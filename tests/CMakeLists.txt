@@ -2,6 +2,7 @@
 set(TEST_RUNNER_SOURCES
     test_runner.c
     test_mcp_arena.c
+    test_mcp_tcp_transport.c
     # Add other test_*.c files here later
 )
 
@@ -13,7 +14,7 @@ target_link_libraries(mcp_tests unity_lib mcp_common)
 
 # Add include directories needed for tests
 target_include_directories(mcp_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/include # For mcp_*.h headers
+    ${CMAKE_SOURCE_DIR}/include 
     # tests/unity is already public via unity_lib target
 )
 
