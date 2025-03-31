@@ -9,13 +9,13 @@ char* mcp_json_format_request(uint64_t id, const char* method, const char* param
         return NULL;
     }
 
-    mcp_json_t* request = mcp_json_object_create(NULL); // Pass NULL arena
+    mcp_json_t* request = mcp_json_object_create(NULL);
     if (request == NULL) {
         return NULL;
     }
 
     // Add jsonrpc version
-    mcp_json_t* jsonrpc = mcp_json_string_create(NULL, "2.0"); // Pass NULL arena
+    mcp_json_t* jsonrpc = mcp_json_string_create(NULL, "2.0");
     if (jsonrpc == NULL) {
         mcp_json_destroy(request);
         return NULL;
@@ -28,7 +28,7 @@ char* mcp_json_format_request(uint64_t id, const char* method, const char* param
     }
 
     // Add id
-    mcp_json_t* id_json = mcp_json_number_create(NULL, (double)id); // Pass NULL arena
+    mcp_json_t* id_json = mcp_json_number_create(NULL, (double)id);
     if (id_json == NULL) {
         mcp_json_destroy(request);
         return NULL;
@@ -41,7 +41,7 @@ char* mcp_json_format_request(uint64_t id, const char* method, const char* param
     }
 
     // Add method
-    mcp_json_t* method_json = mcp_json_string_create(NULL, method); // Pass NULL arena
+    mcp_json_t* method_json = mcp_json_string_create(NULL, method);
     if (method_json == NULL) {
         mcp_json_destroy(request);
         return NULL;
@@ -54,7 +54,7 @@ char* mcp_json_format_request(uint64_t id, const char* method, const char* param
     }
 
     // Add params
-    mcp_json_t* params_json = mcp_json_parse(NULL, params); // Pass NULL arena
+    mcp_json_t* params_json = mcp_json_parse(NULL, params);
     if (params_json == NULL) {
         mcp_json_destroy(request);
         return NULL;
@@ -77,13 +77,13 @@ char* mcp_json_format_response(uint64_t id, const char* result) {
         return NULL;
     }
 
-    mcp_json_t* response = mcp_json_object_create(NULL); // Pass NULL arena
+    mcp_json_t* response = mcp_json_object_create(NULL);
     if (response == NULL) {
         return NULL;
     }
 
     // Add jsonrpc version
-    mcp_json_t* jsonrpc = mcp_json_string_create(NULL, "2.0"); // Pass NULL arena
+    mcp_json_t* jsonrpc = mcp_json_string_create(NULL, "2.0");
     if (jsonrpc == NULL) {
         mcp_json_destroy(response);
         return NULL;
@@ -96,7 +96,7 @@ char* mcp_json_format_response(uint64_t id, const char* result) {
     }
 
     // Add id
-    mcp_json_t* id_json = mcp_json_number_create(NULL, (double)id); // Pass NULL arena
+    mcp_json_t* id_json = mcp_json_number_create(NULL, (double)id);
     if (id_json == NULL) {
         mcp_json_destroy(response);
         return NULL;
@@ -109,7 +109,7 @@ char* mcp_json_format_response(uint64_t id, const char* result) {
     }
 
     // Add result
-    mcp_json_t* result_json = mcp_json_parse(NULL, result); // Pass NULL arena
+    mcp_json_t* result_json = mcp_json_parse(NULL, result);
     if (result_json == NULL) {
         mcp_json_destroy(response);
         return NULL;
@@ -128,13 +128,13 @@ char* mcp_json_format_response(uint64_t id, const char* result) {
 }
 
 char* mcp_json_format_error_response(uint64_t id, mcp_error_code_t error_code, const char* error_message) {
-    mcp_json_t* response = mcp_json_object_create(NULL); // Pass NULL arena
+    mcp_json_t* response = mcp_json_object_create(NULL);
     if (response == NULL) {
         return NULL;
     }
 
     // Add jsonrpc version
-    mcp_json_t* jsonrpc = mcp_json_string_create(NULL, "2.0"); // Pass NULL arena
+    mcp_json_t* jsonrpc = mcp_json_string_create(NULL, "2.0");
     if (jsonrpc == NULL) {
         mcp_json_destroy(response);
         return NULL;
@@ -147,7 +147,7 @@ char* mcp_json_format_error_response(uint64_t id, mcp_error_code_t error_code, c
     }
 
     // Add id
-    mcp_json_t* id_json = mcp_json_number_create(NULL, (double)id); // Pass NULL arena
+    mcp_json_t* id_json = mcp_json_number_create(NULL, (double)id);
     if (id_json == NULL) {
         mcp_json_destroy(response);
         return NULL;
@@ -160,14 +160,14 @@ char* mcp_json_format_error_response(uint64_t id, mcp_error_code_t error_code, c
     }
 
     // Add error
-    mcp_json_t* error = mcp_json_object_create(NULL); // Pass NULL arena
+    mcp_json_t* error = mcp_json_object_create(NULL);
     if (error == NULL) {
         mcp_json_destroy(response);
         return NULL;
     }
 
     // Add error code
-    mcp_json_t* code = mcp_json_number_create(NULL, (double)error_code); // Pass NULL arena
+    mcp_json_t* code = mcp_json_number_create(NULL, (double)error_code);
     if (code == NULL) {
         mcp_json_destroy(error);
         mcp_json_destroy(response);
@@ -183,7 +183,7 @@ char* mcp_json_format_error_response(uint64_t id, mcp_error_code_t error_code, c
 
     // Add error message
     if (error_message != NULL) {
-        mcp_json_t* message = mcp_json_string_create(NULL, error_message); // Pass NULL arena
+        mcp_json_t* message = mcp_json_string_create(NULL, error_message);
         if (message == NULL) {
             mcp_json_destroy(error);
             mcp_json_destroy(response);
@@ -227,7 +227,7 @@ int mcp_json_parse_response(
     *error_message = NULL;
     *result = NULL;
 
-    mcp_json_t* json = mcp_json_parse(NULL, json_str); // Use malloc for parsing response
+    mcp_json_t* json = mcp_json_parse(NULL, json_str);
     if (json == NULL) {
         return -1;
     }
@@ -293,13 +293,13 @@ char* mcp_json_format_read_resource_params(const char* uri) {
         return NULL;
     }
 
-    mcp_json_t* params = mcp_json_object_create(NULL); // Pass NULL arena
+    mcp_json_t* params = mcp_json_object_create(NULL);
     if (params == NULL) {
         return NULL;
     }
 
     // Add uri
-    mcp_json_t* uri_json = mcp_json_string_create(NULL, uri); // Pass NULL arena
+    mcp_json_t* uri_json = mcp_json_string_create(NULL, uri);
     if (uri_json == NULL) {
         mcp_json_destroy(params);
         return NULL;
@@ -322,13 +322,13 @@ char* mcp_json_format_call_tool_params(const char* name, const char* arguments) 
         return NULL;
     }
 
-    mcp_json_t* params = mcp_json_object_create(NULL); // Pass NULL arena
+    mcp_json_t* params = mcp_json_object_create(NULL);
     if (params == NULL) {
         return NULL;
     }
 
     // Add name
-    mcp_json_t* name_json = mcp_json_string_create(NULL, name); // Pass NULL arena
+    mcp_json_t* name_json = mcp_json_string_create(NULL, name);
     if (name_json == NULL) {
         mcp_json_destroy(params);
         return NULL;
@@ -342,7 +342,7 @@ char* mcp_json_format_call_tool_params(const char* name, const char* arguments) 
 
     // Add arguments
     if (arguments != NULL) {
-        mcp_json_t* arguments_json = mcp_json_parse(NULL, arguments); // Pass NULL arena
+        mcp_json_t* arguments_json = mcp_json_parse(NULL, arguments);
         if (arguments_json == NULL) {
             mcp_json_destroy(params);
             return NULL;
@@ -374,7 +374,7 @@ int mcp_json_parse_resources(
     *resources = NULL;
     *count = 0;
 
-    mcp_json_t* json = mcp_json_parse(NULL, json_str); // Use malloc
+    mcp_json_t* json = mcp_json_parse(NULL, json_str);
     if (json == NULL) {
         return -1;
     }
@@ -475,7 +475,7 @@ int mcp_json_parse_resource_templates(
     *templates = NULL;
     *count = 0;
 
-    mcp_json_t* json = mcp_json_parse(NULL, json_str); // Use malloc
+    mcp_json_t* json = mcp_json_parse(NULL, json_str);
     if (json == NULL) {
         return -1;
     }
@@ -576,7 +576,7 @@ int mcp_json_parse_content(
     *content = NULL;
     *count = 0;
 
-    mcp_json_t* json = mcp_json_parse(NULL, json_str); // Use malloc
+    mcp_json_t* json = mcp_json_parse(NULL, json_str);
     if (json == NULL) {
         return -1;
     }
@@ -683,7 +683,7 @@ int mcp_json_parse_tools(
     *tools = NULL;
     *count = 0;
 
-    mcp_json_t* json = mcp_json_parse(NULL, json_str); // Use malloc
+    mcp_json_t* json = mcp_json_parse(NULL, json_str);
     if (json == NULL) {
         return -1;
     }
@@ -858,7 +858,7 @@ int mcp_json_parse_tool_result(
     *count = 0;
     *is_error = false;
 
-    mcp_json_t* json = mcp_json_parse(NULL, json_str); // Use malloc
+    mcp_json_t* json = mcp_json_parse(NULL, json_str);
     if (json == NULL) {
         return -1;
     }
