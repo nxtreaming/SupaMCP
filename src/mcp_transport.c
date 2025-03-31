@@ -17,6 +17,7 @@ int mcp_transport_start(
     // Store callback and user data for use by the implementation's start/receive logic
     transport->message_callback = message_callback;
     transport->callback_user_data = user_data;
+    // Pass the callback and user_data to the specific implementation's start function
     return transport->start(transport, message_callback, user_data);
 }
 

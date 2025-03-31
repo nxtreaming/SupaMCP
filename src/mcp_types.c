@@ -76,7 +76,8 @@ void mcp_message_free(mcp_message_t* message) {
             free(message->request.params);
             break;
         case MCP_MESSAGE_TYPE_RESPONSE:
-            free(message->response.error_message);
+            // Freeing const char* - relies on implicit conversion to void*
+            free((void*)message->response.error_message);
             free(message->response.result);
             break;
         case MCP_MESSAGE_TYPE_NOTIFICATION:

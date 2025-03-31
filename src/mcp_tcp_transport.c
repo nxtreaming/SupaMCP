@@ -69,7 +69,7 @@ typedef struct {
 // --- Forward Declarations for Static Functions ---
 static int tcp_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data);
 static int tcp_transport_stop(mcp_transport_t* transport);
-static int tcp_transport_send(mcp_transport_t* transport, const void* data, size_t size); // Note: Server send needs target client
+// static int tcp_transport_send(mcp_transport_t* transport, const void* data, size_t size); // Removed - sending handled by client handler
 static void tcp_transport_destroy(mcp_transport_t* transport);
 #ifdef _WIN32
 static DWORD WINAPI tcp_accept_thread_func(LPVOID arg);
@@ -96,18 +96,31 @@ static void initialize_winsock() {
 static void initialize_winsock() { /* No-op on non-Windows */ }
 #endif
 
-// Placeholder: Actual send needs to target a specific client connection
-static int tcp_transport_send(mcp_transport_t* transport, const void* data_to_send, size_t size) {
-    (void)transport;
-    (void)data_to_send;
-    (void)size;
-    log_message(LOG_LEVEL_WARN, "Server-side TCP send not fully implemented (needs client target).");
-    // In a real server, you'd need a mechanism to map a response back to the
-    // correct client socket and send it there, likely involving locking the client list.
-    // This would involve finding the correct tcp_client_connection_t and using its socket.
-    // Remember to implement length-prefix framing here too!
-    return -1; // Not implemented for server broadcast
+// Helper function to send exactly n bytes to a socket
+static int send_exact(socket_t sock, const char* buf, size_t len, bool* running_flag) {
+    size_t total_sent = 0;
+    while (total_sent < len) {
+        if (running_flag && !(*running_flag)) return -2; // Interrupted by stop signal
+
+        // Note: send() typically takes int/ssize_t for length. We might need to cast
+        // or send in chunks if len > INT_MAX (highly unlikely for JSON-RPC).
+        // For simplicity, assume len fits in send()'s length parameter type.
+        // On Windows, send takes int. On POSIX, it takes size_t.
+#ifdef _WIN32
+        int chunk_len = (len - total_sent > INT_MAX) ? INT_MAX : (int)(len - total_sent);
+        int bytes_sent = send(sock, buf + total_sent, chunk_len, 0);
+#else
+        ssize_t bytes_sent = send(sock, buf + total_sent, len - total_sent, 0);
+#endif
+
+        if (bytes_sent == SOCKET_ERROR) {
+            return -1; // Socket error
+        }
+        total_sent += bytes_sent;
+    }
+    return (int)total_sent; // Should be equal to len if successful
 }
+
 
 // Helper function to read exactly n bytes from a socket
 static int recv_exact(socket_t sock, char* buf, int len, bool* running_flag) {
@@ -234,18 +247,76 @@ static void* tcp_client_handler_thread_func(void* arg) {
          }
 
 
-        // 6. Null-terminate and process the message
+        // 6. Null-terminate and process the message via callback
         message_buf[message_length_host] = '\0';
+        char* response_str = NULL;
+        int callback_error_code = 0;
         if (transport->message_callback != NULL) {
-            if (transport->message_callback(transport->callback_user_data, message_buf, message_length_host) != 0) {
-                 log_message(LOG_LEVEL_WARN, "Message callback failed for data from socket %d", (int)client_conn->socket);
-                 // Decide if we should continue or disconnect on callback failure? For now, continue.
-            }
+            response_str = transport->message_callback(transport->callback_user_data, message_buf, message_length_host, &callback_error_code);
+            // response_str is malloc'd by the callback, or NULL
         }
 
-        // 7. Free the message buffer for the next message
+        // 7. Free the received message buffer
         free(message_buf);
         message_buf = NULL;
+
+        // 8. If callback returned a response string, send it back
+        if (response_str != NULL) {
+            size_t response_len = strlen(response_str);
+            if (response_len > 0 && response_len <= MAX_MCP_MESSAGE_SIZE) {
+                uint32_t net_len = htonl((uint32_t)response_len);
+                size_t total_send_len = sizeof(net_len) + response_len;
+                char* send_buffer = (char*)malloc(total_send_len);
+
+                if (send_buffer) {
+                    memcpy(send_buffer, &net_len, sizeof(net_len));
+                    memcpy(send_buffer + sizeof(net_len), response_str, response_len);
+
+                    // Pass size_t total_send_len directly
+                    int send_result = send_exact(client_conn->socket, send_buffer, total_send_len, &client_conn->active);
+                    if (send_result == SOCKET_ERROR) { // send_exact returns -1 on error
+                        if (client_conn->active) { // Avoid error log if stopping
+                            char err_buf[128];
+#ifdef _WIN32
+                            strerror_s(err_buf, sizeof(err_buf), sock_errno);
+                            log_message(LOG_LEVEL_ERROR, "send_exact failed for socket %p: %d (%s)", (void*)client_conn->socket, sock_errno, err_buf);
+#else
+                            if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
+                                log_message(LOG_LEVEL_ERROR, "send_exact failed for socket %d: %d (%s)", client_conn->socket, sock_errno, err_buf);
+                            } else {
+                                log_message(LOG_LEVEL_ERROR, "send_exact failed for socket %d: %d (strerror_r failed)", client_conn->socket, sock_errno);
+                            }
+#endif
+                        }
+                        free(send_buffer);
+                        free(response_str); // Free callback response
+                        goto client_cleanup; // Error sending response
+                    } else if (send_result == -2) {
+                         log_message(LOG_LEVEL_DEBUG, "Client handler send for socket %d interrupted by stop signal.", (int)client_conn->socket);
+                         free(send_buffer);
+                         free(response_str);
+                         goto client_cleanup; // Interrupted by stop
+                    }
+                    free(send_buffer);
+                } else {
+                    log_message(LOG_LEVEL_ERROR, "Failed to allocate send buffer for response on socket %d", (int)client_conn->socket);
+                    // Continue without sending response? Or disconnect? Disconnect for safety.
+                    free(response_str);
+                    goto client_cleanup;
+                }
+            } else if (response_len > MAX_MCP_MESSAGE_SIZE) {
+                 log_message(LOG_LEVEL_ERROR, "Response generated by callback is too large (%zu bytes) for socket %d", response_len, (int)client_conn->socket);
+                 // Disconnect client?
+            }
+            // Free the response string returned by the callback
+            free(response_str);
+            response_str = NULL;
+        } else if (callback_error_code != 0) {
+            // Callback indicated an error but didn't return a response string
+            log_message(LOG_LEVEL_WARN, "Message callback indicated error (%d) but returned no response string for socket %d", callback_error_code, (int)client_conn->socket);
+            // Decide if we should disconnect? For now, continue.
+        }
+        // If response_str was NULL and no error, it was likely a notification - no response needed.
 
     } // End of main while loop
 
@@ -676,7 +747,8 @@ mcp_transport_t* mcp_transport_tcp_create(const char* host, uint16_t port) {
     // Initialize function pointers
     transport->start = tcp_transport_start;
     transport->stop = tcp_transport_stop;
-    transport->send = tcp_transport_send; // Assign placeholder send
+    transport->send = NULL; // Set send to NULL, it's not used by server transport
+    transport->receive = NULL; // Set receive to NULL, not used by server transport
     transport->destroy = tcp_transport_destroy;
     transport->transport_data = tcp_data;
     transport->message_callback = NULL;

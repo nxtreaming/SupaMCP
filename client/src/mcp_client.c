@@ -124,12 +124,31 @@ static int mcp_client_send_request(
         return -1;
     }
 
-    // Send request
-    if (mcp_transport_send(client->transport, request_json, strlen(request_json)) != 0) {
+    // Prepare buffer with length prefix + JSON data
+    size_t json_len = strlen(request_json);
+    uint32_t net_len = htonl((uint32_t)json_len); // Convert length to network byte order
+    size_t total_len = sizeof(net_len) + json_len;
+    char* send_buffer = (char*)malloc(total_len);
+
+    if (send_buffer == NULL) {
         free(request_json);
-        return -1;
+        return -1; // Allocation failed
     }
-    free(request_json);
+
+    // Copy length prefix and JSON data into the buffer
+    memcpy(send_buffer, &net_len, sizeof(net_len));
+    memcpy(send_buffer + sizeof(net_len), request_json, json_len);
+
+    // Send the combined buffer
+    int send_status = mcp_transport_send(client->transport, send_buffer, total_len);
+
+    // Clean up buffers
+    free(send_buffer);
+    free(request_json); // Free original JSON string
+
+    if (send_status != 0) {
+        return -1; // Send failed
+    }
 
     // Receive response
     // This is currently blocking and synchronous. A real client might use a

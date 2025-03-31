@@ -20,7 +20,7 @@ struct mcp_transport {
     void* transport_data;
     // User data to be passed to the message callback
     void* callback_user_data;
-    // The message callback itself
+    // The message callback itself (returns malloc'd response string)
     mcp_transport_message_callback_t message_callback;
 };
 

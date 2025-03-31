@@ -21,9 +21,12 @@ typedef struct mcp_transport mcp_transport_t;
  * @param user_data User data provided to mcp_transport_start.
  * @param data Pointer to the received message data.
  * @param size Size of the received message data in bytes.
- * @return 0 on success, non-zero indicates an error processing the message.
+ * @param error_code Pointer to an integer where an error code can be stored if the callback fails.
+ * @return A dynamically allocated (malloc'd) string containing the JSON response to send back,
+ *         or NULL if no response should be sent (e.g., for notifications) or an error occurred.
+ *         The caller (transport layer) is responsible for freeing this string.
  */
-typedef int (*mcp_transport_message_callback_t)(void* user_data, const void* data, size_t size);
+typedef char* (*mcp_transport_message_callback_t)(void* user_data, const void* data, size_t size, int* error_code);
 
 /**
  * @brief Starts the transport layer and begins listening/processing messages.

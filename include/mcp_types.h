@@ -122,7 +122,7 @@ typedef struct {
 typedef struct {
     uint64_t id;
     mcp_error_code_t error_code;
-    char* error_message;
+    const char* error_message; // Changed to const char*
     void* result;
 } mcp_response_t;
 

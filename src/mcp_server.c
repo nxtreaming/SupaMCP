@@ -34,22 +34,21 @@ struct mcp_server {
     void* tool_handler_user_data;
 };
 
-// Message handling
-static int handle_message(mcp_server_t* server, const void* data, size_t size);
-static int handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request); // Pass arena
-static int send_response(mcp_server_t* server, const mcp_response_t* response);
+// Message handling - returns malloc'd response string or NULL
+static char* handle_message(mcp_server_t* server, const void* data, size_t size, int* error_code);
+static char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code); // Pass arena, returns response string
 
-// Request handlers (pass arena for parsing params)
-static int handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request);
-static int handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request);
-static int handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request);
-static int handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request);
-static int handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request);
+// Request handlers (pass arena for parsing params) - return malloc'd response string or NULL
+static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
+static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
+static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
+static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
+static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
 
-// Transport callback
-static int transport_message_callback(void* user_data, const void* data, size_t size) {
+// Transport callback - matches new signature
+static char* transport_message_callback(void* user_data, const void* data, size_t size, int* error_code) {
     mcp_server_t* server = (mcp_server_t*)user_data;
-    return handle_message(server, data, size);
+    return handle_message(server, data, size, error_code);
 }
 
 // Server creation and management
@@ -121,6 +120,7 @@ int mcp_server_start(
     server->transport = transport;
     server->running = true;
 
+    // Pass the updated callback signature to transport_start
     return mcp_transport_start(transport, transport_message_callback, server);
 }
 
@@ -276,14 +276,21 @@ int mcp_server_process_message(
     if (server == NULL || data == NULL || size == 0) {
         return -1;
     }
-    return handle_message(server, data, size);
+    // This function is likely unused now, as messages come via the transport callback.
+    // Keep it for potential direct injection testing, but update signature.
+    int error_code = 0;
+    char* response = handle_message(server, data, size, &error_code);
+    free(response); // Caller doesn't get the response here
+    return error_code;
 }
 
-// Message handling - Use Arena Allocator
-static int handle_message(mcp_server_t* server, const void* data, size_t size) {
-    if (server == NULL || data == NULL || size == 0) {
-        return -1;
+// Message handling - Use Arena Allocator, returns malloc'd response string or NULL
+static char* handle_message(mcp_server_t* server, const void* data, size_t size, int* error_code) {
+    if (server == NULL || data == NULL || size == 0 || error_code == NULL) {
+        if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        return NULL;
     }
+    *error_code = MCP_ERROR_NONE; // Default to success
 
     // Initialize arena for this message processing cycle
     mcp_arena_t arena;
@@ -294,7 +301,8 @@ static int handle_message(mcp_server_t* server, const void* data, size_t size) {
     char* json_str = (char*)malloc(size + 1);
     if (json_str == NULL) {
         mcp_arena_destroy(&arena); // Clean up arena on error
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR; // Indicate allocation failure
+        return NULL;
     }
     memcpy(json_str, data, size);
     json_str[size] = '\0';
@@ -310,24 +318,27 @@ static int handle_message(mcp_server_t* server, const void* data, size_t size) {
 
     if (parse_result != 0) {
         mcp_arena_destroy(&arena); // Clean up arena on parse error
-        // TODO: Send JSON-RPC Parse Error response?
-        return -1;
+        *error_code = MCP_ERROR_PARSE_ERROR;
+        // TODO: Generate and return a JSON-RPC Parse Error response string?
+        // For now, just return NULL indicating failure.
+        return NULL;
     }
 
     // Handle the message based on its type
-    int result = -1;
+    char* response_str = NULL;
     switch (message.type) {
         case MCP_MESSAGE_TYPE_REQUEST:
-            // Pass arena to request handler
-            result = handle_request(server, &arena, &message.request);
+            // Pass arena to request handler, get response string back
+            response_str = handle_request(server, &arena, &message.request, error_code);
             break;
         case MCP_MESSAGE_TYPE_RESPONSE:
             // Server typically doesn't process responses it receives
-            result = 0; // Ignore for now
+            *error_code = 0; // No error, just no response to send
             break;
         case MCP_MESSAGE_TYPE_NOTIFICATION:
             // Server could handle notifications if needed
-            result = 0; // Ignore for now
+            // For now, just acknowledge success, no response needed.
+            *error_code = 0;
             break;
     }
 
@@ -338,90 +349,115 @@ static int handle_message(mcp_server_t* server, const void* data, size_t size) {
     // Reset is faster if we expect similar allocation patterns next time
     mcp_arena_reset(&arena);
     // Or destroy if memory usage needs to be minimized between messages
-    // mcp_arena_destroy(&arena);
+    mcp_arena_destroy(&arena); // Destroy arena after processing one message
 
-    return result;
+    return response_str; // Return malloc'd response string (or NULL)
 }
 
-// Pass arena for parsing params
-static int handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request) {
-    if (server == NULL || request == NULL || arena == NULL) {
-        return -1;
+// Pass arena for parsing params, returns malloc'd response string or NULL
+static char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
+    if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
+        if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        return NULL;
     }
+    *error_code = MCP_ERROR_NONE; // Default to success
 
     // Handle the request based on its method
     if (strcmp(request->method, "list_resources") == 0) {
-        return handle_list_resources_request(server, arena, request);
+        return handle_list_resources_request(server, arena, request, error_code);
     } else if (strcmp(request->method, "list_resource_templates") == 0) {
-        return handle_list_resource_templates_request(server, arena, request);
+        return handle_list_resource_templates_request(server, arena, request, error_code);
     } else if (strcmp(request->method, "read_resource") == 0) {
-        return handle_read_resource_request(server, arena, request);
+        return handle_read_resource_request(server, arena, request, error_code);
     } else if (strcmp(request->method, "list_tools") == 0) {
-        return handle_list_tools_request(server, arena, request);
+        return handle_list_tools_request(server, arena, request, error_code);
     } else if (strcmp(request->method, "call_tool") == 0) {
-        return handle_call_tool_request(server, arena, request);
+        return handle_call_tool_request(server, arena, request, error_code);
     } else {
-        // Unknown method - Response uses malloc
+        // Unknown method - Create and return error response string
+        *error_code = MCP_ERROR_METHOD_NOT_FOUND;
         mcp_response_t response;
         response.id = request->id;
-        response.error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        response.error_message = strdup("Method not found");
+        response.error_code = *error_code;
+        response.error_message = "Method not found"; // Use const string
         response.result = NULL;
-        int result = -1;
-        if (response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
-    }
-}
 
-// Response sending uses malloc internally for stringify
-static int send_response(mcp_server_t* server, const mcp_response_t* response) {
-    if (server == NULL || response == NULL) {
-        return -1;
-    }
-    mcp_message_t message;
-    message.type = MCP_MESSAGE_TYPE_RESPONSE;
-    // Directly assign pointer, assuming response lifetime is managed by caller
-    // or it's stack-allocated within the handler.
-    message.response = *response;
+        // Create message struct and pass its address
+        mcp_message_t msg;
+        msg.type = MCP_MESSAGE_TYPE_RESPONSE;
+        msg.response = response; // Copy stack response
 
-    // Stringify uses malloc
-    char* json_str = mcp_json_stringify_message(&message);
-    if (json_str == NULL) {
-        return -1;
+        // Stringify uses malloc
+        char* response_str = mcp_json_stringify_message(&msg);
+        // Note: error_message in response struct is const, no need to free
+        return response_str; // Return malloc'd string or NULL if stringify fails
     }
-    int result = mcp_transport_send(server->transport, json_str, strlen(json_str));
-    free(json_str);
-    return result;
 }
 
 // --- Request Handlers ---
-// These now parse params using the provided arena
+// These now parse params using the provided arena and return malloc'd response string
 
-static int handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request) {
+// Helper to create error response string
+static char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message) {
+    mcp_response_t response;
+    response.id = id;
+    response.error_code = code;
+    response.error_message = message; // Use const string
+    response.result = NULL;
+
+    mcp_message_t msg;
+    msg.type = MCP_MESSAGE_TYPE_RESPONSE;
+    msg.response = response; // Copy the stack response struct
+
+    return mcp_json_stringify_message(&msg); // Returns malloc'd string or NULL
+}
+
+// Helper to create success response string from result string (takes ownership)
+static char* create_success_response(uint64_t id, char* result_str) {
+    mcp_response_t response;
+    response.id = id;
+    response.error_code = MCP_ERROR_NONE;
+    response.error_message = NULL;
+    response.result = result_str; // Pass ownership (will be freed below)
+
+    mcp_message_t msg;
+    msg.type = MCP_MESSAGE_TYPE_RESPONSE;
+    msg.response = response; // Copy the stack response struct
+
+    // Stringify the message. mcp_json_stringify_message makes its own copy
+    // of the result string if needed (or parses it if it's complex JSON).
+    char* response_msg_str = mcp_json_stringify_message(&msg);
+
+    // Free the original result string passed into this helper
+    free(result_str);
+
+    return response_msg_str; // Return malloc'd message string or NULL
+}
+
+
+static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
     // This request has no parameters, arena is not used for parsing here
     (void)arena; // Mark arena as unused
 
-    if (server == NULL || request == NULL || !server->capabilities.resources_supported) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        response.error_message = strdup("Resources not supported");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+    if (server == NULL || request == NULL || error_code == NULL) {
+         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         return NULL;
+    }
+    *error_code = MCP_ERROR_NONE;
+
+    if (!server->capabilities.resources_supported) {
+        *error_code = MCP_ERROR_METHOD_NOT_FOUND;
+        return create_error_response(request->id, *error_code, "Resources not supported");
     }
 
     // Create response JSON (uses malloc for nodes/strings via NULL arena)
     mcp_json_t* resources_json = mcp_json_array_create(NULL);
-    if (!resources_json) return -1;
+    if (!resources_json) {
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to create resources array");
+    }
 
+    bool build_error = false;
     for (size_t i = 0; i < server->resource_count; i++) {
         mcp_resource_t* resource = server->resources[i];
         mcp_json_t* res_obj = mcp_json_object_create(NULL);
@@ -433,55 +469,59 @@ static int handle_list_resources_request(mcp_server_t* server, mcp_arena_t* aren
             mcp_json_array_add_item(resources_json, res_obj) != 0)
         {
             mcp_json_destroy(res_obj); // Handles nested nodes
-            mcp_json_destroy(resources_json);
-            return -1; // Error during JSON construction
+            build_error = true;
+            break;
         }
+    }
+
+    if (build_error) {
+        mcp_json_destroy(resources_json);
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to build resource JSON");
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
     if (!result_obj || mcp_json_object_set_property(result_obj, "resources", resources_json) != 0) {
         mcp_json_destroy(resources_json);
         mcp_json_destroy(result_obj);
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to create result object");
     }
 
-    char* result_str = mcp_json_stringify(result_obj);
+    char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj); // Destroys nested resources_json
-    if (!result_str) return -1;
+    if (!result_str) {
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to stringify result");
+    }
 
-    mcp_response_t response;
-    response.id = request->id;
-    response.error_code = MCP_ERROR_NONE;
-    response.error_message = NULL;
-    response.result = result_str; // result_str uses malloc
-
-    int send_result = send_response(server, &response);
-    free(result_str);
-    return send_result;
+    // Create the final response message string (takes ownership of result_str)
+    return create_success_response(request->id, result_str);
 }
 
-static int handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request) {
+static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
     // No params, arena unused here
     (void)arena;
 
-     if (server == NULL || request == NULL || !server->capabilities.resources_supported) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        response.error_message = strdup("Resources not supported");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+    if (server == NULL || request == NULL || error_code == NULL) {
+         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         return NULL;
+    }
+    *error_code = MCP_ERROR_NONE;
+
+     if (!server->capabilities.resources_supported) {
+        *error_code = MCP_ERROR_METHOD_NOT_FOUND;
+        return create_error_response(request->id, *error_code, "Resources not supported");
     }
 
     // Create response JSON (uses malloc)
     mcp_json_t* templates_json = mcp_json_array_create(NULL);
-     if (!templates_json) return -1;
+     if (!templates_json) {
+         *error_code = MCP_ERROR_INTERNAL_ERROR;
+         return create_error_response(request->id, *error_code, "Failed to create templates array");
+     }
 
+    bool build_error = false;
     for (size_t i = 0; i < server->resource_template_count; i++) {
         mcp_resource_template_t* tmpl = server->resource_templates[i];
         mcp_json_t* tmpl_obj = mcp_json_object_create(NULL);
@@ -493,94 +533,66 @@ static int handle_list_resource_templates_request(mcp_server_t* server, mcp_aren
             mcp_json_array_add_item(templates_json, tmpl_obj) != 0)
         {
             mcp_json_destroy(tmpl_obj);
-            mcp_json_destroy(templates_json);
-            return -1;
+            build_error = true;
+            break;
         }
+    }
+
+    if (build_error) {
+        mcp_json_destroy(templates_json);
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to build template JSON");
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
     if (!result_obj || mcp_json_object_set_property(result_obj, "resourceTemplates", templates_json) != 0) {
         mcp_json_destroy(templates_json);
         mcp_json_destroy(result_obj);
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to create result object");
     }
 
-    char* result_str = mcp_json_stringify(result_obj);
+    char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj);
-    if (!result_str) return -1;
+    if (!result_str) {
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to stringify result");
+    }
 
-    mcp_response_t response;
-    response.id = request->id;
-    response.error_code = MCP_ERROR_NONE;
-    response.error_message = NULL;
-    response.result = result_str;
-
-    int send_result = send_response(server, &response);
-    free(result_str);
-    return send_result;
+    return create_success_response(request->id, result_str);
 }
 
-static int handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request) {
-     if (server == NULL || request == NULL || !server->capabilities.resources_supported) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        response.error_message = strdup("Resources not supported");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
+    if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
+         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         return NULL;
+    }
+    *error_code = MCP_ERROR_NONE;
+
+     if (!server->capabilities.resources_supported) {
+        *error_code = MCP_ERROR_METHOD_NOT_FOUND;
+        return create_error_response(request->id, *error_code, "Resources not supported");
     }
 
     if (request->params == NULL) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_INVALID_PARAMS;
-        response.error_message = strdup("Missing parameters");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+        *error_code = MCP_ERROR_INVALID_PARAMS;
+        return create_error_response(request->id, *error_code, "Missing parameters");
     }
 
     // Parse params using the arena
     mcp_json_t* params_json = mcp_json_parse(arena, request->params);
     if (params_json == NULL) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_INVALID_PARAMS;
-        response.error_message = strdup("Invalid parameters JSON");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
+        *error_code = MCP_ERROR_INVALID_PARAMS;
+        return create_error_response(request->id, *error_code, "Invalid parameters JSON");
         // Arena will be reset/destroyed by caller (handle_message)
-        return result;
     }
 
     mcp_json_t* uri_json = mcp_json_object_get_property(params_json, "uri");
     const char* uri = NULL;
     if (uri_json == NULL || mcp_json_get_type(uri_json) != MCP_JSON_STRING || mcp_json_get_string(uri_json, &uri) != 0) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_INVALID_PARAMS;
-        response.error_message = strdup("Missing or invalid 'uri' parameter");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
+        *error_code = MCP_ERROR_INVALID_PARAMS;
+        return create_error_response(request->id, *error_code, "Missing or invalid 'uri' parameter");
         // Arena handles params_json cleanup
-        return result;
     }
 
     // Call the resource handler
@@ -594,18 +606,9 @@ static int handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena
     if (handler_status != 0 || content_items == NULL || content_count == 0) {
         // Handler failed or returned no content
         free(content_items); // Free if allocated but handler failed
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_INTERNAL_ERROR; // Or a more specific code if handler provided one
-        response.error_message = strdup("Resource handler failed or resource not found");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
+        *error_code = MCP_ERROR_INTERNAL_ERROR; // Or a more specific code if handler provided one
+        return create_error_response(request->id, *error_code, "Resource handler failed or resource not found");
         // Arena handles params_json cleanup
-        return result;
     }
 
     // Create response JSON (uses malloc)
@@ -613,7 +616,8 @@ static int handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena
     if (!contents_json) {
         for (size_t i = 0; i < content_count; i++) mcp_content_item_free(&content_items[i]);
         free(content_items);
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to create contents array");
     }
 
     bool json_build_error = false;
@@ -639,53 +643,50 @@ static int handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena
 
     if (json_build_error) {
         mcp_json_destroy(contents_json);
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to build content item JSON");
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
     if (!result_obj || mcp_json_object_set_property(result_obj, "contents", contents_json) != 0) {
         mcp_json_destroy(contents_json);
         mcp_json_destroy(result_obj);
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to create result object");
     }
 
-    char* result_str = mcp_json_stringify(result_obj);
+    char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj);
-    if (!result_str) return -1;
+    if (!result_str) {
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to stringify result");
+    }
 
-    mcp_response_t response;
-    response.id = request->id;
-    response.error_code = MCP_ERROR_NONE;
-    response.error_message = NULL;
-    response.result = result_str;
-
-    int send_result = send_response(server, &response);
-    free(result_str);
-    // Arena handles params_json cleanup
-    return send_result;
+    // Arena handles params_json cleanup via caller
+    return create_success_response(request->id, result_str);
 }
 
-static int handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request) {
+static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
     // No params, arena unused
     (void)arena;
 
-    if (server == NULL || request == NULL || !server->capabilities.tools_supported) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        response.error_message = strdup("Tools not supported");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+    if (server == NULL || request == NULL || error_code == NULL) {
+         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         return NULL;
+    }
+    *error_code = MCP_ERROR_NONE;
+
+    if (!server->capabilities.tools_supported) {
+        *error_code = MCP_ERROR_METHOD_NOT_FOUND;
+        return create_error_response(request->id, *error_code, "Tools not supported");
     }
 
     // Create response JSON (uses malloc)
     mcp_json_t* tools_json = mcp_json_array_create(NULL);
-    if (!tools_json) return -1;
+    if (!tools_json) {
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to create tools array");
+    }
 
     bool json_build_error = false;
     for (size_t i = 0; i < server->tool_count; i++) {
@@ -763,90 +764,57 @@ static int handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, c
 
     if (json_build_error) {
         mcp_json_destroy(tools_json);
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to build tool JSON");
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
     if (!result_obj || mcp_json_object_set_property(result_obj, "tools", tools_json) != 0) {
         mcp_json_destroy(tools_json);
         mcp_json_destroy(result_obj);
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to create result object");
     }
 
-    char* result_str = mcp_json_stringify(result_obj);
+    char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj);
-    if (!result_str) return -1;
+    if (!result_str) {
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to stringify result");
+    }
 
-    mcp_response_t response;
-    response.id = request->id;
-    response.error_code = MCP_ERROR_NONE;
-    response.error_message = NULL;
-    response.result = result_str;
-
-    int send_result = send_response(server, &response);
-    free(result_str);
-    return send_result;
+    return create_success_response(request->id, result_str);
 }
 
-static int handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request) {
-    if (server == NULL || request == NULL || !server->capabilities.tools_supported) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        response.error_message = strdup("Tools not supported");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
+    if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
+         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         return NULL;
+    }
+    *error_code = MCP_ERROR_NONE;
+
+    if (!server->capabilities.tools_supported) {
+        *error_code = MCP_ERROR_METHOD_NOT_FOUND;
+        return create_error_response(request->id, *error_code, "Tools not supported");
     }
 
      if (request->params == NULL) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_INVALID_PARAMS;
-        response.error_message = strdup("Missing parameters");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+        *error_code = MCP_ERROR_INVALID_PARAMS;
+        return create_error_response(request->id, *error_code, "Missing parameters");
     }
 
     // Parse params using arena
     mcp_json_t* params_json = mcp_json_parse(arena, request->params);
     if (params_json == NULL) {
-         mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_INVALID_PARAMS;
-        response.error_message = strdup("Invalid parameters JSON");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+        *error_code = MCP_ERROR_INVALID_PARAMS;
+        return create_error_response(request->id, *error_code, "Invalid parameters JSON");
     }
 
     mcp_json_t* name_json = mcp_json_object_get_property(params_json, "name");
     const char* name = NULL;
     if (name_json == NULL || mcp_json_get_type(name_json) != MCP_JSON_STRING || mcp_json_get_string(name_json, &name) != 0) {
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_INVALID_PARAMS;
-        response.error_message = strdup("Missing or invalid 'name' parameter");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+        *error_code = MCP_ERROR_INVALID_PARAMS;
+        return create_error_response(request->id, *error_code, "Missing or invalid 'name' parameter");
     }
 
     mcp_json_t* args_json = mcp_json_object_get_property(params_json, "arguments");
@@ -855,17 +823,8 @@ static int handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, co
     if (args_json != NULL) {
         args_str = mcp_json_stringify(args_json); // Uses malloc
         if (args_str == NULL) {
-             mcp_response_t response;
-            response.id = request->id;
-            response.error_code = MCP_ERROR_INTERNAL_ERROR;
-            response.error_message = strdup("Failed to stringify arguments");
-            response.result = NULL;
-            int result = -1;
-            if(response.error_message) {
-                result = send_response(server, &response);
-                free(response.error_message);
-            }
-            return result;
+            *error_code = MCP_ERROR_INTERNAL_ERROR;
+            return create_error_response(request->id, *error_code, "Failed to stringify arguments");
         }
     }
 
@@ -882,17 +841,8 @@ static int handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, co
 
     if (handler_status != 0 || content_items == NULL || content_count == 0) {
         free(content_items);
-        mcp_response_t response;
-        response.id = request->id;
-        response.error_code = MCP_ERROR_INTERNAL_ERROR; // Or more specific
-        response.error_message = strdup("Tool handler failed or tool not found");
-        response.result = NULL;
-        int result = -1;
-        if(response.error_message) {
-            result = send_response(server, &response);
-            free(response.error_message);
-        }
-        return result;
+        *error_code = MCP_ERROR_INTERNAL_ERROR; // Or more specific
+        return create_error_response(request->id, *error_code, "Tool handler failed or tool not found");
     }
 
     // Create response JSON (uses malloc)
@@ -900,7 +850,8 @@ static int handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, co
     if (!content_json) {
          for (size_t i = 0; i < content_count; i++) mcp_content_item_free(&content_items[i]);
          free(content_items);
-         return -1;
+         *error_code = MCP_ERROR_INTERNAL_ERROR;
+         return create_error_response(request->id, *error_code, "Failed to create content array");
     }
 
     bool json_build_error = false;
@@ -934,7 +885,8 @@ static int handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, co
 
      if (json_build_error) {
         mcp_json_destroy(content_json);
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to build content item JSON");
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
@@ -944,21 +896,17 @@ static int handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, co
     {
         mcp_json_destroy(content_json);
         mcp_json_destroy(result_obj);
-        return -1;
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to create result object");
     }
 
-    char* result_str = mcp_json_stringify(result_obj);
+    char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj);
-    if (!result_str) return -1;
+    if (!result_str) {
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Failed to stringify result");
+    }
 
-    mcp_response_t response;
-    response.id = request->id;
-    response.error_code = MCP_ERROR_NONE;
-    response.error_message = NULL;
-    response.result = result_str;
-
-    int send_result = send_response(server, &response);
-    free(result_str);
-    // Arena handles params_json cleanup
-    return send_result;
+    // Arena handles params_json cleanup via caller
+    return create_success_response(request->id, result_str);
 }

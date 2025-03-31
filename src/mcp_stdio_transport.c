@@ -28,6 +28,9 @@ typedef struct {
 #endif
 } mcp_stdio_transport_data_t;
 
+// --- Forward Declarations for Static Functions ---
+static int stdio_transport_send(mcp_transport_t* transport, const void* data_to_send, size_t size);
+
 // --- Static Implementation Functions ---
 
 // Max line length for reading from stdin
@@ -101,12 +104,29 @@ static void* stdio_read_thread_func(void* arg) {
             size_t len = strlen(line_buffer);
 
             if (len > 0 && transport->message_callback != NULL) {
-                // Pass the received line to the callback
-                if (transport->message_callback(transport->callback_user_data, line_buffer, len) != 0) {
-                    // Callback indicated an error, maybe stop?
-                    // fprintf(stderr, "[MCP Stdio Transport] Message callback failed.\n");
-                    // data->running = false; // Optional: stop on callback error
+                int callback_error_code = 0;
+                char* response_str = transport->message_callback(
+                    transport->callback_user_data,
+                    line_buffer,
+                    len,
+                    &callback_error_code
+                );
+
+                if (response_str != NULL) {
+                    // Send the response back via stdout
+                    // stdio_transport_send already adds newline and flushes
+                    if (stdio_transport_send(transport, response_str, strlen(response_str)) != 0) {
+                         fprintf(stderr, "[MCP Stdio Transport] Failed to send response via stdout.\n");
+                         // Error sending response, maybe stop?
+                         // data->running = false;
+                    }
+                    free(response_str); // Free the malloc'd response string
+                } else if (callback_error_code != 0) {
+                    // Callback indicated an error but returned no response
+                     fprintf(stderr, "[MCP Stdio Transport] Message callback indicated error (%d) but returned no response string.\n", callback_error_code);
+                     // data->running = false; // Optional: stop on callback error
                 }
+                // If response_str is NULL and no error, it was a notification or response not needed.
             }
         } else {
             // fgets returned NULL, either EOF or error
