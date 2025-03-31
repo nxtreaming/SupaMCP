@@ -1,5 +1,6 @@
 #include "mcp_stdio_transport.h"
 #include "mcp_transport_internal.h"
+#include "mcp_log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,7 +30,61 @@ typedef struct {
 
 // --- Static Implementation Functions ---
 
-// Thread function to read from stdin
+// Max line length for reading from stdin
+#define MAX_STDIO_LINE_LENGTH 4096
+
+// Synchronous receive function for stdio (primarily for client)
+static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
+    (void)transport; // Not needed for stdio receive
+    (void)timeout_ms; // Timeout ignored for simple blocking fgets
+
+    if (data_out == NULL || size_out == NULL) {
+        return -1;
+    }
+    *data_out = NULL;
+    *size_out = 0;
+
+    char line_buffer[MAX_STDIO_LINE_LENGTH];
+
+    // Blocking read using fgets
+    if (fgets(line_buffer, sizeof(line_buffer), stdin) == NULL) {
+        if (feof(stdin)) {
+            log_message(LOG_LEVEL_INFO, "EOF reached on stdin during receive.");
+            return -1; // Or a specific EOF code? -1 for general error for now.
+        } else {
+            char err_buf[128];
+#ifdef _WIN32
+            strerror_s(err_buf, sizeof(err_buf), errno);
+            log_message(LOG_LEVEL_ERROR, "Failed to read from stdin: %s (errno: %d)", err_buf, errno);
+#else
+            if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
+                 log_message(LOG_LEVEL_ERROR, "Failed to read from stdin: %s (errno: %d)", err_buf, errno);
+            } else {
+                 log_message(LOG_LEVEL_ERROR, "Failed to read from stdin: (errno: %d, strerror_r failed)", errno);
+            }
+#endif
+            return -1; // Read error
+        }
+    }
+
+    // Remove trailing newline characters
+    line_buffer[strcspn(line_buffer, "\r\n")] = 0;
+    *size_out = strlen(line_buffer);
+
+    // Allocate memory for the result (caller must free)
+    *data_out = (char*)malloc(*size_out + 1);
+    if (*data_out == NULL) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for received message.");
+        *size_out = 0;
+        return -1;
+    }
+    memcpy(*data_out, line_buffer, *size_out + 1); // Copy including null terminator
+
+    return 0; // Success
+}
+
+
+// Thread function to read from stdin (for server callback)
 #ifdef _WIN32
 static DWORD WINAPI stdio_read_thread_func(LPVOID arg) {
 #else
@@ -202,6 +257,7 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     transport->start = stdio_transport_start;
     transport->stop = stdio_transport_stop;
     transport->send = stdio_transport_send;
+    transport->receive = stdio_transport_receive; // Assign receive function
     transport->destroy = stdio_transport_destroy;
     transport->transport_data = stdio_data; // Store specific data
     transport->message_callback = NULL;     // Will be set by mcp_transport_start

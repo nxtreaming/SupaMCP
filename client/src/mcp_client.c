@@ -139,27 +139,20 @@ static int mcp_client_send_request(
     // and that the transport layer doesn't have its own receive loop running.
     // We also lack timeout handling here based on client->config.request_timeout_ms.
     char* response_json = NULL;
-    // size_t response_size = 0; // No longer used with fgets placeholder
-    // The generic mcp_transport_receive function was removed in the interface refactor.
-    // We need a way to receive. For stdio, this means reading from stdin.
-    // This synchronous approach is problematic for robust clients.
-    // Let's simulate a blocking read for now (assuming stdio).
-    char line_buffer[MAX_LINE_LENGTH]; // Assuming MAX_LINE_LENGTH is defined somewhere accessible
-    if (fgets(line_buffer, sizeof(line_buffer), stdin) == NULL) {
-         fprintf(stderr, "Failed to read response from transport.\n");
-         return -1; // Read error or EOF
-    }
-    line_buffer[strcspn(line_buffer, "\r\n")] = 0; // Remove newline
-    response_json = strdup(line_buffer); // Use malloc for the response string
-    if (!response_json) {
-         return -1; // Allocation failure
-    }
-    // response_size = strlen(response_json); // Not strictly needed for parsing
+    size_t response_size = 0;
 
-    // TODO: Implement proper receive logic, potentially using the transport start callback mechanism.
-    // if (mcp_transport_receive(client->transport, &response_json, &response_size) != 0) {
-    //     return -1;
-    // }
+    // Use the transport receive function (blocking with timeout)
+    int receive_status = mcp_transport_receive(client->transport, &response_json, &response_size, client->config.request_timeout_ms);
+
+    if (receive_status != 0) {
+        fprintf(stderr, "Failed to receive response from transport (status: %d).\n", receive_status);
+        // response_json should be NULL if receive failed
+        return -1;
+    }
+    if (response_json == NULL || response_size == 0) {
+         fprintf(stderr, "Transport receive succeeded but returned empty data.\n");
+         return -1; // Should not happen on success
+    }
 
     // Parse response
     uint64_t id;

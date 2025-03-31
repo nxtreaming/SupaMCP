@@ -75,6 +75,29 @@ int mcp_transport_send(mcp_transport_t* transport, const void* data, size_t size
  */
 void mcp_transport_destroy(mcp_transport_t* transport);
 
+/**
+ * @brief Receives a complete message from the transport (blocking, synchronous).
+ *
+ * This function attempts to read one complete message according to the
+ * transport's framing mechanism (e.g., length-prefix, newline delimited).
+ * It blocks until a message is received, an error occurs, or the timeout expires.
+ * This is primarily intended for simple synchronous client implementations.
+ * More complex clients or servers should typically use the asynchronous callback
+ * mechanism initiated by mcp_transport_start.
+ *
+ * @param transport The transport handle.
+ * @param data Pointer to a char pointer that will be allocated (using malloc)
+ *             and filled with the received message data. The caller is responsible
+ *             for freeing this buffer. NULL on error or timeout.
+ * @param size Pointer to a size_t variable that will be filled with the size
+ *             of the received message data (excluding null terminator).
+ * @param timeout_ms Timeout in milliseconds to wait for a message. A value of 0
+ *                   might indicate non-blocking, while a negative value might
+ *                   indicate blocking indefinitely (behavior depends on implementation).
+ * @return 0 on success, -1 on error, -2 on timeout (or other non-zero for specific errors).
+ */
+int mcp_transport_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms);
+
 
 // --- Concrete Transport Creation Function Declarations ---
 // These functions are declared in separate headers (e.g., mcp_stdio_transport.h)

@@ -34,6 +34,18 @@ int mcp_transport_send(mcp_transport_t* transport, const void* data, size_t size
     return transport->send(transport, data, size);
 }
 
+int mcp_transport_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms) {
+    if (transport == NULL || transport->receive == NULL || data == NULL || size == NULL) {
+        if (data) *data = NULL;
+        if (size) *size = 0;
+        return -1;
+    }
+    // Initialize output params
+    *data = NULL;
+    *size = 0;
+    return transport->receive(transport, data, size, timeout_ms);
+}
+
 void mcp_transport_destroy(mcp_transport_t* transport) {
     if (transport == NULL) {
         return;
