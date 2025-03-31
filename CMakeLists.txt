@@ -29,19 +29,24 @@ include_directories(
 set(COMMON_SOURCES
     src/mcp_json.c
     src/mcp_json_rpc.c
-    src/mcp_transport.c     # Generic transport functions
-    src/mcp_stdio_transport.c # Stdio implementation
+    src/mcp_transport.c
+    src/mcp_stdio_transport.c
+    src/mcp_tcp_transport.c
     src/mcp_types.c
     src/mcp_arena.c
+    src/mcp_log.c
 )
 
 # Common library header files
 set(COMMON_HEADERS
     include/mcp_json.h
     include/mcp_json_rpc.h
-    include/mcp_transport.h     # Generic transport interface
-    include/mcp_stdio_transport.h # Stdio create function
+    include/mcp_transport.h 
+    include/mcp_stdio_transport.h
+    include/mcp_tcp_transport.h
     include/mcp_types.h
+    include/mcp_arena.h
+    include/mcp_log.h
 )
 
 # Server-specific source files
@@ -78,8 +83,8 @@ add_executable(mcp_client ${CLIENT_SOURCES} ${CLIENT_HEADERS})
 target_link_libraries(mcp_client mcp_common)
 # Explicitly add include directories for the client target
 target_include_directories(mcp_client PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include       # For mcp_transport.h, mcp_stdio_transport.h etc.
-    ${CMAKE_CURRENT_SOURCE_DIR}/client/include # For mcp_client.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/client/include
 )
 
 # Link platform-specific libraries
