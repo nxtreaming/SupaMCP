@@ -202,9 +202,22 @@ int mcp_json_object_delete_property(mcp_json_t* json, const char* name);
 int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names, size_t* count);
 
 /**
- * Destroy a JSON value
- * 
- * @param json JSON value (if allocated with arena, destroying the arena is preferred)
+ * @brief Destroys the internal data of a JSON value (strings, arrays, objects).
+ *
+ * IMPORTANT: This function ONLY frees data allocated internally by the JSON
+ * library using malloc/strdup/realloc (e.g., string values, array/object storage).
+ * It DOES NOT free the top-level mcp_json_t node itself pointed to by `json`.
+ *
+ * - If the JSON tree was created using an mcp_arena_t (e.g., via
+ *   mcp_json_parse(arena, ...)), you MUST free the entire tree by calling
+ *   mcp_arena_reset() or mcp_arena_destroy() on the arena. Calling
+ *   mcp_json_destroy on an arena-allocated tree may lead to errors.
+ * - If the JSON value was created using malloc (e.g., via
+ *   mcp_json_parse(NULL, ...) or mcp_json_*_create(NULL, ...)), you should
+ *   call mcp_json_destroy() first to free its internal contents, and then
+ *   call free() on the `json` pointer itself.
+ *
+ * @param json The JSON value whose internal data should be freed.
  */
 void mcp_json_destroy(mcp_json_t* json);
 

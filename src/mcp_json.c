@@ -180,9 +180,11 @@ void mcp_json_destroy(mcp_json_t* json) {
             break;
     }
 
-    // Free the node itself (assuming malloc was used)
-    // If arena was used, this free is incorrect, but necessary if called directly.
-    free(json);
+    // DO NOT free the 'json' node itself here.
+    // If the node was allocated from an arena, freeing it is an error.
+    // If the node was allocated by malloc, the caller is responsible for freeing it
+    // after calling mcp_json_destroy to free its internal contents.
+    // Typically, arena-allocated trees are freed via mcp_arena_reset/destroy.
 }
 
 mcp_json_type_t mcp_json_get_type(const mcp_json_t* json) {
