@@ -11,7 +11,7 @@
 // Platform-specific socket includes
 #ifdef _WIN32
 #   include <winsock2.h>
-#   include <ws2tcpip.h> // For InetNtop
+#   include <ws2tcpip.h>
 #   pragma comment(lib, "Ws2_32.lib")
     typedef SOCKET socket_t;
     typedef int socklen_t;
@@ -20,10 +20,10 @@
 #else
 #   include <sys/socket.h>
 #   include <netinet/in.h>
-#   include <arpa/inet.h> // For inet_ntop
+#   include <arpa/inet.h>
 #   include <unistd.h>
 #   include <pthread.h>
-#   include <fcntl.h> // For non-blocking socket
+#   include <fcntl.h>
     typedef int socket_t;
     #define INVALID_SOCKET (-1)
     #define SOCKET_ERROR   (-1)
@@ -31,8 +31,8 @@
     #define sock_errno errno
 #endif
 
-// Max line length for reading from socket (simple framing)
-#define MAX_SOCKET_LINE_LENGTH 4096
+// Max message size limit for sanity check
+#define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Example: 1MB limit
 // Max number of concurrent clients (simple example)
 #define MAX_TCP_CLIENTS 10
 
@@ -104,8 +104,28 @@ static int tcp_transport_send(mcp_transport_t* transport, const void* data_to_se
     log_message(LOG_LEVEL_WARN, "Server-side TCP send not fully implemented (needs client target).");
     // In a real server, you'd need a mechanism to map a response back to the
     // correct client socket and send it there, likely involving locking the client list.
+    // This would involve finding the correct tcp_client_connection_t and using its socket.
+    // Remember to implement length-prefix framing here too!
     return -1; // Not implemented for server broadcast
 }
+
+// Helper function to read exactly n bytes from a socket
+static int recv_exact(socket_t sock, char* buf, int len, bool* running_flag) {
+    int total_read = 0;
+    while (total_read < len) {
+        if (running_flag && !(*running_flag)) return -2; // Interrupted by stop signal
+
+        int bytes_read = recv(sock, buf + total_read, len - total_read, 0);
+        if (bytes_read == SOCKET_ERROR) {
+            return -1; // Socket error
+        } else if (bytes_read == 0) {
+            return 0;  // Connection closed gracefully
+        }
+        total_read += bytes_read;
+    }
+    return total_read; // Should be equal to len if successful
+}
+
 
 // Thread function to handle a single client connection
 #ifdef _WIN32
@@ -116,8 +136,10 @@ static void* tcp_client_handler_thread_func(void* arg) {
     tcp_client_connection_t* client_conn = (tcp_client_connection_t*)arg;
     mcp_transport_t* transport = client_conn->transport;
     mcp_tcp_transport_data_t* tcp_data = (mcp_tcp_transport_data_t*)transport->transport_data;
-    char buffer[MAX_SOCKET_LINE_LENGTH];
-    int bytes_received;
+    char length_buf[4];
+    uint32_t message_length_net, message_length_host;
+    char* message_buf = NULL;
+    int read_result;
 
 #ifdef _WIN32
     log_message(LOG_LEVEL_DEBUG, "Client handler started for socket %p", (void*)client_conn->socket);
@@ -125,55 +147,111 @@ static void* tcp_client_handler_thread_func(void* arg) {
     log_message(LOG_LEVEL_DEBUG, "Client handler started for socket %d", client_conn->socket);
 #endif
 
-    // Use recv directly for better control
+    // Main receive loop with length prefix framing
     while (tcp_data->running && client_conn->active) {
-        bytes_received = recv(client_conn->socket, buffer, sizeof(buffer) - 1, 0);
+        // 1. Read the 4-byte length prefix
+        read_result = recv_exact(client_conn->socket, length_buf, 4, &client_conn->active); // Pass active flag
 
-        if (bytes_received == SOCKET_ERROR) {
-            // Only log error if we are supposed to be running
-            if (tcp_data->running && client_conn->active) {
+        if (read_result == SOCKET_ERROR) {
+             if (client_conn->active) { // Avoid error log if stopping
                 char err_buf[128];
 #ifdef _WIN32
                 strerror_s(err_buf, sizeof(err_buf), sock_errno);
-                log_message(LOG_LEVEL_ERROR, "recv failed for socket %p: %d (%s)", (void*)client_conn->socket, sock_errno, err_buf);
+                log_message(LOG_LEVEL_ERROR, "recv (length) failed for socket %p: %d (%s)", (void*)client_conn->socket, sock_errno, err_buf);
 #else
-                // Use XSI-compliant strerror_r
                 if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-                    log_message(LOG_LEVEL_ERROR, "recv failed for socket %d: %d (%s)", client_conn->socket, sock_errno, err_buf);
+                    log_message(LOG_LEVEL_ERROR, "recv (length) failed for socket %d: %d (%s)", client_conn->socket, sock_errno, err_buf);
                 } else {
-                    log_message(LOG_LEVEL_ERROR, "recv failed for socket %d: %d (strerror_r failed)", client_conn->socket, sock_errno);
+                    log_message(LOG_LEVEL_ERROR, "recv (length) failed for socket %d: %d (strerror_r failed)", client_conn->socket, sock_errno);
                 }
 #endif
-            }
-            break;
-        } else if (bytes_received == 0) {
+             }
+             goto client_cleanup;
+        } else if (read_result == 0) {
 #ifdef _WIN32
-            log_message(LOG_LEVEL_INFO, "Client disconnected socket %p", (void*)client_conn->socket);
+             log_message(LOG_LEVEL_INFO, "Client disconnected socket %p while reading length", (void*)client_conn->socket);
 #else
-            log_message(LOG_LEVEL_INFO, "Client disconnected socket %d", client_conn->socket);
+             log_message(LOG_LEVEL_INFO, "Client disconnected socket %d while reading length", client_conn->socket);
 #endif
-            break; // Connection closed by client
-        } else {
-            buffer[bytes_received] = '\0'; // Null-terminate received data
-            // TODO: Handle message framing - this assumes newline termination for now
-            // This simple approach will break if messages don't have newlines or are sent fragmented.
-            char *line_start = buffer;
-            char *line_end;
-            while((line_end = strchr(line_start, '\n')) != NULL) {
-                *line_end = '\0'; // Null-terminate the line
-                size_t len = line_end - line_start;
-                if (len > 0 && transport->message_callback != NULL) {
-                     if (transport->message_callback(transport->callback_user_data, line_start, len) != 0) {
-                        log_message(LOG_LEVEL_WARN, "Message callback failed for data from socket %d", (int)client_conn->socket);
-                     }
-                }
-                line_start = line_end + 1; // Move to the start of the next potential line
-                 if (*line_start == '\0') break; // End of buffer
-            }
-             // TODO: Need buffer management for partial lines received without newline
-             // If line_start still points to data, it's a partial line.
+             goto client_cleanup;
+        } else if (read_result == -2) {
+             log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
+             goto client_cleanup; // Interrupted by stop
+        } else if (read_result != 4) {
+             log_message(LOG_LEVEL_ERROR, "Incomplete length received (%d bytes) for socket %d", read_result, (int)client_conn->socket);
+             goto client_cleanup; // Should not happen with recv_exact logic
         }
-    }
+
+
+        // 2. Decode length (Network to Host byte order)
+        memcpy(&message_length_net, length_buf, 4);
+        message_length_host = ntohl(message_length_net);
+
+        // 3. Sanity check length
+        if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
+             log_message(LOG_LEVEL_ERROR, "Invalid message length received: %u on socket %d", message_length_host, (int)client_conn->socket);
+             goto client_cleanup; // Invalid length, close connection
+        }
+
+        // 4. Allocate buffer for message body
+        message_buf = (char*)malloc(message_length_host + 1); // +1 for null terminator
+        if (message_buf == NULL) {
+             log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer for message size %u on socket %d", message_length_host, (int)client_conn->socket);
+             goto client_cleanup; // Allocation failure
+        }
+
+        // 5. Read the message body
+        read_result = recv_exact(client_conn->socket, message_buf, message_length_host, &client_conn->active);
+
+         if (read_result == SOCKET_ERROR) {
+             if (client_conn->active) { // Avoid error log if stopping
+                char err_buf[128];
+#ifdef _WIN32
+                strerror_s(err_buf, sizeof(err_buf), sock_errno);
+                log_message(LOG_LEVEL_ERROR, "recv (body) failed for socket %p: %d (%s)", (void*)client_conn->socket, sock_errno, err_buf);
+#else
+                if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
+                    log_message(LOG_LEVEL_ERROR, "recv (body) failed for socket %d: %d (%s)", client_conn->socket, sock_errno, err_buf);
+                } else {
+                    log_message(LOG_LEVEL_ERROR, "recv (body) failed for socket %d: %d (strerror_r failed)", client_conn->socket, sock_errno);
+                }
+#endif
+             }
+             goto client_cleanup; // Exit thread on error
+         } else if (read_result == 0) {
+#ifdef _WIN32
+             log_message(LOG_LEVEL_INFO, "Client disconnected socket %p while reading body", (void*)client_conn->socket);
+#else
+             log_message(LOG_LEVEL_INFO, "Client disconnected socket %d while reading body", client_conn->socket);
+#endif
+             goto client_cleanup; // Exit thread on disconnect
+         } else if (read_result == -2) {
+             log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
+             goto client_cleanup; // Interrupted by stop
+         } else if (read_result != (int)message_length_host) {
+             log_message(LOG_LEVEL_ERROR, "Incomplete message body received (%d/%u bytes) for socket %d", read_result, message_length_host, (int)client_conn->socket);
+             goto client_cleanup; // Should not happen with recv_exact logic
+         }
+
+
+        // 6. Null-terminate and process the message
+        message_buf[message_length_host] = '\0';
+        if (transport->message_callback != NULL) {
+            if (transport->message_callback(transport->callback_user_data, message_buf, message_length_host) != 0) {
+                 log_message(LOG_LEVEL_WARN, "Message callback failed for data from socket %d", (int)client_conn->socket);
+                 // Decide if we should continue or disconnect on callback failure? For now, continue.
+            }
+        }
+
+        // 7. Free the message buffer for the next message
+        free(message_buf);
+        message_buf = NULL;
+
+    } // End of main while loop
+
+client_cleanup:
+    // Free buffer if loop exited unexpectedly
+    free(message_buf);
 
 #ifdef _WIN32
     log_message(LOG_LEVEL_DEBUG, "Closing client connection socket %p", (void*)client_conn->socket);
@@ -190,10 +268,10 @@ static void* tcp_client_handler_thread_func(void* arg) {
 #endif
     client_conn->active = false;
 #ifdef _WIN32
-    // Close the thread handle on Windows? Only if not detached.
-    // If CreateThread was used, CloseHandle is needed eventually.
-    // CloseHandle(client_conn->thread_handle); // Maybe do this in stop/destroy?
-    client_conn->thread_handle = NULL;
+    if (client_conn->thread_handle) {
+        CloseHandle(client_conn->thread_handle); // Close handle now that thread is exiting
+        client_conn->thread_handle = NULL;
+    }
 #else
     // Pthreads were detached, no need to join or manage handle here.
     client_conn->thread_handle = 0;
@@ -247,14 +325,12 @@ static void* tcp_accept_thread_func(void* arg) {
                  }
 #endif
             }
-            // Consider adding a small delay before retrying on certain errors?
-            continue;
+            continue; // Don't exit thread on accept error, just try again
         }
 
         // Convert client IP to string
         const char* client_ip = NULL;
 #ifdef _WIN32
-        // InetNtop requires Ws2_32.lib, already linked via pragma
         if (InetNtop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) != NULL) {
              client_ip = client_ip_str;
         } else {
@@ -320,15 +396,21 @@ static void* tcp_accept_thread_func(void* arg) {
             if (client_conn->thread_handle == NULL) {
                 log_message(LOG_LEVEL_ERROR, "Failed to create handler thread for client %d.", client_index);
                 close_socket(client_socket);
-                client_conn->active = false; // Free the slot
+                // Safely mark slot inactive again
+                EnterCriticalSection(&data->client_mutex);
+                client_conn->active = false;
+                LeaveCriticalSection(&data->client_mutex);
             }
 #else
             if (pthread_create(&client_conn->thread_handle, NULL, tcp_client_handler_thread_func, client_conn) != 0) {
                  log_message(LOG_LEVEL_ERROR, "Failed to create handler thread: %s", strerror(errno));
                  close_socket(client_socket);
-                 client_conn->active = false; // Free the slot
+                 // Safely mark slot inactive again
+                 pthread_mutex_lock(&data->client_mutex);
+                 client_conn->active = false;
+                 pthread_mutex_unlock(&data->client_mutex);
             } else {
-                 pthread_detach(client_conn->thread_handle); // Detach thread so resources are cleaned up automatically
+                 pthread_detach(client_conn->thread_handle); // Detach thread
             }
 #endif
         } else {
@@ -530,8 +612,10 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
 #else
             // Threads were detached, cannot join. Assume they exit on socket close/error.
 #endif
-        }
-    }
+        } // end if(data->clients[i].active)
+    } // end for loop
+
+    // Clean up mutex
 #ifdef _WIN32
     LeaveCriticalSection(&data->client_mutex);
     DeleteCriticalSection(&data->client_mutex);
@@ -539,11 +623,14 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
     pthread_mutex_unlock(&data->client_mutex);
     pthread_mutex_destroy(&data->client_mutex);
 #endif
+
     log_message(LOG_LEVEL_INFO, "TCP Transport stopped.");
 
+    // Cleanup Winsock on Windows
 #ifdef _WIN32
     WSACleanup();
 #endif
+
     return 0;
 }
 

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <stdarg.h>
 
 #ifdef _WIN32
 #include <windows.h>
