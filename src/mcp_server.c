@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include "mcp_server.h"
 #include "mcp_json.h"
-#include "mcp_arena.h" // Include arena allocator
+#include "mcp_arena.h"
 
 // Server structure
 struct mcp_server {

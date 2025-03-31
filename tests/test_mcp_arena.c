@@ -1,5 +1,5 @@
 #include "unity.h"
-#include "mcp_arena.h" // Include the header for the code under test
+#include "mcp_arena.h"
 #include <string.h>
 
 // Define a test group runner function (called by the main runner)

@@ -1,6 +1,5 @@
-#include "mcp_stdio_transport.h" // Public header for this transport
-// #include "mcp_transport.h" // Already included via internal header
-#include "mcp_transport_internal.h" // Include the internal struct definition
+#include "mcp_stdio_transport.h"
+#include "mcp_transport_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -22,7 +22,6 @@
 #endif
 
 #include "mcp_server.h"
-// Include specific transport creation headers instead of the generic one
 #include "mcp_stdio_transport.h"
 // #include "mcp_tcp_transport.h" // Example if TCP was implemented
 

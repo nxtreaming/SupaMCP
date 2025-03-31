@@ -1,7 +1,7 @@
 #ifndef MCP_TRANSPORT_INTERNAL_H
 #define MCP_TRANSPORT_INTERNAL_H
 
-#include "mcp_transport.h" // Include the public interface for types like mcp_transport_t and callback
+#include "mcp_transport.h"
 
 // Define the internal structure for the transport handle
 // This is included by mcp_transport.c and specific implementations like mcp_stdio_transport.c

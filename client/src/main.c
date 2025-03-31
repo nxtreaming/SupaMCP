@@ -8,8 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "mcp_client.h"
-// #include "mcp_transport.h" // No longer needed directly for creation
-#include "mcp_stdio_transport.h" // Include specific transport creation header
+#include "mcp_stdio_transport.h"
 // #include "mcp_tcp_transport.h" // Example if TCP was implemented
 
 int main(int argc, char** argv) {

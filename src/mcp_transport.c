@@ -1,7 +1,6 @@
-// #include "mcp_transport.h" // Already included via internal header
-#include "mcp_transport_internal.h" // Include the internal struct definition
-#include <stdlib.h> // For malloc, free
-#include <stdio.h>  // For fprintf, stderr (optional, for error logging)
+#include "mcp_transport_internal.h"
+#include <stdlib.h>
+#include <stdio.h>
 
 // Internal struct mcp_transport is now defined in mcp_transport_internal.h
 

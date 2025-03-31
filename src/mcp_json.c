@@ -1,9 +1,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <assert.h> // For hash table implementation assertions
+#include <assert.h>
 #include "mcp_json.h"
-#include "mcp_arena.h" // Include arena allocator
+#include "mcp_arena.h"
 
 // --- Hash Table Implementation for JSON Objects ---
 
