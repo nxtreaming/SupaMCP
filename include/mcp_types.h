@@ -167,9 +167,10 @@ void mcp_tool_free(mcp_tool_t* tool);
 void mcp_content_item_free(mcp_content_item_t* item);
 
 /**
- * Free a message
+ * Release the heap-allocated contents of a message structure
+ * (Does NOT free the message struct itself).
  */
-void mcp_message_free(mcp_message_t* message);
+void mcp_message_release_contents(mcp_message_t* message);
 
 /**
  * Create a resource

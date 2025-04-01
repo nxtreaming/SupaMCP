@@ -9,7 +9,7 @@
 #include <string.h>
 #include "mcp_client.h"
 #include "mcp_stdio_transport.h"
-// #include "mcp_tcp_transport.h" // Example if TCP was implemented
+#include "mcp_tcp_client_transport.h"
 
 int main(int argc, char** argv) {
     // Default transport
@@ -40,10 +40,8 @@ int main(int argc, char** argv) {
         printf("Using stdio transport\n");
         transport = mcp_transport_stdio_create(); // Use specific create function
     } else if (strcmp(transport_type, "tcp") == 0) {
-        printf("Using TCP transport (%s:%d)\n", host, port);
-        // transport = mcp_transport_tcp_create(host, port); // Example if TCP was implemented
-        fprintf(stderr, "TCP transport not implemented yet.\n");
-        return 1;
+        printf("Using TCP client transport (%s:%d)\n", host, port);
+        transport = mcp_transport_tcp_client_create(host, port);
     } else {
         fprintf(stderr, "Unknown transport type: %s\n", transport_type);
         return 1;

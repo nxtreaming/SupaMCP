@@ -65,7 +65,7 @@ void mcp_content_item_free(mcp_content_item_t* item) {
     free(item);
 }
 
-void mcp_message_free(mcp_message_t* message) {
+void mcp_message_release_contents(mcp_message_t* message) {
     if (message == NULL) {
         return;
     }
@@ -85,8 +85,6 @@ void mcp_message_free(mcp_message_t* message) {
             free(message->notification.params);
             break;
     }
-
-    free(message);
 }
 
 mcp_resource_t* mcp_resource_create(
@@ -361,7 +359,8 @@ mcp_message_t* mcp_request_create(
     if (method != NULL) {
         message->request.method = strdup(method);
         if (message->request.method == NULL) {
-            mcp_message_free(message);
+            mcp_message_release_contents(message);
+            free(message);
             return NULL;
         }
     }
@@ -370,7 +369,8 @@ mcp_message_t* mcp_request_create(
     if (params != NULL) {
         message->request.params = strdup(params);
         if (message->request.params == NULL) {
-            mcp_message_free(message);
+            mcp_message_release_contents(message);
+            free(message);
             return NULL;
         }
     }
@@ -400,7 +400,8 @@ mcp_message_t* mcp_response_create(
     if (error_message != NULL) {
         message->response.error_message = strdup(error_message);
         if (message->response.error_message == NULL) {
-            mcp_message_free(message);
+            mcp_message_release_contents(message);
+            free(message);
             return NULL;
         }
     }
@@ -409,7 +410,8 @@ mcp_message_t* mcp_response_create(
     if (result != NULL) {
         message->response.result = strdup(result);
         if (message->response.result == NULL) {
-            mcp_message_free(message);
+            mcp_message_release_contents(message);
+            free(message);
             return NULL;
         }
     }
@@ -435,7 +437,8 @@ mcp_message_t* mcp_notification_create(
     if (method != NULL) {
         message->notification.method = strdup(method);
         if (message->notification.method == NULL) {
-            mcp_message_free(message);
+            mcp_message_release_contents(message);
+            free(message);
             return NULL;
         }
     }
@@ -444,7 +447,8 @@ mcp_message_t* mcp_notification_create(
     if (params != NULL) {
         message->notification.params = strdup(params);
         if (message->notification.params == NULL) {
-            mcp_message_free(message);
+            mcp_message_release_contents(message);
+            free(message);
             return NULL;
         }
     }

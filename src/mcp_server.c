@@ -4,6 +4,7 @@
 #include "mcp_server.h"
 #include "mcp_json.h"
 #include "mcp_arena.h"
+#include "mcp_log.h"
 
 // Server structure
 struct mcp_server {
@@ -296,25 +297,15 @@ static char* handle_message(mcp_server_t* server, const void* data, size_t size,
     mcp_arena_t arena;
     mcp_arena_init(&arena, 0); // Use default block size
 
-    // Ensure the data is null-terminated (use arena for temp buffer?)
-    // For simplicity, still use malloc here, but could optimize later.
-    char* json_str = (char*)malloc(size + 1);
-    if (json_str == NULL) {
-        mcp_arena_destroy(&arena); // Clean up arena on error
-        *error_code = MCP_ERROR_INTERNAL_ERROR; // Indicate allocation failure
-        return NULL;
-    }
-    memcpy(json_str, data, size);
-    json_str[size] = '\0';
+    // Assume 'data' is null-terminated by the caller (tcp_client_handler_thread_func)
+    const char* json_str = (const char*)data;
 
     // Parse the message using the arena
-    // NOTE: mcp_json_parse_message internally uses mcp_json_parse(arena, ...)
-    //       but still uses malloc for string duplication within the message struct.
     mcp_message_t message;
     // Pass the arena to the message parser
     int parse_result = mcp_json_parse_message(&arena, json_str, &message);
 
-    free(json_str); // Free the temporary buffer
+    // No need to free json_str, it points to the buffer managed by the caller
 
     if (parse_result != 0) {
         mcp_arena_destroy(&arena); // Clean up arena on parse error
@@ -343,7 +334,7 @@ static char* handle_message(mcp_server_t* server, const void* data, size_t size,
     }
 
     // Free the message structure contents (which used malloc/strdup)
-    mcp_message_free(&message);
+    mcp_message_release_contents(&message);
 
     // Reset or destroy the arena for this cycle
     // Reset is faster if we expect similar allocation patterns next time
