@@ -2,6 +2,7 @@
 #include "mcp_tcp_client_transport.h"
 #include "mcp_transport_internal.h"
 #include "mcp_log.h"
+#include "mcp_buffer_pool.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,8 +35,11 @@
     #define sleep_ms(ms) usleep(ms * 1000)
 #endif
 
-// Max message size limit for sanity check
+// Max message size limit for sanity check (remains relevant)
 #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Example: 1MB limit
+// Buffer pool configuration (use same constants as server for consistency)
+#define POOL_BUFFER_SIZE (1024 * 8) // 8KB buffer size
+#define POOL_NUM_BUFFERS 16         // Number of buffers in the pool
 
 // Internal structure for TCP client transport data
 typedef struct {
@@ -50,6 +54,7 @@ typedef struct {
 #else
     pthread_t receive_thread;
 #endif
+    mcp_buffer_pool_t* buffer_pool; // Buffer pool for message buffers
 } mcp_tcp_client_transport_data_t;
 
 
@@ -170,6 +175,7 @@ static void* tcp_client_receive_thread_func(void* arg) {
     char length_buf[4];
     uint32_t message_length_net, message_length_host;
     char* message_buf = NULL;
+    bool buffer_malloced = false; // Flag to track if we used malloc fallback
     int read_result;
     bool error_signaled = false; // Track if error callback was already called in this loop iteration
 
@@ -228,8 +234,30 @@ static void* tcp_client_receive_thread_func(void* arg) {
              break; // Exit receive loop
         }
 
-        // 4. Allocate buffer for message body
-        message_buf = (char*)malloc(message_length_host + 1); // +1 for null terminator
+        // 4. Allocate buffer for message body using buffer pool or malloc
+        size_t required_size = message_length_host + 1; // +1 for null terminator
+        size_t pool_buffer_size = mcp_buffer_pool_get_buffer_size(data->buffer_pool);
+
+        if (required_size <= pool_buffer_size) {
+            // Try to acquire from pool
+            message_buf = (char*)mcp_buffer_pool_acquire(data->buffer_pool);
+            if (message_buf != NULL) {
+                buffer_malloced = false;
+                // log_message(LOG_LEVEL_DEBUG, "Acquired buffer from pool for socket %d", (int)data->sock);
+            } else {
+                // Pool empty, fallback to malloc
+                log_message(LOG_LEVEL_WARN, "Buffer pool empty, falling back to malloc for %zu bytes on socket %d", required_size, (int)data->sock);
+                message_buf = (char*)malloc(required_size);
+                buffer_malloced = true;
+            }
+        } else {
+            // Message too large for pool buffers, use malloc
+            log_message(LOG_LEVEL_WARN, "Message size %u exceeds pool buffer size %zu, using malloc on socket %d", message_length_host, pool_buffer_size, (int)data->sock);
+            message_buf = (char*)malloc(required_size);
+            buffer_malloced = true;
+        }
+
+        // Check allocation result
         if (message_buf == NULL) {
              log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer for message size %u on socket %d", message_length_host, (int)data->sock);
              data->connected = false; // Treat as fatal error
@@ -263,7 +291,13 @@ static void* tcp_client_receive_thread_func(void* arg) {
 #endif
                  }
               }
-              free(message_buf); // Free partially allocated buffer
+              // Free or release buffer before exiting
+              if (buffer_malloced) {
+                  free(message_buf); 
+              } else {
+                  mcp_buffer_pool_release(data->buffer_pool, message_buf);
+              }
+              message_buf = NULL;
               data->connected = false;
               // Signal transport error back to the main client logic if running and not already signaled
               if (data->running && transport->error_callback && !error_signaled) {
@@ -273,7 +307,13 @@ static void* tcp_client_receive_thread_func(void* arg) {
               break; // Exit receive loop
           } else if (read_result == -2) { // Interrupted by stop signal
               log_message(LOG_LEVEL_DEBUG, "Client receive thread for socket %d interrupted by stop signal (body read).", (int)data->sock);
-              free(message_buf);
+              // Free or release buffer before exiting
+              if (buffer_malloced) {
+                  free(message_buf);
+              } else {
+                  mcp_buffer_pool_release(data->buffer_pool, message_buf);
+              }
+              message_buf = NULL;
               break; // Exit receive loop
           }
          // read_result == 1 means success reading body
@@ -292,14 +332,31 @@ static void* tcp_client_receive_thread_func(void* arg) {
             }
         }
 
-        // 7. Free the message buffer for the next message
-        free(message_buf);
-        message_buf = NULL;
+        // 7. Free or release the message buffer
+        if (message_buf != NULL) { // Check if buffer was allocated
+            if (buffer_malloced) {
+                free(message_buf);
+            } else {
+                mcp_buffer_pool_release(data->buffer_pool, message_buf);
+                // log_message(LOG_LEVEL_DEBUG, "Released buffer to pool for socket %d", (int)data->sock);
+            }
+            message_buf = NULL; // Avoid double free/release in cleanup
+        }
 
     } // End of main while loop
 
     log_message(LOG_LEVEL_DEBUG, "TCP Client receive thread exiting for socket %d.", (int)data->sock);
     data->connected = false; // Ensure disconnected state
+
+    // Free buffer if loop exited unexpectedly (should have been handled above, but double-check)
+    if (message_buf != NULL) {
+        if (buffer_malloced) {
+            free(message_buf);
+        } else {
+            mcp_buffer_pool_release(data->buffer_pool, message_buf);
+        }
+    }
+
 
 #ifdef _WIN32
     return 0;
@@ -499,6 +556,8 @@ static void tcp_client_transport_destroy(mcp_transport_t* transport) {
      tcp_client_transport_stop(transport); // Ensure everything is stopped and cleaned
 
      free(data->host);
+     // Destroy the buffer pool
+     mcp_buffer_pool_destroy(data->buffer_pool);
      free(data);
      transport->transport_data = NULL;
      // Generic destroy will free the transport struct itself
@@ -522,17 +581,28 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
      tcp_data->host = mcp_strdup(host); // Use helper
      if (tcp_data->host == NULL) {
          free(tcp_data);
-        free(transport);
-        return NULL;
-    }
+         free(transport);
+         return NULL;
+     }
 
-    tcp_data->port = port;
-    tcp_data->sock = INVALID_SOCKET;
-    tcp_data->running = false;
-    tcp_data->connected = false;
-    tcp_data->transport_handle = transport; // Link back
+     tcp_data->port = port;
+     tcp_data->sock = INVALID_SOCKET;
+     tcp_data->running = false;
+     tcp_data->connected = false;
+     tcp_data->transport_handle = transport; // Link back
+     tcp_data->buffer_pool = NULL; // Initialize pool pointer
 
-    // Initialize function pointers
+     // Create the buffer pool
+     tcp_data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
+     if (tcp_data->buffer_pool == NULL) {
+         log_message(LOG_LEVEL_ERROR, "Failed to create buffer pool for TCP client transport.");
+         free(tcp_data->host);
+         free(tcp_data);
+         free(transport);
+         return NULL;
+     }
+
+     // Initialize function pointers
     transport->start = tcp_client_transport_start;
     transport->stop = tcp_client_transport_stop;
     transport->send = tcp_client_transport_send; // Use the client send function

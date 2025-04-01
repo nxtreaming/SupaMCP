@@ -998,7 +998,7 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                 if (params == NULL || params->type == MCP_JSON_OBJECT || params->type == MCP_JSON_ARRAY) {
                     message->type = MCP_MESSAGE_TYPE_REQUEST;
                     message->request.id = (uint64_t)id->number_value; // TODO: Handle potential precision loss or non-integer?
-                    message->request.method = mcp_strdup(method->string_value);
+                    message->request.method = mcp_strdup(method->string_value); // Use helper
                     message->request.params = (params != NULL) ? mcp_json_stringify(params) : NULL;
 
                     if (message->request.method != NULL && (params == NULL || message->request.params != NULL)) {
@@ -1015,7 +1015,7 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
              // Check params type (object or array allowed, or omitted)
             if (params == NULL || params->type == MCP_JSON_OBJECT || params->type == MCP_JSON_ARRAY) {
                 message->type = MCP_MESSAGE_TYPE_NOTIFICATION;
-                message->notification.method = mcp_strdup(method->string_value);
+                message->notification.method = mcp_strdup(method->string_value); // Use helper
                 message->notification.params = (params != NULL) ? mcp_json_stringify(params) : NULL;
 
                 if (message->notification.method != NULL && (params == NULL || message->notification.params != NULL)) {

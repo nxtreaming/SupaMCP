@@ -30,6 +30,7 @@ set(COMMON_SOURCES
     src/mcp_types.c
     src/mcp_arena.c
     src/mcp_log.c
+    src/mcp_buffer_pool.c
 )
 
 # Common library header files
