@@ -1,10 +1,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include "mcp_server.h"
-#include "mcp_json.h"
-#include "mcp_arena.h"
-#include "mcp_log.h"
+#include <mcp_server.h>
+#include <mcp_json.h>
+#include <mcp_arena.h>
+#include <mcp_log.h>
 
 // Server structure
 struct mcp_server {

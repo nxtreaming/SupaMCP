@@ -19,12 +19,6 @@ if(NOT WIN32)
     find_package(Threads REQUIRED)
 endif()
 
-# Include directories
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/client/include
-)
-
 # Common library source files
 set(COMMON_SOURCES
     src/mcp_json.c
@@ -73,18 +67,30 @@ set(CLIENT_HEADERS
 )
 
 # Create common library
-add_library(mcp_common STATIC ${COMMON_SOURCES} ${COMMON_HEADERS})
+add_library(mcp_common STATIC)
+target_sources(mcp_common PRIVATE ${COMMON_SOURCES})
+# Make the public headers available to consumers
+target_include_directories(mcp_common PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+# Add internal headers needed for compiling the library itself
+target_include_directories(mcp_common PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src # For mcp_transport_internal.h etc.
+)
 
 # Create server executable
 add_executable(mcp_server ${SERVER_SOURCES} ${SERVER_HEADERS})
-target_link_libraries(mcp_server mcp_common)
+target_link_libraries(mcp_server PRIVATE mcp_common)
+# Server needs access to its own headers in include/
+target_include_directories(mcp_server PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 
 # Create client executable
 add_executable(mcp_client ${CLIENT_SOURCES} ${CLIENT_HEADERS})
-target_link_libraries(mcp_client mcp_common)
-# Explicitly add include directories for the client target
+target_link_libraries(mcp_client PRIVATE mcp_common)
+# Client needs access to its own headers in client/include/
 target_include_directories(mcp_client PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/client/include
 )
 

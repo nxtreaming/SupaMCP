@@ -1,9 +1,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include "../../include/mcp_json.h"
-#include "../include/mcp_client.h"
-#include "../../include/mcp_transport.h"
+#include <mcp_json.h>
+#include "mcp_client.h"
+#include <mcp_transport.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
