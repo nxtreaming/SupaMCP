@@ -322,7 +322,12 @@ static int connect_to_server(mcp_tcp_client_transport_data_t* data) {
  }
 
 
- static int tcp_client_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data, mcp_transport_error_callback_t error_callback) {
+ static int tcp_client_transport_start(
+    mcp_transport_t* transport,
+    mcp_transport_message_callback_t message_callback,
+    void* user_data,
+    mcp_transport_error_callback_t error_callback
+) {
      if (transport == NULL || transport->transport_data == NULL) return -1;
      mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 

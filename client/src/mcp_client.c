@@ -139,7 +139,13 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
 
 
     // Start the transport's receive mechanism with our internal callbacks
-    if (mcp_transport_start(client->transport, client_receive_callback, client, client_transport_error_callback) != 0) {
+    if (mcp_transport_start(
+            client->transport,
+            client_receive_callback,
+            client,
+            client_transport_error_callback
+        ) != 0)
+    {
         // Cleanup if start fails
         free(client->pending_requests_table);
 #ifdef _WIN32

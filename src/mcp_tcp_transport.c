@@ -570,11 +570,16 @@ static void* tcp_accept_thread_func(void* arg) {
 
 
 // Note: Update tcp_transport_start signature to match interface
-static int tcp_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data, mcp_transport_error_callback_t error_callback) {
+static int tcp_transport_start(
+    mcp_transport_t* transport,
+    mcp_transport_message_callback_t message_callback,
+    void* user_data,
+    mcp_transport_error_callback_t error_callback
+) {
     // Store callbacks
     transport->message_callback = message_callback;
     transport->callback_user_data = user_data;
-    transport->error_callback = error_callback; // Store error callback
+    transport->error_callback = error_callback;
 
     if (transport == NULL || transport->transport_data == NULL) return -1;
     mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)transport->transport_data;
@@ -881,4 +886,3 @@ mcp_transport_t* mcp_transport_tcp_create(const char* host, uint16_t port) {
 
     return transport;
 }
-

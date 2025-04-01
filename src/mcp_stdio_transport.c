@@ -148,7 +148,12 @@ static void* stdio_read_thread_func(void* arg) {
 }
 
 // Update signature to match the function pointer type in mcp_transport struct
-static int stdio_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data, mcp_transport_error_callback_t error_callback) {
+static int stdio_transport_start(
+    mcp_transport_t* transport,
+    mcp_transport_message_callback_t message_callback,
+    void* user_data,
+    mcp_transport_error_callback_t error_callback
+) {
     (void)message_callback; // Callback is stored in transport struct by generic start
     (void)user_data;        // User data is stored in transport struct by generic start
     (void)error_callback;   // Stdio transport doesn't use the error callback currently
@@ -284,6 +289,7 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     transport->transport_data = stdio_data; // Store specific data
     transport->message_callback = NULL;     // Will be set by mcp_transport_start
     transport->callback_user_data = NULL; // Will be set by mcp_transport_start
+    transport->error_callback = NULL;     // Will be set by mcp_transport_start
 
     return transport;
 }

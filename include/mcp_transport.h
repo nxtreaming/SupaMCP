@@ -54,7 +54,7 @@ int mcp_transport_start(
     mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
     void* user_data,
-    mcp_transport_error_callback_t error_callback // Added error callback parameter
+    mcp_transport_error_callback_t error_callback
 );
 
 /**
