@@ -15,7 +15,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <pthread.h>
-#include <time.h> // Required for clock_gettime on POSIX
+#include <time.h>
 #endif
 
 // Initial capacity for pending requests hash table (must be power of 2)
@@ -77,7 +77,7 @@ static size_t hash_id(uint64_t id, size_t table_size);
 static pending_request_entry_t* find_pending_request_entry(mcp_client_t* client, uint64_t id, bool find_empty_for_insert);
 static int add_pending_request_entry(mcp_client_t* client, uint64_t id, pending_request_t* request);
 static int remove_pending_request_entry(mcp_client_t* client, uint64_t id);
-// static int resize_pending_requests_table(mcp_client_t* client); // TODO: Implement resizing if needed
+static int resize_pending_requests_table(mcp_client_t* client);
 
 // Forward declaration for the client's internal receive callback
 static char* client_receive_callback(void* user_data, const void* data, size_t size, int* error_code);
@@ -244,14 +244,19 @@ static pending_request_entry_t* find_pending_request_entry(mcp_client_t* client,
 
 // Add a request to the hash table
 static int add_pending_request_entry(mcp_client_t* client, uint64_t id, pending_request_t* request) {
-    // TODO: Implement resizing if load factor exceeds threshold
-    // float load_factor = (float)client->pending_requests_count / client->pending_requests_capacity;
-    // if (load_factor >= HASH_TABLE_MAX_LOAD_FACTOR) {
-    //     if (resize_pending_requests_table(client) != 0) {
-    //         return -1; // Resize failed
-    //     }
-    // }
+    // Check load factor BEFORE trying to find a slot, resize if needed
+    // Note: This check happens under the pending_requests_mutex lock in the calling function
+    // Check load factor *after* potentially adding this new element
+    float load_factor = (float)(client->pending_requests_count + 1) / client->pending_requests_capacity;
+    if (load_factor >= HASH_TABLE_MAX_LOAD_FACTOR) {
+        if (resize_pending_requests_table(client) != 0) {
+            fprintf(stderr, "Failed to resize hash table for request %llu.\n", (unsigned long long)id);
+            return -1; // Resize failed
+        }
+        // After resize, capacity has changed, need to recalculate hash/index
+    }
 
+    // Find an empty slot for insertion (using the potentially new capacity)
     pending_request_entry_t* entry = find_pending_request_entry(client, id, true);
 
     if (entry == NULL) {
@@ -289,8 +294,77 @@ static int remove_pending_request_entry(mcp_client_t* client, uint64_t id) {
     return -1; // Not found or already invalid
 }
 
-// TODO: Implement resize_pending_requests_table if needed
-// static int resize_pending_requests_table(mcp_client_t* client) { ... }
+// Resize the hash table when load factor exceeds the threshold
+static int resize_pending_requests_table(mcp_client_t* client) {
+    size_t new_capacity = client->pending_requests_capacity * 2;
+    // Ensure capacity doesn't wrap around or become excessively large
+    if (new_capacity <= client->pending_requests_capacity) {
+        fprintf(stderr, "Hash table resize failed: new capacity overflow or too large.\n");
+        return -1;
+    }
+
+    pending_request_entry_t* new_table = (pending_request_entry_t*)calloc(
+        new_capacity, sizeof(pending_request_entry_t));
+
+    if (new_table == NULL) {
+        fprintf(stderr, "Hash table resize failed: calloc returned NULL for new capacity %zu.\n", new_capacity);
+        return -1; // Allocation failed
+    }
+
+    // Initialize all entries in the new table (calloc zeros memory, so id is 0)
+    for (size_t i = 0; i < new_capacity; ++i) {
+        new_table[i].request.status = PENDING_REQUEST_INVALID;
+        // new_table[i].id = 0; // Already done by calloc
+    }
+
+    // Rehash all existing valid entries from the old table
+    size_t rehashed_count = 0;
+    for (size_t i = 0; i < client->pending_requests_capacity; ++i) {
+        pending_request_entry_t* old_entry = &client->pending_requests_table[i];
+        // Check if the slot is occupied by a valid, non-deleted request
+        if (old_entry->id != 0 && old_entry->request.status != PENDING_REQUEST_INVALID) {
+            // Find new position using linear probing in the new table
+            size_t index = hash_id(old_entry->id, new_capacity);
+            size_t original_index = index;
+
+            do {
+                if (new_table[index].id == 0) {
+                    // Found empty slot in the new table
+                    new_table[index] = *old_entry; // Copy the entire entry
+                    rehashed_count++;
+                    break; // Move to the next entry in the old table
+                }
+                // Collision in the new table, move to the next slot
+                index = (index + 1) & (new_capacity - 1); // Wrap around using bitwise AND
+            } while (index != original_index);
+
+            // If we looped back to the original index, the new table is full.
+            // This should not happen if the load factor is managed correctly (<1.0)
+            // and the new capacity is larger.
+            if (index == original_index) {
+                fprintf(stderr, "Hash table resize failed: Could not find empty slot during rehash for ID %llu.\n", (unsigned long long)old_entry->id);
+                free(new_table); // Clean up the partially filled new table
+                return -1; // Indicate critical failure
+            }
+        }
+    }
+
+    // Sanity check: ensure all original items were rehashed
+    if (rehashed_count != client->pending_requests_count) {
+         fprintf(stderr, "Hash table resize warning: Rehashed count (%zu) does not match original count (%zu).\n", rehashed_count, client->pending_requests_count);
+         // This might indicate an issue with tracking pending_requests_count or the rehashing logic.
+         // Proceeding, but this warrants investigation.
+    }
+
+
+    // Replace old table with new one
+    free(client->pending_requests_table);
+    client->pending_requests_table = new_table;
+    client->pending_requests_capacity = new_capacity;
+
+    fprintf(stdout, "Resized pending requests hash table to capacity %zu\n", new_capacity); // Optional: Log resize event
+    return 0; // Success
+}
 
 
 // --- Client Internal Transport Error Callback ---
