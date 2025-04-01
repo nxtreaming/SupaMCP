@@ -154,6 +154,12 @@ static void* tcp_client_handler_thread_func(void* arg) {
     char* message_buf = NULL;
     int read_result;
 
+#ifdef _WIN32
+    log_message(LOG_LEVEL_DEBUG, "Client handler started for socket %p", (void*)client_conn->socket);
+#else
+    log_message(LOG_LEVEL_DEBUG, "Client handler started for socket %d", client_conn->socket);
+#endif
+
     // Main receive loop with length prefix framing
     while (tcp_data->running && client_conn->active) {
         // 1. Read the 4-byte length prefix
@@ -182,6 +188,7 @@ static void* tcp_client_handler_thread_func(void* arg) {
 #endif
              goto client_cleanup;
         } else if (read_result == -2) {
+             log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
              goto client_cleanup; // Interrupted by stop
         } else if (read_result != 4) {
              log_message(LOG_LEVEL_ERROR, "Incomplete length received (%d bytes) for socket %d", read_result, (int)client_conn->socket);
@@ -191,7 +198,7 @@ static void* tcp_client_handler_thread_func(void* arg) {
 
         // 2. Decode length (Network to Host byte order)
         memcpy(&message_length_net, length_buf, 4);
-        message_length_host = ntohl(message_length_net); // Revert back to ntohl
+        message_length_host = ntohl(message_length_net);
 
         // 3. Sanity check length
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
@@ -232,6 +239,7 @@ static void* tcp_client_handler_thread_func(void* arg) {
 #endif
              goto client_cleanup; // Exit thread on disconnect
          } else if (read_result == -2) {
+             log_message(LOG_LEVEL_DEBUG, "Client handler send for socket %d interrupted by stop signal.", (int)client_conn->socket);
              goto client_cleanup; // Interrupted by stop
          } else if (read_result != (int)message_length_host) {
              log_message(LOG_LEVEL_ERROR, "Incomplete message body received (%d/%u bytes) for socket %d", read_result, message_length_host, (int)client_conn->socket);
@@ -315,6 +323,11 @@ client_cleanup:
     // Free buffer if loop exited unexpectedly
     free(message_buf);
 
+ #ifdef _WIN32
+     log_message(LOG_LEVEL_DEBUG, "Closing client connection socket %p", (void*)client_conn->socket);
+ #else
+     log_message(LOG_LEVEL_DEBUG, "Closing client connection socket %d", client_conn->socket);
+ #endif
     close_socket(client_conn->socket);
 
     // Mark slot as inactive (needs mutex protection)
@@ -641,6 +654,7 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
         data->accept_thread = 0;
     }
 #endif
+    log_message(LOG_LEVEL_DEBUG, "Accept thread stopped.");
 
     // Close all active client connections and signal handler threads
 #ifdef _WIN32
