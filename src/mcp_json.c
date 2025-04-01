@@ -6,75 +6,110 @@
 #include "mcp_arena.h"
 
 // --- Hash Table Implementation for JSON Objects ---
+// This uses a simple separate chaining hash table.
+// IMPORTANT: This internal implementation uses malloc/free/strdup/realloc
+//            for its own structures (buckets, entries, keys), *not* the arena
+//            passed to mcp_json_object_create. Only the mcp_json_t *value* nodes
+//            stored in the table might be arena-allocated if the caller used one.
 
-// Initial capacity for the hash table
+/** @internal Initial capacity for the hash table bucket array. Should be power of 2. */
 #define MCP_JSON_HASH_TABLE_INITIAL_CAPACITY 16
-// Load factor threshold for resizing
+/** @internal Load factor threshold. If count/capacity exceeds this, the table resizes. */
 #define MCP_JSON_HASH_TABLE_MAX_LOAD_FACTOR 0.75
 
-// Hash table entry structure (for separate chaining)
+/**
+ * @internal
+ * @brief Represents a single key-value entry within a JSON object's hash table bucket.
+ */
 typedef struct mcp_json_object_entry {
-    char* name;                         // Property name (key) - uses malloc/strdup
-    mcp_json_t* value;                  // Property value - allocated from arena or malloc
-    struct mcp_json_object_entry* next; // Pointer to the next entry in the same bucket
+    char* name;                         /**< Property name (key), allocated using strdup (malloc). */
+    mcp_json_t* value;                  /**< Property value (mcp_json_t node), allocated using arena or malloc by the caller. */
+    struct mcp_json_object_entry* next; /**< Pointer to the next entry in the same bucket (separate chaining). */
 } mcp_json_object_entry_t;
 
-// Hash table structure for JSON object
+/**
+ * @internal
+ * @brief Hash table structure used internally to store JSON object properties.
+ */
 typedef struct mcp_json_object_table {
-    mcp_json_object_entry_t** buckets; // Array of pointers to entries (buckets) - uses malloc/realloc
-    size_t capacity;                   // Current capacity of the bucket array
-    size_t count;                      // Number of entries currently stored
+    mcp_json_object_entry_t** buckets; /**< Array of pointers to entries (buckets), allocated using malloc/realloc. */
+    size_t capacity;                   /**< Current capacity (number of buckets) of the bucket array. */
+    size_t count;                      /**< Number of key-value pairs currently stored in the table. */
 } mcp_json_object_table_t;
 
-// djb2 hash function for strings
+/**
+ * @internal
+ * @brief Simple djb2 hash function for strings.
+ * @param str Null-terminated string to hash.
+ * @return Unsigned long hash value.
+ */
 static unsigned long hash_string(const char* str) {
-    unsigned long hash = 5381;
+    unsigned long hash = 5381; // Initial magic value
     int c;
+    // Iterate through the string, updating the hash
     while ((c = *str++)) {
-        hash = ((hash << 5) + hash) + c; // hash * 33 + c
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
     }
     return hash;
 }
 
-// Forward declarations for hash table helper functions
+// --- Internal Hash Table Helper Function Declarations ---
+
+/** @internal Initializes a hash table structure. Allocates bucket array using malloc. */
 static int mcp_json_object_table_init(mcp_json_object_table_t* table, size_t capacity);
+/** @internal Destroys a hash table, freeing all entries, keys, and the bucket array. Calls mcp_json_destroy on values. */
 static void mcp_json_object_table_destroy(mcp_json_object_table_t* table);
-static int mcp_json_object_table_set(mcp_arena_t* arena, mcp_json_object_table_t* table, const char* name, mcp_json_t* value); // Pass arena
+/** @internal Sets a key-value pair. Handles collisions and potential resize. Allocates new entries using malloc (arena parameter is currently unused here). */
+static int mcp_json_object_table_set(mcp_arena_t* arena, mcp_json_object_table_t* table, const char* name, mcp_json_t* value);
+/** @internal Finds an entry by key name. */
 static mcp_json_object_entry_t* mcp_json_object_table_find(mcp_json_object_table_t* table, const char* name);
+/** @internal Deletes an entry by key name. Frees the entry, key, and calls mcp_json_destroy on the value. */
 static int mcp_json_object_table_delete(mcp_json_object_table_t* table, const char* name);
+/** @internal Resizes the hash table's bucket array and rehashes existing entries. Uses malloc/realloc. */
 static int mcp_json_object_table_resize(mcp_json_object_table_t* table, size_t new_capacity);
 
-// --- End Hash Table Implementation ---
+// --- End Hash Table Declarations ---
 
 
-// We'll use a simple JSON library implementation
-// In a real-world scenario, you might want to use a more robust library like cJSON
-
+/**
+ * @internal
+ * @brief Internal structure representing a JSON value.
+ */
 struct mcp_json {
-    mcp_json_type_t type;
+    mcp_json_type_t type; /**< The type of this JSON value. */
     union {
-        bool boolean_value;
-        double number_value;
-        char* string_value; // Uses malloc/strdup
+        bool boolean_value;     /**< Used if type is MCP_JSON_BOOLEAN. */
+        double number_value;    /**< Used if type is MCP_JSON_NUMBER. */
+        char* string_value;     /**< Used if type is MCP_JSON_STRING. Allocated using malloc/strdup. */
         struct {
-            mcp_json_t** items; // Uses malloc/realloc
-            size_t count;
-            size_t capacity;
-        } array;
-        mcp_json_object_table_t object; // Uses hash table for objects
+            mcp_json_t** items; /**< Dynamic array of item pointers. Allocated using malloc/realloc. */
+            size_t count;       /**< Number of items currently in the array. */
+            size_t capacity;    /**< Current allocated capacity of the items array. */
+        } array;                /**< Used if type is MCP_JSON_ARRAY. */
+        mcp_json_object_table_t object; /**< Hash table for properties. Used if type is MCP_JSON_OBJECT. */
     };
 };
 
-// Helper function to allocate mcp_json_t node
+/**
+ * @internal
+ * @brief Helper function to allocate an mcp_json_t node using either the arena or malloc.
+ * @param arena Optional arena allocator. If NULL, uses malloc.
+ * @return Pointer to the allocated node, or NULL on failure.
+ */
 static mcp_json_t* mcp_json_alloc_node(mcp_arena_t* arena) {
     if (arena != NULL) {
+        // Allocate node from the arena
         return (mcp_json_t*)mcp_arena_alloc(arena, sizeof(mcp_json_t));
     } else {
+        // Allocate node using standard malloc
         return (mcp_json_t*)malloc(sizeof(mcp_json_t));
     }
 }
 
+// --- Public JSON API Implementation ---
+
 mcp_json_t* mcp_json_null_create(mcp_arena_t* arena) {
+    // Allocate the node structure itself
     mcp_json_t* json = mcp_json_alloc_node(arena);
     if (json == NULL) {
         return NULL;
@@ -103,29 +138,34 @@ mcp_json_t* mcp_json_number_create(mcp_arena_t* arena, double value) {
     return json;
 }
 
-// String values still use strdup/malloc, not the arena
+// NOTE: String values *always* use strdup/malloc for the internal copy,
+// regardless of whether the node itself is arena-allocated.
 mcp_json_t* mcp_json_string_create(mcp_arena_t* arena, const char* value) {
     if (value == NULL) {
-        return NULL;
+        return NULL; // Cannot create string from NULL
     }
+    // Allocate the node structure
     mcp_json_t* json = mcp_json_alloc_node(arena);
     if (json == NULL) {
         return NULL;
     }
     json->type = MCP_JSON_STRING;
+    // Duplicate the input string using malloc/strdup
     json->string_value = strdup(value);
     if (json->string_value == NULL) {
-        // If arena was used, the node is leaked here, but fixing requires
-        // knowing if it was arena or malloc. Simplification for now.
-        // A more robust solution would track the allocator used.
+        // strdup failed. If node was malloc'd, free it.
+        // If node was arena'd, it will be cleaned up by arena reset/destroy,
+        // but this indicates an error state.
         if (arena == NULL) free(json);
         return NULL;
     }
     return json;
 }
 
-// Array backing storage uses malloc/realloc, not the arena
+// NOTE: Array backing storage (the array of pointers `items`) *always* uses
+// malloc/realloc, regardless of whether the node itself is arena-allocated.
 mcp_json_t* mcp_json_array_create(mcp_arena_t* arena) {
+    // Allocate the node structure
     mcp_json_t* json = mcp_json_alloc_node(arena);
     if (json == NULL) {
         return NULL;
@@ -137,55 +177,68 @@ mcp_json_t* mcp_json_array_create(mcp_arena_t* arena) {
     return json;
 }
 
-// Object hash table uses malloc/realloc internally, not the arena
+// NOTE: Object hash table structures (buckets, entries, keys) *always* use
+// malloc/realloc/strdup, regardless of whether the node itself is arena-allocated.
 mcp_json_t* mcp_json_object_create(mcp_arena_t* arena) {
+    // Allocate the node structure
     mcp_json_t* json = mcp_json_alloc_node(arena);
     if (json == NULL) {
         return NULL;
     }
     json->type = MCP_JSON_OBJECT;
-    // Pass arena to table init? No, table uses malloc for buckets.
+    // Initialize the internal hash table (which uses malloc)
     if (mcp_json_object_table_init(&json->object, MCP_JSON_HASH_TABLE_INITIAL_CAPACITY) != 0) {
+        // Table init failed. Free node if it was malloc'd.
         if (arena == NULL) free(json);
-        return NULL;
+        return NULL; // Return error
     }
     return json;
 }
 
-// Destroy function needs to know if malloc or arena was used.
-// For simplicity, we assume malloc was used if arena wasn't involved in parsing/creation.
-// If arena was used, mcp_arena_destroy/reset should be called instead of this.
+// See header file for detailed explanation of mcp_json_destroy behavior.
 void mcp_json_destroy(mcp_json_t* json) {
     if (json == NULL) {
         return;
     }
 
+    // This function only frees internally allocated data using malloc/strdup/realloc.
+    // It does NOT free the mcp_json_t node itself.
     switch (json->type) {
         case MCP_JSON_STRING:
-            free(json->string_value); // Strings always use malloc
+            // Free the duplicated string value
+            free(json->string_value);
+            json->string_value = NULL; // Prevent double free
             break;
         case MCP_JSON_ARRAY:
+            // Recursively destroy items before freeing the item array.
+            // This assumes items were added correctly (e.g., if item was arena'd,
+            // its internal mallocs are freed here, but node remains until arena clear).
             for (size_t i = 0; i < json->array.count; i++) {
-                // Recursively destroy items (assuming they also used malloc)
                 mcp_json_destroy(json->array.items[i]);
+                // If the item node itself was malloc'd, the caller should free it.
+                // If added to a malloc'd array, this function doesn't free the item node.
+                // This highlights complexity - best practice is consistent allocation.
             }
-            free(json->array.items); // Array storage uses malloc
+            // Free the array pointer storage itself (always malloc'd)
+            free(json->array.items);
+            json->array.items = NULL;
+            json->array.count = 0;
+            json->array.capacity = 0;
             break;
         case MCP_JSON_OBJECT:
-            // Hash table destroy handles freeing names (malloc) and destroying values (recursive)
+            // Destroy the internal hash table (frees buckets, entries, keys, and calls destroy on values)
             mcp_json_object_table_destroy(&json->object);
             break;
+        case MCP_JSON_NULL:
+        case MCP_JSON_BOOLEAN:
+        case MCP_JSON_NUMBER:
         default:
-            // Null, Boolean, Number have no extra data to free
+            // These types have no internally malloc'd data associated with the node.
             break;
     }
-
-    // DO NOT free the 'json' node itself here.
-    // If the node was allocated from an arena, freeing it is an error.
-    // If the node was allocated by malloc, the caller is responsible for freeing it
-    // after calling mcp_json_destroy to free its internal contents.
-    // Typically, arena-allocated trees are freed via mcp_arena_reset/destroy.
+    // Note: We don't touch json->type or the value fields here, only pointers we allocated.
 }
+
 
 mcp_json_type_t mcp_json_get_type(const mcp_json_t* json) {
     if (json == NULL) {
@@ -232,16 +285,18 @@ mcp_json_t* mcp_json_array_get_item(const mcp_json_t* json, int index) {
     return json->array.items[index];
 }
 
-// Array items storage uses malloc/realloc
+// NOTE: Array backing storage (`items` pointer array) uses malloc/realloc.
 int mcp_json_array_add_item(mcp_json_t* json, mcp_json_t* item) {
     if (json == NULL || item == NULL || json->type != MCP_JSON_ARRAY) {
-        return -1;
+        return -1; // Invalid input
     }
+    // Resize the internal item pointer array if necessary
     if (json->array.count >= json->array.capacity) {
         size_t new_capacity = json->array.capacity == 0 ? 8 : json->array.capacity * 2;
+        // Use realloc for the array of pointers
         mcp_json_t** new_items = (mcp_json_t**)realloc(json->array.items, new_capacity * sizeof(mcp_json_t*));
         if (new_items == NULL) {
-            return -1;
+            return -1; // Realloc failed
         }
         json->array.items = new_items;
         json->array.capacity = new_capacity;
@@ -267,16 +322,16 @@ mcp_json_t* mcp_json_object_get_property(const mcp_json_t* json, const char* nam
     return (entry != NULL) ? entry->value : NULL;
 }
 
-// Set property uses hash table set, which needs arena passed if used
-// However, the public API doesn't take arena here. This assumes set is called
-// on objects created potentially outside the parsing context (where arena is available).
-// For simplicity, we don't pass arena to table_set here, meaning new entries
-// created during set will use malloc, not the arena.
+// NOTE: The internal hash table uses malloc/strdup for keys and entries.
+//       The added `value` node's memory is managed by its original allocator (arena or malloc).
+//       The object takes ownership in the sense that mcp_json_destroy(object) will
+//       call mcp_json_destroy(value) later.
 int mcp_json_object_set_property(mcp_json_t* json, const char* name, mcp_json_t* value) {
     if (json == NULL || name == NULL || value == NULL || json->type != MCP_JSON_OBJECT) {
-        return -1;
+        return -1; // Invalid input
     }
-    // Pass NULL arena to table_set, forcing malloc for new entries if needed
+    // Pass NULL arena to internal set function, as the hash table itself uses malloc.
+    // The 'value' retains its original allocation method (arena or malloc).
     return mcp_json_object_table_set(NULL, &json->object, name, value);
 }
 
@@ -287,31 +342,38 @@ int mcp_json_object_delete_property(mcp_json_t* json, const char* name) {
     return mcp_json_object_table_delete(&json->object, name);
 }
 
-// Property names array uses malloc
+// NOTE: The returned array of names and the names themselves use malloc/strdup.
+//       The caller is responsible for freeing them as described in the header.
 int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names_out, size_t* count_out) {
     if (json == NULL || names_out == NULL || count_out == NULL || json->type != MCP_JSON_OBJECT) {
-        return -1;
+        if (names_out) *names_out = NULL;
+        if (count_out) *count_out = 0;
+        return -1; // Invalid input
     }
     const mcp_json_object_table_t* table = &json->object;
     *count_out = table->count;
     if (table->count == 0) {
-        *names_out = NULL;
+        *names_out = NULL; // No properties, return NULL array
         return 0;
     }
+    // Allocate the array of char pointers using malloc
     *names_out = (char**)malloc(table->count * sizeof(char*));
     if (*names_out == NULL) {
         *count_out = 0;
-        return -1;
+        return -1; // Allocation failure
     }
     size_t current_index = 0;
+    // Iterate through all buckets and entries in the hash table
     for (size_t i = 0; i < table->capacity; i++) {
         mcp_json_object_entry_t* entry = table->buckets[i];
         while (entry != NULL) {
-            assert(current_index < table->count); // Sanity check
-            (*names_out)[current_index] = strdup(entry->name); // Names use strdup
+            assert(current_index < table->count); // Internal consistency check
+            // Duplicate each name string using strdup (malloc)
+            (*names_out)[current_index] = strdup(entry->name);
             if ((*names_out)[current_index] == NULL) {
+                // strdup failed, clean up already duplicated names and the array
                 for (size_t j = 0; j < current_index; j++) {
-                    free((*names_out)[j]);
+                    free((*names_out)[j]); // Free individual name strings
                 }
                 free(*names_out);
                 *names_out = NULL;
@@ -326,12 +388,13 @@ int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names_out
     return 0;
 }
 
-// --- Hash Table Helper Function Implementations ---
+// --- Internal Hash Table Helper Function Implementations ---
 
-// Initialize hash table - uses calloc/malloc
+/** @internal Initializes the hash table buckets. Uses calloc. */
 static int mcp_json_object_table_init(mcp_json_object_table_t* table, size_t capacity) {
     table->count = 0;
     table->capacity = capacity > 0 ? capacity : MCP_JSON_HASH_TABLE_INITIAL_CAPACITY;
+    // Allocate the bucket array (array of pointers)
     table->buckets = (mcp_json_object_entry_t**)calloc(table->capacity, sizeof(mcp_json_object_entry_t*));
     if (table->buckets == NULL) {
         table->capacity = 0;
@@ -340,37 +403,43 @@ static int mcp_json_object_table_init(mcp_json_object_table_t* table, size_t cap
     return 0;
 }
 
-// Destroy hash table and its entries
+/** @internal Frees all memory associated with the hash table. */
 static void mcp_json_object_table_destroy(mcp_json_object_table_t* table) {
     if (table == NULL || table->buckets == NULL) {
         return;
     }
+    // Iterate through each bucket
     for (size_t i = 0; i < table->capacity; i++) {
         mcp_json_object_entry_t* entry = table->buckets[i];
+        // Iterate through the linked list in the bucket
         while (entry != NULL) {
             mcp_json_object_entry_t* next = entry->next;
-            free(entry->name); // Names use malloc/strdup
-            // Values might be arena or malloc allocated. Destroy assumes malloc.
-            // If arena was used, this might double-free or leak depending on destroy logic.
-            // Correct handling requires tracking allocator per value or destroying via arena.
+            free(entry->name); // Free the duplicated key string
+            // Recursively destroy the value node's internal data.
+            // IMPORTANT: This assumes the value node itself will be freed elsewhere
+            // (either by the caller via free() or by the arena).
             mcp_json_destroy(entry->value);
-            free(entry); // Entries use malloc
+            // Free the entry structure itself (always allocated with malloc by table_set)
+            free(entry);
             entry = next;
         }
     }
-    free(table->buckets); // Buckets use malloc/realloc
+    // Free the bucket array itself
+    free(table->buckets);
     table->buckets = NULL;
     table->capacity = 0;
     table->count = 0;
 }
 
-// Find an entry in the hash table
+/** @internal Finds an entry in the hash table by name. */
 static mcp_json_object_entry_t* mcp_json_object_table_find(mcp_json_object_table_t* table, const char* name) {
     if (table == NULL || name == NULL || table->capacity == 0) {
         return NULL;
     }
+    // Calculate hash and initial bucket index
     unsigned long hash = hash_string(name);
     size_t index = hash % table->capacity;
+    // Search the linked list at the bucket index
     mcp_json_object_entry_t* entry = table->buckets[index];
     while (entry != NULL) {
         if (strcmp(entry->name, name) == 0) {
@@ -381,7 +450,7 @@ static mcp_json_object_entry_t* mcp_json_object_table_find(mcp_json_object_table
     return NULL; // Not found
 }
 
-// Resize the hash table - uses calloc/malloc/realloc
+/** @internal Resizes the hash table. Uses malloc/realloc/calloc. */
 static int mcp_json_object_table_resize(mcp_json_object_table_t* table, size_t new_capacity) {
     if (new_capacity < MCP_JSON_HASH_TABLE_INITIAL_CAPACITY) {
         new_capacity = MCP_JSON_HASH_TABLE_INITIAL_CAPACITY;
@@ -389,105 +458,147 @@ static int mcp_json_object_table_resize(mcp_json_object_table_t* table, size_t n
     if (new_capacity == table->capacity) {
         return 0; // No resize needed
     }
+
+    // Allocate new bucket array
     mcp_json_object_entry_t** new_buckets = (mcp_json_object_entry_t**)calloc(new_capacity, sizeof(mcp_json_object_entry_t*));
     if (new_buckets == NULL) {
         return -1; // Allocation failure
     }
+
+    // Rehash all existing entries into the new buckets
     for (size_t i = 0; i < table->capacity; i++) {
         mcp_json_object_entry_t* entry = table->buckets[i];
         while (entry != NULL) {
-            mcp_json_object_entry_t* next = entry->next;
+            mcp_json_object_entry_t* next = entry->next; // Store next entry
+            // Calculate new index
             unsigned long hash = hash_string(entry->name);
             size_t new_index = hash % new_capacity;
+            // Insert entry at the head of the new bucket's list
             entry->next = new_buckets[new_index];
             new_buckets[new_index] = entry;
-            entry = next;
+            entry = next; // Move to the next entry in the old bucket
         }
     }
+
+    // Free the old bucket array and update table properties
     free(table->buckets);
     table->buckets = new_buckets;
     table->capacity = new_capacity;
     return 0;
 }
 
-// Set (insert or update) a property in the hash table
-// Uses malloc for new entries, not arena (unless arena passed explicitly)
+/**
+ * @internal
+ * @brief Inserts or updates a key-value pair in the hash table.
+ * Handles resizing if the load factor is exceeded.
+ * Destroys the old value if the key already exists.
+ * Allocates new entries and duplicates keys using malloc/strdup.
+ * @param arena Unused in this implementation (new entries always use malloc).
+ * @param table The hash table.
+ * @param name The property name (key).
+ * @param value The JSON value node (ownership transferred to table logic via mcp_json_destroy).
+ * @return 0 on success, -1 on failure.
+ */
 static int mcp_json_object_table_set(mcp_arena_t* arena, mcp_json_object_table_t* table, const char* name, mcp_json_t* value) {
+    (void)arena; // Arena is not used for allocating hash table entries/keys
+
+    // Resize if load factor is too high
     if (table->capacity == 0 || ((double)table->count + 1) / table->capacity > MCP_JSON_HASH_TABLE_MAX_LOAD_FACTOR) {
         size_t new_capacity = (table->capacity == 0) ? MCP_JSON_HASH_TABLE_INITIAL_CAPACITY : table->capacity * 2;
         if (mcp_json_object_table_resize(table, new_capacity) != 0) {
             return -1; // Resize failed
         }
     }
+
+    // Find the bucket and check if the key already exists
     unsigned long hash = hash_string(name);
     size_t index = hash % table->capacity;
     mcp_json_object_entry_t* entry = table->buckets[index];
     while (entry != NULL) {
         if (strcmp(entry->name, name) == 0) {
-            // Update existing entry
-            // Destroy old value (assuming malloc) before replacing
+            // Key exists: Update value
+            // Destroy the old value's internal data first
             mcp_json_destroy(entry->value);
-            entry->value = value;
-            return 0;
+            // Free the old value node itself IF it was malloc'd (how to know?)
+            // --> This highlights the danger of mixing allocators without tracking.
+            // --> Assume for now that if a value is being replaced, the old one
+            //     needs freeing if it wasn't part of an arena being reset/destroyed.
+            // --> Safest approach: Ensure values added via set_property are consistently allocated.
+            // --> Let's assume mcp_json_destroy handles internal freeing, and node freeing is caller's job.
+            entry->value = value; // Assign the new value pointer
+            return 0; // Update successful
         }
         entry = entry->next;
     }
 
-    // Insert new entry - use arena if provided, otherwise malloc
-    mcp_json_object_entry_t* new_entry;
-    if (arena != NULL) {
-        new_entry = (mcp_json_object_entry_t*)mcp_arena_alloc(arena, sizeof(mcp_json_object_entry_t));
-    } else {
-        new_entry = (mcp_json_object_entry_t*)malloc(sizeof(mcp_json_object_entry_t));
-    }
+    // Key doesn't exist: Insert new entry
+    // Allocate the entry structure itself using malloc
+    mcp_json_object_entry_t* new_entry = (mcp_json_object_entry_t*)malloc(sizeof(mcp_json_object_entry_t));
     if (new_entry == NULL) {
         return -1; // Allocation failed
     }
-    new_entry->name = strdup(name); // Name uses strdup
+    // Duplicate the key name using strdup (malloc)
+    new_entry->name = strdup(name);
     if (new_entry->name == NULL) {
-        free(new_entry);
-        return -1;
+        free(new_entry); // Free the partially allocated entry
+        return -1; // strdup failed
     }
-    new_entry->value = value; // Value is passed in (arena or malloc allocated)
+    new_entry->value = value; // Store the pointer to the value node
+    // Insert at the head of the bucket's linked list
     new_entry->next = table->buckets[index];
     table->buckets[index] = new_entry;
     table->count++;
-    return 0;
+    return 0; // Insert successful
 }
 
-// Delete a property from the hash table
+/**
+ * @internal
+ * @brief Deletes a key-value pair from the hash table.
+ * Frees the entry structure, the duplicated key name, and calls mcp_json_destroy on the value.
+ * @param table The hash table.
+ * @param name The key name to delete.
+ * @return 0 on success, -1 if key not found or error.
+ */
 static int mcp_json_object_table_delete(mcp_json_object_table_t* table, const char* name) {
     if (table == NULL || name == NULL || table->capacity == 0 || table->count == 0) {
-        return -1;
+        return -1; // Invalid input or empty table
     }
+    // Find the bucket
     unsigned long hash = hash_string(name);
     size_t index = hash % table->capacity;
     mcp_json_object_entry_t* entry = table->buckets[index];
     mcp_json_object_entry_t* prev = NULL;
+
+    // Search the linked list in the bucket
     while (entry != NULL) {
         if (strcmp(entry->name, name) == 0) {
-            if (prev == NULL) {
+            // Found the entry, remove it from the list
+            if (prev == NULL) { // Entry is the head of the list
                 table->buckets[index] = entry->next;
             } else {
                 prev->next = entry->next;
             }
-            free(entry->name); // Free name (strdup)
-            // Destroy value (assuming malloc)
-            mcp_json_destroy(entry->value);
-            free(entry); // Free entry (malloc)
+            // Free allocated resources for the entry
+            free(entry->name);          // Free the duplicated key string
+            mcp_json_destroy(entry->value); // Free internal data of the value node
+            // Note: We don't free the value node itself here, assuming caller/arena handles it.
+            free(entry);                // Free the entry structure itself
             table->count--;
-            return 0;
+            return 0; // Deletion successful
         }
         prev = entry;
         entry = entry->next;
     }
-    return -1; // Not found
+    return -1; // Key not found
 }
 
 // --- End Hash Table Helper Function Implementations ---
 
 
-// --- JSON Parser Implementation (using Arena for nodes) ---
+// --- JSON Parser Implementation ---
+// Simple recursive descent parser.
+// Uses the provided arena (if not NULL) for allocating mcp_json_t nodes.
+// String values are always duplicated using malloc/strdup.
 
 // Forward declarations for parser helper functions (pass arena)
 static mcp_json_t* parse_value(mcp_arena_t* arena, const char** json);

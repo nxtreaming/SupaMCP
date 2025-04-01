@@ -15,41 +15,70 @@
 #endif
 
 // Max line length for reading from stdin
-#define MAX_LINE_LENGTH 4096
+#define MAX_LINE_LENGTH 4096 // Max length for a single line read from stdin
 
-// Internal structure for stdio transport data
+/**
+ * @internal
+ * @brief Internal data specific to the stdio transport implementation.
+ */
 typedef struct {
-    bool running;
-    mcp_transport_t* transport_handle; // Pointer back to the main handle
+    bool running;                       /**< Flag indicating if the transport (read thread) is active. */
+    mcp_transport_t* transport_handle;  /**< Pointer back to the generic transport handle containing callbacks. */
 #ifdef _WIN32
     HANDLE read_thread;
 #else
-    pthread_t read_thread;
+    pthread_t read_thread;              /**< Handle for the background stdin reading thread. */
 #endif
 } mcp_stdio_transport_data_t;
 
-// --- Forward Declarations for Static Functions ---
+// --- Static Function Declarations ---
+
+// Implementation of the send function for stdio transport.
 static int stdio_transport_send(mcp_transport_t* transport, const void* data_to_send, size_t size);
+// Implementation of the synchronous receive function for stdio transport.
+static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms);
+// Implementation of the start function for stdio transport.
+static int stdio_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data, mcp_transport_error_callback_t error_callback);
+// Implementation of the stop function for stdio transport.
+static int stdio_transport_stop(mcp_transport_t* transport);
+// Implementation of the destroy function for stdio transport.
+static void stdio_transport_destroy(mcp_transport_t* transport);
+// Background thread function for reading from stdin.
+#ifdef _WIN32
+static DWORD WINAPI stdio_read_thread_func(LPVOID arg);
+#else
+static void* stdio_read_thread_func(void* arg);
+#endif
+
 
 // --- Static Implementation Functions ---
 
-// Max line length for reading from stdin
-#define MAX_STDIO_LINE_LENGTH 4096
+// Note: MAX_LINE_LENGTH is defined globally near the top of the file.
 
-// Synchronous receive function for stdio (primarily for client)
+/**
+ * @internal
+ * @brief Synchronously reads a single line (message) from stdin.
+ * Used when the stdio transport is employed in a simple synchronous client role.
+ * Blocks until a newline is encountered or an error/EOF occurs.
+ * @param transport The transport handle (unused).
+ * @param[out] data_out Pointer to receive the malloc'd buffer containing the line read (excluding newline). Caller must free.
+ * @param[out] size_out Pointer to receive the length of the line read.
+ * @param timeout_ms Timeout parameter (ignored by this implementation).
+ * @return 0 on success, -1 on error or EOF.
+ */
 static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
-    (void)transport; // Not needed for stdio receive
-    (void)timeout_ms; // Timeout ignored for simple blocking fgets
+    (void)transport; // Unused in this function
+    (void)timeout_ms; // Timeout is ignored, fgets is blocking
 
     if (data_out == NULL || size_out == NULL) {
-        return -1;
-    }
-    *data_out = NULL;
-    *size_out = 0;
+         return -1;
+     }
+     *data_out = NULL;
+     *size_out = 0;
 
-    char line_buffer[MAX_STDIO_LINE_LENGTH];
+     char line_buffer[MAX_LINE_LENGTH]; // Use the globally defined MAX_LINE_LENGTH
 
-    // Blocking read using fgets
+     // Blocking read using fgets
     if (fgets(line_buffer, sizeof(line_buffer), stdin) == NULL) {
         if (feof(stdin)) {
             log_message(LOG_LEVEL_INFO, "EOF reached on stdin during receive.");
@@ -83,11 +112,19 @@ static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, 
     }
     memcpy(*data_out, line_buffer, *size_out + 1); // Copy including null terminator
 
-    return 0; // Success
+    return 0;
 }
 
-
-// Thread function to read from stdin (for server callback)
+/**
+ * @internal
+ * @brief Background thread function that continuously reads lines from stdin.
+ * This is used when the stdio transport is started via mcp_transport_start
+ * (typically in a server role). Each line read is treated as a message and
+ * passed to the registered message callback. Responses from the callback are
+ * sent to stdout.
+ * @param arg Pointer to the mcp_stdio_transport_data_t structure.
+ * @return 0 on Windows, NULL on POSIX.
+ */
 #ifdef _WIN32
 static DWORD WINAPI stdio_read_thread_func(LPVOID arg) {
 #else
@@ -97,18 +134,24 @@ static void* stdio_read_thread_func(void* arg) {
     mcp_transport_t* transport = data->transport_handle;
     char line_buffer[MAX_LINE_LENGTH];
 
+    log_message(LOG_LEVEL_DEBUG, "Stdio read thread started.");
+
+    // Loop reading lines as long as the transport is running
     while (data->running) {
+        // Blocking read using fgets
         if (fgets(line_buffer, sizeof(line_buffer), stdin) != NULL) {
-            // Remove trailing newline characters
+            // Successfully read a line, remove trailing newline characters
             line_buffer[strcspn(line_buffer, "\r\n")] = 0;
             size_t len = strlen(line_buffer);
 
+            // If the line is not empty and a message callback is registered, process it
             if (len > 0 && transport->message_callback != NULL) {
                 int callback_error_code = 0;
+                // Invoke the message callback with the line data
                 char* response_str = transport->message_callback(
-                    transport->callback_user_data,
-                    line_buffer,
-                    len,
+                    transport->callback_user_data, // Pass user data
+                    line_buffer,                   // Pass line content as message data
+                    len,                           // Pass line length
                     &callback_error_code
                 );
 
@@ -147,19 +190,29 @@ static void* stdio_read_thread_func(void* arg) {
 #endif
 }
 
-// Update signature to match the function pointer type in mcp_transport struct
+/**
+ * @internal
+ * @brief Starts the stdio transport, primarily by launching the background read thread.
+ * @param transport The transport handle.
+ * @param message_callback Callback for received messages (stored in transport by generic start).
+ * @param user_data User data for callbacks (stored in transport by generic start).
+ * @param error_callback Error callback (stored in transport by generic start, but unused here).
+ * @return 0 on success, -1 on error (e.g., thread creation failed).
+ */
 static int stdio_transport_start(
     mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
     void* user_data,
     mcp_transport_error_callback_t error_callback
 ) {
-    (void)message_callback; // Callback is stored in transport struct by generic start
-    (void)user_data;        // User data is stored in transport struct by generic start
-    (void)error_callback;   // Stdio transport doesn't use the error callback currently
+    // Callbacks and user_data are already stored in the transport handle
+    // by the generic mcp_transport_start function before this is called.
+    (void)message_callback;
+    (void)user_data;
+    (void)error_callback; // Stdio transport doesn't currently signal transport errors via callback
 
     if (transport == NULL || transport->transport_data == NULL) {
-        return -1;
+        return -1; // Invalid arguments
     }
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
 
@@ -187,9 +240,15 @@ static int stdio_transport_start(
     return 0;
 }
 
+/**
+ * @internal
+ * @brief Stops the stdio transport's background read thread.
+ * @param transport The transport handle.
+ * @return 0 on success, -1 on error.
+ */
 static int stdio_transport_stop(mcp_transport_t* transport) {
      if (transport == NULL || transport->transport_data == NULL) {
-        return -1;
+        return -1; // Invalid arguments
     }
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
 
@@ -218,10 +277,19 @@ static int stdio_transport_stop(mcp_transport_t* transport) {
     return 0;
 }
 
+/**
+ * @internal
+ * @brief Sends data via the stdio transport (writes to stdout).
+ * Appends a newline character and flushes stdout after writing the data.
+ * @param transport The transport handle (unused).
+ * @param data_to_send Pointer to the data buffer to send.
+ * @param size Number of bytes to send from the buffer.
+ * @return 0 on success, -1 on error (e.g., write error, flush error).
+ */
 static int stdio_transport_send(mcp_transport_t* transport, const void* data_to_send, size_t size) {
-    (void)transport; // Not needed for stdio send
+    (void)transport; // Unused in this function
     if (data_to_send == NULL || size == 0) {
-        return -1;
+        return -1; // Invalid arguments
     }
 
     // Write the data, followed by a newline (as expected by fgets on the other side)
@@ -241,9 +309,15 @@ static int stdio_transport_send(mcp_transport_t* transport, const void* data_to_
     return 0;
 }
 
+/**
+ * @internal
+ * @brief Destroys the stdio transport specific data.
+ * Ensures the transport is stopped and frees the internal data structure.
+ * @param transport The transport handle.
+ */
 static void stdio_transport_destroy(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
-        return;
+        return; // Nothing to do
     }
     // Ensure transport is stopped first
     stdio_transport_stop(transport);

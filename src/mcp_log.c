@@ -16,27 +16,32 @@
 #   define PATH_SEPARATOR "/"
 #endif
 
-// Global variables for logging state
+// --- Static Global Variables ---
+
+/** @internal File pointer for the optional log file. NULL if file logging is disabled. */
 static FILE* g_log_file = NULL;
+/** @internal Current maximum log level. Messages above this level are ignored. */
 static log_level_t g_log_level = LOG_LEVEL_INFO; // Default level
+/** @internal String representations of log levels for output. */
 static const char* g_log_level_names[] = {"ERROR", "WARN", "INFO", "DEBUG"};
 
-/**
- * Log a message to the console and/or log file
- */
+// --- Public API Implementation ---
+
 void log_message(log_level_t level, const char* format, ...) {
+    // 1. Check if the message level is high enough to be logged
     if (level > g_log_level) {
-        return;
+        return; // Ignore message if its level is higher than the configured level
     }
 
+    // 2. Get current time and format it as a timestamp string
     time_t now;
-    struct tm timeinfo_storage; // Storage for thread-safe variants
+    struct tm timeinfo_storage; // Use local storage for thread-safety
     struct tm* timeinfo;
-    char timestamp[20];
+    char timestamp[20]; // Buffer for "YYYY-MM-DD HH:MM:SS" + null terminator
 
     time(&now);
 
-    // Use thread-safe localtime variants
+    // Use platform-specific thread-safe functions to get local time
 #ifdef _WIN32
     errno_t err = localtime_s(&timeinfo_storage, &now);
     if (err != 0) {
@@ -64,179 +69,206 @@ void log_message(log_level_t level, const char* format, ...) {
     }
 
 
+    // 3. Format the log message using varargs
     va_list args;
     va_start(args, format);
 
-    char message[1024];
-    // Use vsnprintf for safety
+    char message[1024]; // Fixed-size buffer for the formatted message
+    // Use vsnprintf for safe formatting, preventing buffer overflows
     int written = vsnprintf(message, sizeof(message), format, args);
     va_end(args);
 
-    // Ensure null termination even if vsnprintf truncated
+    // Ensure null termination, especially if vsnprintf truncated the output
     if (written >= (int)sizeof(message)) {
-         message[sizeof(message) - 1] = '\0';
+         message[sizeof(message) - 1] = '\0'; // Manually null-terminate if truncated
     } else if (written < 0) {
-        // Encoding error occurred, write a fallback message
+        // vsnprintf failed (e.g., encoding error in format string)
+        // Write a fallback error message to indicate the issue
         snprintf(message, sizeof(message), "Encoding error in log message format: %s", format);
     }
+    // If written is non-negative and less than buffer size, vsnprintf added null terminator.
 
 
-    // Log to console (stderr)
+    // 4. Output the formatted message to stderr (console)
+    // Format: [Timestamp] [LEVEL] Message
     fprintf(stderr, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
 
-    // Log to file if available
+    // 5. Output the formatted message to the log file, if open
     if (g_log_file != NULL) {
         fprintf(g_log_file, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
-        fflush(g_log_file); // Ensure logs are written immediately to file
+        // Flush the file buffer to ensure the log entry is written immediately
+        fflush(g_log_file);
     }
 }
 
-
 /**
- * Create log directory if it doesn't exist
+ * @internal
+ * @brief Attempts to create the directory path for the log file if it doesn't exist.
+ * Handles nested directories.
+ * @param log_file_path The full path to the log file.
+ * @return 0 on success or if no directory needed creating, -1 on failure.
  */
 static int create_log_directory(const char* log_file_path) {
     if (log_file_path == NULL) {
-        return 0; // No path provided, nothing to do
+        return 0; // Nothing to do
     }
 
-    // Duplicate the path string because dirname might modify it
+    // Duplicate the path string because dirname-like operations will modify it
     char* path_copy = strdup(log_file_path);
     if (path_copy == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to duplicate log file path for directory creation.");
+        // Use fprintf directly as log_message might not be fully initialized or working
+        fprintf(stderr, "[ERROR] Failed to duplicate log file path for directory creation.\n");
         return -1;
     }
 
-    // Find the last path separator
+    // Find the last path separator to isolate the directory part
     char* last_separator = strrchr(path_copy, PATH_SEPARATOR[0]);
     if (last_separator == NULL) {
-        // No directory part in the path (e.g., just "logfile.log")
+        // No directory part found (e.g., filename only in current dir)
         free(path_copy);
-        return 0;
+        return 0; // Nothing to create
     }
 
-    // Null-terminate at the separator to get just the directory path
+    // Temporarily terminate the string at the separator to get the directory path
     *last_separator = '\0';
 
-    // Check if directory is empty (e.g. "/logfile.log") or root ("/")
-     if (strlen(path_copy) == 0 || strcmp(path_copy, PATH_SEPARATOR) == 0) {
+    // Handle edge cases: empty path or root directory ("/" or "C:\")
+     if (strlen(path_copy) == 0 || (strlen(path_copy) == 1 && path_copy[0] == PATH_SEPARATOR[0])
+#ifdef _WIN32 // Check for drive letter root like "C:"
+        || (strlen(path_copy) == 2 && path_copy[1] == ':')
+#endif
+     ) {
         free(path_copy);
-        return 0; // No directory needs to be created or root directory
+        return 0; // Root directory or similar, no creation needed/possible
     }
 
-
-    // Create the directory recursively (more robust)
+    // --- Recursive directory creation ---
     int result = 0;
     char* p = path_copy;
-    // Skip leading separator if present (for absolute paths)
+
+    // Skip potential leading separator (e.g., '/' in "/path/to/log")
+    // or drive letter (e.g., 'C:' in "C:\path\to\log")
     if (*p == PATH_SEPARATOR[0]) {
         p++;
     }
+#ifdef _WIN32
+    else if (strlen(p) >= 2 && p[1] == ':') {
+        p += 2; // Skip drive letter "C:"
+        if (*p == PATH_SEPARATOR[0]) p++; // Skip separator after drive letter if present
+    }
+#endif
 
-    while ((p = strchr(p, PATH_SEPARATOR[0])) != NULL) {
-        *p = '\0'; // Temporarily terminate at the separator
+    // Iterate through path components separated by PATH_SEPARATOR
+    while (result == 0 && (p = strchr(p, PATH_SEPARATOR[0])) != NULL) {
+        // Temporarily terminate the path at the current separator
+        *p = '\0';
 
+        // Attempt to create the directory component
 #ifdef _WIN32
         if (CreateDirectory(path_copy, NULL) == 0) {
+            // Check if failure was because it already exists (which is OK)
             if (GetLastError() != ERROR_ALREADY_EXISTS) {
-                log_message(LOG_LEVEL_ERROR, "Failed to create log directory component: %s (Error: %lu)", path_copy, GetLastError());
-                result = -1;
-                break;
+                fprintf(stderr, "[ERROR] Failed to create log directory component: %s (Error: %lu)\n", path_copy, GetLastError());
+                result = -1; // Mark failure
             }
         }
 #else
-        if (mkdir(path_copy, 0755) != 0) {
+        if (mkdir(path_copy, 0755) != 0) { // Use standard POSIX permissions
+            // Check if failure was because it already exists (which is OK)
             if (errno != EEXIST) {
-                log_message(LOG_LEVEL_ERROR, "Failed to create log directory component: %s (errno: %d - %s)", path_copy, errno, strerror(errno));
-                result = -1;
-                break;
+                fprintf(stderr, "[ERROR] Failed to create log directory component: %s (errno: %d - %s)\n", path_copy, errno, strerror(errno));
+                result = -1; // Mark failure
             }
         }
 #endif
-        *p = PATH_SEPARATOR[0]; // Restore separator
-        p++; // Move past the separator
+        // Restore the separator and move to the next component
+        *p = PATH_SEPARATOR[0];
+        p++;
     }
 
-    // Create the final directory component if loop didn't fail
+    // Attempt to create the final, full directory path if no error occurred yet
     if (result == 0) {
 #ifdef _WIN32
          if (CreateDirectory(path_copy, NULL) == 0) {
             if (GetLastError() != ERROR_ALREADY_EXISTS) {
-                log_message(LOG_LEVEL_ERROR, "Failed to create final log directory: %s (Error: %lu)", path_copy, GetLastError());
+                fprintf(stderr, "[ERROR] Failed to create final log directory: %s (Error: %lu)\n", path_copy, GetLastError());
                 result = -1;
             }
         }
 #else
          if (mkdir(path_copy, 0755) != 0) {
             if (errno != EEXIST) {
-                log_message(LOG_LEVEL_ERROR, "Failed to create final log directory: %s (errno: %d - %s)", path_copy, errno, strerror(errno));
+                fprintf(stderr, "[ERROR] Failed to create final log directory: %s (errno: %d - %s)\n", path_copy, errno, strerror(errno));
                 result = -1;
             }
         }
 #endif
     }
 
-
-    free(path_copy);
+    free(path_copy); // Free the duplicated path string
     return result;
 }
 
-/**
- * Initialize logging
- */
 int init_logging(const char* log_file_path, log_level_t level) {
-    // Ensure level is valid
+    // 1. Validate and set the global log level
     if (level < LOG_LEVEL_ERROR || level > LOG_LEVEL_DEBUG) {
-        level = LOG_LEVEL_INFO; // Default to INFO if invalid
+        fprintf(stderr, "[WARN] Invalid log level specified (%d), defaulting to INFO.\n", level);
+        level = LOG_LEVEL_INFO;
     }
     g_log_level = level;
 
-    // Close existing log file if any
+    // 2. Close any previously opened log file
     close_logging();
 
+    // 3. If a log file path is provided, attempt to open it
     if (log_file_path != NULL && strlen(log_file_path) > 0) {
-        // Create log directory if needed
+        // 3a. Ensure the directory exists
         if (create_log_directory(log_file_path) != 0) {
-            // Error already logged by create_log_directory
-            return -1;
+            // Error message already printed by create_log_directory
+            return -1; // Failed to create directory
         }
 
-        // Open log file in append mode using platform-specific safe function
+        // 3b. Open the log file in append mode ("a")
 #ifdef _WIN32
+        // Use fopen_s on Windows for security
         errno_t err = fopen_s(&g_log_file, log_file_path, "a");
         if (err != 0 || g_log_file == NULL) {
             char err_buf[128];
-            strerror_s(err_buf, sizeof(err_buf), err); // Get error message for errno_t
-            log_message(LOG_LEVEL_ERROR, "Failed to open log file '%s': %s (errno: %d)", log_file_path, err_buf, err);
+            strerror_s(err_buf, sizeof(err_buf), err);
+            // Use fprintf directly in case log_message relies on the file pointer
+            fprintf(stderr, "[ERROR] Failed to open log file '%s': %s (errno: %d)\n", log_file_path, err_buf, err);
             g_log_file = NULL; // Ensure it's NULL on failure
 #else
+        // Use standard fopen on POSIX
         g_log_file = fopen(log_file_path, "a");
         if (g_log_file == NULL) {
-            // Use log_message which will print to stderr
             char err_buf[128];
              if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-                 log_message(LOG_LEVEL_ERROR, "Failed to open log file '%s': %s (errno: %d)", log_file_path, err_buf, errno);
+                 fprintf(stderr, "[ERROR] Failed to open log file '%s': %s (errno: %d)\n", log_file_path, err_buf, errno);
              } else {
-                 log_message(LOG_LEVEL_ERROR, "Failed to open log file '%s': (errno: %d, strerror_r failed)", log_file_path, errno);
+                 fprintf(stderr, "[ERROR] Failed to open log file '%s': (errno: %d, strerror_r failed)\n", log_file_path, errno);
              }
 #endif
-            return -1;
+            return -1; // File open failed
         }
-        log_message(LOG_LEVEL_INFO, "Logging to file: %s", log_file_path);
+        // Log successful file opening (will go to stderr and the file itself)
+        log_message(LOG_LEVEL_INFO, "Logging initialized to file: %s (Level: %s)", log_file_path, g_log_level_names[g_log_level]);
     } else {
-         log_message(LOG_LEVEL_INFO, "File logging disabled.");
+         // Log that file logging is disabled (will go to stderr only)
+         log_message(LOG_LEVEL_INFO, "File logging disabled. Logging to stderr only. (Level: %s)", g_log_level_names[g_log_level]);
     }
 
-    return 0;
+    return 0; // Success
 }
 
-/**
- * Close logging
- */
 void close_logging(void) {
+    // Check if a log file is currently open
     if (g_log_file != NULL) {
+        // Log the closing event (will go to stderr and the file)
         log_message(LOG_LEVEL_INFO, "Closing log file.");
+        // Close the file stream
         fclose(g_log_file);
+        // Reset the global file pointer
         g_log_file = NULL;
     }
 }

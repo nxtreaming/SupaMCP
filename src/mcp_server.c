@@ -32,27 +32,59 @@ struct mcp_server {
     mcp_server_resource_handler_t resource_handler;
     void* resource_handler_user_data;
     mcp_server_tool_handler_t tool_handler;
-    void* tool_handler_user_data;
+    void* tool_handler_user_data;       /**< User data pointer for the tool handler. */
 };
 
-// Message handling - returns malloc'd response string or NULL
-static char* handle_message(mcp_server_t* server, const void* data, size_t size, int* error_code);
-static char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code); // Pass arena, returns response string
+// --- Static Function Declarations ---
 
-// Request handlers (pass arena for parsing params) - return malloc'd response string or NULL
+// Main message handler called by the transport layer.
+// Parses the incoming JSON, determines message type, and dispatches accordingly.
+// Returns a malloc'd JSON string response for requests, or NULL otherwise.
+static char* handle_message(mcp_server_t* server, const void* data, size_t size, int* error_code);
+
+// Handles a parsed request message. Dispatches to specific method handlers.
+// Uses the provided arena for parsing request parameters.
+// Returns a malloc'd JSON string response.
+static char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
+
+// Specific request handler implementations.
+// Use the provided arena for parsing parameters if needed.
+// Return a malloc'd JSON string response (success or error).
 static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
 static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
 static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
 static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
 static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
 
-// Transport callback - matches new signature
+// Helper functions for creating response strings (always use malloc).
+static char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message);
+static char* create_success_response(uint64_t id, char* result_str); // Takes ownership of result_str
+
+
+// --- Transport Callback ---
+
+/**
+ * @internal
+ * @brief Callback function passed to the transport layer.
+ *
+ * This function is invoked by the transport when a complete message is received.
+ * It acts as the entry point for message processing within the server core.
+ *
+ * @param user_data Pointer to the mcp_server_t instance.
+ * @param data Pointer to the received raw message data.
+ * @param size Size of the received data.
+ * @param[out] error_code Pointer to store potential errors during callback processing itself (not application errors).
+ * @return A malloc'd string containing the JSON response to send back (for requests), or NULL.
+ *         The transport layer is responsible for freeing this string.
+ */
 static char* transport_message_callback(void* user_data, const void* data, size_t size, int* error_code) {
     mcp_server_t* server = (mcp_server_t*)user_data;
+    // Delegate processing to the main message handler.
     return handle_message(server, data, size, error_code);
 }
 
-// Server creation and management
+// --- Public API Implementation ---
+
 mcp_server_t* mcp_server_create(
     const mcp_server_config_t* config,
     const mcp_server_capabilities_t* capabilities
@@ -290,7 +322,22 @@ int mcp_server_process_message(
     return error_code;
 }
 
-// Message handling - Use Arena Allocator, returns malloc'd response string or NULL
+
+// --- Internal Message Handling ---
+
+/**
+ * @internal
+ * @brief Parses and handles a single incoming message.
+ *
+ * Uses an arena for temporary allocations during parsing. Determines message type
+ * and dispatches to the appropriate handler (handle_request or handles notifications/responses).
+ *
+ * @param server The server instance.
+ * @param data Raw message data (expected to be null-terminated JSON string).
+ * @param size Size of the data.
+ * @param[out] error_code Set to MCP_ERROR_NONE on success, or an error code on failure (e.g., parse error).
+ * @return A malloc'd JSON string response if the message was a request, NULL otherwise (or on error).
+ */
 static char* handle_message(mcp_server_t* server, const void* data, size_t size, int* error_code) {
     if (server == NULL || data == NULL || size == 0 || error_code == NULL) {
         if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -341,16 +388,25 @@ static char* handle_message(mcp_server_t* server, const void* data, size_t size,
     // Free the message structure contents (which used malloc/strdup)
     mcp_message_release_contents(&message);
 
-    // Reset or destroy the arena for this cycle
-    // Reset is faster if we expect similar allocation patterns next time
-    mcp_arena_reset(&arena);
-    // Or destroy if memory usage needs to be minimized between messages
-    mcp_arena_destroy(&arena); // Destroy arena after processing one message
+    // Clean up the arena used for this message cycle.
+    // Destroy is chosen here to release memory blocks back to the system,
+    // assuming message sizes might vary significantly. Reset could be used
+    // for potentially higher performance if memory usage isn't a concern.
+    mcp_arena_destroy(&arena);
 
     return response_str; // Return malloc'd response string (or NULL)
 }
 
-// Pass arena for parsing params, returns malloc'd response string or NULL
+/**
+ * @internal
+ * @brief Handles a parsed request message by dispatching to the correct method handler.
+ *
+ * @param server The server instance.
+ * @param arena Arena used for parsing the request (can be used by handlers for param parsing).
+ * @param request Pointer to the parsed request structure.
+ * @param[out] error_code Set to MCP_ERROR_NONE on success, or an error code if the method is not found.
+ * @return A malloc'd JSON string response (success or error response).
+ */
 static char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
     if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -390,50 +446,70 @@ static char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_
     }
 }
 
-// --- Request Handlers ---
-// These now parse params using the provided arena and return malloc'd response string
+// --- Internal Request Handler Implementations ---
 
-// Helper to create error response string
+/**
+ * @internal
+ * @brief Helper function to construct a JSON-RPC error response string.
+ * @param id The request ID.
+ * @param code The MCP error code.
+ * @param message The error message string (typically a const literal).
+ * @return A malloc'd JSON string representing the error response, or NULL on allocation failure.
+ */
 static char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message) {
-    mcp_response_t response;
+    mcp_response_t response; // Stack allocation is fine here
     response.id = id;
     response.error_code = code;
-    response.error_message = message; // Use const string
+    response.error_message = message; // String literal, no copy needed
     response.result = NULL;
 
-    mcp_message_t msg;
+    mcp_message_t msg; // Stack allocation
     msg.type = MCP_MESSAGE_TYPE_RESPONSE;
-    msg.response = response; // Copy the stack response struct
+    msg.response = response;
 
-    return mcp_json_stringify_message(&msg); // Returns malloc'd string or NULL
+    // Stringify the response message (allocates the final string)
+    return mcp_json_stringify_message(&msg);
 }
 
-// Helper to create success response string from result string (takes ownership)
+/**
+ * @internal
+ * @brief Helper function to construct a JSON-RPC success response string.
+ * @param id The request ID.
+ * @param result_str A malloc'd string containing the JSON representation of the result.
+ *                   This function takes ownership of this string and frees it.
+ * @return A malloc'd JSON string representing the success response, or NULL on allocation failure.
+ */
 static char* create_success_response(uint64_t id, char* result_str) {
-    mcp_response_t response;
+    mcp_response_t response; // Stack allocation
     response.id = id;
     response.error_code = MCP_ERROR_NONE;
     response.error_message = NULL;
-    response.result = result_str; // Pass ownership (will be freed below)
+    // Temporarily assign the result string pointer. The stringify function
+    // will handle embedding it correctly.
+    response.result = result_str;
 
-    mcp_message_t msg;
+    mcp_message_t msg; // Stack allocation
     msg.type = MCP_MESSAGE_TYPE_RESPONSE;
-    msg.response = response; // Copy the stack response struct
+    msg.response = response;
 
-    // Stringify the message. mcp_json_stringify_message makes its own copy
-    // of the result string if needed (or parses it if it's complex JSON).
+    // Stringify the complete response message (allocates the final string)
     char* response_msg_str = mcp_json_stringify_message(&msg);
 
-    // Free the original result string passed into this helper
+    // Free the original result string now that stringify is done with it.
     free(result_str);
 
-    return response_msg_str; // Return malloc'd message string or NULL
+    return response_msg_str;
 }
 
-
+/**
+ * @internal
+ * @brief Handles the 'list_resources' request.
+ * Iterates through the server's registered resources and builds a JSON response.
+ * Uses malloc for building the JSON response structure.
+ */
 static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
-    // This request has no parameters, arena is not used for parsing here
-    (void)arena; // Mark arena as unused
+    // This request has no parameters, arena is not used for parsing here.
+    (void)arena;
 
     if (server == NULL || request == NULL || error_code == NULL) {
          if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -446,10 +522,11 @@ static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* ar
         return create_error_response(request->id, *error_code, "Resources not supported");
     }
 
-    // Create response JSON (uses malloc for nodes/strings via NULL arena)
+    // Create response JSON structure using malloc (not arena) because the
+    // resulting string needs to outlive the current message handling cycle.
     mcp_json_t* resources_json = mcp_json_array_create(NULL);
     if (!resources_json) {
-        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
         return create_error_response(request->id, *error_code, "Failed to create resources array");
     }
 
@@ -491,12 +568,18 @@ static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* ar
         return create_error_response(request->id, *error_code, "Failed to stringify result");
     }
 
-    // Create the final response message string (takes ownership of result_str)
+    // Create the final success response message string (takes ownership of result_str)
     return create_success_response(request->id, result_str);
 }
 
+/**
+ * @internal
+ * @brief Handles the 'list_resource_templates' request.
+ * Iterates through the server's registered templates and builds a JSON response.
+ * Uses malloc for building the JSON response structure.
+ */
 static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
-    // No params, arena unused here
+    // No params, arena unused here.
     (void)arena;
 
     if (server == NULL || request == NULL || error_code == NULL) {
@@ -510,10 +593,10 @@ static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_ar
         return create_error_response(request->id, *error_code, "Resources not supported");
     }
 
-    // Create response JSON (uses malloc)
+    // Create response JSON structure using malloc.
     mcp_json_t* templates_json = mcp_json_array_create(NULL);
      if (!templates_json) {
-         *error_code = MCP_ERROR_INTERNAL_ERROR;
+         *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
          return create_error_response(request->id, *error_code, "Failed to create templates array");
      }
 
@@ -558,6 +641,12 @@ static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_ar
     return create_success_response(request->id, result_str);
 }
 
+/**
+ * @internal
+ * @brief Handles the 'read_resource' request.
+ * Parses the 'uri' parameter using the provided arena, calls the registered
+ * resource handler, and builds the JSON response (using malloc).
+ */
 static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
     if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
          if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -607,12 +696,13 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
         // Arena handles params_json cleanup
     }
 
-    // Create response JSON (uses malloc)
+    // Create response JSON structure using malloc.
     mcp_json_t* contents_json = mcp_json_array_create(NULL);
     if (!contents_json) {
+        // Free handler-allocated content if JSON creation fails
         for (size_t i = 0; i < content_count; i++) mcp_content_item_free(&content_items[i]);
         free(content_items);
-        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
         return create_error_response(request->id, *error_code, "Failed to create contents array");
     }
 
@@ -658,12 +748,18 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
         return create_error_response(request->id, *error_code, "Failed to stringify result");
     }
 
-    // Arena handles params_json cleanup via caller
+    // Arena handles params_json cleanup via handle_message caller.
     return create_success_response(request->id, result_str);
 }
 
+/**
+ * @internal
+ * @brief Handles the 'list_tools' request.
+ * Iterates through the server's registered tools and builds a JSON response
+ * including the input schema for each tool. Uses malloc for building the response.
+ */
 static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
-    // No params, arena unused
+    // No params, arena unused.
     (void)arena;
 
     if (server == NULL || request == NULL || error_code == NULL) {
@@ -677,10 +773,10 @@ static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena,
         return create_error_response(request->id, *error_code, "Tools not supported");
     }
 
-    // Create response JSON (uses malloc)
+    // Create response JSON structure using malloc.
     mcp_json_t* tools_json = mcp_json_array_create(NULL);
     if (!tools_json) {
-        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
         return create_error_response(request->id, *error_code, "Failed to create tools array");
     }
 
@@ -782,6 +878,12 @@ static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena,
     return create_success_response(request->id, result_str);
 }
 
+/**
+ * @internal
+ * @brief Handles the 'call_tool' request.
+ * Parses the 'name' and 'arguments' parameters using the provided arena,
+ * calls the registered tool handler, and builds the JSON response (using malloc).
+ */
 static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
     if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
          if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -841,12 +943,13 @@ static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, 
         return create_error_response(request->id, *error_code, "Tool handler failed or tool not found");
     }
 
-    // Create response JSON (uses malloc)
+    // Create response JSON structure using malloc.
     mcp_json_t* content_json = mcp_json_array_create(NULL);
     if (!content_json) {
+         // Free handler-allocated content if JSON creation fails
          for (size_t i = 0; i < content_count; i++) mcp_content_item_free(&content_items[i]);
          free(content_items);
-         *error_code = MCP_ERROR_INTERNAL_ERROR;
+         *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
          return create_error_response(request->id, *error_code, "Failed to create content array");
     }
 

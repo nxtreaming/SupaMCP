@@ -71,6 +71,10 @@ static int recv_exact_client(socket_t sock, char* buf, size_t len, bool* running
 
 // --- Static Implementation Functions ---
 
+/**
+ * @internal
+ * @brief Initializes Winsock if on Windows. No-op otherwise.
+ */
 #ifdef _WIN32
 static void initialize_winsock_client() {
     WSADATA wsaData;
@@ -84,10 +88,20 @@ static void initialize_winsock_client() {
 static void initialize_winsock_client() { /* No-op on non-Windows */ }
 #endif
 
-// Helper function to send exactly n bytes to a socket
+/**
+ * @internal
+ * @brief Helper function to reliably send a specified number of bytes over a socket.
+ * Handles potential partial sends. Checks the running flag for interruption.
+ * @param sock The socket descriptor.
+ * @param buf Buffer containing the data to send.
+ * @param len Number of bytes to send.
+ * @param running_flag Pointer to the transport's running flag for interruption check.
+ * @return 0 on success, -1 on socket error, -2 if interrupted by stop signal.
+ */
 static int send_exact_client(socket_t sock, const char* buf, size_t len, bool* running_flag) {
     size_t total_sent = 0;
     while (total_sent < len) {
+        // Check if the transport has been stopped
         if (running_flag && !(*running_flag)) return -2; // Interrupted by stop signal
 
 #ifdef _WIN32
@@ -102,13 +116,23 @@ static int send_exact_client(socket_t sock, const char* buf, size_t len, bool* r
         }
         total_sent += bytes_sent;
     }
-    return 0; // Return 0 on success, -1 on error, -2 on interrupt
+    return 0;
 }
 
-// Helper function to read exactly n bytes from a socket
+/**
+ * @internal
+ * @brief Helper function to reliably receive a specified number of bytes from a socket.
+ * Handles potential partial reads. Checks the running flag for interruption.
+ * @param sock The socket descriptor.
+ * @param buf Buffer to store the received data.
+ * @param len Number of bytes to receive.
+ * @param running_flag Pointer to the transport's running flag for interruption check.
+ * @return 1 on success, 0 on graceful connection close, -1 on socket error, -2 if interrupted by stop signal.
+ */
 static int recv_exact_client(socket_t sock, char* buf, size_t len, bool* running_flag) {
     size_t total_read = 0;
     while (total_read < len) {
+        // Check if the transport has been stopped
         if (running_flag && !(*running_flag)) return -2; // Interrupted by stop signal
 
 #ifdef _WIN32
@@ -125,10 +149,17 @@ static int recv_exact_client(socket_t sock, char* buf, size_t len, bool* running
         }
         total_read += bytes_read;
     }
-    return 1; // Return 1 on success, 0 on close, -1 on error, -2 on interrupt
+    return 1;
 }
 
-// Thread function to handle receiving messages from the server
+/**
+ * @internal
+ * @brief Background thread function responsible for receiving messages from the server.
+ * Reads messages using length-prefix framing, calls the message callback for processing,
+ * and calls the error callback if fatal transport errors occur.
+ * @param arg Pointer to the mcp_transport_t handle.
+ * @return 0 on Windows, NULL on POSIX.
+ */
 #ifdef _WIN32
 static DWORD WINAPI tcp_client_receive_thread_func(LPVOID arg) {
 #else
@@ -144,15 +175,17 @@ static void* tcp_client_receive_thread_func(void* arg) {
 
     log_message(LOG_LEVEL_DEBUG, "TCP Client receive thread started for socket %d", (int)data->sock);
 
+    // Loop while the transport is marked as running and connected
     while (data->running && data->connected) {
-        // 1. Read the 4-byte length prefix
-        read_result = recv_exact_client(data->sock, length_buf, (size_t)4, &data->running); // Cast 4 to size_t
+        // 1. Read the 4-byte length prefix (network byte order)
+        read_result = recv_exact_client(data->sock, length_buf, (size_t)4, &data->running);
 
+        // Check result of reading the length prefix
         if (read_result == SOCKET_ERROR || read_result == 0) { // Error or connection closed
-             if (data->running) { // Avoid error log if stopping intentionally
-                 if (read_result == 0) {
-                     log_message(LOG_LEVEL_INFO, "Server disconnected socket %d.", (int)data->sock);
-                 } else {
+             if (data->running) { // Log only if not intentionally stopping
+                 if (read_result == 0) { // Graceful close by server
+                     log_message(LOG_LEVEL_INFO, "Server disconnected socket %d (length read).", (int)data->sock);
+                 } else { // Socket error
                      char err_buf[128];
 #ifdef _WIN32
                      strerror_s(err_buf, sizeof(err_buf), sock_errno);
@@ -167,17 +200,17 @@ static void* tcp_client_receive_thread_func(void* arg) {
                  }
              }
              data->connected = false; // Mark as disconnected
-             // Signal error back to client logic if running
+             // Signal transport error back to the main client logic if running
              if (data->running && transport->error_callback) {
                  transport->error_callback(transport->callback_user_data, MCP_ERROR_TRANSPORT_ERROR);
-                 error_signaled = true;
+                 error_signaled = true; // Avoid signaling multiple times if body read also fails
              }
-             break; // Exit thread
-        } else if (read_result == -2) {
-             log_message(LOG_LEVEL_DEBUG, "Client receive thread for socket %d interrupted by stop signal.", (int)data->sock);
-             break; // Interrupted by stop
+             break; // Exit receive loop
+        } else if (read_result == -2) { // Interrupted by stop signal
+             log_message(LOG_LEVEL_DEBUG, "Client receive thread for socket %d interrupted by stop signal (length read).", (int)data->sock);
+             break; // Exit receive loop
         }
-        // read_result == 1 means success
+        // read_result == 1 means success reading length
 
         // 2. Decode length (Network to Host byte order)
         memcpy(&message_length_net, length_buf, 4);
@@ -186,36 +219,37 @@ static void* tcp_client_receive_thread_func(void* arg) {
         // 3. Sanity check length
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
              log_message(LOG_LEVEL_ERROR, "Invalid message length received from server: %u on socket %d", message_length_host, (int)data->sock);
-             data->connected = false; // Mark as disconnected
-             // Signal error back to client logic if running
+             data->connected = false; // Treat as fatal error
+             // Signal error back to client logic if running and not already signaled
              if (data->running && transport->error_callback && !error_signaled) {
                  transport->error_callback(transport->callback_user_data, MCP_ERROR_PARSE_ERROR); // Or a specific framing error?
                  error_signaled = true;
              }
-             break; // Invalid length, stop processing
+             break; // Exit receive loop
         }
 
         // 4. Allocate buffer for message body
         message_buf = (char*)malloc(message_length_host + 1); // +1 for null terminator
         if (message_buf == NULL) {
              log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer for message size %u on socket %d", message_length_host, (int)data->sock);
-             data->connected = false; // Mark as disconnected
-             // Signal error back to client logic if running
+             data->connected = false; // Treat as fatal error
+             // Signal error back to client logic if running and not already signaled
              if (data->running && transport->error_callback && !error_signaled) {
                  transport->error_callback(transport->callback_user_data, MCP_ERROR_INTERNAL_ERROR); // Allocation error
                  error_signaled = true;
              }
-             break; // Allocation failure
+             break; // Exit receive loop
         }
 
         // 5. Read the message body
-        read_result = recv_exact_client(data->sock, message_buf, (size_t)message_length_host, &data->running); // Cast uint32_t to size_t
+        read_result = recv_exact_client(data->sock, message_buf, (size_t)message_length_host, &data->running);
 
+         // Check result of reading the message body
          if (read_result == SOCKET_ERROR || read_result == 0) { // Error or connection closed
-             if (data->running) {
-                 if (read_result == 0) {
+             if (data->running) { // Log only if not intentionally stopping
+                 if (read_result == 0) { // Graceful close by server
                      log_message(LOG_LEVEL_INFO, "Server disconnected socket %d while reading body.", (int)data->sock);
-                 } else {
+                 } else { // Socket error
                      char err_buf[128];
 #ifdef _WIN32
                      strerror_s(err_buf, sizeof(err_buf), sock_errno);
@@ -229,22 +263,22 @@ static void* tcp_client_receive_thread_func(void* arg) {
 #endif
                  }
               }
-              free(message_buf);
+              free(message_buf); // Free partially allocated buffer
               data->connected = false;
-              // Signal error back to client logic if running
+              // Signal transport error back to the main client logic if running and not already signaled
               if (data->running && transport->error_callback && !error_signaled) {
                   transport->error_callback(transport->callback_user_data, MCP_ERROR_TRANSPORT_ERROR);
                   error_signaled = true;
               }
-              break; // Exit thread
-          } else if (read_result == -2) {
-              log_message(LOG_LEVEL_DEBUG, "Client receive thread for socket %d interrupted by stop signal.", (int)data->sock);
+              break; // Exit receive loop
+          } else if (read_result == -2) { // Interrupted by stop signal
+              log_message(LOG_LEVEL_DEBUG, "Client receive thread for socket %d interrupted by stop signal (body read).", (int)data->sock);
               free(message_buf);
-              break; // Interrupted by stop
+              break; // Exit receive loop
           }
-         // read_result == 1 means success
+         // read_result == 1 means success reading body
 
-        // 6. Null-terminate and process the message via callback
+        // 6. Null-terminate the received data and pass it to the message callback
         message_buf[message_length_host] = '\0';
         if (transport->message_callback != NULL) {
             int callback_error_code = 0;
@@ -274,7 +308,13 @@ static void* tcp_client_receive_thread_func(void* arg) {
 #endif
 }
 
-// Connect to the server
+/**
+ * @internal
+ * @brief Establishes a TCP connection to the configured server host and port.
+ * Uses getaddrinfo for hostname resolution and attempts connection.
+ * @param data Pointer to the transport's internal data structure containing host, port, and socket field.
+ * @return 0 on successful connection, -1 on failure.
+ */
 static int connect_to_server(mcp_tcp_client_transport_data_t* data) {
     struct addrinfo hints, *servinfo, *p;
     int rv;
