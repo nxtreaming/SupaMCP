@@ -3,11 +3,11 @@
 #include <stdio.h>
 #include <assert.h>
 #include "mcp_json.h"
-#include "mcp_arena.h"
+#include "mcp_arena.h" // Include arena allocator header
 
 // --- Hash Table Implementation for JSON Objects ---
 // This uses a simple separate chaining hash table.
-// IMPORTANT: This internal implementation uses malloc/free/strdup/realloc
+// IMPORTANT: This internal implementation uses malloc/free/mcp_strdup/realloc
 //            for its own structures (buckets, entries, keys), *not* the arena
 //            passed to mcp_json_object_create. Only the mcp_json_t *value* nodes
 //            stored in the table might be arena-allocated if the caller used one.
@@ -22,7 +22,7 @@
  * @brief Represents a single key-value entry within a JSON object's hash table bucket.
  */
 typedef struct mcp_json_object_entry {
-    char* name;                         /**< Property name (key), allocated using strdup (malloc). */
+    char* name;                         /**< Property name (key), allocated using mcp_strdup (malloc). */
     mcp_json_t* value;                  /**< Property value (mcp_json_t node), allocated using arena or malloc by the caller. */
     struct mcp_json_object_entry* next; /**< Pointer to the next entry in the same bucket (separate chaining). */
 } mcp_json_object_entry_t;
@@ -80,7 +80,7 @@ struct mcp_json {
     union {
         bool boolean_value;     /**< Used if type is MCP_JSON_BOOLEAN. */
         double number_value;    /**< Used if type is MCP_JSON_NUMBER. */
-        char* string_value;     /**< Used if type is MCP_JSON_STRING. Allocated using malloc/strdup. */
+        char* string_value;     /**< Used if type is MCP_JSON_STRING. Allocated using malloc/mcp_strdup. */
         struct {
             mcp_json_t** items; /**< Dynamic array of item pointers. Allocated using malloc/realloc. */
             size_t count;       /**< Number of items currently in the array. */
@@ -138,7 +138,7 @@ mcp_json_t* mcp_json_number_create(mcp_arena_t* arena, double value) {
     return json;
 }
 
-// NOTE: String values *always* use strdup/malloc for the internal copy,
+// NOTE: String values *always* use mcp_strdup/malloc for the internal copy,
 // regardless of whether the node itself is arena-allocated.
 mcp_json_t* mcp_json_string_create(mcp_arena_t* arena, const char* value) {
     if (value == NULL) {
@@ -150,10 +150,10 @@ mcp_json_t* mcp_json_string_create(mcp_arena_t* arena, const char* value) {
         return NULL;
     }
     json->type = MCP_JSON_STRING;
-    // Duplicate the input string using malloc/strdup
-    json->string_value = strdup(value);
+    // Duplicate the input string using our helper
+    json->string_value = mcp_strdup(value);
     if (json->string_value == NULL) {
-        // strdup failed. If node was malloc'd, free it.
+        // mcp_strdup failed. If node was malloc'd, free it.
         // If node was arena'd, it will be cleaned up by arena reset/destroy,
         // but this indicates an error state.
         if (arena == NULL) free(json);
@@ -178,7 +178,7 @@ mcp_json_t* mcp_json_array_create(mcp_arena_t* arena) {
 }
 
 // NOTE: Object hash table structures (buckets, entries, keys) *always* use
-// malloc/realloc/strdup, regardless of whether the node itself is arena-allocated.
+// malloc/realloc/mcp_strdup, regardless of whether the node itself is arena-allocated.
 mcp_json_t* mcp_json_object_create(mcp_arena_t* arena) {
     // Allocate the node structure
     mcp_json_t* json = mcp_json_alloc_node(arena);
@@ -201,7 +201,7 @@ void mcp_json_destroy(mcp_json_t* json) {
         return;
     }
 
-    // This function only frees internally allocated data using malloc/strdup/realloc.
+    // This function only frees internally allocated data using malloc/mcp_strdup/realloc.
     // It does NOT free the mcp_json_t node itself.
     switch (json->type) {
         case MCP_JSON_STRING:
@@ -322,7 +322,7 @@ mcp_json_t* mcp_json_object_get_property(const mcp_json_t* json, const char* nam
     return (entry != NULL) ? entry->value : NULL;
 }
 
-// NOTE: The internal hash table uses malloc/strdup for keys and entries.
+// NOTE: The internal hash table uses malloc/mcp_strdup for keys and entries.
 //       The added `value` node's memory is managed by its original allocator (arena or malloc).
 //       The object takes ownership in the sense that mcp_json_destroy(object) will
 //       call mcp_json_destroy(value) later.
@@ -342,7 +342,7 @@ int mcp_json_object_delete_property(mcp_json_t* json, const char* name) {
     return mcp_json_object_table_delete(&json->object, name);
 }
 
-// NOTE: The returned array of names and the names themselves use malloc/strdup.
+// NOTE: The returned array of names and the names themselves use malloc/mcp_strdup.
 //       The caller is responsible for freeing them as described in the header.
 int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names_out, size_t* count_out) {
     if (json == NULL || names_out == NULL || count_out == NULL || json->type != MCP_JSON_OBJECT) {
@@ -368,10 +368,10 @@ int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names_out
         mcp_json_object_entry_t* entry = table->buckets[i];
         while (entry != NULL) {
             assert(current_index < table->count); // Internal consistency check
-            // Duplicate each name string using strdup (malloc)
-            (*names_out)[current_index] = strdup(entry->name);
+            // Duplicate each name string using our helper (malloc)
+            (*names_out)[current_index] = mcp_strdup(entry->name);
             if ((*names_out)[current_index] == NULL) {
-                // strdup failed, clean up already duplicated names and the array
+                // mcp_strdup failed, clean up already duplicated names and the array
                 for (size_t j = 0; j < current_index; j++) {
                     free((*names_out)[j]); // Free individual name strings
                 }
@@ -492,7 +492,7 @@ static int mcp_json_object_table_resize(mcp_json_object_table_t* table, size_t n
  * @brief Inserts or updates a key-value pair in the hash table.
  * Handles resizing if the load factor is exceeded.
  * Destroys the old value if the key already exists.
- * Allocates new entries and duplicates keys using malloc/strdup.
+ * Allocates new entries and duplicates keys using malloc/mcp_strdup.
  * @param arena Unused in this implementation (new entries always use malloc).
  * @param table The hash table.
  * @param name The property name (key).
@@ -535,13 +535,13 @@ static int mcp_json_object_table_set(mcp_arena_t* arena, mcp_json_object_table_t
     // Allocate the entry structure itself using malloc
     mcp_json_object_entry_t* new_entry = (mcp_json_object_entry_t*)malloc(sizeof(mcp_json_object_entry_t));
     if (new_entry == NULL) {
-        return -1; // Allocation failed
-    }
-    // Duplicate the key name using strdup (malloc)
-    new_entry->name = strdup(name);
-    if (new_entry->name == NULL) {
-        free(new_entry); // Free the partially allocated entry
-        return -1; // strdup failed
+         return -1; // Allocation failed
+     }
+     // Duplicate the key name using our helper (malloc)
+     new_entry->name = mcp_strdup(name);
+     if (new_entry->name == NULL) {
+         free(new_entry); // Free the partially allocated entry
+         return -1; // mcp_strdup failed
     }
     new_entry->value = value; // Store the pointer to the value node
     // Insert at the head of the bucket's linked list
@@ -598,12 +598,12 @@ static int mcp_json_object_table_delete(mcp_json_object_table_t* table, const ch
 // --- JSON Parser Implementation ---
 // Simple recursive descent parser.
 // Uses the provided arena (if not NULL) for allocating mcp_json_t nodes.
-// String values are always duplicated using malloc/strdup.
+// String values are always duplicated using malloc/mcp_strdup.
 
 // Forward declarations for parser helper functions (pass arena)
 static mcp_json_t* parse_value(mcp_arena_t* arena, const char** json);
 static void skip_whitespace(const char** json);
-static char* parse_string(const char** json); // Uses malloc/strdup, no arena
+static char* parse_string(const char** json); // Uses malloc/mcp_strdup, no arena
 static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json);
 static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json);
 static mcp_json_t* parse_number(mcp_arena_t* arena, const char** json);
@@ -614,7 +614,7 @@ static void skip_whitespace(const char** json) {
     }
 }
 
-// Uses malloc/strdup
+// Uses malloc/mcp_strdup
 static char* parse_string(const char** json) {
     if (**json != '"') {
         return NULL;
@@ -631,6 +631,9 @@ static char* parse_string(const char** json) {
         return NULL; // Unterminated string
     }
     size_t length = *json - start;
+    // Need to handle escape sequences properly here for accurate length/copy
+    // For simplicity, this basic parser doesn't handle escapes within the string value itself.
+    // A robust parser would need to allocate based on unescaped length and copy char by char.
     char* result = (char*)malloc(length + 1);
     if (result == NULL) {
         return NULL;
@@ -959,7 +962,7 @@ char* mcp_json_stringify(const mcp_json_t* json) {
 
 // --- MCP Message Parsing/Stringification ---
 // These functions now accept an arena for parsing the main JSON structure,
-// but still use malloc/strdup for strings within the mcp_message_t struct
+// but still use malloc/mcp_strdup for strings within the mcp_message_t struct
 // and for the stringified result/params.
 
 int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message_t* message) {
@@ -995,13 +998,13 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                 if (params == NULL || params->type == MCP_JSON_OBJECT || params->type == MCP_JSON_ARRAY) {
                     message->type = MCP_MESSAGE_TYPE_REQUEST;
                     message->request.id = (uint64_t)id->number_value; // TODO: Handle potential precision loss or non-integer?
-                    message->request.method = strdup(method->string_value);
+                    message->request.method = mcp_strdup(method->string_value);
                     message->request.params = (params != NULL) ? mcp_json_stringify(params) : NULL;
 
                     if (message->request.method != NULL && (params == NULL || message->request.params != NULL)) {
                         parse_status = 0; // Success
                     } else {
-                        // Allocation failure during stringify/strdup
+                        // Allocation failure during stringify/mcp_strdup
                         free(message->request.method); // Method might be allocated
                         free(message->request.params); // Params might be allocated
                         message->type = MCP_MESSAGE_TYPE_INVALID; // Reset type
@@ -1012,7 +1015,7 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
              // Check params type (object or array allowed, or omitted)
             if (params == NULL || params->type == MCP_JSON_OBJECT || params->type == MCP_JSON_ARRAY) {
                 message->type = MCP_MESSAGE_TYPE_NOTIFICATION;
-                message->notification.method = strdup(method->string_value);
+                message->notification.method = mcp_strdup(method->string_value);
                 message->notification.params = (params != NULL) ? mcp_json_stringify(params) : NULL;
 
                 if (message->notification.method != NULL && (params == NULL || message->notification.params != NULL)) {
@@ -1043,12 +1046,12 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                         // Message MUST be a string
                         if (msg != NULL && msg->type == MCP_JSON_STRING) {
                             message->response.error_code = (mcp_error_code_t)(int)code->number_value;
-                            message->response.error_message = strdup(msg->string_value);
+                            message->response.error_message = mcp_strdup(msg->string_value);
                             message->response.result = NULL;
                             if (message->response.error_message != NULL) {
                                 parse_status = 0; // Success
                             } else {
-                                // strdup failed
+                                // mcp_strdup failed
                                 message->type = MCP_MESSAGE_TYPE_INVALID;
                             }
                         }

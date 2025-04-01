@@ -98,10 +98,10 @@ mcp_server_t* mcp_server_create(
         return NULL;
     }
 
-    // Copy configuration (uses malloc/strdup)
-    server->config.name = config->name ? strdup(config->name) : NULL;
-    server->config.version = config->version ? strdup(config->version) : NULL;
-    server->config.description = config->description ? strdup(config->description) : NULL;
+    // Copy configuration (uses mcp_strdup)
+    server->config.name = config->name ? mcp_strdup(config->name) : NULL;
+    server->config.version = config->version ? mcp_strdup(config->version) : NULL;
+    server->config.description = config->description ? mcp_strdup(config->description) : NULL;
 
     // Copy capabilities
     server->capabilities = *capabilities;

@@ -2,6 +2,29 @@
 #include <string.h>
 #include "mcp_types.h"
 
+// --- Helper Functions ---
+
+/**
+ * @internal
+ * @brief Standard C equivalent of strdup. Allocates memory and copies string.
+ * @param s The null-terminated string to duplicate.
+ * @return Pointer to the newly allocated duplicated string, or NULL on error (NULL input or malloc failure).
+ * @note Caller is responsible for freeing the returned string.
+ */
+char* mcp_strdup(const char* s) { // Removed static keyword
+    if (s == NULL) {
+        return NULL;
+    }
+    size_t len = strlen(s) + 1; // +1 for null terminator
+    char* new_s = (char*)malloc(len);
+    if (new_s == NULL) {
+        return NULL; // malloc failed
+    }
+    memcpy(new_s, s, len); // Copy including null terminator
+    return new_s;
+}
+
+
 // --- Free Functions ---
 
 /**
@@ -12,7 +35,7 @@ void mcp_resource_free(mcp_resource_t* resource) {
         return; // Nothing to free
     }
 
-    // Free the duplicated strings within the struct (strdup uses malloc)
+    // Free the duplicated strings within the struct (mcp_strdup uses malloc)
     free(resource->uri);
     free(resource->name);
     free(resource->mime_type);
@@ -29,7 +52,7 @@ void mcp_resource_template_free(mcp_resource_template_t* tmpl) {
         return; // Nothing to free
     }
 
-    // Free the duplicated strings within the struct (strdup uses malloc)
+    // Free the duplicated strings within the struct (mcp_strdup uses malloc)
     free(tmpl->uri_template);
     free(tmpl->name);
     free(tmpl->mime_type);
@@ -50,14 +73,14 @@ void mcp_tool_free(mcp_tool_t* tool) {
         return; // Nothing to free
     }
 
-    // Free top-level strings (strdup uses malloc)
+    // Free top-level strings (mcp_strdup uses malloc)
     free(tool->name);
     free(tool->description);
 
     // Free the input schema array and the strings within each schema element
     if (tool->input_schema != NULL) {
         for (size_t i = 0; i < tool->input_schema_count; i++) {
-            // Free strings within each parameter schema (strdup uses malloc)
+            // Free strings within each parameter schema (mcp_strdup uses malloc)
             free(tool->input_schema[i].name);
             free(tool->input_schema[i].type);
             free(tool->input_schema[i].description);
@@ -81,7 +104,7 @@ void mcp_content_item_free(mcp_content_item_t* item) {
         return; // Nothing to free
     }
 
-    // Free the duplicated mime type string (strdup uses malloc)
+    // Free the duplicated mime type string (mcp_strdup uses malloc)
     free(item->mime_type);
     // Free the copied data buffer (malloc uses malloc)
     free(item->data);
@@ -101,7 +124,7 @@ void mcp_message_release_contents(mcp_message_t* message) {
     // Free members based on the message type
     switch (message->type) {
         case MCP_MESSAGE_TYPE_REQUEST:
-            // Method and params strings are typically malloc'd/strdup'd during parsing or creation
+            // Method and params strings are typically malloc'd/mcp_strdup'd during parsing or creation
             free(message->request.method);
             free(message->request.params); // Assumes params is a malloc'd string (e.g., from stringify)
             // Nullify to prevent double free if called again
@@ -109,7 +132,7 @@ void mcp_message_release_contents(mcp_message_t* message) {
             message->request.params = NULL;
             break;
         case MCP_MESSAGE_TYPE_RESPONSE:
-            // error_message and result are typically malloc'd/strdup'd during parsing or creation
+            // error_message and result are typically malloc'd/mcp_strdup'd during parsing or creation
             // Cast needed because error_message is const char* in struct, but we know it was malloc'd if set by parser/create
             free((void*)message->response.error_message);
             free(message->response.result); // Assumes result is a malloc'd string (e.g., from stringify)
@@ -118,7 +141,7 @@ void mcp_message_release_contents(mcp_message_t* message) {
             message->response.result = NULL;
             break;
         case MCP_MESSAGE_TYPE_NOTIFICATION:
-            // Method and params strings are typically malloc'd/strdup'd during parsing or creation
+            // Method and params strings are typically malloc'd/mcp_strdup'd during parsing or creation
             free(message->notification.method);
             free(message->notification.params); // Assumes params is a malloc'd string
             // Nullify to prevent double free
@@ -138,7 +161,7 @@ void mcp_message_release_contents(mcp_message_t* message) {
 
 /**
  * @brief Creates and allocates an mcp_resource_t structure using malloc.
- * Duplicates input strings using strdup.
+ * Duplicates input strings using mcp_strdup.
  */
 mcp_resource_t* mcp_resource_create(
     const char* uri,
@@ -160,7 +183,7 @@ mcp_resource_t* mcp_resource_create(
 
     // Duplicate URI string if provided
     if (uri != NULL) {
-        resource->uri = strdup(uri);
+        resource->uri = mcp_strdup(uri);
         if (resource->uri == NULL) {
             mcp_resource_free(resource); // Cleanup partially allocated struct
             return NULL;
@@ -169,7 +192,7 @@ mcp_resource_t* mcp_resource_create(
 
     // Duplicate name string if provided
     if (name != NULL) {
-        resource->name = strdup(name);
+        resource->name = mcp_strdup(name);
         if (resource->name == NULL) {
             mcp_resource_free(resource); // Cleanup partially allocated struct
             return NULL;
@@ -178,7 +201,7 @@ mcp_resource_t* mcp_resource_create(
 
     // Duplicate MIME type string if provided
     if (mime_type != NULL) {
-        resource->mime_type = strdup(mime_type);
+        resource->mime_type = mcp_strdup(mime_type);
         if (resource->mime_type == NULL) {
             mcp_resource_free(resource); // Cleanup partially allocated struct
             return NULL;
@@ -187,7 +210,7 @@ mcp_resource_t* mcp_resource_create(
 
     // Duplicate description string if provided
     if (description != NULL) {
-        resource->description = strdup(description);
+        resource->description = mcp_strdup(description);
         if (resource->description == NULL) {
             mcp_resource_free(resource); // Cleanup partially allocated struct
             return NULL;
@@ -199,7 +222,7 @@ mcp_resource_t* mcp_resource_create(
 
 /**
  * @brief Creates and allocates an mcp_resource_template_t structure using malloc.
- * Duplicates input strings using strdup.
+ * Duplicates input strings using mcp_strdup.
  */
 mcp_resource_template_t* mcp_resource_template_create(
     const char* uri_template,
@@ -221,7 +244,7 @@ mcp_resource_template_t* mcp_resource_template_create(
 
     // Duplicate URI template string if provided
     if (uri_template != NULL) {
-        tmpl->uri_template = strdup(uri_template);
+        tmpl->uri_template = mcp_strdup(uri_template);
         if (tmpl->uri_template == NULL) {
             mcp_resource_template_free(tmpl);
             return NULL;
@@ -230,7 +253,7 @@ mcp_resource_template_t* mcp_resource_template_create(
 
     // Duplicate name string if provided
     if (name != NULL) {
-        tmpl->name = strdup(name);
+        tmpl->name = mcp_strdup(name);
         if (tmpl->name == NULL) {
             mcp_resource_template_free(tmpl);
             return NULL;
@@ -239,7 +262,7 @@ mcp_resource_template_t* mcp_resource_template_create(
 
     // Duplicate MIME type string if provided
     if (mime_type != NULL) {
-        tmpl->mime_type = strdup(mime_type);
+        tmpl->mime_type = mcp_strdup(mime_type);
         if (tmpl->mime_type == NULL) {
             mcp_resource_template_free(tmpl);
             return NULL;
@@ -248,7 +271,7 @@ mcp_resource_template_t* mcp_resource_template_create(
 
     // Duplicate description string if provided
     if (description != NULL) {
-        tmpl->description = strdup(description);
+        tmpl->description = mcp_strdup(description);
         if (tmpl->description == NULL) {
             mcp_resource_template_free(tmpl);
             return NULL;
@@ -260,7 +283,7 @@ mcp_resource_template_t* mcp_resource_template_create(
 
 /**
  * @brief Creates and allocates an mcp_tool_t structure using malloc.
- * Duplicates input strings using strdup. Initializes schema to empty.
+ * Duplicates input strings using mcp_strdup. Initializes schema to empty.
  */
 mcp_tool_t* mcp_tool_create(
     const char* name,
@@ -280,7 +303,7 @@ mcp_tool_t* mcp_tool_create(
 
     // Duplicate name string if provided
     if (name != NULL) {
-        tool->name = strdup(name);
+        tool->name = mcp_strdup(name);
         if (tool->name == NULL) {
             mcp_tool_free(tool); // Use free function for cleanup
             return NULL;
@@ -294,7 +317,7 @@ mcp_tool_t* mcp_tool_create(
 
     // Duplicate description string if provided
     if (description != NULL) {
-        tool->description = strdup(description);
+        tool->description = mcp_strdup(description);
         if (tool->description == NULL) {
             mcp_tool_free(tool);
             return NULL;
@@ -305,7 +328,7 @@ mcp_tool_t* mcp_tool_create(
 }
 
 /**
- * @brief Adds a parameter definition to a tool's input schema using malloc/realloc/strdup.
+ * @brief Adds a parameter definition to a tool's input schema using malloc/realloc/mcp_strdup.
  */
 int mcp_tool_add_param(
     mcp_tool_t* tool,
@@ -326,25 +349,25 @@ int mcp_tool_add_param(
     new_param.required = required;
 
     // Duplicate name string
-    new_param.name = strdup(name);
+    new_param.name = mcp_strdup(name);
     if (new_param.name == NULL) {
-        return -1; // strdup failed
+        return -1; // mcp_strdup failed
     }
 
     // Duplicate type string
-    new_param.type = strdup(type);
+    new_param.type = mcp_strdup(type);
     if (new_param.type == NULL) {
         free(new_param.name); // Clean up already allocated name
-        return -1; // strdup failed
+        return -1; // mcp_strdup failed
     }
 
     // Duplicate description string if provided
     if (description != NULL) {
-        new_param.description = strdup(description);
+        new_param.description = mcp_strdup(description);
         if (new_param.description == NULL) {
             free(new_param.name);
             free(new_param.type);
-            return -1; // strdup failed
+            return -1; // mcp_strdup failed
         }
     }
 
@@ -373,7 +396,7 @@ int mcp_tool_add_param(
 
 /**
  * @brief Creates and allocates an mcp_content_item_t structure using malloc.
- * Duplicates mime_type string using strdup and copies data using malloc/memcpy.
+ * Duplicates mime_type string using mcp_strdup and copies data using malloc/memcpy.
  */
 mcp_content_item_t* mcp_content_item_create(
     mcp_content_type_t type,
@@ -395,7 +418,7 @@ mcp_content_item_t* mcp_content_item_create(
 
     // Duplicate mime_type string if provided
     if (mime_type != NULL) {
-        item->mime_type = strdup(mime_type);
+        item->mime_type = mcp_strdup(mime_type);
         if (item->mime_type == NULL) {
             mcp_content_item_free(item); // Use free function for cleanup
             return NULL;
@@ -439,7 +462,7 @@ mcp_message_t* mcp_request_create(
 
     // Duplicate method string
     if (method != NULL) {
-        message->request.method = strdup(method);
+        message->request.method = mcp_strdup(method);
         if (message->request.method == NULL) {
             // No need to call release_contents as nothing else was allocated
             free(message);
@@ -454,7 +477,7 @@ mcp_message_t* mcp_request_create(
 
     // Duplicate params string (assuming input is string)
     if (params != NULL) {
-        message->request.params = strdup((const char*)params);
+        message->request.params = mcp_strdup((const char*)params);
         if (message->request.params == NULL) {
             mcp_message_release_contents(message); // Free already allocated method
             free(message);
@@ -486,7 +509,7 @@ mcp_message_t* mcp_response_create(
     // Duplicate error message string if provided
     if (error_message != NULL) {
         // Need to cast away const for assignment, but free needs void* anyway
-        message->response.error_message = strdup(error_message);
+        message->response.error_message = mcp_strdup(error_message);
         if (message->response.error_message == NULL) {
             free(message);
             return NULL;
@@ -495,7 +518,7 @@ mcp_message_t* mcp_response_create(
 
     // Duplicate result string if provided (and no error)
     if (error_code == MCP_ERROR_NONE && result != NULL) {
-        message->response.result = strdup((const char*)result);
+        message->response.result = mcp_strdup((const char*)result);
         if (message->response.result == NULL) {
             mcp_message_release_contents(message); // Free potential error message
             free(message);
@@ -522,7 +545,7 @@ mcp_message_t* mcp_notification_create(
 
     // Duplicate method string
     if (method != NULL) {
-        message->notification.method = strdup(method);
+        message->notification.method = mcp_strdup(method);
         if (message->notification.method == NULL) {
             free(message);
             return NULL;
@@ -536,7 +559,7 @@ mcp_message_t* mcp_notification_create(
 
     // Duplicate params string if provided
     if (params != NULL) {
-        message->notification.params = strdup((const char*)params);
+        message->notification.params = mcp_strdup((const char*)params);
         if (message->notification.params == NULL) {
             mcp_message_release_contents(message); // Free allocated method
             free(message);

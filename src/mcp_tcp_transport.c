@@ -854,12 +854,12 @@ mcp_transport_t* mcp_transport_tcp_create(const char* host, uint16_t port) {
     mcp_tcp_transport_data_t* tcp_data = (mcp_tcp_transport_data_t*)calloc(1, sizeof(mcp_tcp_transport_data_t)); // Use calloc for zero-init
     if (tcp_data == NULL) {
         free(transport);
-        return NULL;
-    }
+         return NULL;
+     }
 
-    tcp_data->host = strdup(host);
-    if (tcp_data->host == NULL) {
-        free(tcp_data);
+     tcp_data->host = mcp_strdup(host); // Use helper
+     if (tcp_data->host == NULL) {
+         free(tcp_data);
         free(transport);
         return NULL;
     }

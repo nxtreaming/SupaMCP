@@ -323,7 +323,9 @@ static void client_transport_error_callback(void* user_data, int transport_error
             *(entry->request.error_code_ptr) = MCP_ERROR_TRANSPORT_ERROR; // Use a generic transport error
             // Avoid overwriting existing error message if one was somehow set
             if (*(entry->request.error_message_ptr) == NULL) {
-                 *(entry->request.error_message_ptr) = strdup("Transport connection error");
+                 // Allocate error message using our helper
+                 *(entry->request.error_message_ptr) = mcp_strdup("Transport connection error");
+                 // If mcp_strdup fails, the message pointer remains NULL.
             }
 
             // Update status to ERROR
@@ -571,19 +573,29 @@ static int mcp_client_send_request(
 #endif
 
     // 5. Return status based on wait result
-    if (wait_status == -2) {
+    if (wait_status == -2) { // Timeout case
         fprintf(stderr, "Request %llu timed out.\n", (unsigned long long)pending_req.id);
         *error_code = MCP_ERROR_TRANSPORT_ERROR; // Use a generic transport error for timeout
-        *error_message = strdup("Request timed out");
-        return -1;
-    } else if (wait_status != 0) {
+        // Allocate error message using our helper
+        *error_message = mcp_strdup("Request timed out");
+        // If mcp_strdup fails, error_message will be NULL, which is acceptable
+        return -1; // Return error for timeout
+    } else if (wait_status != 0) { // Other wait error or error signaled by callback
          fprintf(stderr, "Error waiting for response for request %llu.\n", (unsigned long long)pending_req.id);
-         // error_code and error_message should have been set by the callback if status is ERROR
-         if (*error_code == MCP_ERROR_NONE) { // If callback didn't set an error
+         // error_code and error_message should have been set by the callback
+         // (client_receive_callback or client_transport_error_callback) if status is ERROR.
+         // Check if an error message was actually allocated by the callback.
+         if (*error_code != MCP_ERROR_NONE && *error_message == NULL) {
+             // If an error code is set but no message, provide a generic one.
+             *error_message = mcp_strdup("Unknown internal error occurred");
+         } else if (*error_code == MCP_ERROR_NONE) {
+             // This case should ideally not happen if wait_status != 0,
+             // but handle it defensively.
              *error_code = MCP_ERROR_INTERNAL_ERROR;
-             *error_message = strdup("Internal error waiting for response");
+             *error_message = mcp_strdup("Internal error waiting for response");
          }
-         return -1;
+         // If mcp_strdup failed above, error_message will be NULL.
+         return -1; // Return error
     }
 
     // Success (wait_status == 0), result/error are already populated by callback via pointers

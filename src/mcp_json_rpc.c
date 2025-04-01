@@ -273,7 +273,7 @@ int mcp_json_parse_response(
         if (message != NULL && mcp_json_get_type(message) == MCP_JSON_STRING) {
             const char* message_value;
             if (mcp_json_get_string(message, &message_value) == 0) {
-                *error_message = strdup(message_value);
+                *error_message = mcp_strdup(message_value); // Use helper
             }
         }
     } else {

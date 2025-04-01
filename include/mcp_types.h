@@ -333,6 +333,15 @@ mcp_message_t* mcp_notification_create(
     const void* params
 );
 
+/**
+ * @brief Duplicates a string using malloc. Portable alternative to strdup.
+ * @param s The null-terminated string to duplicate.
+ * @return Pointer to the newly allocated duplicated string, or NULL on error.
+ * @note Caller is responsible for freeing the returned string using free().
+ */
+char* mcp_strdup(const char* s);
+
+
 #ifdef __cplusplus
 }
 #endif
