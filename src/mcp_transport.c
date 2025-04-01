@@ -9,16 +9,18 @@
 int mcp_transport_start(
     mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
-    void* user_data
+    void* user_data,
+    mcp_transport_error_callback_t error_callback // Added error callback
 ) {
     if (transport == NULL || transport->start == NULL) {
         return -1;
     }
-    // Store callback and user data for use by the implementation's start/receive logic
+    // Store callbacks and user data for use by the implementation's start/receive logic
     transport->message_callback = message_callback;
     transport->callback_user_data = user_data;
-    // Pass the callback and user_data to the specific implementation's start function
-    return transport->start(transport, message_callback, user_data);
+    transport->error_callback = error_callback; // Store error callback
+    // Pass the callbacks and user_data to the specific implementation's start function
+    return transport->start(transport, message_callback, user_data, error_callback);
 }
 
 int mcp_transport_stop(mcp_transport_t* transport) {

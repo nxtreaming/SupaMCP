@@ -15,13 +15,17 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <pthread.h>
+#include <time.h> // Required for clock_gettime on POSIX
 #endif
 
-// Initial capacity for pending requests array
+// Initial capacity for pending requests hash table (must be power of 2)
 #define INITIAL_PENDING_REQUESTS_CAPACITY 16
+// Max load factor before resizing hash table
+#define HASH_TABLE_MAX_LOAD_FACTOR 0.75
 
 // Status for pending requests
 typedef enum {
+    PENDING_REQUEST_INVALID, // Slot is empty or request was removed
     PENDING_REQUEST_WAITING,
     PENDING_REQUEST_COMPLETED,
     PENDING_REQUEST_ERROR,
@@ -42,6 +46,12 @@ typedef struct {
 #endif
 } pending_request_t;
 
+// Structure for hash table entry
+typedef struct {
+    uint64_t id; // 0 indicates empty slot
+    pending_request_t request;
+} pending_request_entry_t;
+
 
 /**
  * MCP client structure (Internal definition)
@@ -57,13 +67,22 @@ struct mcp_client {
 #else
     pthread_mutex_t pending_requests_mutex;
 #endif
-    pending_request_t* pending_requests; // Dynamic array of pending requests
-    size_t pending_requests_count;
-    size_t pending_requests_capacity;
+    pending_request_entry_t* pending_requests_table; // Hash table
+    size_t pending_requests_capacity; // Current capacity (size) of the hash table
+    size_t pending_requests_count;    // Number of active entries in the hash table
 };
+
+// --- Hash Table Helper Function Declarations ---
+static size_t hash_id(uint64_t id, size_t table_size);
+static pending_request_entry_t* find_pending_request_entry(mcp_client_t* client, uint64_t id, bool find_empty_for_insert);
+static int add_pending_request_entry(mcp_client_t* client, uint64_t id, pending_request_t* request);
+static int remove_pending_request_entry(mcp_client_t* client, uint64_t id);
+// static int resize_pending_requests_table(mcp_client_t* client); // TODO: Implement resizing if needed
 
 // Forward declaration for the client's internal receive callback
 static char* client_receive_callback(void* user_data, const void* data, size_t size, int* error_code);
+// Forward declaration for the client's internal transport error callback
+static void client_transport_error_callback(void* user_data, int error_code);
 
 
 /**
@@ -98,9 +117,12 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
     }
 #endif
 
+    // Initialize hash table
     client->pending_requests_capacity = INITIAL_PENDING_REQUESTS_CAPACITY;
-    client->pending_requests = (pending_request_t*)malloc(client->pending_requests_capacity * sizeof(pending_request_t));
-    if (client->pending_requests == NULL) {
+    client->pending_requests_count = 0;
+    // Use calloc to zero-initialize the table (marks all slots as empty with id=0)
+    client->pending_requests_table = (pending_request_entry_t*)calloc(client->pending_requests_capacity, sizeof(pending_request_entry_t));
+    if (client->pending_requests_table == NULL) {
 #ifdef _WIN32
         DeleteCriticalSection(&client->pending_requests_mutex);
 #else
@@ -110,12 +132,16 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
         free(client);
         return NULL;
     }
-    client->pending_requests_count = 0;
+    // Initialize status for all allocated entries (calloc already sets id to 0)
+    for (size_t i = 0; i < client->pending_requests_capacity; ++i) {
+         client->pending_requests_table[i].request.status = PENDING_REQUEST_INVALID;
+    }
 
-    // Start the transport's receive mechanism with our internal callback
-    if (mcp_transport_start(client->transport, client_receive_callback, client) != 0) {
+
+    // Start the transport's receive mechanism with our internal callbacks
+    if (mcp_transport_start(client->transport, client_receive_callback, client, client_transport_error_callback) != 0) {
         // Cleanup if start fails
-        free(client->pending_requests);
+        free(client->pending_requests_table);
 #ifdef _WIN32
         DeleteCriticalSection(&client->pending_requests_mutex);
 #else
@@ -150,20 +176,171 @@ void mcp_client_destroy(mcp_client_t* client) {
     pthread_mutex_destroy(&client->pending_requests_mutex);
 #endif
 
-    // Free any remaining pending requests (and their condition variables)
-    for (size_t i = 0; i < client->pending_requests_count; ++i) {
+    // Free any remaining pending requests (and their condition variables) in the hash table
+    for (size_t i = 0; i < client->pending_requests_capacity; ++i) {
+        if (client->pending_requests_table[i].id != 0 && client->pending_requests_table[i].request.status != PENDING_REQUEST_INVALID) {
 #ifdef _WIN32
-        // No explicit destruction needed for CONDITION_VARIABLE? Check docs.
+            // No explicit destruction needed for CONDITION_VARIABLE? Check docs.
 #else
-        pthread_cond_destroy(&client->pending_requests[i].cv);
+            pthread_cond_destroy(&client->pending_requests_table[i].request.cv);
 #endif
-        // Free any potentially allocated result/error strings if request timed out?
-        // This depends on how we handle timeouts later. For now, assume they are NULL.
+            // Free any potentially allocated result/error strings if request timed out or errored?
+            // The current logic assigns these pointers back to the caller's stack variables,
+            // so the caller is responsible. We only need to destroy the CV here.
+        }
     }
-    free(client->pending_requests);
+    free(client->pending_requests_table);
 
     free(client);
 }
+
+
+// --- Hash Table Helper Function Implementations ---
+
+// Simple hash function (using bitwise AND for power-of-2 table size)
+static size_t hash_id(uint64_t id, size_t table_size) {
+    // Assumes table_size is a power of 2
+    return (size_t)(id & (table_size - 1));
+}
+
+// Find an entry in the hash table using linear probing
+// If find_empty_for_insert is true, returns the first empty/deleted slot if key not found
+static pending_request_entry_t* find_pending_request_entry(mcp_client_t* client, uint64_t id, bool find_empty_for_insert) {
+    if (id == 0) return NULL; // ID 0 is reserved for empty slots
+
+    size_t index = hash_id(id, client->pending_requests_capacity);
+    size_t original_index = index;
+    pending_request_entry_t* first_deleted_slot = NULL;
+
+    do {
+        pending_request_entry_t* entry = &client->pending_requests_table[index];
+
+        if (entry->id == id) {
+            // Found the exact key
+            return entry;
+        } else if (entry->id == 0) {
+            // Found an empty slot, key is not in the table
+            return find_empty_for_insert ? (first_deleted_slot ? first_deleted_slot : entry) : NULL;
+        } else if (entry->request.status == PENDING_REQUEST_INVALID) {
+             // Found a deleted slot (marked as invalid), remember the first one
+             if (find_empty_for_insert && first_deleted_slot == NULL) {
+                 first_deleted_slot = entry;
+             }
+        }
+        // else: Collision, continue probing
+
+        index = (index + 1) & (client->pending_requests_capacity - 1); // Move to next slot (wraps around)
+    } while (index != original_index);
+
+    // Table is full or key not found after full scan
+    return find_empty_for_insert ? first_deleted_slot : NULL;
+}
+
+// Add a request to the hash table
+static int add_pending_request_entry(mcp_client_t* client, uint64_t id, pending_request_t* request) {
+    // TODO: Implement resizing if load factor exceeds threshold
+    // float load_factor = (float)client->pending_requests_count / client->pending_requests_capacity;
+    // if (load_factor >= HASH_TABLE_MAX_LOAD_FACTOR) {
+    //     if (resize_pending_requests_table(client) != 0) {
+    //         return -1; // Resize failed
+    //     }
+    // }
+
+    pending_request_entry_t* entry = find_pending_request_entry(client, id, true);
+
+    if (entry == NULL) {
+         fprintf(stderr, "Hash table full or failed to find slot for insert (ID: %llu)\n", (unsigned long long)id);
+         return -1; // Should not happen if resizing is implemented or table not full
+    }
+
+    if (entry->id == id) {
+         fprintf(stderr, "Error: Duplicate request ID found in hash table: %llu\n", (unsigned long long)id);
+         // This indicates a logic error (ID reuse before completion) or hash collision issue not handled
+         return -1;
+    }
+
+
+    // Found an empty or deleted slot
+    entry->id = id;
+    entry->request = *request; // Copy the request data
+    client->pending_requests_count++;
+    return 0;
+}
+
+// Remove a request from the hash table (marks as invalid)
+static int remove_pending_request_entry(mcp_client_t* client, uint64_t id) {
+    pending_request_entry_t* entry = find_pending_request_entry(client, id, false);
+    if (entry != NULL && entry->request.status != PENDING_REQUEST_INVALID) {
+        // Destroy CV before marking as invalid
+#ifndef _WIN32
+        pthread_cond_destroy(&entry->request.cv);
+#endif
+        entry->request.status = PENDING_REQUEST_INVALID;
+        // entry->id = 0; // Keep ID for tombstone/probing, or set to a special deleted marker if needed
+        client->pending_requests_count--;
+        return 0;
+    }
+    return -1; // Not found or already invalid
+}
+
+// TODO: Implement resize_pending_requests_table if needed
+// static int resize_pending_requests_table(mcp_client_t* client) { ... }
+
+
+// --- Client Internal Transport Error Callback ---
+
+/**
+ * @brief Callback invoked by the transport layer when a fatal error occurs (e.g., disconnection).
+ *
+ * This function iterates through all waiting requests, marks them as errored,
+ * and signals their condition variables to wake up the waiting threads.
+ */
+static void client_transport_error_callback(void* user_data, int transport_error_code) {
+    mcp_client_t* client = (mcp_client_t*)user_data;
+    if (client == NULL) return;
+
+    fprintf(stderr, "Transport error detected (code: %d). Notifying waiting requests.\n", transport_error_code);
+
+    // Lock the mutex to safely access the pending requests table
+#ifdef _WIN32
+    EnterCriticalSection(&client->pending_requests_mutex);
+#else
+    pthread_mutex_lock(&client->pending_requests_mutex);
+#endif
+
+    // Iterate through the hash table
+    for (size_t i = 0; i < client->pending_requests_capacity; ++i) {
+        pending_request_entry_t* entry = &client->pending_requests_table[i];
+        // Check if the slot is active and the request is currently waiting
+        if (entry->id != 0 && entry->request.status == PENDING_REQUEST_WAITING) {
+            // Set error details for the waiting request
+            *(entry->request.error_code_ptr) = MCP_ERROR_TRANSPORT_ERROR; // Use a generic transport error
+            // Avoid overwriting existing error message if one was somehow set
+            if (*(entry->request.error_message_ptr) == NULL) {
+                 *(entry->request.error_message_ptr) = strdup("Transport connection error");
+            }
+
+            // Update status to ERROR
+            entry->request.status = PENDING_REQUEST_ERROR;
+
+            // Signal the condition variable to wake up the waiting thread
+#ifdef _WIN32
+            WakeConditionVariable(&entry->request.cv);
+#else
+            pthread_cond_signal(&entry->request.cv);
+#endif
+            // Note: The waiting thread is responsible for removing the entry from the table
+        }
+    }
+
+    // Unlock the mutex
+#ifdef _WIN32
+    LeaveCriticalSection(&client->pending_requests_mutex);
+#else
+    pthread_mutex_unlock(&client->pending_requests_mutex);
+#endif
+}
+
 
 // Connect/Disconnect functions are removed as transport is handled at creation/destruction.
 
@@ -260,25 +437,18 @@ static int mcp_client_send_request(
 #else
     pthread_mutex_lock(&client->pending_requests_mutex);
 #endif
-    // Resize array if needed (simple doubling strategy)
-    if (client->pending_requests_count >= client->pending_requests_capacity) {
-        size_t new_capacity = client->pending_requests_capacity * 2;
-        pending_request_t* new_array = (pending_request_t*)realloc(client->pending_requests, new_capacity * sizeof(pending_request_t));
-        if (new_array == NULL) {
+    // Add the request to the hash table
+    if (add_pending_request_entry(client, pending_req.id, &pending_req) != 0) {
 #ifdef _WIN32
-            LeaveCriticalSection(&client->pending_requests_mutex);
-            // CV cleanup not strictly needed on failure here?
+        LeaveCriticalSection(&client->pending_requests_mutex);
 #else
-            pthread_mutex_unlock(&client->pending_requests_mutex);
-            pthread_cond_destroy(&pending_req.cv);
+        pthread_mutex_unlock(&client->pending_requests_mutex);
+        // Destroy the CV we initialized if add failed
+        pthread_cond_destroy(&pending_req.cv);
 #endif
-            return -1; // Realloc failed
-        }
-        client->pending_requests = new_array;
-        client->pending_requests_capacity = new_capacity;
+        fprintf(stderr, "Failed to add request %llu to hash table.\n", (unsigned long long)pending_req.id);
+        return -1; // Failed to add to hash table
     }
-    // Add the request
-    client->pending_requests[client->pending_requests_count++] = pending_req; // Copy struct
 #ifdef _WIN32
     LeaveCriticalSection(&client->pending_requests_mutex);
 #else
@@ -287,27 +457,13 @@ static int mcp_client_send_request(
 
     // 3. Send the request (already done above)
     if (send_status != 0) {
-        // If send failed, remove the pending request we just added
+    // If send failed, remove the pending request we just added from the hash table
 #ifdef _WIN32
         EnterCriticalSection(&client->pending_requests_mutex);
 #else
         pthread_mutex_lock(&client->pending_requests_mutex);
 #endif
-        // Find and remove (or just decrement count if it's the last one)
-        for (size_t i = 0; i < client->pending_requests_count; ++i) {
-            if (client->pending_requests[i].id == pending_req.id) {
-                // Destroy CV before removing
-#ifndef _WIN32
-                pthread_cond_destroy(&client->pending_requests[i].cv);
-#endif
-                // Shift elements down if not the last one
-                if (i < client->pending_requests_count - 1) {
-                    memmove(&client->pending_requests[i], &client->pending_requests[i+1], (client->pending_requests_count - 1 - i) * sizeof(pending_request_t));
-                }
-                client->pending_requests_count--;
-                break;
-            }
-        }
+        remove_pending_request_entry(client, pending_req.id); // CV is destroyed inside remove
 #ifdef _WIN32
         LeaveCriticalSection(&client->pending_requests_mutex);
 #else
@@ -321,42 +477,40 @@ static int mcp_client_send_request(
     int wait_status = 0;
 #ifdef _WIN32
     EnterCriticalSection(&client->pending_requests_mutex);
-    // Find the actual entry in the array again by ID, as the array might have realloc'd
-    pending_request_t* req_entry = NULL;
-    size_t req_index = (size_t)-1;
-     for (size_t i = 0; i < client->pending_requests_count; ++i) {
-        if (client->pending_requests[i].id == pending_req.id) {
-            req_entry = &client->pending_requests[i];
-            req_index = i;
-            break;
-        }
-    }
-    if (req_entry && req_entry->status == PENDING_REQUEST_WAITING) {
-         if (!SleepConditionVariableCS(&req_entry->cv, &client->pending_requests_mutex, client->config.request_timeout_ms > 0 ? client->config.request_timeout_ms : INFINITE)) {
+    // Find the entry in the hash table by ID
+    pending_request_entry_t* req_entry_wrapper = find_pending_request_entry(client, pending_req.id, false);
+
+    if (req_entry_wrapper && req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
+         if (!SleepConditionVariableCS(&req_entry_wrapper->request.cv, &client->pending_requests_mutex, client->config.request_timeout_ms > 0 ? client->config.request_timeout_ms : INFINITE)) {
              if (GetLastError() == ERROR_TIMEOUT) {
                  wait_status = -2; // Timeout
-                 req_entry->status = PENDING_REQUEST_TIMEOUT;
+                 req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
              } else {
                  wait_status = -1; // Wait error
              }
          } else {
              // Signaled successfully
-             wait_status = (req_entry->status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
+             wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
          }
-    } else if (req_entry) {
-        // Status changed before we could wait (should be COMPLETED or ERROR)
-        wait_status = (req_entry->status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
+    } else if (req_entry_wrapper) {
+        // Status changed before we could wait (e.g., error during callback processing)
+        wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
     } else {
-        wait_status = -1; // Request not found - should not happen
-    }
-    // Remove entry if found
-    if (req_index != (size_t)-1) {
-        // Destroy CV before removing
-        // No explicit destroy for CONDITION_VARIABLE
-        if (req_index < client->pending_requests_count - 1) {
-             memmove(&client->pending_requests[req_index], &client->pending_requests[req_index+1], (client->pending_requests_count - 1 - req_index) * sizeof(pending_request_t));
+        // Request not found - could happen if callback processed it very quickly
+        // before we acquired the lock, or if send failed and it was removed.
+        // Check the caller's error code/message which might have been set.
+        if (*error_code != MCP_ERROR_NONE) {
+             wait_status = -1; // Error already set
+        } else {
+             // This case should ideally not happen if send succeeded. Log it.
+             fprintf(stderr, "Request %llu not found in table after send.\n", (unsigned long long)pending_req.id);
+             wait_status = -1;
         }
-        client->pending_requests_count--;
+    }
+
+    // Remove entry from hash table after waiting/timeout/error
+    if (req_entry_wrapper) {
+        remove_pending_request_entry(client, pending_req.id); // CV destroyed inside remove
     }
     LeaveCriticalSection(&client->pending_requests_mutex);
 
@@ -370,49 +524,42 @@ static int mcp_client_send_request(
     }
 
     pthread_mutex_lock(&client->pending_requests_mutex);
-    // Find the actual entry in the array again by ID
-    pending_request_t* req_entry = NULL;
-    size_t req_index = (size_t)-1;
-     for (size_t i = 0; i < client->pending_requests_count; ++i) {
-        if (client->pending_requests[i].id == pending_req.id) {
-            req_entry = &client->pending_requests[i];
-            req_index = i;
-            break;
-        }
-    }
+    // Find the entry in the hash table by ID
+    pending_request_entry_t* req_entry_wrapper = find_pending_request_entry(client, pending_req.id, false);
 
     int pthread_wait_ret = 0;
-    if (req_entry && req_entry->status == PENDING_REQUEST_WAITING) {
+    if (req_entry_wrapper && req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
         if (client->config.request_timeout_ms > 0) {
-            pthread_wait_ret = pthread_cond_timedwait(&req_entry->cv, &client->pending_requests_mutex, &ts);
+            pthread_wait_ret = pthread_cond_timedwait(&req_entry_wrapper->request.cv, &client->pending_requests_mutex, &ts);
         } else {
-            pthread_wait_ret = pthread_cond_wait(&req_entry->cv, &client->pending_requests_mutex);
+            pthread_wait_ret = pthread_cond_wait(&req_entry_wrapper->request.cv, &client->pending_requests_mutex);
         }
 
         if (pthread_wait_ret == ETIMEDOUT) {
             wait_status = -2; // Timeout
-            req_entry->status = PENDING_REQUEST_TIMEOUT;
+            req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
         } else if (pthread_wait_ret != 0) {
             wait_status = -1; // Wait error
         } else {
             // Signaled successfully
-             wait_status = (req_entry->status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
+             wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
         }
-    } else if (req_entry) {
+    } else if (req_entry_wrapper) {
          // Status changed before we could wait
-         wait_status = (req_entry->status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
+         wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
     } else {
-        wait_status = -1; // Request not found
+        // Request not found - see Windows comments
+        if (*error_code != MCP_ERROR_NONE) {
+             wait_status = -1; // Error already set
+        } else {
+             fprintf(stderr, "Request %llu not found in table after send.\n", (unsigned long long)pending_req.id);
+             wait_status = -1;
+        }
     }
 
-    // Remove entry if found
-    if (req_index != (size_t)-1) {
-        // Destroy CV before removing
-        pthread_cond_destroy(&client->pending_requests[req_index].cv); // Destroy the actual entry's CV
-        if (req_index < client->pending_requests_count - 1) {
-             memmove(&client->pending_requests[req_index], &client->pending_requests[req_index+1], (client->pending_requests_count - 1 - req_index) * sizeof(pending_request_t));
-        }
-        client->pending_requests_count--;
+    // Remove entry from hash table after waiting/timeout/error
+    if (req_entry_wrapper) {
+        remove_pending_request_entry(client, pending_req.id); // CV destroyed inside remove
     }
     pthread_mutex_unlock(&client->pending_requests_mutex);
 #endif
@@ -514,32 +661,25 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
     pthread_mutex_lock(&client->pending_requests_mutex);
 #endif
 
-    pending_request_t* req_entry = NULL;
-    size_t req_index = (size_t)-1;
-    for (size_t i = 0; i < client->pending_requests_count; ++i) {
-        if (client->pending_requests[i].id == id) {
-            req_entry = &client->pending_requests[i];
-            req_index = i;
-            break;
-        }
-    }
+    // Find the pending request entry in the hash table
+    pending_request_entry_t* req_entry_wrapper = find_pending_request_entry(client, id, false);
 
-    if (req_entry != NULL) {
+    if (req_entry_wrapper != NULL && req_entry_wrapper->request.status != PENDING_REQUEST_INVALID) {
         // Found the pending request
-        if (req_entry->status == PENDING_REQUEST_WAITING) {
+        if (req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
             // Store results via pointers
-            *(req_entry->error_code_ptr) = resp_error_code;
-            *(req_entry->error_message_ptr) = resp_error_message; // Transfer ownership
-            *(req_entry->result_ptr) = resp_result;             // Transfer ownership
+            *(req_entry_wrapper->request.error_code_ptr) = resp_error_code;
+            *(req_entry_wrapper->request.error_message_ptr) = resp_error_message; // Transfer ownership
+            *(req_entry_wrapper->request.result_ptr) = resp_result;             // Transfer ownership
 
             // Update status
-            req_entry->status = (resp_error_code == MCP_ERROR_NONE) ? PENDING_REQUEST_COMPLETED : PENDING_REQUEST_ERROR;
+            req_entry_wrapper->request.status = (resp_error_code == MCP_ERROR_NONE) ? PENDING_REQUEST_COMPLETED : PENDING_REQUEST_ERROR;
 
             // Signal the waiting thread
 #ifdef _WIN32
-            WakeConditionVariable(&req_entry->cv);
+            WakeConditionVariable(&req_entry_wrapper->request.cv);
 #else
-            pthread_cond_signal(&req_entry->cv);
+            pthread_cond_signal(&req_entry_wrapper->request.cv);
 #endif
             // Note: We don't remove the entry here. The waiting thread will remove it after waking up.
         } else {

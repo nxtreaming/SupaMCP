@@ -121,8 +121,8 @@ int mcp_server_start(
     server->transport = transport;
     server->running = true;
 
-    // Pass the updated callback signature to transport_start
-    return mcp_transport_start(transport, transport_message_callback, server);
+    // Pass the updated callback signature to transport_start, providing NULL for the error callback
+    return mcp_transport_start(transport, transport_message_callback, server, NULL);
 }
 
 int mcp_server_stop(mcp_server_t* server) {

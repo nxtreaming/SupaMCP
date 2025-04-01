@@ -29,6 +29,15 @@ typedef struct mcp_transport mcp_transport_t;
 typedef char* (*mcp_transport_message_callback_t)(void* user_data, const void* data, size_t size, int* error_code);
 
 /**
+ * @brief Callback function type for transport-level errors (e.g., disconnection).
+ *
+ * @param user_data User data provided to mcp_transport_start.
+ * @param error_code An error code indicating the nature of the transport error.
+ */
+typedef void (*mcp_transport_error_callback_t)(void* user_data, int error_code);
+
+
+/**
  * @brief Starts the transport layer and begins listening/processing messages.
  *
  * For connection-based transports, this might accept connections.
@@ -37,13 +46,15 @@ typedef char* (*mcp_transport_message_callback_t)(void* user_data, const void* d
  *
  * @param transport The transport handle.
  * @param message_callback The function to call when a complete message is received.
- * @param user_data Arbitrary user data to be passed to the message_callback.
+ * @param user_data Arbitrary user data to be passed to the message_callback and error_callback.
+ * @param error_callback The function to call when a transport-level error occurs (optional, can be NULL).
  * @return 0 on success, non-zero on error (e.g., failed to bind, listen, or start read loop).
  */
 int mcp_transport_start(
     mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
-    void* user_data
+    void* user_data,
+    mcp_transport_error_callback_t error_callback // Added error callback parameter
 );
 
 /**

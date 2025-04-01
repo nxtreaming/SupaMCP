@@ -42,7 +42,7 @@ set(COMMON_SOURCES
 set(COMMON_HEADERS
     include/mcp_json.h
     include/mcp_json_rpc.h
-    include/mcp_transport.h 
+    include/mcp_transport.h
     include/mcp_stdio_transport.h
     include/mcp_tcp_transport.h
     include/mcp_types.h

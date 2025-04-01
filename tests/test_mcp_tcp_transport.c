@@ -56,8 +56,8 @@ void test_tcp_transport_lifecycle(void) {
     TEST_ASSERT_NOT_NULL_MESSAGE(transport, "mcp_transport_tcp_create failed");
     if (!transport) return; // Avoid crashing following tests
 
-    // Test Start
-    result = mcp_transport_start(transport, dummy_message_callback, NULL);
+    // Test Start - Add NULL for the new error_callback parameter
+    result = mcp_transport_start(transport, dummy_message_callback, NULL, NULL);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, result, "mcp_transport_start failed");
     // Add a small delay to allow the accept thread to potentially start
     #ifdef _WIN32

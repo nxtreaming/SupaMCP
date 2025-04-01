@@ -44,7 +44,7 @@ typedef struct {
     socket_t sock;
     bool running;
     bool connected; // Track connection state
-    mcp_transport_t* transport_handle; // Pointer back to the main handle
+    mcp_transport_t* transport_handle; // Pointer back to the main handle (contains callbacks)
 #ifdef _WIN32
     HANDLE receive_thread;
 #else
@@ -54,7 +54,7 @@ typedef struct {
 
 
 // --- Forward Declarations for Static Functions ---
-static int tcp_client_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data);
+static int tcp_client_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data, mcp_transport_error_callback_t error_callback);
 static int tcp_client_transport_stop(mcp_transport_t* transport);
 static int tcp_client_transport_send(mcp_transport_t* transport, const void* data, size_t size);
 static void tcp_client_transport_destroy(mcp_transport_t* transport);
@@ -140,6 +140,7 @@ static void* tcp_client_receive_thread_func(void* arg) {
     uint32_t message_length_net, message_length_host;
     char* message_buf = NULL;
     int read_result;
+    bool error_signaled = false; // Track if error callback was already called in this loop iteration
 
     log_message(LOG_LEVEL_DEBUG, "TCP Client receive thread started for socket %d", (int)data->sock);
 
@@ -166,6 +167,11 @@ static void* tcp_client_receive_thread_func(void* arg) {
                  }
              }
              data->connected = false; // Mark as disconnected
+             // Signal error back to client logic if running
+             if (data->running && transport->error_callback) {
+                 transport->error_callback(transport->callback_user_data, MCP_ERROR_TRANSPORT_ERROR);
+                 error_signaled = true;
+             }
              break; // Exit thread
         } else if (read_result == -2) {
              log_message(LOG_LEVEL_DEBUG, "Client receive thread for socket %d interrupted by stop signal.", (int)data->sock);
@@ -181,6 +187,11 @@ static void* tcp_client_receive_thread_func(void* arg) {
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
              log_message(LOG_LEVEL_ERROR, "Invalid message length received from server: %u on socket %d", message_length_host, (int)data->sock);
              data->connected = false; // Mark as disconnected
+             // Signal error back to client logic if running
+             if (data->running && transport->error_callback && !error_signaled) {
+                 transport->error_callback(transport->callback_user_data, MCP_ERROR_PARSE_ERROR); // Or a specific framing error?
+                 error_signaled = true;
+             }
              break; // Invalid length, stop processing
         }
 
@@ -189,6 +200,11 @@ static void* tcp_client_receive_thread_func(void* arg) {
         if (message_buf == NULL) {
              log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer for message size %u on socket %d", message_length_host, (int)data->sock);
              data->connected = false; // Mark as disconnected
+             // Signal error back to client logic if running
+             if (data->running && transport->error_callback && !error_signaled) {
+                 transport->error_callback(transport->callback_user_data, MCP_ERROR_INTERNAL_ERROR); // Allocation error
+                 error_signaled = true;
+             }
              break; // Allocation failure
         }
 
@@ -212,15 +228,20 @@ static void* tcp_client_receive_thread_func(void* arg) {
                      }
 #endif
                  }
-             }
-             free(message_buf);
-             data->connected = false;
-             break; // Exit thread
-         } else if (read_result == -2) {
-             log_message(LOG_LEVEL_DEBUG, "Client receive thread for socket %d interrupted by stop signal.", (int)data->sock);
-             free(message_buf);
-             break; // Interrupted by stop
-         }
+              }
+              free(message_buf);
+              data->connected = false;
+              // Signal error back to client logic if running
+              if (data->running && transport->error_callback && !error_signaled) {
+                  transport->error_callback(transport->callback_user_data, MCP_ERROR_TRANSPORT_ERROR);
+                  error_signaled = true;
+              }
+              break; // Exit thread
+          } else if (read_result == -2) {
+              log_message(LOG_LEVEL_DEBUG, "Client receive thread for socket %d interrupted by stop signal.", (int)data->sock);
+              free(message_buf);
+              break; // Interrupted by stop
+          }
          // read_result == 1 means success
 
         // 6. Null-terminate and process the message via callback
@@ -298,15 +319,17 @@ static int connect_to_server(mcp_tcp_client_transport_data_t* data) {
     log_message(LOG_LEVEL_INFO, "Client connected to %s:%u on socket %d", data->host, data->port, (int)data->sock);
     data->connected = true;
     return 0;
-}
+ }
 
 
-static int tcp_client_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data) {
-    (void)message_callback; // Stored in transport struct
-    (void)user_data;        // Stored in transport struct
+ static int tcp_client_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data, mcp_transport_error_callback_t error_callback) {
+     if (transport == NULL || transport->transport_data == NULL) return -1;
+     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
-    if (transport == NULL || transport->transport_data == NULL) return -1;
-    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
+     // Store callbacks and user data in the generic transport handle
+     transport->message_callback = message_callback;
+     transport->callback_user_data = user_data;
+     transport->error_callback = error_callback;
 
     if (data->running) return 0; // Already running
 
@@ -469,10 +492,11 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
     transport->stop = tcp_client_transport_stop;
     transport->send = tcp_client_transport_send; // Use the client send function
     transport->receive = NULL; // Synchronous receive not supported/used by client transport
-    transport->destroy = tcp_client_transport_destroy;
-    transport->transport_data = tcp_data;
-    transport->message_callback = NULL; // Set by start
-    transport->callback_user_data = NULL; // Set by start
+     transport->destroy = tcp_client_transport_destroy;
+     transport->transport_data = tcp_data;
+     transport->message_callback = NULL; // Set by start
+     transport->callback_user_data = NULL; // Set by start
+     transport->error_callback = NULL; // Set by start
 
-    return transport;
-}
+     return transport;
+ }
