@@ -1,7 +1,7 @@
 #ifndef MCP_TCP_CLIENT_TRANSPORT_H
 #define MCP_TCP_CLIENT_TRANSPORT_H
 
-#include "mcp_transport.h"
+#include <mcp_transport.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -11,9 +11,10 @@ extern "C" {
 /**
  * @brief Creates a TCP client transport instance.
  *
- * This transport connects to a specified host and port instead of listening.
+ * This transport connects to a specified TCP server host and port.
  * It requires a subsequent call to mcp_transport_start() to establish the
- * connection and start the receive loop.
+ * connection and start the background receive loop. Communication assumes
+ * 4-byte network-order length prefix framing for messages.
  *
  * @param host The hostname or IP address of the server to connect to.
  * @param port The port number on the server to connect to.

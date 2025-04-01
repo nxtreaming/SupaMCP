@@ -1,7 +1,7 @@
 #ifndef MCP_TCP_TRANSPORT_H
 #define MCP_TCP_TRANSPORT_H
 
-#include "mcp_transport.h"
+#include <mcp_transport.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -13,8 +13,8 @@ extern "C" {
  *
  * This transport acts as a TCP server, listening on the specified host and port.
  * It handles multiple client connections concurrently (implementation detail, likely using threads).
- * Received messages (typically line-delimited) from any connected client are passed
- * to the message callback provided during mcp_transport_start.
+ * Received messages (using 4-byte network-order length prefix framing) from any
+ * connected client are passed to the message callback provided during mcp_transport_start.
  *
  * @param host The hostname or IP address to bind to (e.g., "0.0.0.0" for all interfaces, "127.0.0.1" for localhost).
  * @param port The port number to listen on.

@@ -1,7 +1,7 @@
 #ifndef MCP_STDIO_TRANSPORT_H
 #define MCP_STDIO_TRANSPORT_H
 
-#include "mcp_transport.h"
+#include <mcp_transport.h>
 
 #ifdef __cplusplus
 extern "C" {

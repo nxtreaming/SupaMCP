@@ -1,242 +1,294 @@
 #ifndef MCP_JSON_H
 #define MCP_JSON_H
 
-#include "mcp_types.h"
-#include "mcp_arena.h"
+#include <mcp_types.h>
+#include <mcp_arena.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * JSON value type
+ * @brief Represents the type of a JSON value.
  */
 typedef enum {
-    MCP_JSON_NULL,
-    MCP_JSON_BOOLEAN,
-    MCP_JSON_NUMBER,
-    MCP_JSON_STRING,
-    MCP_JSON_ARRAY,
-    MCP_JSON_OBJECT,
+    MCP_JSON_NULL,      /**< Represents a JSON null value. */
+    MCP_JSON_BOOLEAN,   /**< Represents a JSON boolean value (true or false). */
+    MCP_JSON_NUMBER,    /**< Represents a JSON number value (stored as double). */
+    MCP_JSON_STRING,    /**< Represents a JSON string value. */
+    MCP_JSON_ARRAY,     /**< Represents a JSON array value. */
+    MCP_JSON_OBJECT,    /**< Represents a JSON object value. */
 } mcp_json_type_t;
 
 /**
- * JSON value
+ * @brief Opaque handle representing a JSON value.
  */
 typedef struct mcp_json mcp_json_t;
 
 /**
- * Create a null JSON value
- * @param arena Arena to allocate from (optional, uses malloc if NULL)
- * @return JSON value or NULL on error
+ * @brief Creates a JSON null value.
+ * @param arena Optional arena allocator. If NULL, uses malloc for the node.
+ * @return Pointer to the created JSON value, or NULL on error.
+ * @note If using malloc (arena is NULL), the caller must free the returned pointer using free()
+ *       after potentially calling mcp_json_destroy() (though destroy is a no-op for null).
+ *       If using an arena, the arena manages the node's memory.
  */
 mcp_json_t* mcp_json_null_create(mcp_arena_t* arena);
 
 /**
- * Create a boolean JSON value
- * 
- * @param arena Arena to allocate from (optional, uses malloc if NULL)
- * @param value Boolean value
- * @return JSON value or NULL on error
+ * @brief Creates a JSON boolean value.
+ * @param arena Optional arena allocator. If NULL, uses malloc for the node.
+ * @param value The boolean value (true or false).
+ * @return Pointer to the created JSON value, or NULL on error.
+ * @note See mcp_json_null_create() for memory management details.
  */
 mcp_json_t* mcp_json_boolean_create(mcp_arena_t* arena, bool value);
 
 /**
- * Create a number JSON value
- * 
- * @param arena Arena to allocate from (optional, uses malloc if NULL)
- * @param value Number value
- * @return JSON value or NULL on error
+ * @brief Creates a JSON number value.
+ * @param arena Optional arena allocator. If NULL, uses malloc for the node.
+ * @param value The numeric value (stored as double).
+ * @return Pointer to the created JSON value, or NULL on error.
+ * @note See mcp_json_null_create() for memory management details.
  */
 mcp_json_t* mcp_json_number_create(mcp_arena_t* arena, double value);
 
 /**
- * Create a string JSON value
- * 
- * @param arena Arena to allocate from (optional, uses malloc if NULL)
- * @param value String value (will be duplicated using malloc/strdup, not arena)
- * @return JSON value or NULL on error
+ * @brief Creates a JSON string value.
+ * @param arena Optional arena allocator. If NULL, uses malloc for the node.
+ * @param value The null-terminated string value. This string is *always* duplicated
+ *              internally using malloc/strdup, regardless of whether an arena is used
+ *              for the node itself. Can be NULL, which results in an error.
+ * @return Pointer to the created JSON value, or NULL on error (e.g., NULL input, allocation failure).
+ * @note The internal string copy is freed by mcp_json_destroy().
+ *       See mcp_json_null_create() for node memory management details.
  */
 mcp_json_t* mcp_json_string_create(mcp_arena_t* arena, const char* value);
 
 /**
- * Create an array JSON value
- * @param arena Arena to allocate from (optional, uses malloc if NULL)
- * @return JSON value or NULL on error
+ * @brief Creates an empty JSON array value.
+ * @param arena Optional arena allocator. If NULL, uses malloc for the node.
+ * @return Pointer to the created JSON array value, or NULL on error.
+ * @note Internal storage for array items uses malloc/realloc and is freed by mcp_json_destroy().
+ *       See mcp_json_null_create() for node memory management details.
  */
 mcp_json_t* mcp_json_array_create(mcp_arena_t* arena);
 
 /**
- * Create an object JSON value
- * @param arena Arena to allocate from (optional, uses malloc if NULL)
- * @return JSON value or NULL on error
+ * @brief Creates an empty JSON object value.
+ * @param arena Optional arena allocator. If NULL, uses malloc for the node.
+ * @return Pointer to the created JSON object value, or NULL on error.
+ * @note Internal storage for object properties (hash table, keys, values) uses malloc/realloc/strdup
+ *       and is freed by mcp_json_destroy().
+ *       See mcp_json_null_create() for node memory management details.
  */
 mcp_json_t* mcp_json_object_create(mcp_arena_t* arena);
 
 /**
- * Parse a JSON string using an optional arena for allocations.
- * NOTE: String values within the parsed JSON will still use malloc/strdup.
- *       Array/Object backing storage will use malloc/realloc.
- *       Only the mcp_json_t nodes themselves are allocated from the arena.
+ * @brief Parses a JSON string into a tree of mcp_json_t nodes.
  *
- * @param arena Arena to allocate mcp_json_t nodes from (optional, uses malloc if NULL)
- * @param json JSON string
- * @return JSON value or NULL on error
+ * @param arena Optional arena allocator. If NULL, uses malloc for all nodes.
+ *              If provided, only the mcp_json_t nodes themselves are allocated from the arena.
+ *              Internal strings, array storage, and object hash tables *always* use malloc/strdup/realloc.
+ * @param json The null-terminated JSON string to parse.
+ * @return Pointer to the root mcp_json_t node of the parsed tree, or NULL on parse error or allocation failure.
+ * @note If using malloc (arena is NULL), the caller must free the entire tree using mcp_json_destroy()
+ *       followed by free() on the returned root node pointer.
+ *       If using an arena, the caller must still call mcp_json_destroy() on the root node to free
+ *       internal malloc'd strings/tables, and then reset/destroy the arena to free the nodes.
  */
 mcp_json_t* mcp_json_parse(mcp_arena_t* arena, const char* json);
 
 /**
- * Stringify a JSON value
- * 
- * @param json JSON value
- * @return JSON string or NULL on error (must be freed by the caller)
+ * @brief Converts a JSON value tree back into a JSON string representation.
+ *
+ * @param json Pointer to the root JSON value node.
+ * @return A newly allocated null-terminated JSON string, or NULL on error (e.g., allocation failure).
+ * @note The caller is responsible for freeing the returned string using free().
  */
 char* mcp_json_stringify(const mcp_json_t* json);
 
 /**
- * Get the type of a JSON value
- * 
- * @param json JSON value
- * @return JSON type
+ * @brief Gets the type of a JSON value.
+ *
+ * @param json Pointer to the JSON value. Must not be NULL.
+ * @return The mcp_json_type_t enum value.
  */
 mcp_json_type_t mcp_json_get_type(const mcp_json_t* json);
 
 /**
- * Get a boolean value from a JSON value
- * 
- * @param json JSON value
- * @param value Output boolean value
- * @return 0 on success, non-zero on error
+ * @brief Retrieves the boolean value from a JSON boolean node.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_BOOLEAN.
+ * @param[out] value Pointer to a bool variable where the value will be stored.
+ * @return 0 on success, non-zero if json is NULL or not a boolean type.
  */
 int mcp_json_get_boolean(const mcp_json_t* json, bool* value);
 
 /**
- * Get a number value from a JSON value
- * 
- * @param json JSON value
- * @param value Output number value
- * @return 0 on success, non-zero on error
+ * @brief Retrieves the numeric value from a JSON number node.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_NUMBER.
+ * @param[out] value Pointer to a double variable where the value will be stored.
+ * @return 0 on success, non-zero if json is NULL or not a number type.
  */
 int mcp_json_get_number(const mcp_json_t* json, double* value);
 
 /**
- * Get a string value from a JSON value
- * 
- * @param json JSON value
- * @param value Output string value
- * @return 0 on success, non-zero on error
+ * @brief Retrieves the string value from a JSON string node.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_STRING.
+ * @param[out] value Pointer to a `const char*` variable that will be set to point
+ *                   to the internal string data.
+ * @return 0 on success, non-zero if json is NULL or not a string type.
+ * @note The returned string pointer is valid only as long as the `json` node exists
+ *       and has not been destroyed or modified. Do not free the returned pointer.
  */
 int mcp_json_get_string(const mcp_json_t* json, const char** value);
 
 /**
- * Get the size of a JSON array
- * 
- * @param json JSON value
- * @return Size of the array or -1 on error
+ * @brief Gets the number of items currently in a JSON array.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_ARRAY.
+ * @return The number of items in the array, or -1 if json is NULL or not an array type.
  */
 int mcp_json_array_get_size(const mcp_json_t* json);
 
 /**
- * Get an item from a JSON array
- * 
- * @param json JSON value
- * @param index Index of the item
- * @return JSON value or NULL on error
+ * @brief Retrieves an item from a JSON array by its index.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_ARRAY.
+ * @param index The zero-based index of the item to retrieve.
+ * @return Pointer to the JSON value at the specified index, or NULL if json is NULL,
+ *         not an array type, or the index is out of bounds.
+ * @note The returned pointer refers to the item within the array; do not free it directly.
+ *       Its lifetime is tied to the parent array.
  */
 mcp_json_t* mcp_json_array_get_item(const mcp_json_t* json, int index);
 
 /**
- * Add an item to a JSON array
- * 
- * @param json JSON value
- * @param item Item to add
- * @return 0 on success, non-zero on error
+ * @brief Adds a JSON value item to the end of a JSON array.
+ *
+ * The array takes ownership of the added item. If the item was allocated with malloc,
+ * it (and its internal data) will be freed when the parent array is destroyed via
+ * mcp_json_destroy(). If the item was allocated using an arena, only its internal
+ * malloc'd data (like strings) will be freed by mcp_json_destroy(); the node itself
+ * must be freed by the arena. Mixing allocators requires careful management.
+ *
+ * @param json Pointer to the JSON array value. Must be of type MCP_JSON_ARRAY.
+ * @param item Pointer to the JSON value item to add.
+ * @return 0 on success, non-zero on error (e.g., NULL input, wrong type, allocation failure).
  */
 int mcp_json_array_add_item(mcp_json_t* json, mcp_json_t* item);
 
 /**
- * Check if a JSON object has a property
- * 
- * @param json JSON value
- * @param name Property name
- * @return true if the property exists, false otherwise
+ * @brief Checks if a JSON object contains a property with the given name.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_OBJECT.
+ * @param name The null-terminated property name (key) to check for.
+ * @return True if the property exists, false otherwise or if json is NULL/not an object.
  */
 bool mcp_json_object_has_property(const mcp_json_t* json, const char* name);
 
 /**
- * Get a property from a JSON object
- * 
- * @param json JSON value
- * @param name Property name
- * @return JSON value or NULL on error
+ * @brief Retrieves a property (value) from a JSON object by its name (key).
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_OBJECT.
+ * @param name The null-terminated property name (key) whose value should be retrieved.
+ * @return Pointer to the JSON value associated with the name, or NULL if json is NULL,
+ *         not an object type, or the property does not exist.
+ * @note The returned pointer refers to the value within the object; do not free it directly.
+ *       Its lifetime is tied to the parent object.
  */
 mcp_json_t* mcp_json_object_get_property(const mcp_json_t* json, const char* name);
 
 /**
- * Set a property in a JSON object
- * 
- * @param json JSON value
- * @param name Property name
- * @param value Property value
- * @return 0 on success, non-zero on error
+ * @brief Sets a property (key-value pair) in a JSON object.
+ *
+ * If a property with the same name already exists, its old value is destroyed
+ * (using mcp_json_destroy) and replaced with the new value. The object takes
+ * ownership of the provided `value` node. See mcp_json_array_add_item() note
+ * regarding memory management and mixed allocators.
+ *
+ * @param json Pointer to the JSON object value. Must be of type MCP_JSON_OBJECT.
+ * @param name The null-terminated property name (key). The name string is copied internally (using malloc).
+ * @param value Pointer to the JSON value to associate with the name.
+ * @return 0 on success, non-zero on error (e.g., NULL input, wrong type, allocation failure).
  */
 int mcp_json_object_set_property(mcp_json_t* json, const char* name, mcp_json_t* value);
 
 /**
- * Delete a property from a JSON object
- * 
- * @param json JSON value
- * @param name Property name
- * @return 0 on success, non-zero on error
+ * @brief Deletes a property (key-value pair) from a JSON object.
+ *
+ * If the property exists, its associated value is destroyed using mcp_json_destroy().
+ *
+ * @param json Pointer to the JSON object value. Must be of type MCP_JSON_OBJECT.
+ * @param name The null-terminated property name (key) to delete.
+ * @return 0 on success (property found and deleted), non-zero if json is NULL,
+ *         not an object, or the property does not exist.
  */
 int mcp_json_object_delete_property(mcp_json_t* json, const char* name);
 
 /**
- * Get all property names from a JSON object
- * 
- * @param json JSON value
- * @param names Output property names (must be freed by the caller)
- * @param count Output property count
- * @return 0 on success, non-zero on error
+ * @brief Retrieves an array of all property names (keys) from a JSON object.
+ *
+ * @param json Pointer to the JSON object value. Must be of type MCP_JSON_OBJECT.
+ * @param[out] names Pointer to a `char**` variable that will receive the newly allocated
+ *                   array of property name strings.
+ * @param[out] count Pointer to a size_t variable that will receive the number of names
+ *                   in the returned array.
+ * @return 0 on success, non-zero on error (e.g., NULL input, wrong type, allocation failure).
+ * @note The caller is responsible for freeing the memory allocated for the name strings.
+ *       This involves freeing each individual string (`names[i]`) and then freeing
+ *       the array of pointers (`names`) itself using `free()`.
  */
 int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names, size_t* count);
 
 /**
- * @brief Destroys the internal data of a JSON value (strings, arrays, objects).
+ * @brief Frees memory allocated *internally* by a JSON value node.
  *
- * IMPORTANT: This function ONLY frees data allocated internally by the JSON
- * library using malloc/strdup/realloc (e.g., string values, array/object storage).
- * It DOES NOT free the top-level mcp_json_t node itself pointed to by `json`.
+ * This function handles freeing:
+ * - The duplicated string value within an MCP_JSON_STRING node (allocated via malloc/strdup).
+ * - The internal storage (array of pointers) for an MCP_JSON_ARRAY node (allocated via malloc/realloc).
+ * - The internal hash table, keys, and associated storage for an MCP_JSON_OBJECT node.
+ * - Recursively calls mcp_json_destroy() on child items in arrays and objects.
  *
- * - If the JSON tree was created using an mcp_arena_t (e.g., via
- *   mcp_json_parse(arena, ...)), you MUST free the entire tree by calling
- *   mcp_arena_reset() or mcp_arena_destroy() on the arena. Calling
- *   mcp_json_destroy on an arena-allocated tree may lead to errors.
- * - If the JSON value was created using malloc (e.g., via
- *   mcp_json_parse(NULL, ...) or mcp_json_*_create(NULL, ...)), you should
- *   call mcp_json_destroy() first to free its internal contents, and then
- *   call free() on the `json` pointer itself.
+ * **IMPORTANT Memory Management Notes:**
+ * 1.  This function **DOES NOT** free the `mcp_json_t` node itself pointed to by `json`.
+ * 2.  If the `mcp_json_t` node was allocated using `malloc` (e.g., `mcp_json_parse(NULL, ...)`),
+ *     you MUST call `free(json)` *after* calling `mcp_json_destroy(json)`.
+ * 3.  If the `mcp_json_t` node was allocated using an arena (e.g., `mcp_json_parse(arena, ...)`),
+ *     you MUST call `mcp_json_destroy(json)` first to free any internally `malloc`-ed data
+ *     (like strings or object keys), and *then* reset or destroy the arena to free the node itself.
+ *     DO NOT call `free(json)` on an arena-allocated node.
  *
- * @param json The JSON value whose internal data should be freed.
+ * @param json Pointer to the JSON value whose internal data should be freed. If NULL, the function does nothing.
  */
 void mcp_json_destroy(mcp_json_t* json);
 
 /**
- * Parse a message from JSON
- * 
- * @param json JSON string
- * @param arena Arena to allocate parsed JSON nodes from (optional, uses malloc if NULL)
- * @param json JSON string
- * @param message Output message (strings inside message still use malloc/strdup)
- * @return 0 on success, non-zero on error
+ * @brief Parses a JSON string representing an MCP message (request, response, or notification).
+ *
+ * @param arena Optional arena allocator for `mcp_json_t` nodes within the message's params/result.
+ *              If NULL, `malloc` is used. Note that top-level strings like `method` are still `malloc`-ed.
+ * @param json The null-terminated JSON string representing the message.
+ * @param[out] message Pointer to an `mcp_message_t` structure where the parsed message will be stored.
+ *                     The caller typically allocates this structure on the stack.
+ * @return 0 on success, non-zero on error (e.g., parse error, invalid message structure).
+ * @note On success, the `message` structure will contain pointers to dynamically allocated data
+ *       (strings, parsed JSON for params/result). The caller MUST call `mcp_message_release_contents(message)`
+ *       to free this internal data before the `message` structure goes out of scope or is reused.
  */
 int mcp_json_parse_message(mcp_arena_t* arena, const char* json, mcp_message_t* message);
 
 /**
- * Stringify a message to JSON
- * 
- * @param message Message
- * @return JSON string or NULL on error (must be freed by the caller)
+ * @brief Converts an MCP message structure into a JSON string representation.
+ *
+ * @param message Pointer to the `mcp_message_t` structure to stringify.
+ * @return A newly allocated null-terminated JSON string, or NULL on error (e.g., allocation failure).
+ * @note The caller is responsible for freeing the returned string using `free()`.
  */
 char* mcp_json_stringify_message(const mcp_message_t* message);
 

@@ -68,10 +68,12 @@ int mcp_transport_start(
 int mcp_transport_stop(mcp_transport_t* transport);
 
 /**
- * @brief Sends data through the transport layer.
+ * @brief Sends raw data through the transport layer.
  *
- * The transport implementation is responsible for any necessary framing
- * (e.g., adding delimiters or length prefixes) if required by the protocol.
+ * The caller is typically responsible for ensuring the provided data includes
+ * any necessary framing (e.g., length prefixes) required by the specific MCP
+ * transport implementation or protocol convention. This function sends the
+ * exact bytes provided in the buffer.
  *
  * @param transport The transport handle.
  * @param data Pointer to the data to send.
@@ -110,7 +112,12 @@ void mcp_transport_destroy(mcp_transport_t* transport);
  *                   indicate blocking indefinitely (behavior depends on implementation).
  * @return 0 on success, -1 on error, -2 on timeout (or other non-zero for specific errors).
  */
-int mcp_transport_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms);
+int mcp_transport_receive(
+    mcp_transport_t* transport,
+    char** data, // [out]
+    size_t* size, // [out]
+    uint32_t timeout_ms
+);
 
 
 // --- Concrete Transport Creation Function Declarations ---

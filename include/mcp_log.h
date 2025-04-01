@@ -7,12 +7,14 @@
 extern "C" {
 #endif
 
-// Logging levels
+/**
+ * @brief Defines the severity levels for log messages.
+ */
 typedef enum {
-    LOG_LEVEL_ERROR = 0,
-    LOG_LEVEL_WARN = 1,
-    LOG_LEVEL_INFO = 2,
-    LOG_LEVEL_DEBUG = 3
+    LOG_LEVEL_ERROR = 0, /**< Error conditions that prevent normal operation. */
+    LOG_LEVEL_WARN = 1,  /**< Warning conditions that might indicate potential problems. */
+    LOG_LEVEL_INFO = 2,  /**< Informational messages about normal operation. */
+    LOG_LEVEL_DEBUG = 3  /**< Detailed debugging information. */
 } log_level_t;
 
 /**
