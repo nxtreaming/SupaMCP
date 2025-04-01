@@ -1,6 +1,8 @@
 #include "unity.h"
 #include "mcp_json.h"
+#include "mcp_json_rpc.h"
 #include "mcp_arena.h"
+#include "mcp_types.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -103,9 +105,7 @@ void test_json_create_string(void) {
     TEST_ASSERT_EQUAL(MCP_JSON_STRING, mcp_json_get_type(json2_arena));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_get_string(json2_arena, &out_val));
     TEST_ASSERT_EQUAL_STRING(val2, out_val);
-    // Arena teardown will clean node, but internal strdup needs mcp_json_destroy
-    // This highlights the complexity - let's assume destroy is called before arena reset/destroy
-    // mcp_json_destroy(json2_arena); // Call destroy to free internal string
+    mcp_json_destroy(json2_arena); // Call destroy to free internal string
 
      // Test NULL input
     mcp_json_t* json_null = mcp_json_string_create(&test_arena, NULL);
@@ -197,20 +197,13 @@ void test_json_array_operations(void) {
     // Cleanup (important: destroy assumes malloc for items added)
     mcp_json_destroy(arr_malloc); free(arr_malloc);
     // For arr_arena, items were malloc'd, so destroy is needed before arena cleanup
-    // mcp_json_destroy(arr_arena); // This would free item3's internal data (none) but not item3 node
-    // Teardown handles arr_arena node and item3 node. item1/item2 already freed via arr_malloc destroy.
-    // This again shows the complexity. Let's simplify: assume items added to arena array are also from arena.
-    // Re-create items for arena test:
     mcp_arena_reset(&test_arena); // Reset arena first
     arr_arena = mcp_json_array_create(&test_arena);
     item1 = mcp_json_number_create(&test_arena, 1);
     item2 = mcp_json_string_create(&test_arena, "two_arena"); // Use arena, but string inside is still malloc
     TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr_arena, item1));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr_arena, item2));
-    // Now, destroying the arena in teardown is sufficient, EXCEPT for the internal string in item2.
-    // We still need mcp_json_destroy to clean that internal malloc.
     mcp_json_destroy(arr_arena); // Call this to free internal mallocs (like the string in item2)
-    // Arena teardown will free the nodes (arr_arena, item1, item2) and array storage (if it were arena-based)
 }
 
 // Test Object Operations (Hash Table)
@@ -267,12 +260,16 @@ void test_json_object_operations(void) {
     TEST_ASSERT_NOT_NULL(names);
     // Note: Order is not guaranteed with hash table
     bool found_key1 = false, found_key2 = false;
-    for(size_t i=0; i<count; ++i) {
-        if (strcmp(names[i], "key1") == 0) found_key1 = true;
-        if (strcmp(names[i], "key2") == 0) found_key2 = true;
-        free(names[i]); // Free names allocated by get_property_names
+    if (names) { // Add check for static analysis
+        for(size_t i=0; i<count; ++i) {
+            if (names[i] != NULL) { // Check individual name pointer
+                if (strcmp(names[i], "key1") == 0) found_key1 = true;
+                if (strcmp(names[i], "key2") == 0) found_key2 = true;
+                free(names[i]); // Free names allocated by get_property_names
+            }
+        }
+        free(names);
     }
-    free(names);
     TEST_ASSERT_TRUE(found_key1);
     TEST_ASSERT_TRUE(found_key2);
 
@@ -285,15 +282,15 @@ void test_json_object_operations(void) {
     TEST_ASSERT_EQUAL_INT(0, mcp_json_object_get_property_names(obj_malloc, &names, &count));
     TEST_ASSERT_EQUAL_UINT(1, count);
     TEST_ASSERT_NOT_NULL(names);
-    TEST_ASSERT_EQUAL_STRING("key2", names[0]);
-    free(names[0]); free(names);
+    if (names && names[0]) { // Add check for static analysis
+        TEST_ASSERT_EQUAL_STRING("key2", names[0]);
+        free(names[0]);
+    }
+    free(names);
 
     // Cleanup
     mcp_json_destroy(obj_malloc); free(obj_malloc); // Frees internal val_str + node
-    // For obj_arena, internal values val_bool, val_null are arena allocated.
-    // Hash table entries/names used malloc. mcp_json_destroy handles those.
     mcp_json_destroy(obj_arena);
-    // Teardown frees obj_arena node, val_bool node, val_null node.
     mcp_json_destroy(val_arr); free(val_arr); // Clean up unused array
 }
 
@@ -475,8 +472,267 @@ void test_json_stringify(void) {
     free(str); mcp_json_destroy(json); free(json);
 }
 
+// Test mcp_json_parse_response (Success)
+void test_mcp_json_parse_response_success(void) {
+    const char* json_str = "{\"id\": 123, \"result\": {\"value\": \"ok\"}}";
+    uint64_t id = 0;
+    mcp_error_code_t err_code = MCP_ERROR_INTERNAL_ERROR; // Init to error
+    char* err_msg = (char*)"dummy"; // Init to non-NULL
+    char* result = NULL;
+
+    int ret = mcp_json_parse_response(json_str, &id, &err_code, &err_msg, &result);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_EQUAL_UINT64(123, id);
+    TEST_ASSERT_EQUAL_INT(MCP_ERROR_NONE, err_code);
+    TEST_ASSERT_NULL(err_msg); // Should be NULL on success
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL_STRING("{\"value\":\"ok\"}", result);
+
+    free(result); // Free the allocated result string
+}
+
+// Test mcp_json_parse_response (Error)
+void test_mcp_json_parse_response_error(void) {
+    const char* json_str = "{\"id\": 456, \"error\": {\"code\": -32601, \"message\": \"Method not found\"}}";
+    uint64_t id = 0;
+    mcp_error_code_t err_code = MCP_ERROR_NONE; // Init to success
+    char* err_msg = NULL;
+    char* result = (char*)"dummy"; // Init to non-NULL
+
+    int ret = mcp_json_parse_response(json_str, &id, &err_code, &err_msg, &result);
+
+    TEST_ASSERT_EQUAL_INT(0, ret); // Parse itself succeeds
+    TEST_ASSERT_EQUAL_UINT64(456, id);
+    TEST_ASSERT_EQUAL_INT(MCP_ERROR_METHOD_NOT_FOUND, err_code);
+    TEST_ASSERT_NOT_NULL(err_msg);
+    TEST_ASSERT_EQUAL_STRING("Method not found", err_msg);
+    TEST_ASSERT_NULL(result); // Should be NULL on error
+
+    free(err_msg); // Free the allocated error message string
+}
+
+// Test mcp_json_parse_response (Invalid JSON)
+void test_mcp_json_parse_response_invalid_json(void) {
+    const char* json_str = "{\"id\": 789, error: {}}"; // Invalid JSON (unquoted key)
+    uint64_t id = 0;
+    mcp_error_code_t err_code = MCP_ERROR_NONE;
+    char* err_msg = NULL;
+    char* result = NULL;
+
+    int ret = mcp_json_parse_response(json_str, &id, &err_code, &err_msg, &result);
+
+    TEST_ASSERT_EQUAL_INT(-1, ret); // Parse should fail
+}
+
+// Test mcp_json_parse_response (Missing fields)
+void test_mcp_json_parse_response_missing_fields(void) {
+    const char* json_str1 = "{\"id\": 1}"; // Missing result/error
+    const char* json_str2 = "{\"result\": 1}"; // Missing id
+    uint64_t id = 0;
+    mcp_error_code_t err_code = MCP_ERROR_NONE;
+    char* err_msg = NULL;
+    char* result = NULL;
+
+    int ret1 = mcp_json_parse_response(json_str1, &id, &err_code, &err_msg, &result);
+    TEST_ASSERT_EQUAL_INT(-1, ret1); // Should fail: missing result/error
+
+    int ret2 = mcp_json_parse_response(json_str2, &id, &err_code, &err_msg, &result);
+    TEST_ASSERT_EQUAL_INT(-1, ret2); // Should fail: missing id
+}
+
+// Test mcp_json_parse_resources
+void test_mcp_json_parse_resources_valid(void) {
+    const char* json_str = "{\"resources\": [{\"uri\": \"res:/a\", \"name\": \"Resource A\"}, {\"uri\": \"res:/b\"}]}";
+    mcp_resource_t** resources = NULL;
+    size_t count = 0;
+
+    int ret = mcp_json_parse_resources(json_str, &resources, &count);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_EQUAL_size_t(2, count);
+    TEST_ASSERT_NOT_NULL(resources);
+    if (resources) { // Add check to satisfy static analysis
+        TEST_ASSERT_NOT_NULL(resources[0]);
+        TEST_ASSERT_NOT_NULL(resources[1]);
+        if (resources[0]) {
+            TEST_ASSERT_EQUAL_STRING("res:/a", resources[0]->uri);
+            TEST_ASSERT_EQUAL_STRING("Resource A", resources[0]->name);
+        }
+        if (resources[1]) {
+            TEST_ASSERT_EQUAL_STRING("res:/b", resources[1]->uri);
+            TEST_ASSERT_NULL(resources[1]->name); // Name is optional
+        }
+    }
+
+    mcp_free_resources(resources, count); // Use generic free function
+}
+
+void test_mcp_json_parse_resources_empty(void) {
+    const char* json_str = "{\"resources\": []}";
+    mcp_resource_t** resources = NULL;
+    size_t count = 1; // Init to non-zero
+
+    int ret = mcp_json_parse_resources(json_str, &resources, &count);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_EQUAL_size_t(0, count);
+    TEST_ASSERT_NULL(resources);
+}
+
+void test_mcp_json_parse_resources_invalid(void) {
+    const char* json_str1 = "{\"resources\": [{\"uri\": 1}]}"; // Invalid uri type
+    const char* json_str2 = "{\"resources\": 1}"; // Invalid resources type
+    mcp_resource_t** resources = NULL;
+    size_t count = 0;
+
+    int ret1 = mcp_json_parse_resources(json_str1, &resources, &count);
+    TEST_ASSERT_EQUAL_INT(-1, ret1);
+
+    int ret2 = mcp_json_parse_resources(json_str2, &resources, &count);
+    TEST_ASSERT_EQUAL_INT(-1, ret2);
+}
+
+// Test mcp_json_parse_resource_templates (similar structure to resources)
+void test_mcp_json_parse_resource_templates_valid(void) {
+    const char* json_str = "{\"resourceTemplates\": [{\"uriTemplate\": \"res://{city}\", \"name\": \"City Resource\"}]}";
+    mcp_resource_template_t** templates = NULL;
+    size_t count = 0;
+
+    int ret = mcp_json_parse_resource_templates(json_str, &templates, &count);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_EQUAL_size_t(1, count);
+    TEST_ASSERT_NOT_NULL(templates);
+    if (templates) { // Add check
+        TEST_ASSERT_NOT_NULL(templates[0]);
+        if (templates[0]) {
+            TEST_ASSERT_EQUAL_STRING("res://{city}", templates[0]->uri_template);
+            TEST_ASSERT_EQUAL_STRING("City Resource", templates[0]->name);
+        }
+    }
+
+    mcp_free_resource_templates(templates, count); // Use generic free function
+}
+
+// Test mcp_json_parse_content
+void test_mcp_json_parse_content_valid(void) {
+    const char* json_str = "{\"contents\": [{\"type\": \"text\", \"text\": \"Hello\"}, {\"type\": \"json\", \"mimeType\": \"app/json\", \"text\": \"{\\\"a\\\":1}\"}]}";
+    mcp_content_item_t** content = NULL;
+    size_t count = 0;
+
+    int ret = mcp_json_parse_content(json_str, &content, &count);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_EQUAL_size_t(2, count);
+    TEST_ASSERT_NOT_NULL(content);
+    if (content) { // Add check
+        TEST_ASSERT_NOT_NULL(content[0]);
+        TEST_ASSERT_NOT_NULL(content[1]);
+        if (content[0]) {
+            TEST_ASSERT_EQUAL(MCP_CONTENT_TYPE_TEXT, content[0]->type);
+            TEST_ASSERT_EQUAL_STRING("Hello", (char*)content[0]->data); // Correct access via cast
+        }
+        if (content[1]) {
+            TEST_ASSERT_EQUAL(MCP_CONTENT_TYPE_JSON, content[1]->type);
+            TEST_ASSERT_EQUAL_STRING("app/json", content[1]->mime_type);
+            TEST_ASSERT_EQUAL_STRING("{\"a\":1}", (char*)content[1]->data); // Correct access via cast
+        }
+    }
+
+    mcp_free_content(content, count); // Use generic free function
+}
+
+// Test mcp_json_parse_tools
+void test_mcp_json_parse_tools_valid(void) {
+    const char* json_str = "{\"tools\": [{\"name\": \"tool_a\", \"description\": \"Does A\"}, {\"name\": \"tool_b\"}]}";
+    mcp_tool_t** tools = NULL;
+    size_t count = 0;
+
+    int ret = mcp_json_parse_tools(json_str, &tools, &count);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_EQUAL_size_t(2, count);
+    TEST_ASSERT_NOT_NULL(tools);
+    if (tools) { // Add check
+        TEST_ASSERT_NOT_NULL(tools[0]);
+        TEST_ASSERT_NOT_NULL(tools[1]);
+        if (tools[0]) {
+            TEST_ASSERT_EQUAL_STRING("tool_a", tools[0]->name);
+            TEST_ASSERT_EQUAL_STRING("Does A", tools[0]->description);
+        }
+        if (tools[1]) {
+            TEST_ASSERT_EQUAL_STRING("tool_b", tools[1]->name);
+            TEST_ASSERT_NULL(tools[1]->description);
+        }
+    }
+
+    mcp_free_tools(tools, count); // Use generic free function
+}
+
+// Test mcp_json_parse_tool_result
+void test_mcp_json_parse_tool_result_success(void) {
+    const char* json_str = "{\"isError\": false, \"content\": [{\"type\": \"text\", \"text\": \"Success!\"}]}";
+    mcp_content_item_t** content = NULL;
+    size_t count = 0;
+    bool is_error = true; // Init to true
+
+    int ret = mcp_json_parse_tool_result(json_str, &content, &count, &is_error);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_FALSE(is_error);
+    TEST_ASSERT_EQUAL_size_t(1, count);
+    TEST_ASSERT_NOT_NULL(content);
+    if (content) { // Add check
+        TEST_ASSERT_NOT_NULL(content[0]);
+        if (content[0]) {
+            TEST_ASSERT_EQUAL(MCP_CONTENT_TYPE_TEXT, content[0]->type);
+            TEST_ASSERT_EQUAL_STRING("Success!", (char*)content[0]->data); // Correct access via cast
+        }
+    }
+
+    mcp_free_content(content, count); // Use generic free function
+}
+
+void test_mcp_json_parse_tool_result_error(void) {
+    const char* json_str = "{\"isError\": true, \"content\": [{\"type\": \"text\", \"text\": \"Failure!\"}]}";
+    mcp_content_item_t** content = NULL;
+    size_t count = 0;
+    bool is_error = false; // Init to false
+
+    int ret = mcp_json_parse_tool_result(json_str, &content, &count, &is_error);
+
+    TEST_ASSERT_EQUAL_INT(0, ret);
+    TEST_ASSERT_TRUE(is_error);
+    TEST_ASSERT_EQUAL_size_t(1, count);
+    TEST_ASSERT_NOT_NULL(content);
+     if (content) { // Add check
+        TEST_ASSERT_NOT_NULL(content[0]);
+        if (content[0]) {
+            TEST_ASSERT_EQUAL_STRING("Failure!", (char*)content[0]->data); // Correct access via cast
+        }
+    }
+
+    mcp_free_content(content, count); // Use generic free function
+}
+
 
 // --- Test Group Runner ---
+
+// Add forward declarations for new tests
+extern void test_mcp_json_parse_response_success(void);
+extern void test_mcp_json_parse_response_error(void);
+extern void test_mcp_json_parse_response_invalid_json(void);
+extern void test_mcp_json_parse_response_missing_fields(void);
+extern void test_mcp_json_parse_resources_valid(void);
+extern void test_mcp_json_parse_resources_empty(void);
+extern void test_mcp_json_parse_resources_invalid(void);
+extern void test_mcp_json_parse_resource_templates_valid(void);
+extern void test_mcp_json_parse_content_valid(void);
+extern void test_mcp_json_parse_tools_valid(void);
+extern void test_mcp_json_parse_tool_result_success(void);
+extern void test_mcp_json_parse_tool_result_error(void);
+
 
 void run_mcp_json_tests(void) {
     // Setup/Teardown are called automatically by RUN_TEST
@@ -492,4 +748,17 @@ void run_mcp_json_tests(void) {
     RUN_TEST(test_json_parse_structures);
     RUN_TEST(test_json_parse_invalid);
     RUN_TEST(test_json_stringify);
+    // Add calls for new tests
+    RUN_TEST(test_mcp_json_parse_response_success);
+    RUN_TEST(test_mcp_json_parse_response_error);
+    RUN_TEST(test_mcp_json_parse_response_invalid_json);
+    RUN_TEST(test_mcp_json_parse_response_missing_fields);
+    RUN_TEST(test_mcp_json_parse_resources_valid);
+    RUN_TEST(test_mcp_json_parse_resources_empty);
+    RUN_TEST(test_mcp_json_parse_resources_invalid);
+    RUN_TEST(test_mcp_json_parse_resource_templates_valid);
+    RUN_TEST(test_mcp_json_parse_content_valid);
+    RUN_TEST(test_mcp_json_parse_tools_valid);
+    RUN_TEST(test_mcp_json_parse_tool_result_success);
+    RUN_TEST(test_mcp_json_parse_tool_result_error);
 }

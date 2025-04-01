@@ -189,6 +189,40 @@ void mcp_content_item_free(mcp_content_item_t* item);
  */
 void mcp_message_release_contents(mcp_message_t* message);
 
+
+// --- Array Free Functions ---
+
+/**
+ * @brief Frees an array of resources previously returned by parsing functions.
+ * @param resources Pointer to the array of resource pointers to free. Can be NULL.
+ * @param count The number of elements in the resources array.
+ */
+void mcp_free_resources(mcp_resource_t** resources, size_t count);
+
+/**
+ * @brief Frees an array of resource templates previously returned by parsing functions.
+ * @param templates Pointer to the array of resource template pointers to free. Can be NULL.
+ * @param count The number of elements in the templates array.
+ */
+void mcp_free_resource_templates(mcp_resource_template_t** templates, size_t count);
+
+/**
+ * @brief Frees an array of content items previously returned by parsing functions.
+ * @param content Pointer to the array of content item pointers to free. Can be NULL.
+ * @param count The number of elements in the content array.
+ */
+void mcp_free_content(mcp_content_item_t** content, size_t count);
+
+/**
+ * @brief Frees an array of tools previously returned by parsing functions.
+ * @param tools Pointer to the array of tool pointers to free. Can be NULL.
+ * @param count The number of elements in the tools array.
+ */
+void mcp_free_tools(mcp_tool_t** tools, size_t count);
+
+
+// --- Create Functions ---
+
 /**
  * @brief Creates a new mcp_resource_t structure on the heap.
  *

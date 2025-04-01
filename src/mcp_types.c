@@ -488,6 +488,69 @@ mcp_message_t* mcp_request_create(
     return message;
 }
 
+
+// --- Array Free Functions (Moved from mcp_client.c) ---
+
+/**
+ * @brief Frees an array of resources and its contents.
+ * @param resources Pointer to the array of resource pointers.
+ * @param count Number of elements in the array.
+ */
+void mcp_free_resources(mcp_resource_t** resources, size_t count) {
+    if (resources == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        mcp_resource_free(resources[i]); // Frees individual resource and its strings
+    }
+    free(resources); // Frees the array itself
+}
+
+/**
+ * @brief Frees an array of resource templates and its contents.
+ * @param templates Pointer to the array of template pointers.
+ * @param count Number of elements in the array.
+ */
+void mcp_free_resource_templates(mcp_resource_template_t** templates, size_t count) {
+    if (templates == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        mcp_resource_template_free(templates[i]); // Frees individual template and its strings
+    }
+    free(templates); // Frees the array itself
+}
+
+/**
+ * @brief Frees an array of content items and its contents.
+ * @param content Pointer to the array of content item pointers.
+ * @param count Number of elements in the array.
+ */
+void mcp_free_content(mcp_content_item_t** content, size_t count) {
+    if (content == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        mcp_content_item_free(content[i]); // Frees individual item and its data/strings
+    }
+    free(content); // Frees the array itself
+}
+
+/**
+ * @brief Frees an array of tools and its contents.
+ * @param tools Pointer to the array of tool pointers.
+ * @param count Number of elements in the array.
+ */
+void mcp_free_tools(mcp_tool_t** tools, size_t count) {
+    if (tools == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        mcp_tool_free(tools[i]); // Frees individual tool and its contents
+    }
+    free(tools); // Frees the array itself
+}
+
 mcp_message_t* mcp_response_create(
     uint64_t id,
     mcp_error_code_t error_code,

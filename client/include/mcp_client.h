@@ -153,49 +153,7 @@ int mcp_client_call_tool(
     bool* is_error
 );
 
-/**
- * @brief Frees an array of resources previously returned by mcp_client_list_resources.
- *
- * This function iterates through the array, frees each individual resource
- * using mcp_resource_free(), and then frees the array itself.
- *
- * @param resources Pointer to the array of resource pointers to free. Can be NULL.
- * @param count The number of elements in the resources array.
- */
-void mcp_client_free_resources(mcp_resource_t** resources, size_t count);
-
-/**
- * @brief Frees an array of resource templates previously returned by mcp_client_list_resource_templates.
- *
- * This function iterates through the array, frees each individual template
- * using mcp_resource_template_free(), and then frees the array itself.
- *
- * @param templates Pointer to the array of resource template pointers to free. Can be NULL.
- * @param count The number of elements in the templates array.
- */
-void mcp_client_free_resource_templates(mcp_resource_template_t** templates, size_t count);
-
-/**
- * @brief Frees an array of content items previously returned by mcp_client_read_resource or mcp_client_call_tool.
- *
- * This function iterates through the array, frees each individual content item
- * using mcp_content_item_free(), and then frees the array itself.
- *
- * @param content Pointer to the array of content item pointers to free. Can be NULL.
- * @param count The number of elements in the content array.
- */
-void mcp_client_free_content(mcp_content_item_t** content, size_t count);
-
-/**
- * @brief Frees an array of tools previously returned by mcp_client_list_tools.
- *
- * This function iterates through the array, frees each individual tool
- * using mcp_tool_free(), and then frees the array itself.
- *
- * @param tools Pointer to the array of tool pointers to free. Can be NULL.
- * @param count The number of elements in the tools array.
- */
-void mcp_client_free_tools(mcp_tool_t** tools, size_t count);
+// Free functions moved to mcp_types.h
 
 #ifdef __cplusplus
 }
