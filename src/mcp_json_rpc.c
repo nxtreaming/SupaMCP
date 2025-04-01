@@ -781,7 +781,7 @@ int mcp_json_parse_tools(
                                     if (required_property_json != NULL && mcp_json_get_type(required_property_json) == MCP_JSON_STRING) {
                                         const char* required_property_name;
                                         if (mcp_json_get_string(required_property_json, &required_property_name) == 0) {
-                                            required_properties[j] = strdup(required_property_name);
+                                            required_properties[j] = mcp_strdup(required_property_name);
                                         }
                                     }
                                 }

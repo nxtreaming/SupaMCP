@@ -7,9 +7,6 @@
 
 // Handle Windows-specific compatibility issues
 #ifdef _WIN32
-    // Redefine strdup to _strdup on Windows to avoid deprecation warnings
-    #define strdup          _strdup
-    
     // Disable warning about nameless struct/union
     #pragma warning(disable: 4201)
 #endif

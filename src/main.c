@@ -64,13 +64,13 @@ static int example_resource_handler(
     if (*content == NULL) return -1;
 
     (*content)->type = MCP_CONTENT_TYPE_TEXT;
-    (*content)->mime_type = strdup("text/plain");
+    (*content)->mime_type = mcp_strdup("text/plain");
     (*content)->data = NULL; // Initialize data pointer
 
     if (strcmp(resource_name, "hello") == 0) {
-        (*content)->data = strdup("Hello, world!");
+        (*content)->data = mcp_strdup("Hello, world!");
     } else if (strcmp(resource_name, "info") == 0) {
-        (*content)->data = strdup("This is an example MCP server.");
+        (*content)->data = mcp_strdup("This is an example MCP server.");
     }
 
     if ((*content)->data == NULL || (*content)->mime_type == NULL) {
@@ -109,11 +109,11 @@ static int example_tool_handler(
     }
 
     (*content)->type = MCP_CONTENT_TYPE_TEXT;
-    (*content)->mime_type = strdup("text/plain");
+    (*content)->mime_type = mcp_strdup("text/plain");
     (*content)->data = NULL; // Initialize
 
     if (strcmp(name, "echo") == 0) {
-        (*content)->data = strdup(arguments ? arguments : "");
+        (*content)->data = mcp_strdup(arguments ? arguments : "");
     } else if (strcmp(name, "reverse") == 0 && arguments != NULL) {
         size_t len = strlen(arguments);
         char* reversed = (char*)malloc(len + 1);
