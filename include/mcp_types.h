@@ -318,6 +318,19 @@ mcp_content_item_t* mcp_content_item_create(
 );
 
 /**
+ * @brief Creates a deep copy of an mcp_content_item_t structure on the heap.
+ *
+ * Allocates memory for the new structure and performs deep copies of the
+ * mime_type string and the data buffer.
+ *
+ * @param original Pointer to the content item to copy.
+ * @return Pointer to the newly allocated copy, or NULL on error.
+ * @note The caller is responsible for freeing the returned structure using mcp_content_item_free().
+ */
+mcp_content_item_t* mcp_content_item_copy(const mcp_content_item_t* original);
+
+
+/**
  * @brief Creates a new heap-allocated mcp_message_t representing a request.
  * @deprecated This function allocates the top-level message struct, which is often
  *             less convenient than stack allocation + mcp_message_release_contents.

@@ -11,6 +11,7 @@
 
 // Platform-specific socket includes
 #ifdef _WIN32
+// Include winsock2.h FIRST before any other includes that might pull in windows.h
 #   include <winsock2.h>
 #   include <ws2tcpip.h>
 #   pragma comment(lib, "Ws2_32.lib")

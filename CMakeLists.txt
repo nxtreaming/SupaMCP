@@ -31,6 +31,8 @@ set(COMMON_SOURCES
     src/mcp_arena.c
     src/mcp_log.c
     src/mcp_buffer_pool.c
+    src/mcp_thread_pool.c
+    src/mcp_cache.c
 )
 
 # Common library header files
@@ -43,6 +45,8 @@ set(COMMON_HEADERS
     include/mcp_types.h
     include/mcp_arena.h
     include/mcp_log.h
+    include/mcp_thread_pool.h
+    include/mcp_cache.h
 )
 
 # Server-specific source files
@@ -88,6 +92,7 @@ target_include_directories(mcp_server PRIVATE
 )
 
 # Create client executable
+# Note: This might need adjustment if client also needs thread pool, but for now it links mcp_common
 add_executable(mcp_client ${CLIENT_SOURCES} ${CLIENT_HEADERS})
 target_link_libraries(mcp_client PRIVATE mcp_common)
 # Client needs access to its own headers in client/include/

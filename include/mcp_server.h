@@ -15,6 +15,10 @@ typedef struct {
     const char* name;        /**< Server name (e.g., "my-mcp-server"). */
     const char* version;     /**< Server version string (e.g., "1.0.0"). */
     const char* description; /**< Optional server description. */
+    size_t thread_pool_size; /**< Number of worker threads for request handling. Default: 4 if 0. */
+    size_t task_queue_size;  /**< Maximum number of pending requests in the queue. Default: 1024 if 0. */
+    size_t cache_capacity;   /**< Maximum number of entries in the resource cache. Default: 128 if 0. */
+    time_t cache_default_ttl_seconds; /**< Default TTL for cache entries in seconds. Default: 300 (5 min) if 0. */
 } mcp_server_config_t;
 
 /**

@@ -1,3 +1,9 @@
+// Ensure winsock2.h is included before windows.h (which might be included by other headers)
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -5,12 +11,27 @@
 #include <mcp_json.h>
 #include <mcp_arena.h>
 #include <mcp_log.h>
+#include <mcp_thread_pool.h>
+#include <mcp_cache.h>
+
+#ifndef _WIN32 // Only include netinet/in.h if not Windows (winsock2.h covers htonl)
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#endif
+
+// Default thread pool settings if not specified in config
+#define DEFAULT_THREAD_POOL_SIZE 4
+#define DEFAULT_TASK_QUEUE_SIZE 1024
+#define DEFAULT_CACHE_CAPACITY 128
+#define DEFAULT_CACHE_TTL_SECONDS 300 // 5 minutes
 
 // Server structure
 struct mcp_server {
     mcp_server_config_t config;
     mcp_server_capabilities_t capabilities;
-    mcp_transport_t* transport;
+    mcp_transport_t* transport;         // Transport associated via start()
+    mcp_thread_pool_t* thread_pool;     // Thread pool for request handling
+    mcp_resource_cache_t* resource_cache; // Resource cache
     bool running;
 
     // Resources
@@ -60,6 +81,66 @@ static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, 
 static char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message);
 static char* create_success_response(uint64_t id, char* result_str); // Takes ownership of result_str
 
+// --- Thread Pool Task Data and Worker ---
+
+// Structure to hold data for a message processing task
+typedef struct {
+    mcp_server_t* server;
+    mcp_transport_t* transport; // Transport to send response on
+    void* message_data;         // Copied message data (owned by this struct)
+    size_t message_size;
+} message_task_data_t;
+
+// Worker function executed by the thread pool
+static void process_message_task(void* arg) {
+    message_task_data_t* task_data = (message_task_data_t*)arg;
+    if (!task_data || !task_data->server || !task_data->transport || !task_data->message_data) {
+        fprintf(stderr, "Error: Invalid task data in process_message_task.\n");
+        // Attempt cleanup even with invalid data
+        if (task_data) free(task_data->message_data);
+        free(task_data);
+        return;
+    }
+
+    mcp_server_t* server = task_data->server;
+    mcp_transport_t* transport = task_data->transport;
+    void* data = task_data->message_data;
+    size_t size = task_data->message_size;
+
+    int error_code = 0;
+    char* response_json = handle_message(server, data, size, &error_code);
+
+    // If handle_message produced a response, send it back via the transport
+    if (response_json != NULL) {
+        size_t json_len = strlen(response_json);
+        uint32_t net_len = htonl((uint32_t)json_len); // Network byte order length
+        size_t total_len = sizeof(net_len) + json_len;
+        char* send_buffer = (char*)malloc(total_len);
+
+        if (send_buffer) {
+            memcpy(send_buffer, &net_len, sizeof(net_len));
+            memcpy(send_buffer + sizeof(net_len), response_json, json_len);
+
+            // Send the response (ignore errors for now, could log)
+            // TODO: Handle send errors more robustly?
+            mcp_transport_send(transport, send_buffer, total_len);
+
+            free(send_buffer);
+        } else {
+            fprintf(stderr, "Error: Failed to allocate send buffer for response.\n");
+        }
+        free(response_json); // Free the response from handle_message
+    } else if (error_code != MCP_ERROR_NONE) {
+        // Log if handle_message failed but didn't produce an error response string
+        // (e.g., parse error before ID was known)
+        fprintf(stderr, "Error processing message (code: %d), no response generated.\n", error_code);
+    }
+
+    // Clean up task data
+    free(task_data->message_data);
+    free(task_data);
+}
+
 
 // --- Transport Callback ---
 
@@ -68,19 +149,55 @@ static char* create_success_response(uint64_t id, char* result_str); // Takes ow
  * @brief Callback function passed to the transport layer.
  *
  * This function is invoked by the transport when a complete message is received.
- * It acts as the entry point for message processing within the server core.
+ * It copies the message data and dispatches it to the thread pool for processing.
  *
  * @param user_data Pointer to the mcp_server_t instance.
  * @param data Pointer to the received raw message data.
  * @param size Size of the received data.
  * @param[out] error_code Pointer to store potential errors during callback processing itself (not application errors).
- * @return A malloc'd string containing the JSON response to send back (for requests), or NULL.
- *         The transport layer is responsible for freeing this string.
+ * @return NULL. Responses are sent asynchronously by the worker thread.
  */
 static char* transport_message_callback(void* user_data, const void* data, size_t size, int* error_code) {
     mcp_server_t* server = (mcp_server_t*)user_data;
-    // Delegate processing to the main message handler.
-    return handle_message(server, data, size, error_code);
+    if (server == NULL || data == NULL || size == 0 || error_code == NULL || server->thread_pool == NULL) {
+        if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        return NULL; // Cannot process
+    }
+    *error_code = MCP_ERROR_NONE;
+
+    // Create task data - must copy message data as the original buffer might be reused/freed
+    message_task_data_t* task_data = (message_task_data_t*)malloc(sizeof(message_task_data_t));
+    if (!task_data) {
+        fprintf(stderr, "Error: Failed to allocate task data.\n");
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return NULL;
+    }
+
+    task_data->message_data = malloc(size);
+    if (!task_data->message_data) {
+        fprintf(stderr, "Error: Failed to allocate buffer for message copy.\n");
+        free(task_data);
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return NULL;
+    }
+
+    memcpy(task_data->message_data, data, size);
+    task_data->server = server;
+    // Use the transport stored in the server struct (set during mcp_server_start)
+    task_data->transport = server->transport;
+    task_data->message_size = size;
+
+    // Add task to the thread pool
+    if (mcp_thread_pool_add_task(server->thread_pool, process_message_task, task_data) != 0) {
+        fprintf(stderr, "Error: Failed to add message processing task to thread pool.\n");
+        // Cleanup allocated data if task add failed
+        free(task_data->message_data);
+        free(task_data);
+        *error_code = MCP_ERROR_INTERNAL_ERROR; // Indicate failure to queue
+    }
+
+    // Callback itself doesn't return the response string anymore
+    return NULL;
 }
 
 // --- Public API Implementation ---
@@ -102,6 +219,12 @@ mcp_server_t* mcp_server_create(
     server->config.name = config->name ? mcp_strdup(config->name) : NULL;
     server->config.version = config->version ? mcp_strdup(config->version) : NULL;
     server->config.description = config->description ? mcp_strdup(config->description) : NULL;
+    // Copy thread pool & cache config (not strdup needed)
+    server->config.thread_pool_size = config->thread_pool_size;
+    server->config.task_queue_size = config->task_queue_size;
+    server->config.cache_capacity = config->cache_capacity;
+    server->config.cache_default_ttl_seconds = config->cache_default_ttl_seconds;
+
 
     // Copy capabilities
     server->capabilities = *capabilities;
@@ -126,12 +249,15 @@ mcp_server_t* mcp_server_create(
     server->resource_handler_user_data = NULL;
     server->tool_handler = NULL;
     server->tool_handler_user_data = NULL;
+    server->thread_pool = NULL; // Initialize thread pool pointer
+    server->resource_cache = NULL; // Initialize cache pointer
 
     // Check for allocation failures during config copy
     if ((config->name && !server->config.name) ||
         (config->version && !server->config.version) ||
         (config->description && !server->config.description))
     {
+        // Free potentially allocated strings
         free((void*)server->config.name);
         free((void*)server->config.version);
         free((void*)server->config.description);
@@ -139,7 +265,37 @@ mcp_server_t* mcp_server_create(
         return NULL;
     }
 
+    // Create the thread pool
+    size_t pool_size = server->config.thread_pool_size > 0 ? server->config.thread_pool_size : DEFAULT_THREAD_POOL_SIZE;
+    size_t queue_size = server->config.task_queue_size > 0 ? server->config.task_queue_size : DEFAULT_TASK_QUEUE_SIZE;
+    server->thread_pool = mcp_thread_pool_create(pool_size, queue_size);
+    if (server->thread_pool == NULL) {
+        fprintf(stderr, "Failed to create server thread pool.\n");
+        goto create_error_cleanup;
+    }
+
+    // Create the resource cache if resources are supported
+    if (server->capabilities.resources_supported) {
+        size_t cache_cap = server->config.cache_capacity > 0 ? server->config.cache_capacity : DEFAULT_CACHE_CAPACITY;
+        time_t cache_ttl = server->config.cache_default_ttl_seconds > 0 ? server->config.cache_default_ttl_seconds : DEFAULT_CACHE_TTL_SECONDS;
+        server->resource_cache = mcp_cache_create(cache_cap, cache_ttl);
+        if (server->resource_cache == NULL) {
+            fprintf(stderr, "Failed to create server resource cache.\n");
+            mcp_thread_pool_destroy(server->thread_pool); // Cleanup thread pool
+            goto create_error_cleanup;
+        }
+    }
+
+
     return server;
+
+create_error_cleanup:
+    // Cleanup allocated config strings before freeing server
+    free((void*)server->config.name);
+    free((void*)server->config.version);
+    free((void*)server->config.description);
+    free(server); // Free the server struct itself
+    return NULL;
 }
 
 int mcp_server_start(
@@ -150,15 +306,15 @@ int mcp_server_start(
         return -1;
     }
 
-    server->transport = transport;
+    server->transport = transport; // Store the transport handle
     server->running = true;
 
-    // Pass the updated callback signature to transport_start, providing NULL for the error callback
+    // Pass the updated callback signature to transport_start
     return mcp_transport_start(
         transport,
-        transport_message_callback,
-        server,
-        NULL
+        transport_message_callback, // Our callback that dispatches to the pool
+        server,                     // Pass server instance as user_data
+        NULL                        // No error callback needed from transport for now
     );
 }
 
@@ -167,10 +323,17 @@ int mcp_server_stop(mcp_server_t* server) {
         return -1;
     }
 
-    server->running = false;
+    server->running = false; // Signal threads to stop (though pool handles this)
 
     if (server->transport != NULL) {
-        return mcp_transport_stop(server->transport);
+        // Stop the transport first (e.g., stop accepting connections)
+        mcp_transport_stop(server->transport);
+    }
+
+    // Destroy the thread pool (waits for tasks and joins threads)
+    if (server->thread_pool != NULL) {
+        mcp_thread_pool_destroy(server->thread_pool);
+        server->thread_pool = NULL; // Mark as destroyed
     }
 
     return 0;
@@ -181,7 +344,7 @@ void mcp_server_destroy(mcp_server_t* server) {
         return;
     }
 
-    mcp_server_stop(server);
+    mcp_server_stop(server); // Ensure transport is stopped and pool is destroyed
 
     // Free configuration
     free((void*)server->config.name);
@@ -205,6 +368,18 @@ void mcp_server_destroy(mcp_server_t* server) {
         mcp_tool_free(server->tools[i]);
     }
     free(server->tools);
+
+    // Destroy the thread pool (should already be done by stop, but check again)
+    if (server->thread_pool != NULL) {
+        mcp_thread_pool_destroy(server->thread_pool);
+        server->thread_pool = NULL;
+    }
+
+    // Destroy the resource cache
+    if (server->resource_cache != NULL) {
+        mcp_cache_destroy(server->resource_cache);
+        server->resource_cache = NULL;
+    }
 
     // Free the server
     free(server);
@@ -644,8 +819,9 @@ static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_ar
 /**
  * @internal
  * @brief Handles the 'read_resource' request.
- * Parses the 'uri' parameter using the provided arena, calls the registered
- * resource handler, and builds the JSON response (using malloc).
+ * Parses the 'uri' parameter using the provided arena, checks the cache,
+ * calls the registered resource handler if needed, stores the result in cache,
+ * and builds the JSON response (using malloc).
  */
 static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
     if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
@@ -669,49 +845,164 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
     if (params_json == NULL) {
         *error_code = MCP_ERROR_INVALID_PARAMS;
         return create_error_response(request->id, *error_code, "Invalid parameters JSON");
-        // Arena will be reset/destroyed by caller (handle_message)
     }
 
     mcp_json_t* uri_json = mcp_json_object_get_property(params_json, "uri");
     const char* uri = NULL;
-    if (uri_json == NULL || mcp_json_get_type(uri_json) != MCP_JSON_STRING || mcp_json_get_string(uri_json, &uri) != 0) {
+    if (uri_json == NULL || mcp_json_get_type(uri_json) != MCP_JSON_STRING || mcp_json_get_string(uri_json, &uri) != 0 || uri == NULL) {
         *error_code = MCP_ERROR_INVALID_PARAMS;
         return create_error_response(request->id, *error_code, "Missing or invalid 'uri' parameter");
-        // Arena handles params_json cleanup
     }
 
-    // Call the resource handler
-    mcp_content_item_t* content_items = NULL; // Handler should allocate this array (using malloc)
+    mcp_content_item_t** content_items = NULL; // Array of POINTERS to content items
     size_t content_count = 0;
-    int handler_status = -1;
-    if (server->resource_handler != NULL) {
-        handler_status = server->resource_handler(server, uri, server->resource_handler_user_data, &content_items, &content_count);
+    bool fetched_from_handler = false;
+    mcp_content_item_t* handler_content_items_struct_array = NULL; // Temp storage for handler result (array of structs)
+
+    // 1. Check cache first
+    if (server->resource_cache != NULL) {
+        if (mcp_cache_get(server->resource_cache, uri, &content_items, &content_count) == 0) {
+            // Cache hit! content_items (mcp_content_item_t**) is populated with copies.
+            fprintf(stdout, "Cache hit for URI: %s\n", uri);
+        } else {
+            // Cache miss or expired
+            fprintf(stdout, "Cache miss for URI: %s\n", uri);
+            content_items = NULL;
+            content_count = 0;
+        }
     }
 
-    if (handler_status != 0 || content_items == NULL || content_count == 0) {
-        // Handler failed or returned no content
-        free(content_items); // Free if allocated but handler failed
-        *error_code = MCP_ERROR_INTERNAL_ERROR; // Or a more specific code if handler provided one
-        return create_error_response(request->id, *error_code, "Resource handler failed or resource not found");
-        // Arena handles params_json cleanup
+    // 2. If not found in cache (or cache disabled), call the resource handler
+    if (content_items == NULL) {
+        if (server->resource_handler != NULL) {
+            // Handler is expected to return an array of structs (mcp_content_item_t*)
+            int handler_status = server->resource_handler(server, uri, server->resource_handler_user_data, &handler_content_items_struct_array, &content_count);
+            if (handler_status != 0 || handler_content_items_struct_array == NULL || content_count == 0) {
+                free(handler_content_items_struct_array);
+                *error_code = MCP_ERROR_INTERNAL_ERROR;
+                return create_error_response(request->id, *error_code, "Resource handler failed or resource not found");
+            }
+
+            // Allocate our array of pointers (mcp_content_item_t**)
+            content_items = (mcp_content_item_t**)malloc(content_count * sizeof(mcp_content_item_t*));
+            if (!content_items) {
+                 free(handler_content_items_struct_array);
+                 *error_code = MCP_ERROR_INTERNAL_ERROR;
+                 return create_error_response(request->id, *error_code, "Failed to allocate content pointer array");
+            }
+
+            // Copy data from handler's array of structs into our array of pointers
+            bool copy_error = false;
+            for(size_t i = 0; i < content_count; ++i) {
+                content_items[i] = mcp_content_item_copy(&handler_content_items_struct_array[i]);
+                if (!content_items[i]) {
+                    copy_error = true;
+                    // Free already copied items
+                    for(size_t j = 0; j < i; ++j) {
+                        mcp_content_item_free(content_items[j]);
+                        free(content_items[j]);
+                    }
+                    free(content_items);
+                    content_items = NULL;
+                    break;
+                }
+            }
+
+            // Free the original handler result array (structs) - no need to free internal data as it was copied
+            // Note: The handler is responsible for freeing the array it allocated, but not the internal data if copied successfully.
+            // We assume the handler allocated handler_content_items_struct_array with malloc.
+            free(handler_content_items_struct_array);
+            handler_content_items_struct_array = NULL; // Avoid potential double free
+
+            if (copy_error) {
+                 *error_code = MCP_ERROR_INTERNAL_ERROR;
+                 return create_error_response(request->id, *error_code, "Failed to copy content items from handler");
+            }
+
+            fetched_from_handler = true;
+        } else {
+             *error_code = MCP_ERROR_INTERNAL_ERROR;
+             return create_error_response(request->id, *error_code, "Resource handler not configured");
+        }
     }
 
-    // Create response JSON structure using malloc.
+    // 3. If fetched from handler, put it in the cache
+    if (fetched_from_handler && server->resource_cache != NULL) {
+        // mcp_cache_put expects an array of structs (const mcp_content_item_t*)
+        // We need to pass the data *before* we copied it into content_items (array of pointers)
+        // But we already freed handler_content_items_struct_array.
+        // Let's re-create the array of structs from our copied pointers for caching.
+        mcp_content_item_t* items_for_cache = (mcp_content_item_t*)malloc(content_count * sizeof(mcp_content_item_t));
+        if (items_for_cache) {
+            bool cache_put_copy_error = false;
+            for (size_t i = 0; i < content_count; ++i) {
+                // Copy struct content, but make a deep copy of data/mime_type for the cache
+                items_for_cache[i].type = content_items[i]->type;
+                items_for_cache[i].mime_type = content_items[i]->mime_type ? mcp_strdup(content_items[i]->mime_type) : NULL;
+                items_for_cache[i].data_size = content_items[i]->data_size;
+                if (content_items[i]->data && content_items[i]->data_size > 0) {
+                    items_for_cache[i].data = malloc(content_items[i]->data_size);
+                    if (!items_for_cache[i].data) {
+                        cache_put_copy_error = true;
+                        // Free already copied data for cache
+                        for(size_t j=0; j<i; ++j) mcp_content_item_free(&items_for_cache[j]);
+                        break;
+                    }
+                    memcpy(items_for_cache[i].data, content_items[i]->data, content_items[i]->data_size);
+                } else {
+                    items_for_cache[i].data = NULL;
+                }
+                 // Check for allocation errors during copy
+                if ((content_items[i]->mime_type && !items_for_cache[i].mime_type) ||
+                    (content_items[i]->data && !items_for_cache[i].data && content_items[i]->data_size > 0)) {
+                    cache_put_copy_error = true;
+                    mcp_content_item_free(&items_for_cache[i]); // Free partially copied item
+                     // Free already copied data for cache
+                    for(size_t j=0; j<i; ++j) mcp_content_item_free(&items_for_cache[j]);
+                    break;
+                }
+            }
+
+            if (!cache_put_copy_error) {
+                // Pass the newly created array of structs to the cache
+                if (mcp_cache_put(server->resource_cache, uri, items_for_cache, content_count, 0) != 0) {
+                    fprintf(stderr, "Warning: Failed to put resource %s into cache.\n", uri);
+                    // If put fails, the cache didn't take ownership, so free the copies
+                    for (size_t i = 0; i < content_count; ++i) {
+                        mcp_content_item_free(&items_for_cache[i]);
+                    }
+                } else {
+                    fprintf(stdout, "Stored resource %s in cache.\n", uri);
+                    // Cache took ownership, no need to free items_for_cache contents here
+                }
+            }
+            free(items_for_cache); // Free the temporary array itself
+        } else {
+             fprintf(stderr, "Warning: Failed to allocate temporary items for cache put for %s.\n", uri);
+        }
+    }
+
+    // 4. Create response JSON structure using malloc.
     mcp_json_t* contents_json = mcp_json_array_create(NULL);
     if (!contents_json) {
-        // Free handler-allocated content if JSON creation fails
-        for (size_t i = 0; i < content_count; i++) mcp_content_item_free(&content_items[i]);
-        free(content_items);
-        *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
+        // Free content items if JSON creation fails
+        if (content_items) {
+            for (size_t i = 0; i < content_count; i++) {
+                mcp_content_item_free(content_items[i]);
+                free(content_items[i]);
+            }
+            free(content_items);
+        }
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
         return create_error_response(request->id, *error_code, "Failed to create contents array");
     }
 
     bool json_build_error = false;
     for (size_t i = 0; i < content_count; i++) {
-        mcp_content_item_t* item = &content_items[i];
+        mcp_content_item_t* item = content_items[i]; // item is mcp_content_item_t*
         mcp_json_t* item_obj = mcp_json_object_create(NULL);
         if (!item_obj ||
-            mcp_json_object_set_property(item_obj, "uri", mcp_json_string_create(NULL, uri)) != 0 || // Use original URI
+            mcp_json_object_set_property(item_obj, "uri", mcp_json_string_create(NULL, uri)) != 0 ||
             (item->mime_type && mcp_json_object_set_property(item_obj, "mimeType", mcp_json_string_create(NULL, item->mime_type)) != 0) ||
             (item->type == MCP_CONTENT_TYPE_TEXT && item->data && mcp_json_object_set_property(item_obj, "text", mcp_json_string_create(NULL, (const char*)item->data)) != 0) ||
             // TODO: Handle binary data (e.g., base64 encode)?
@@ -723,9 +1014,15 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
         }
     }
 
-    // Free handler-allocated content items AFTER creating JSON copies
-    for (size_t i = 0; i < content_count; i++) mcp_content_item_free(&content_items[i]);
-    free(content_items);
+    // Free content items array and the items it points to AFTER creating JSON copies
+    if (content_items) {
+        for (size_t i = 0; i < content_count; i++) {
+             mcp_content_item_free(content_items[i]); // Free item contents
+             free(content_items[i]); // Free the item struct pointer
+        }
+        free(content_items); // Free the array itself
+    }
+
 
     if (json_build_error) {
         mcp_json_destroy(contents_json);

@@ -440,6 +440,24 @@ mcp_content_item_t* mcp_content_item_create(
     return item; // Success
 }
 
+/**
+ * @brief Creates a deep copy of an mcp_content_item_t structure on the heap.
+ */
+mcp_content_item_t* mcp_content_item_copy(const mcp_content_item_t* original) {
+    if (original == NULL) {
+        return NULL;
+    }
+
+    // Use mcp_content_item_create to handle allocation and deep copying logic
+    return mcp_content_item_create(
+        original->type,
+        original->mime_type,
+        original->data,
+        original->data_size
+    );
+}
+
+
 // --- Deprecated Message Creation Functions ---
 // These allocate the top-level mcp_message_t struct using malloc, which is often less flexible
 // than stack allocation combined with mcp_message_release_contents.
