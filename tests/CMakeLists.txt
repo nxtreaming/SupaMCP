@@ -4,6 +4,7 @@ set(TEST_RUNNER_SOURCES
     test_mcp_arena.c
     test_mcp_tcp_transport.c
     test_mcp_json.c
+    test_mcp_buffer_pool.c
     # Add other test_*.c files here later
 )
 
