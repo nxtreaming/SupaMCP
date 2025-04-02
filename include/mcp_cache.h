@@ -63,13 +63,14 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
  *
  * @param cache The cache instance.
  * @param uri The URI of the resource to store.
- * @param content An array of content item structs (mcp_content_item_t*) to store.
+ * @param content An array of pointers to content items (mcp_content_item_t**) to store.
+ *                The cache will create its own deep copies of these items.
  * @param content_count The number of items in the `content` array.
  * @param ttl_seconds The time-to-live for this specific entry in seconds.
  *                    If 0, the cache's default TTL is used. If negative, the entry never expires.
  * @return 0 on success, -1 on failure (e.g., allocation error).
  */
-int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_content_item_t* content, size_t content_count, int ttl_seconds);
+int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item_t** content, size_t content_count, int ttl_seconds);
 
 /**
  * @brief Removes an entry from the cache.

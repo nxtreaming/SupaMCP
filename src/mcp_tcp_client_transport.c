@@ -522,9 +522,9 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
 }
 
 // Send data with length prefix framing
-// Send data with length prefix framing (caller prepares the frame)
-static int tcp_client_transport_send(mcp_transport_t* transport, const void* data_to_send, size_t size) {
-    if (transport == NULL || transport->transport_data == NULL || data_to_send == NULL || size == 0) {
+// Send data with length prefix framing (transport adds the frame)
+static int tcp_client_transport_send(mcp_transport_t* transport, const void* payload_data, size_t payload_size) {
+    if (transport == NULL || transport->transport_data == NULL || payload_data == NULL || payload_size == 0) {
         return -1;
     }
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
@@ -534,8 +534,29 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* dat
         return -1;
     }
 
-    // Directly send the buffer prepared by the caller (which includes the length prefix)
-    int send_status = send_exact_client(data->sock, (const char*)data_to_send, size, &data->running);
+    // Check payload size limit
+    if (payload_size > MAX_MCP_MESSAGE_SIZE) {
+        log_message(LOG_LEVEL_ERROR, "Cannot send: Payload size (%zu) exceeds limit (%d).", payload_size, MAX_MCP_MESSAGE_SIZE);
+        return -1;
+    }
+
+    // Prepare buffer with 4-byte length prefix + payload
+    uint32_t net_len = htonl((uint32_t)payload_size);
+    size_t total_size = sizeof(net_len) + payload_size;
+    char* send_buffer = (char*)malloc(total_size);
+    if (!send_buffer) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate send buffer for TCP client transport.");
+        return -1;
+    }
+
+    // Copy length prefix and payload
+    memcpy(send_buffer, &net_len, sizeof(net_len));
+    memcpy(send_buffer + sizeof(net_len), payload_data, payload_size);
+
+    // Send the combined buffer
+    int send_status = send_exact_client(data->sock, send_buffer, total_size, &data->running);
+
+    free(send_buffer); // Free the temporary buffer
 
     if (send_status != 0) {
         log_message(LOG_LEVEL_ERROR, "send_exact_client failed (status: %d)", send_status);

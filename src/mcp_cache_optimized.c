@@ -28,7 +28,7 @@ typedef pthread_mutex_t mutex_t;
 
 // Structure for a cache entry
 typedef struct {
-    mcp_content_item_t* content;    // Value (array of copies, malloc'd)
+    mcp_content_item_t** content;   // Value (array of pointers to copies, malloc'd)
     size_t content_count;           // Number of items in the content array
     time_t expiry_time;             // Absolute expiration time (0 for never expires)
     time_t last_accessed;           // For potential LRU eviction
@@ -48,15 +48,15 @@ struct mcp_resource_cache {
 static void free_cache_entry(void* value) {
     mcp_cache_entry_t* entry = (mcp_cache_entry_t*)value;
     if (!entry) return;
-    
+
     if (entry->content) {
         for (size_t i = 0; i < entry->content_count; ++i) {
-            // Free internal data of each content item
-            mcp_content_item_free(&entry->content[i]);
+            // mcp_content_item_free frees the item pointed to AND its internal data
+            mcp_content_item_free(entry->content[i]);
         }
-        free(entry->content); // Free the array of structs
+        free(entry->content); // Free the array of pointers
     }
-    
+
     free(entry); // Free the entry itself
 }
 
@@ -135,8 +135,8 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
                 bool copy_error = false;
                 
                 for (size_t i = 0; i < entry->content_count; ++i) {
-                    // Use mcp_content_item_copy to create a deep copy of each item struct
-                    content_copy_ptrs[i] = mcp_content_item_copy(&entry->content[i]);
+                    // Use mcp_content_item_copy to create a deep copy of the item pointed to by the internal pointer
+                    content_copy_ptrs[i] = mcp_content_item_copy(entry->content[i]); // Corrected: Use pointer directly
                     if (!content_copy_ptrs[i]) {
                         copy_error = true;
                         break;
@@ -172,7 +172,9 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     return result;
 }
 
-int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_content_item_t* content, size_t content_count, int ttl_seconds) {
+// Updated signature to match header: content is mcp_content_item_t**
+int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item_t** content, size_t content_count, int ttl_seconds) {
+    // Note: 'content' is now mcp_content_item_t** (array of pointers)
     if (!cache || !uri || !content || content_count == 0) return -1;
     PROFILE_START("mcp_cache_put");
 
@@ -196,8 +198,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_conten
         return -1; // Allocation failure
     }
 
-    // Allocate space for the array of content item STRUCTS
-    entry->content = (mcp_content_item_t*)malloc(content_count * sizeof(mcp_content_item_t));
+    // Allocate space for the array of content item POINTERS
+    entry->content = (mcp_content_item_t**)malloc(content_count * sizeof(mcp_content_item_t*));
     if (!entry->content) {
         free(entry);
         mutex_unlock(&cache->lock);
@@ -206,7 +208,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_conten
     }
 
     // Initialize entry
-    entry->content_count = 0;
+    entry->content_count = 0; // Will be incremented as items are copied
     entry->last_accessed = time(NULL);
     time_t effective_ttl = (ttl_seconds == 0) ? cache->default_ttl_seconds : (time_t)ttl_seconds;
     entry->expiry_time = (effective_ttl < 0) ? 0 : entry->last_accessed + effective_ttl; // 0 means never expires
@@ -214,51 +216,35 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_conten
     // Copy content items
     bool copy_error = false;
     for (size_t i = 0; i < content_count; ++i) {
-        // Deep copy each item from the input array into our cache entry's array
-        entry->content[i].type = content[i].type;
-        entry->content[i].mime_type = content[i].mime_type ? mcp_strdup(content[i].mime_type) : NULL;
-        entry->content[i].data_size = content[i].data_size;
-        
-        if (content[i].data && content[i].data_size > 0) {
-            entry->content[i].data = malloc(content[i].data_size);
-            if (!entry->content[i].data) {
-                copy_error = true;
-                // Free already copied items in the cache entry
-                for(size_t j = 0; j < i; ++j) {
-                    mcp_content_item_free(&entry->content[j]);
-                }
-                break;
-            }
-            memcpy(entry->content[i].data, content[i].data, content[i].data_size);
-        } else {
-            entry->content[i].data = NULL;
-        }
-        
-        // Check for allocation errors during copy
-        if ((content[i].mime_type && !entry->content[i].mime_type) ||
-            (content[i].data && !entry->content[i].data && content[i].data_size > 0)) {
+        // Deep copy the item pointed to by the input array
+        entry->content[i] = mcp_content_item_copy(content[i]); // Corrected: Use copy function
+        if (!entry->content[i]) {
             copy_error = true;
-            mcp_content_item_free(&entry->content[i]); // Free partially copied item
-            // Free already copied items in the cache entry
+            // Free already copied items in the cache entry's pointer array
             for(size_t j = 0; j < i; ++j) {
-                mcp_content_item_free(&entry->content[j]);
+                mcp_content_item_free(entry->content[j]);
             }
             break;
         }
-        
-        entry->content_count++;
+        entry->content_count++; // Increment count only after successful copy
     }
 
     if (copy_error) {
-        free(entry->content);
-        free(entry);
+        free(entry->content); // Free the array of pointers
+        free(entry);          // Free the entry struct
         mutex_unlock(&cache->lock);
         PROFILE_END("mcp_cache_put");
         return -1; // Allocation failure during content copy
     }
 
     // Add entry to hash table (this will replace any existing entry with the same key)
+    // mcp_hashtable_put takes ownership of the 'entry' pointer if successful.
+    // If it fails, we need to free the entry and its contents.
     int result = mcp_hashtable_put(cache->table, uri, entry);
+    if (result != 0) {
+        // hashtable put failed, free the entry we created
+        free_cache_entry(entry); // This frees internal content array and the entry itself
+    }
 
     mutex_unlock(&cache->lock);
     PROFILE_END("mcp_cache_put");
@@ -269,6 +255,7 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
     if (!cache || !uri) return -1;
 
     mutex_lock(&cache->lock);
+    // mcp_hashtable_remove calls the value free function (free_cache_entry)
     int result = mcp_hashtable_remove(cache->table, uri);
     mutex_unlock(&cache->lock);
     
@@ -295,15 +282,22 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
         if (*(data->keys_count) >= *(data->keys_capacity)) {
             // Resize the keys array if needed
             size_t new_capacity = *(data->keys_capacity) * 2;
+            if (new_capacity == 0) new_capacity = 16; // Handle initial zero capacity
             char** new_keys = (char**)realloc(data->keys_to_remove, new_capacity * sizeof(char*));
             if (!new_keys) {
+                log_message(LOG_LEVEL_ERROR, "Failed to realloc keys_to_remove in prune_expired");
                 return; // Allocation failed, skip this key
             }
             data->keys_to_remove = new_keys;
             *(data->keys_capacity) = new_capacity;
         }
         
+        // Duplicate the key string for removal later
         data->keys_to_remove[*(data->keys_count)] = mcp_strdup(uri);
+        if (!data->keys_to_remove[*(data->keys_count)]) {
+             log_message(LOG_LEVEL_ERROR, "Failed to duplicate key string in prune_expired");
+             return; // Allocation failed, skip this key
+        }
         (*(data->keys_count))++;
         (*(data->removed_count))++;
     }
@@ -324,6 +318,7 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     
     keys_to_remove = (char**)malloc(keys_capacity * sizeof(char*));
     if (!keys_to_remove) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate initial keys_to_remove in prune_expired");
         mutex_unlock(&cache->lock);
         return 0;
     }
@@ -340,15 +335,19 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     // Iterate through all entries to find expired ones
     mcp_hashtable_foreach(cache->table, collect_expired_keys, &callback_data);
     
+    // Update keys_to_remove pointer in case realloc changed it
+    keys_to_remove = callback_data.keys_to_remove;
+
     // Remove all collected expired entries
     for (size_t i = 0; i < keys_count; i++) {
         if (keys_to_remove[i]) {
+            // mcp_hashtable_remove calls the value free function (free_cache_entry)
             mcp_hashtable_remove(cache->table, keys_to_remove[i]);
-            free(keys_to_remove[i]);
+            free(keys_to_remove[i]); // Free the duplicated key string
         }
     }
     
-    free(keys_to_remove);
+    free(keys_to_remove); // Free the array of key pointers
     mutex_unlock(&cache->lock);
     
     return removed_count;

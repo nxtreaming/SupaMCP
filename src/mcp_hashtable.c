@@ -41,16 +41,16 @@ static int mcp_hashtable_resize(mcp_hashtable_t* table, size_t new_capacity) {
     for (size_t i = 0; i < table->capacity; i++) {
         mcp_hashtable_entry_t* entry = table->buckets[i];
         while (entry) {
-            mcp_hashtable_entry_t* next = entry->next;
-            
-            // Calculate new bucket index
-            size_t new_index = table->hash_func(entry->key) % new_capacity;
+            mcp_hashtable_entry_t* next_entry = entry->next; // Store next before modifying entry
+
+            // Calculate new bucket index using bitwise AND for power-of-2 capacity
+            size_t new_index = table->hash_func(entry->key) & (new_capacity - 1);
             
             // Insert at the head of the new bucket
             entry->next = new_buckets[new_index];
             new_buckets[new_index] = entry;
             
-            entry = next;
+            entry = next_entry; // Move to the stored next
         }
     }
 
@@ -139,8 +139,8 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
         }
     }
 
-    // Calculate bucket index
-    size_t index = table->hash_func(key) % table->capacity;
+    // Calculate bucket index using bitwise AND for power-of-2 capacity
+    size_t index = table->hash_func(key) & (table->capacity - 1);
 
     // Check if key already exists
     mcp_hashtable_entry_t* entry = table->buckets[index];
@@ -195,8 +195,8 @@ int mcp_hashtable_get(mcp_hashtable_t* table, const void* key, void** value_ptr)
         return -1;
     }
 
-    // Calculate bucket index
-    size_t index = table->hash_func(key) % table->capacity;
+    // Calculate bucket index using bitwise AND for power-of-2 capacity
+    size_t index = table->hash_func(key) & (table->capacity - 1);
 
     // Search for key
     mcp_hashtable_entry_t* entry = table->buckets[index];
@@ -217,8 +217,8 @@ int mcp_hashtable_remove(mcp_hashtable_t* table, const void* key) {
         return -1;
     }
 
-    // Calculate bucket index
-    size_t index = table->hash_func(key) % table->capacity;
+    // Calculate bucket index using bitwise AND for power-of-2 capacity
+    size_t index = table->hash_func(key) & (table->capacity - 1);
 
     // Search for key
     mcp_hashtable_entry_t* entry = table->buckets[index];
@@ -258,8 +258,8 @@ bool mcp_hashtable_contains(mcp_hashtable_t* table, const void* key) {
         return false;
     }
 
-    // Calculate bucket index
-    size_t index = table->hash_func(key) % table->capacity;
+    // Calculate bucket index using bitwise AND for power-of-2 capacity
+    size_t index = table->hash_func(key) & (table->capacity - 1);
 
     // Search for key
     mcp_hashtable_entry_t* entry = table->buckets[index];

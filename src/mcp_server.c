@@ -135,23 +135,17 @@ static void process_message_task(void* arg) {
 
     // If handle_message produced a response, send it back via the transport
     if (response_json != NULL) {
+        // Framing (length prefix) should be handled by the transport layer itself.
+        // Server core just sends the JSON payload.
         size_t json_len = strlen(response_json);
-        uint32_t net_len = htonl((uint32_t)json_len); // Network byte order length
-        size_t total_len = sizeof(net_len) + json_len;
-        char* send_buffer = (char*)malloc(total_len);
+        int send_status = mcp_transport_send(transport, response_json, json_len);
 
-        if (send_buffer) {
-            memcpy(send_buffer, &net_len, sizeof(net_len));
-            memcpy(send_buffer + sizeof(net_len), response_json, json_len);
-
-            // Send the response (ignore errors for now, could log)
-            // TODO: Handle send errors more robustly?
-            mcp_transport_send(transport, send_buffer, total_len);
-
-            free(send_buffer);
-        } else {
-            fprintf(stderr, "Error: Failed to allocate send buffer for response.\n");
+        if (send_status != 0) {
+            // Log send error
+            log_message(LOG_LEVEL_ERROR, "Failed to send response via transport (status: %d)", send_status);
+            // Depending on the error, might want to close connection, but transport might handle that.
         }
+
         free(response_json); // Free the response from handle_message
     } else if (error_code != MCP_ERROR_NONE) {
         // Log if handle_message failed but didn't produce an error response string
@@ -1082,56 +1076,14 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
 
     // 3. If fetched from handler, put it in the cache
     if (fetched_from_handler && server->resource_cache != NULL) {
-        // mcp_cache_put expects an array of structs (const mcp_content_item_t*)
-        // We need to pass the data *before* we copied it into content_items (array of pointers)
-        // Let's re-create the array of structs from our copied pointers for caching.
-        mcp_content_item_t* items_for_cache = (mcp_content_item_t*)malloc(content_count * sizeof(mcp_content_item_t));
-        if (items_for_cache) {
-            bool cache_put_copy_error = false;
-            for (size_t i = 0; i < content_count; ++i) {
-                // Copy struct content, but make a deep copy of data/mime_type for the cache
-                items_for_cache[i].type = content_items[i]->type;
-                items_for_cache[i].mime_type = content_items[i]->mime_type ? mcp_strdup(content_items[i]->mime_type) : NULL;
-                items_for_cache[i].data_size = content_items[i]->data_size;
-                if (content_items[i]->data && content_items[i]->data_size > 0) {
-                    items_for_cache[i].data = malloc(content_items[i]->data_size);
-                    if (!items_for_cache[i].data) {
-                        cache_put_copy_error = true;
-                        // Free already copied data for cache
-                        for(size_t j=0; j<i; ++j) mcp_content_item_free(&items_for_cache[j]);
-                        break;
-                    }
-                    memcpy(items_for_cache[i].data, content_items[i]->data, content_items[i]->data_size);
-                } else {
-                    items_for_cache[i].data = NULL;
-                }
-                 // Check for allocation errors during copy
-                if ((content_items[i]->mime_type && !items_for_cache[i].mime_type) ||
-                    (content_items[i]->data && !items_for_cache[i].data && content_items[i]->data_size > 0)) {
-                    cache_put_copy_error = true;
-                    mcp_content_item_free(&items_for_cache[i]); // Free partially copied item
-                     // Free already copied data for cache
-                    for(size_t j=0; j<i; ++j) mcp_content_item_free(&items_for_cache[j]);
-                    break;
-                }
-            }
-
-            if (!cache_put_copy_error) {
-                // Pass the newly created array of structs to the cache
-                if (mcp_cache_put(server->resource_cache, uri, items_for_cache, content_count, 0) != 0) {
-                    fprintf(stderr, "Warning: Failed to put resource %s into cache.\n", uri);
-                    // If put fails, the cache didn't take ownership, so free the copies
-                    for (size_t i = 0; i < content_count; ++i) {
-                        mcp_content_item_free(&items_for_cache[i]);
-                    }
-                } else {
-                    fprintf(stdout, "Stored resource %s in cache.\n", uri);
-                    // Cache took ownership, no need to free items_for_cache contents here
-                }
-            }
-            free(items_for_cache); // Free the temporary array itself
+        // mcp_cache_put now expects mcp_content_item_t** (array of pointers).
+        // Pass the content_items array directly. The cache will make its own copies.
+        if (mcp_cache_put(server->resource_cache, uri, content_items, content_count, 0) != 0) {
+            fprintf(stderr, "Warning: Failed to put resource %s into cache.\n", uri);
+            // Note: If cache put fails, we still own content_items and need to free them later.
         } else {
-             fprintf(stderr, "Warning: Failed to allocate temporary items for cache put for %s.\n", uri);
+            fprintf(stdout, "Stored resource %s in cache.\n", uri);
+            // Note: If cache put succeeds, the cache now owns the copies. We still free our original content_items later.
         }
     }
 

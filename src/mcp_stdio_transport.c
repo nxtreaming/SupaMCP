@@ -132,56 +132,91 @@ static void* stdio_read_thread_func(void* arg) {
 #endif
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)arg;
     mcp_transport_t* transport = data->transport_handle;
-    char line_buffer[MAX_LINE_LENGTH];
+    char length_buf[4];
+    uint32_t message_length_net, message_length_host;
+    char* message_buf = NULL;
 
-    log_message(LOG_LEVEL_DEBUG, "Stdio read thread started.");
+    log_message(LOG_LEVEL_DEBUG, "Stdio read thread started (using length prefix framing).");
 
-    // Loop reading lines as long as the transport is running
+    // Loop reading messages as long as the transport is running
     while (data->running) {
-        // Blocking read using fgets
-        if (fgets(line_buffer, sizeof(line_buffer), stdin) != NULL) {
-            // Successfully read a line, remove trailing newline characters
-            line_buffer[strcspn(line_buffer, "\r\n")] = 0;
-            size_t len = strlen(line_buffer);
-
-            // If the line is not empty and a message callback is registered, process it
-            if (len > 0 && transport->message_callback != NULL) {
-                int callback_error_code = 0;
-                // Invoke the message callback with the line data
-                char* response_str = transport->message_callback(
-                    transport->callback_user_data, // Pass user data
-                    line_buffer,                   // Pass line content as message data
-                    len,                           // Pass line length
-                    &callback_error_code
-                );
-
-                if (response_str != NULL) {
-                    // Send the response back via stdout
-                    // stdio_transport_send already adds newline and flushes
-                    if (stdio_transport_send(transport, response_str, strlen(response_str)) != 0) {
-                         fprintf(stderr, "[MCP Stdio Transport] Failed to send response via stdout.\n");
-                         // Error sending response, maybe stop?
-                         // data->running = false;
-                    }
-                    free(response_str); // Free the malloc'd response string
-                } else if (callback_error_code != 0) {
-                    // Callback indicated an error but returned no response
-                     fprintf(stderr, "[MCP Stdio Transport] Message callback indicated error (%d) but returned no response string.\n", callback_error_code);
-                     // data->running = false; // Optional: stop on callback error
-                }
-                // If response_str is NULL and no error, it was a notification or response not needed.
-            }
-        } else {
-            // fgets returned NULL, either EOF or error
+        // 1. Read the 4-byte length prefix
+        if (fread(length_buf, 1, sizeof(length_buf), stdin) != sizeof(length_buf)) {
             if (feof(stdin)) {
-                fprintf(stderr, "[MCP Stdio Transport] EOF reached on stdin.\n");
-            } else if (ferror(stdin)) {
-                perror("[MCP Stdio Transport] Error reading stdin");
+                log_message(LOG_LEVEL_INFO, "[MCP Stdio Transport] EOF reached on stdin while reading length.");
+            } else {
+                perror("[MCP Stdio Transport] Error reading length prefix from stdin");
             }
             data->running = false; // Stop reading on EOF or error
             break;
         }
-    }
+
+        // 2. Decode length (Network to Host byte order)
+        memcpy(&message_length_net, length_buf, 4);
+        message_length_host = ntohl(message_length_net);
+
+        // 3. Sanity check length (using MAX_MCP_MESSAGE_SIZE from TCP transport for consistency)
+        #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Re-define or include from common header
+        if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
+             log_message(LOG_LEVEL_ERROR, "[MCP Stdio Transport] Invalid message length received: %u", message_length_host);
+             data->running = false; // Treat as fatal error
+             break;
+        }
+
+        // 4. Allocate buffer for message body (+1 for null terminator)
+        message_buf = (char*)malloc(message_length_host + 1);
+        if (message_buf == NULL) {
+             log_message(LOG_LEVEL_ERROR, "[MCP Stdio Transport] Failed to allocate buffer for message size %u", message_length_host);
+             data->running = false; // Treat as fatal error
+             break;
+        }
+
+        // 5. Read the message body
+        if (fread(message_buf, 1, message_length_host, stdin) != message_length_host) {
+             if (feof(stdin)) {
+                 log_message(LOG_LEVEL_INFO, "[MCP Stdio Transport] EOF reached on stdin while reading body.");
+             } else {
+                 perror("[MCP Stdio Transport] Error reading message body from stdin");
+             }
+             free(message_buf);
+             message_buf = NULL;
+             data->running = false; // Stop reading on EOF or error
+             break;
+        }
+
+        // 6. Null-terminate and process the message via callback
+        message_buf[message_length_host] = '\0';
+        if (transport->message_callback != NULL) {
+            int callback_error_code = 0;
+            // Invoke the message callback with the message data
+            char* response_str = transport->message_callback(
+                transport->callback_user_data, // Pass user data
+                message_buf,                   // Pass message content
+                message_length_host,           // Pass message length
+                &callback_error_code
+            );
+
+            if (response_str != NULL) {
+                // Send the response back via stdout (send function handles framing)
+                if (stdio_transport_send(transport, response_str, strlen(response_str)) != 0) {
+                     log_message(LOG_LEVEL_ERROR, "[MCP Stdio Transport] Failed to send response via stdout.");
+                     // Error sending response, maybe stop?
+                     // data->running = false;
+                }
+                free(response_str); // Free the malloc'd response string
+            } else if (callback_error_code != 0) {
+                // Callback indicated an error but returned no response
+                 log_message(LOG_LEVEL_WARN, "[MCP Stdio Transport] Message callback indicated error (%d) but returned no response string.", callback_error_code);
+                 // data->running = false; // Optional: stop on callback error
+            }
+            // If response_str is NULL and no error, it was a notification or response not needed.
+        }
+
+        // 7. Free the message buffer for the next read
+        free(message_buf);
+        message_buf = NULL;
+
+    } // End while(data->running)
     fprintf(stderr, "[MCP Stdio Transport] Read thread exiting.\n");
 #ifdef _WIN32
     return 0;
@@ -283,25 +318,31 @@ static int stdio_transport_stop(mcp_transport_t* transport) {
  * Appends a newline character and flushes stdout after writing the data.
  * @param transport The transport handle (unused).
  * @param data_to_send Pointer to the data buffer to send.
- * @param size Number of bytes to send from the buffer.
+ * @param size Number of bytes in the payload to send.
  * @return 0 on success, -1 on error (e.g., write error, flush error).
  */
-static int stdio_transport_send(mcp_transport_t* transport, const void* data_to_send, size_t size) {
+static int stdio_transport_send(mcp_transport_t* transport, const void* payload_data, size_t payload_size) {
     (void)transport; // Unused in this function
-    if (data_to_send == NULL || size == 0) {
+    if (payload_data == NULL || payload_size == 0) {
         return -1; // Invalid arguments
     }
+    // Ensure payload size isn't too large (optional sanity check)
+    // if (payload_size > SOME_MAX_LIMIT) return -1;
 
-    // Write the data, followed by a newline (as expected by fgets on the other side)
-    if (fwrite(data_to_send, 1, size, stdout) != size) {
-        perror("[MCP Stdio Transport] Failed to write data to stdout");
+    // 1. Send 4-byte length prefix (network byte order)
+    uint32_t net_len = htonl((uint32_t)payload_size);
+    if (fwrite(&net_len, 1, sizeof(net_len), stdout) != sizeof(net_len)) {
+        perror("[MCP Stdio Transport] Failed to write length prefix to stdout");
         return -1;
     }
-    if (fputc('\n', stdout) == EOF) {
-         perror("[MCP Stdio Transport] Failed to write newline to stdout");
+
+    // 2. Send the actual payload data
+    if (fwrite(payload_data, 1, payload_size, stdout) != payload_size) {
+        perror("[MCP Stdio Transport] Failed to write payload data to stdout");
         return -1;
     }
-    // Ensure the output is flushed immediately
+
+    // 3. Ensure the output is flushed immediately
     if (fflush(stdout) != 0) {
         perror("[MCP Stdio Transport] Failed to flush stdout");
         return -1;

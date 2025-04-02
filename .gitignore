@@ -20,6 +20,10 @@ cmake-build-*/
 *.gch
 *.pch
 
+# diff files
+*.diff
+*.patch
+
 # Compiled Dynamic libraries
 *.so
 *.dylib

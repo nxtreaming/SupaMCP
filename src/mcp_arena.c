@@ -10,10 +10,13 @@
  * @return Pointer to the newly allocated block, or NULL on failure.
  */
 static mcp_arena_block_t* mcp_arena_new_block(size_t size) {
+    // Check for potential integer overflow before calculating total size
+    if (SIZE_MAX - sizeof(mcp_arena_block_t) < size) {
+        return NULL; // Requested size too large, would overflow
+    }
     // Calculate total size needed: header + data area
     // Note: sizeof(mcp_arena_block_t) already includes the 'char data[1]'
-    // so we need size-1 additional bytes for the data if size > 0.
-    // However, allocating sizeof(header) + size is simpler and safer.
+    // so we need size bytes *in addition* to the header structure.
     size_t total_size = sizeof(mcp_arena_block_t) + size;
     mcp_arena_block_t* block = (mcp_arena_block_t*)malloc(total_size);
     if (block == NULL) {
@@ -76,6 +79,10 @@ void* mcp_arena_alloc(mcp_arena_t* arena, size_t size) {
         return NULL; // Invalid arguments
     }
 
+    // Check for potential integer overflow before alignment calculation
+    if (SIZE_MAX - (sizeof(void*) - 1) < size) {
+         return NULL; // Requested size too large for alignment calculation
+    }
     // Ensure the requested size is aligned to pointer size for safety
     size_t aligned_size = MCP_ARENA_ALIGN_UP(size);
 

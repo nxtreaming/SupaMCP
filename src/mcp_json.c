@@ -619,40 +619,95 @@ static void skip_whitespace(const char** json) {
     }
 }
 
-// Uses malloc/mcp_strdup
+// Parses a JSON string, handling basic escapes. Uses malloc.
+// NOTE: Does not handle \uXXXX escapes correctly in this simplified version.
 static char* parse_string(const char** json) {
     if (**json != '"') {
         return NULL;
     }
-    (*json)++;
-    const char* start = *json;
-    while (**json != '"' && **json != '\0') {
-        if (**json == '\\' && *(*json + 1) != '\0') {
-            (*json)++;
+    (*json)++; // Skip opening quote
+
+    // First pass: calculate required length and check for invalid escapes/chars
+    size_t required_len = 0;
+    const char* p = *json;
+    while (*p != '"' && *p != '\0') {
+        if (*p < 32 && *p != '\t' && *p != '\n' && *p != '\r' && *p != '\b' && *p != '\f') {
+             fprintf(stderr, "Error: Invalid control character in JSON string.\n");
+             return NULL; // Invalid control character
         }
-        (*json)++;
+        if (*p == '\\') {
+            p++; // Skip backslash
+            switch (*p) {
+                case '"': case '\\': case '/': case 'b':
+                case 'f': case 'n': case 'r': case 't':
+                    required_len++;
+                    p++;
+                    break;
+                case 'u': // Unicode escape - basic parser just skips 4 hex digits
+                    p++;
+                    for (int i = 0; i < 4; i++) {
+                        if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') || (*p >= 'A' && *p <= 'F'))) {
+                             fprintf(stderr, "Error: Invalid hex digit in \\u escape.\n");
+                             return NULL; // Invalid hex
+                        }
+                        p++;
+                    }
+                    // TODO: Proper UTF-8 conversion needed here for correct length/value
+                    required_len++; // Placeholder: Assume 1 char for now
+                    break;
+                default:
+                    fprintf(stderr, "Error: Invalid escape sequence '\\%c'.\n", *p);
+                    return NULL; // Invalid escape
+            }
+        } else {
+            if (*p == '\0') { // Check for embedded null byte
+                 fprintf(stderr, "Error: Embedded null byte found in JSON string.\n");
+                 return NULL;
+            }
+            required_len++;
+            p++;
+        }
     }
-    if (**json != '"') {
+
+    if (*p != '"') {
         return NULL; // Unterminated string
     }
-    size_t length = *json - start;
-    // Validate string content for embedded null bytes
-    for (size_t i = 0; i < length; ++i) {
-        if (*(start + i) == '\0') {
-            fprintf(stderr, "Error: Embedded null byte found in JSON string.\n");
-            return NULL; // Invalid string content
-        }
-    }
-    // Need to handle escape sequences properly here for accurate length/copy
-    // For simplicity, this basic parser doesn't handle escapes within the string value itself.
-    // A robust parser would need to allocate based on unescaped length and copy char by char.
-    char* result = (char*)malloc(length + 1);
+
+    // Allocate buffer for the unescaped string
+    char* result = (char*)malloc(required_len + 1);
     if (result == NULL) {
         return NULL;
     }
-    memcpy(result, start, length);
-    result[length] = '\0';
-    (*json)++; // Skip closing quote
+
+    // Second pass: copy characters and handle escapes
+    p = *json; // Reset pointer to start of string content
+    char* q = result;
+    while (*p != '"') {
+        if (*p == '\\') {
+            p++; // Skip backslash
+            switch (*p) {
+                case '"':  *q++ = '"'; break;
+                case '\\': *q++ = '\\'; break;
+                case '/':  *q++ = '/'; break;
+                case 'b':  *q++ = '\b'; break;
+                case 'f':  *q++ = '\f'; break;
+                case 'n':  *q++ = '\n'; break;
+                case 'r':  *q++ = '\r'; break;
+                case 't':  *q++ = '\t'; break;
+                case 'u': // Unicode escape - basic parser puts '?'
+                    p += 4; // Skip 4 hex digits
+                    *q++ = '?'; // Placeholder
+                    break;
+                // No default needed due to first pass validation
+            }
+            p++;
+        } else {
+            *q++ = *p++;
+        }
+    }
+    *q = '\0'; // Null-terminate the result
+
+    *json = p + 1; // Move original pointer past the closing quote
     return result;
 }
 
@@ -1031,6 +1086,12 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                         free(message->request.method); // Method might be allocated
                         free(message->request.params); // Params might be allocated
                         message->type = MCP_MESSAGE_TYPE_INVALID; // Reset type
+                        // LEAK FIX: If arena is NULL, we must destroy and free the parsed json tree
+                        if (arena == NULL && json != NULL) {
+                            mcp_json_destroy(json);
+                            free(json);
+                            json = NULL; // Avoid double free later
+                        }
                     }
                 }
             }
@@ -1048,6 +1109,12 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                     free(message->notification.method);
                     free(message->notification.params);
                     message->type = MCP_MESSAGE_TYPE_INVALID;
+                     // LEAK FIX: If arena is NULL, we must destroy and free the parsed json tree
+                    if (arena == NULL && json != NULL) {
+                        mcp_json_destroy(json);
+                        free(json);
+                        json = NULL; // Avoid double free later
+                    }
                 }
             }
         }
@@ -1076,8 +1143,18 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                             } else {
                                 // mcp_strdup failed
                                 message->type = MCP_MESSAGE_TYPE_INVALID;
+                                // LEAK FIX: If arena is NULL, we must destroy and free the parsed json tree
+                                if (arena == NULL && json != NULL) {
+                                    mcp_json_destroy(json);
+                                    free(json);
+                                    json = NULL; // Avoid double free later
+                                }
                             }
+                        } else { // Invalid error message type
+                             message->type = MCP_MESSAGE_TYPE_INVALID;
                         }
+                    } else { // Invalid error code type
+                        message->type = MCP_MESSAGE_TYPE_INVALID;
                     }
                 }
             } else if (result != NULL) {
@@ -1090,6 +1167,12 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                 } else {
                     // stringify failed
                     message->type = MCP_MESSAGE_TYPE_INVALID;
+                    // LEAK FIX: If arena is NULL, we must destroy and free the parsed json tree
+                    if (arena == NULL && json != NULL) {
+                        mcp_json_destroy(json);
+                        free(json);
+                        json = NULL; // Avoid double free later
+                    }
                 }
             } else {
                  // Invalid response: Must have 'result' or 'error'
@@ -1103,10 +1186,13 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
     // destroy logic assumes malloc for the node itself, which is incorrect if
     // arena was NULL but parsing succeeded.
     // For simplicity with arena: let the caller manage the arena's lifetime.
-    // If arena was NULL, there's a potential leak here if parsing succeeded
-    // but message construction failed. A robust solution needs better tracking.
+    // If arena was NULL and parsing succeeded but message construction failed,
+    // the 'json' pointer would have been set to NULL by the LEAK FIX blocks above.
+    // If parsing failed initially, json is NULL.
+    // If parsing succeeded and message construction succeeded, we still need to clean up.
     if (arena == NULL && json != NULL) {
-         mcp_json_destroy(json); // Attempt cleanup if malloc was used
+         mcp_json_destroy(json); // Free internal mallocs
+         free(json);             // Free the node itself
     }
     // If arena was used, the parsed 'json' tree lives in the arena and will be
     // cleaned up when the arena is reset or destroyed by the caller.

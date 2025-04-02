@@ -520,9 +520,11 @@ static int mcp_client_send_request(
     pthread_mutex_lock(&client->pending_requests_mutex);
 #endif
     // Add the request to the hash table
-    if (add_pending_request_entry(client, pending_req.id, &pending_req) != 0) {
+    int add_status = add_pending_request_entry(client, pending_req.id, &pending_req);
+    if (add_status != 0) {
 #ifdef _WIN32
         LeaveCriticalSection(&client->pending_requests_mutex);
+        // No explicit CV destruction needed on Windows
 #else
         pthread_mutex_unlock(&client->pending_requests_mutex);
         // Destroy the CV we initialized if add failed

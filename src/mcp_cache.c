@@ -28,7 +28,7 @@ typedef pthread_mutex_t mutex_t;
 // Structure for a cache entry
 typedef struct {
     char* uri;                      // Key (malloc'd)
-    mcp_content_item_t* content;    // Value (array of copies, malloc'd)
+    mcp_content_item_t** content;   // Value (array of pointers to copies, malloc'd)
     size_t content_count;           // Number of items in the content array
     time_t expiry_time;             // Absolute expiration time (0 for never expires)
     time_t last_accessed;           // For potential LRU eviction (not implemented yet)
@@ -95,16 +95,16 @@ static mcp_cache_entry_t* find_cache_entry(mcp_resource_cache_t* cache, const ch
 }
 
 // Free resources associated with a cache entry
+// Free resources associated with a cache entry
 static void free_cache_entry_contents(mcp_cache_entry_t* entry) {
     if (!entry) return;
     free(entry->uri);
     if (entry->content) {
         for (size_t i = 0; i < entry->content_count; ++i) {
-            // Important: mcp_content_item_free frees internal data, not the struct itself
-            // when it's part of an array like this.
-            mcp_content_item_free(&entry->content[i]);
+            // mcp_content_item_free frees the item pointed to AND its internal data
+            mcp_content_item_free(entry->content[i]);
         }
-        free(entry->content); // Free the array of structs
+        free(entry->content); // Free the array of pointers
     }
     entry->uri = NULL;
     entry->content = NULL;
@@ -175,8 +175,8 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
                 size_t copied_count = 0;
                 bool copy_error = false;
                 for (size_t i = 0; i < entry->content_count; ++i) {
-                    // Use mcp_content_item_copy to create a deep copy of each item struct
-                    content_copy_ptrs[i] = mcp_content_item_copy(&entry->content[i]);
+                    // Use mcp_content_item_copy to create a deep copy of the item pointed to by the internal pointer
+                    content_copy_ptrs[i] = mcp_content_item_copy(entry->content[i]);
                     if (!content_copy_ptrs[i]) {
                         copy_error = true;
                         break;
@@ -213,7 +213,8 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     return result;
 }
 
-int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_content_item_t* content, size_t content_count, int ttl_seconds) {
+int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item_t** content, size_t content_count, int ttl_seconds) {
+    // Note: 'content' is now mcp_content_item_t** (array of pointers)
     if (!cache || !uri || !content || content_count == 0) return -1;
     PROFILE_START("mcp_cache_put");
 
@@ -245,8 +246,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_conten
         return -1; // Allocation failure
     }
 
-    // Allocate space for the array of content item STRUCTS
-    entry->content = (mcp_content_item_t*)malloc(content_count * sizeof(mcp_content_item_t));
+    // Allocate space for the array of content item POINTERS
+    entry->content = (mcp_content_item_t**)malloc(content_count * sizeof(mcp_content_item_t*));
     if (!entry->content) {
         free(entry->uri);
         entry->uri = NULL;
@@ -257,29 +258,12 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_conten
     bool copy_error = false;
     entry->content_count = 0; // Track successful copies
     for (size_t i = 0; i < content_count; ++i) {
-        // Deep copy each item from the input array into our cache entry's array
-        entry->content[i].type = content[i].type;
-        entry->content[i].mime_type = content[i].mime_type ? mcp_strdup(content[i].mime_type) : NULL;
-        entry->content[i].data_size = content[i].data_size;
-        if (content[i].data && content[i].data_size > 0) {
-            entry->content[i].data = malloc(content[i].data_size);
-            if (!entry->content[i].data) {
-                copy_error = true;
-                // Free already copied items in the cache entry
-                for(size_t j=0; j<i; ++j) mcp_content_item_free(&entry->content[j]);
-                break;
-            }
-            memcpy(entry->content[i].data, content[i].data, content[i].data_size);
-        } else {
-            entry->content[i].data = NULL;
-        }
-         // Check for allocation errors during copy
-        if ((content[i].mime_type && !entry->content[i].mime_type) ||
-            (content[i].data && !entry->content[i].data && content[i].data_size > 0)) { // Check data_size too
+        // Deep copy the item pointed to by the input array
+        entry->content[i] = mcp_content_item_copy(content[i]);
+        if (!entry->content[i]) {
             copy_error = true;
-            mcp_content_item_free(&entry->content[i]); // Free partially copied item
-             // Free already copied items in the cache entry
-            for(size_t j=0; j<i; ++j) mcp_content_item_free(&entry->content[j]);
+            // Free already copied items in the cache entry's pointer array
+            for(size_t j=0; j<i; ++j) mcp_content_item_free(entry->content[j]);
             break;
         }
         entry->content_count++;

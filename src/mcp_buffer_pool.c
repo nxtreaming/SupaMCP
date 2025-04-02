@@ -12,12 +12,12 @@
 
 /**
  * @internal
- * @brief Represents a node in the linked list of free buffers.
- * Each node points to a pre-allocated buffer chunk.
+ * @brief Represents the header for a buffer block in the pool's free list.
+ * The actual buffer memory follows immediately after this header.
  */
 typedef struct mcp_buffer_node {
     struct mcp_buffer_node* next; /**< Pointer to the next free buffer node. */
-    void* buffer;                 /**< Pointer to the actual buffer memory. */
+    // The buffer data starts immediately after this structure in memory.
 } mcp_buffer_node_t;
 
 /**
@@ -60,27 +60,18 @@ mcp_buffer_pool_t* mcp_buffer_pool_create(size_t buffer_size, size_t num_buffers
     }
 #endif
 
-    // Pre-allocate the buffers and nodes
+    // Pre-allocate the combined node+buffer blocks
     for (size_t i = 0; i < num_buffers; ++i) {
-        // Allocate the actual buffer memory
-        void* buffer = malloc(buffer_size);
-        if (buffer == NULL) {
-            log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer %zu/%zu for pool.", i + 1, num_buffers);
-            mcp_buffer_pool_destroy(pool); // Clean up partially created pool
-            return NULL;
-        }
-
-        // Allocate the node for the free list
-        mcp_buffer_node_t* node = (mcp_buffer_node_t*)malloc(sizeof(mcp_buffer_node_t));
+        // Allocate memory for the node header AND the buffer contiguously
+        size_t block_size = sizeof(mcp_buffer_node_t) + buffer_size;
+        mcp_buffer_node_t* node = (mcp_buffer_node_t*)malloc(block_size);
         if (node == NULL) {
-            log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer node %zu/%zu for pool.", i + 1, num_buffers);
-            free(buffer); // Free the buffer we just allocated
+            log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer block %zu/%zu for pool.", i + 1, num_buffers);
             mcp_buffer_pool_destroy(pool); // Clean up partially created pool
             return NULL;
         }
 
-        // Link the node and buffer, add to free list
-        node->buffer = buffer;
+        // Add the new block (node) to the free list
         node->next = pool->free_list;
         pool->free_list = node;
     }
@@ -101,12 +92,11 @@ void mcp_buffer_pool_destroy(mcp_buffer_pool_t* pool) {
     pthread_mutex_lock(&pool->mutex);
 #endif
 
-    // Free all buffers and nodes in the free list
+    // Free all combined node+buffer blocks in the free list
     mcp_buffer_node_t* current = pool->free_list;
     while (current != NULL) {
         mcp_buffer_node_t* next = current->next;
-        free(current->buffer); // Free the actual buffer memory
-        free(current);         // Free the node structure
+        free(current); // Free the entire block (node header + buffer data)
         current = next;
     }
     pool->free_list = NULL; // Mark list as empty
@@ -147,10 +137,9 @@ void* mcp_buffer_pool_acquire(mcp_buffer_pool_t* pool) {
         mcp_buffer_node_t* node = pool->free_list;
         // Update the free list head
         pool->free_list = node->next;
-        // Get the buffer pointer from the node
-        buffer = node->buffer;
-        // Free the node structure (it's no longer needed)
-        free(node);
+        // Calculate the pointer to the buffer data area (right after the node header)
+        buffer = (void*)((char*)node + sizeof(mcp_buffer_node_t));
+        // DO NOT free the node structure - it's part of the block being returned implicitly
     } else {
         // Pool is empty, log a warning or handle as needed
         log_message(LOG_LEVEL_WARN, "Buffer pool empty, cannot acquire buffer.");
@@ -172,17 +161,8 @@ void mcp_buffer_pool_release(mcp_buffer_pool_t* pool, void* buffer) {
         return; // Invalid arguments
     }
 
-    // Allocate a new node to add the buffer back to the free list
-    mcp_buffer_node_t* node = (mcp_buffer_node_t*)malloc(sizeof(mcp_buffer_node_t));
-    if (node == NULL) {
-        // Failed to allocate node - this is problematic.
-        // The buffer is now effectively leaked unless the caller handles it.
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate node to release buffer back to pool. Buffer leaked!");
-        // Optionally: free(buffer); // Free the buffer directly to prevent leak, but deviates from pool concept.
-        return;
-    }
-
-    node->buffer = buffer;
+    // Calculate the address of the node header from the buffer pointer
+    mcp_buffer_node_t* node = (mcp_buffer_node_t*)((char*)buffer - sizeof(mcp_buffer_node_t));
 
     // Lock mutex
 #ifdef _WIN32
@@ -191,7 +171,7 @@ void mcp_buffer_pool_release(mcp_buffer_pool_t* pool, void* buffer) {
     pthread_mutex_lock(&pool->mutex);
 #endif
 
-    // Add the node to the head of the free list
+    // Add the node (the entire block) back to the head of the free list
     node->next = pool->free_list;
     pool->free_list = node;
 

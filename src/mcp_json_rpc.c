@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #include "mcp_json.h"
 #include "mcp_json_rpc.h"
 
@@ -249,6 +250,11 @@ int mcp_json_parse_response(
         mcp_json_destroy(json);
         return -1;
     }
+    // Validate ID value before casting
+    if (id_value < 0 || id_value != floor(id_value) || id_value > (double)UINT64_MAX) {
+         mcp_json_destroy(json);
+         return -1; // Invalid ID value (negative, fractional, or out of range)
+    }
     *id = (uint64_t)id_value;
 
     // Check for error
@@ -265,6 +271,11 @@ int mcp_json_parse_response(
         if (mcp_json_get_number(code, &code_value) != 0) {
             mcp_json_destroy(json);
             return -1;
+        }
+        // Validate error code value before casting
+        if (code_value != floor(code_value) || code_value < INT_MIN || code_value > INT_MAX) {
+            mcp_json_destroy(json);
+            return -1; // Invalid error code value (fractional or out of range)
         }
         *error_code = (mcp_error_code_t)(int)code_value;
 
