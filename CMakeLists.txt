@@ -35,6 +35,8 @@ set(COMMON_SOURCES
     src/mcp_cache.c
     src/mcp_rate_limiter.c
     src/mcp_profiler.c
+    client/src/mcp_client.c
+    src/mcp_server.c
 )
 
 # Common library header files
@@ -51,26 +53,26 @@ set(COMMON_HEADERS
     include/mcp_cache.h
     include/mcp_rate_limiter.h
     include/mcp_profiler.h
+    client/include/mcp_client.h
+    include/mcp_server.h
 )
 
-# Server-specific source files
+# Server-specific source files (Now only contains the server's main entry point)
 set(SERVER_SOURCES
     src/main.c
-    src/mcp_server.c
 )
 
-# Server-specific header files
+# Server-specific header files (Redundant if added to COMMON_HEADERS, but harmless)
 set(SERVER_HEADERS
     include/mcp_server.h
 )
 
-# Client-specific source files
+# Client-specific source files (Now only contains the client's main entry point)
 set(CLIENT_SOURCES
     client/src/main.c
-    client/src/mcp_client.c
 )
 
-# Client-specific header files
+# Client-specific header files (Redundant if added to COMMON_HEADERS, but harmless)
 set(CLIENT_HEADERS
     client/include/mcp_client.h
 )
@@ -81,6 +83,7 @@ target_sources(mcp_common PRIVATE ${COMMON_SOURCES})
 # Make the public headers available to consumers
 target_include_directories(mcp_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Add client include path publicly
 )
 # Add internal headers needed for compiling the library itself
 target_include_directories(mcp_common PRIVATE
@@ -125,6 +128,9 @@ target_include_directories(unity_lib PUBLIC tests/unity) # Make headers availabl
 
 # Add tests subdirectory (will contain test runner definition)
 add_subdirectory(tests)
+
+# Add examples subdirectory (optional, if examples exist)
+add_subdirectory(examples)
 
 # Print configuration
 message(STATUS "CMAKE_SYSTEM_NAME: ${CMAKE_SYSTEM_NAME}")
