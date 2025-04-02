@@ -5,7 +5,8 @@ void run_mcp_arena_tests(void);
 void run_mcp_tcp_transport_tests(void);
 void run_mcp_json_tests(void);
 void run_mcp_buffer_pool_tests(void);
-void run_mcp_client_async_tests(void);     // Add declaration
+void run_mcp_client_async_tests(void);
+void run_mcp_hashtable_tests(void);
 // Add declarations for other test suite runners here later
 
 // setUp and tearDown functions are optional, run before/after each test
@@ -26,7 +27,8 @@ int main(void) {
     run_mcp_tcp_transport_tests();
     run_mcp_json_tests();
     run_mcp_buffer_pool_tests();
-    run_mcp_client_async_tests();     // Add call for async tests
+    run_mcp_client_async_tests();
+    run_mcp_hashtable_tests();
     // Add calls to other test suite runners here later
 
     return UNITY_END(); // IMPORTANT: Call this to finalize tests

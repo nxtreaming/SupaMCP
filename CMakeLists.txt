@@ -32,9 +32,11 @@ set(COMMON_SOURCES
     src/mcp_log.c
     src/mcp_buffer_pool.c
     src/mcp_thread_pool.c
-    src/mcp_cache.c
+    # src/mcp_cache.c
+    src/mcp_cache_optimized.c
     src/mcp_rate_limiter.c
     src/mcp_profiler.c
+    src/mcp_hashtable.c
     client/src/mcp_client.c
     src/mcp_server.c
     src/mcp_auth.c
@@ -56,6 +58,7 @@ set(COMMON_HEADERS
     include/mcp_cache.h
     include/mcp_rate_limiter.h
     include/mcp_profiler.h
+    include/mcp_hashtable.h
     client/include/mcp_client.h
     include/mcp_server.h
     include/mcp_auth.h

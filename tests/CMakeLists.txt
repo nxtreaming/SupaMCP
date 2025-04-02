@@ -7,7 +7,9 @@ set(TEST_RUNNER_SOURCES
     test_mcp_buffer_pool.c
     mock_transport.c
     test_mcp_client_async.c
+    test_mcp_hashtable.c
     ../client/src/mcp_client.c
+    ../src/mcp_hashtable.c
     # Add other test_*.c files here later
 )
 

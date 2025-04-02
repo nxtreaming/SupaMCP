@@ -6,6 +6,8 @@
 #include <stdbool.h> // For bool type
 
 int main(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
     // Initialize logging (optional, but good practice if benchmark functions use it)
     // init_logging(NULL, LOG_LEVEL_INFO); // Example: Log INFO and above to stderr only
 
