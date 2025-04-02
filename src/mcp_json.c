@@ -600,13 +600,16 @@ static int mcp_json_object_table_delete(mcp_json_object_table_t* table, const ch
 // Uses the provided arena (if not NULL) for allocating mcp_json_t nodes.
 // String values are always duplicated using malloc/mcp_strdup.
 
-// Forward declarations for parser helper functions (pass arena)
-static mcp_json_t* parse_value(mcp_arena_t* arena, const char** json);
+// Max parsing depth to prevent stack overflow from deeply nested structures
+#define MCP_JSON_MAX_PARSE_DEPTH 100
+
+// Forward declarations for parser helper functions (pass arena and depth)
+static mcp_json_t* parse_value(mcp_arena_t* arena, const char** json, int depth);
 static void skip_whitespace(const char** json);
 static char* parse_string(const char** json); // Uses malloc/mcp_strdup, no arena
-static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json);
-static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json);
-static mcp_json_t* parse_number(mcp_arena_t* arena, const char** json);
+static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json, int depth);
+static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json, int depth);
+static mcp_json_t* parse_number(mcp_arena_t* arena, const char** json); // Depth not needed here
 
 static void skip_whitespace(const char** json) {
     while (**json == ' ' || **json == '\t' || **json == '\n' || **json == '\r') {
@@ -644,7 +647,11 @@ static char* parse_string(const char** json) {
     return result;
 }
 
-static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json) {
+static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json, int depth) {
+    if (depth > MCP_JSON_MAX_PARSE_DEPTH) {
+        fprintf(stderr, "Error: JSON parsing depth exceeded limit (%d).\n", MCP_JSON_MAX_PARSE_DEPTH);
+        return NULL; // Depth limit exceeded
+    }
     if (**json != '{') {
         return NULL;
     }
@@ -672,7 +679,7 @@ static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json) {
         }
         (*json)++; // Skip ':'
         skip_whitespace(json);
-        mcp_json_t* value = parse_value(arena, json); // Value uses arena (recursively)
+        mcp_json_t* value = parse_value(arena, json, depth + 1); // Value uses arena (recursively), increment depth
         if (value == NULL) {
             free(name);
             return NULL; // Invalid value
@@ -696,7 +703,11 @@ static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json) {
     }
 }
 
-static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json) {
+static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json, int depth) {
+     if (depth > MCP_JSON_MAX_PARSE_DEPTH) {
+        fprintf(stderr, "Error: JSON parsing depth exceeded limit (%d).\n", MCP_JSON_MAX_PARSE_DEPTH);
+        return NULL; // Depth limit exceeded
+    }
     if (**json != '[') {
         return NULL;
     }
@@ -712,7 +723,7 @@ static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json) {
     }
     while (1) {
         skip_whitespace(json);
-        mcp_json_t* value = parse_value(arena, json); // Value uses arena (recursively)
+        mcp_json_t* value = parse_value(arena, json, depth + 1); // Value uses arena (recursively), increment depth
         if (value == NULL) {
             // Don't destroy array, let caller handle via arena
             return NULL; // Invalid value in array
@@ -758,12 +769,13 @@ static mcp_json_t* parse_number(mcp_arena_t* arena, const char** json) {
     return mcp_json_number_create(arena, value); // Uses arena
 }
 
-static mcp_json_t* parse_value(mcp_arena_t* arena, const char** json) {
+static mcp_json_t* parse_value(mcp_arena_t* arena, const char** json, int depth) {
     skip_whitespace(json);
     switch (**json) {
-        case '{': return parse_object(arena, json);
-        case '[': return parse_array(arena, json);
+        case '{': return parse_object(arena, json, depth); // Pass depth
+        case '[': return parse_array(arena, json, depth);  // Pass depth
         case '"': {
+            // TODO: Add string content validation here if needed
             char* string = parse_string(json); // Uses malloc
             if (string == NULL) return NULL;
             mcp_json_t* result = mcp_json_string_create(arena, string); // Uses arena for node
@@ -791,7 +803,7 @@ static mcp_json_t* parse_value(mcp_arena_t* arena, const char** json) {
         case '-':
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
-            return parse_number(arena, json); // Uses arena
+            return parse_number(arena, json); // Uses arena, depth doesn't increase
         default:
             return NULL; // Invalid character
     }
@@ -804,7 +816,7 @@ mcp_json_t* mcp_json_parse(mcp_arena_t* arena, const char* json) {
     }
     const char* current = json; // Use a temporary pointer
     skip_whitespace(&current);
-    mcp_json_t* result = parse_value(arena, &current);
+    mcp_json_t* result = parse_value(arena, &current, 0); // Start parsing at depth 0
     if (result == NULL) {
         // Parsing failed, arena contains partially allocated nodes.
         // Caller should reset/destroy the arena.
