@@ -46,6 +46,41 @@ void close_logging(void);
  */
 void log_message(log_level_t level, const char* format, ...);
 
+/**
+ * @brief Defines the output format for log messages.
+ */
+typedef enum {
+    MCP_LOG_FORMAT_TEXT, /**< Simple human-readable text format (default). */
+    MCP_LOG_FORMAT_JSON, /**< JSON format, suitable for structured logging collectors. */
+    // MCP_LOG_FORMAT_CSV // Example: Could add CSV or other formats
+} mcp_log_format_t;
+
+/**
+ * @brief Sets the desired output format for logs.
+ * @param format The log format to use.
+ */
+void mcp_log_set_format(mcp_log_format_t format);
+
+/**
+ * @brief Records a structured log message with additional context.
+ * 
+ * This allows logging key-value pairs or specific event details in a structured way,
+ * especially useful when using JSON format.
+ *
+ * @param level The log level of the message (use existing log_level_t).
+ * @param component The software component generating the log (e.g., "TCPServer", "JSONParser").
+ * @param event A specific event name or identifier (e.g., "ConnectionAccepted", "ParseError").
+ * @param format The printf-style format string for the main message.
+ * @param ... Arguments for the format string.
+ * @note The implementation will decide how to incorporate component and event into the chosen format.
+ *       For JSON, they would likely become distinct fields. For TEXT, they might be prefixed.
+ */
+void mcp_log_structured(
+    log_level_t level,
+    const char* component,
+    const char* event,
+    const char* format, ...);
+
 #ifdef __cplusplus
 }
 #endif

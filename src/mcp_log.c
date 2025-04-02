@@ -1,3 +1,9 @@
+#ifdef _WIN32
+#   ifndef _CRT_SECURE_NO_WARNINGS
+#       define _CRT_SECURE_NO_WARNINGS
+#   endif
+#endif
+
 #include "mcp_log.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +30,53 @@ static FILE* g_log_file = NULL;
 static log_level_t g_log_level = LOG_LEVEL_INFO; // Default level
 /** @internal String representations of log levels for output. */
 static const char* g_log_level_names[] = {"ERROR", "WARN", "INFO", "DEBUG"};
+/** @internal Current log output format. */
+static mcp_log_format_t g_log_format = MCP_LOG_FORMAT_TEXT; // Default format
+/** @internal Mutex for thread safety (important when changing format or writing to file). */
+// TODO: Initialize and use mutex for thread safety
+// static pthread_mutex_t g_log_mutex; 
+
+// --- Internal Helper ---
+
+// Helper to escape JSON strings (basic implementation)
+// A robust version would handle all required escapes.
+static void escape_json_string(const char* input, char* output, size_t output_size) {
+    size_t out_idx = 0;
+    for (size_t i = 0; input[i] != '\0' && out_idx < output_size - 1; ++i) {
+        char c = input[i];
+        const char* escaped = NULL;
+        switch (c) {
+            case '\\': escaped = "\\\\"; break;
+            case '"':  escaped = "\\\""; break;
+            case '\b': escaped = "\\b"; break;
+            case '\f': escaped = "\\f"; break;
+            case '\n': escaped = "\\n"; break;
+            case '\r': escaped = "\\r"; break;
+            case '\t': escaped = "\\t"; break;
+            // Add other controls chars if needed
+        }
+        if (escaped) {
+            size_t len = strlen(escaped);
+            if (out_idx + len < output_size - 1) {
+                strcpy(output + out_idx, escaped);
+                out_idx += len;
+            } else {
+                break; // Not enough space
+            }
+        } else if (c >= 0 && c < 32) { // Control characters
+             if (out_idx + 6 < output_size - 1) { // Need space for \uXXXX
+                 sprintf(output + out_idx, "\\u%04x", c);
+                 out_idx += 6;
+             } else {
+                 break; // Not enough space
+             }
+        } else {
+            output[out_idx++] = c;
+        }
+    }
+    output[out_idx] = '\0';
+}
+
 
 // --- Public API Implementation ---
 
@@ -93,12 +146,28 @@ void log_message(log_level_t level, const char* format, ...) {
     // Format: [Timestamp] [LEVEL] Message
     fprintf(stderr, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
 
-    // 5. Output the formatted message to the log file, if open
-    if (g_log_file != NULL) {
-        fprintf(g_log_file, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
-        // Flush the file buffer to ensure the log entry is written immediately
-        fflush(g_log_file);
+    // 5. Output the formatted message based on g_log_format
+    // TODO: Add mutex lock/unlock around file/stderr access
+    if (g_log_format == MCP_LOG_FORMAT_JSON) {
+        char escaped_message[sizeof(message) * 2]; // Estimate escaped size
+        escape_json_string(message, escaped_message, sizeof(escaped_message));
+        
+        if (g_log_file != NULL) {
+             fprintf(g_log_file, "{\"timestamp\":\"%s\", \"level\":\"%s\", \"message\":\"%s\"}\n", 
+                     timestamp, g_log_level_names[level], escaped_message);
+             fflush(g_log_file);
+        }
+         fprintf(stderr, "{\"timestamp\":\"%s\", \"level\":\"%s\", \"message\":\"%s\"}\n", 
+                 timestamp, g_log_level_names[level], escaped_message);
+
+    } else { // Default to TEXT format
+        if (g_log_file != NULL) {
+            fprintf(g_log_file, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
+            fflush(g_log_file);
+        }
+         fprintf(stderr, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
     }
+    // TODO: Unlock mutex
 }
 
 /**
@@ -271,4 +340,103 @@ void close_logging(void) {
         // Reset the global file pointer
         g_log_file = NULL;
     }
+    // TODO: Destroy mutex
+}
+
+
+// --- Logging Enhancements ---
+
+/**
+ * @brief Sets the desired output format for logs.
+ */
+void mcp_log_set_format(mcp_log_format_t format) {
+    if (format == MCP_LOG_FORMAT_TEXT || format == MCP_LOG_FORMAT_JSON) {
+        // TODO: Add mutex lock/unlock for thread safety
+        g_log_format = format;
+        log_message(LOG_LEVEL_INFO, "Log format set to %s.", 
+                    (format == MCP_LOG_FORMAT_JSON) ? "JSON" : "TEXT");
+    } else {
+        log_message(LOG_LEVEL_WARN, "Attempted to set invalid log format (%d).", format);
+    }
+}
+
+/**
+ * @brief Records a structured log message with additional context.
+ */
+void mcp_log_structured(
+    log_level_t level,
+    const char* component,
+    const char* event,
+    const char* format, ...) 
+{
+     // 1. Check if the message level is high enough to be logged
+    if (level > g_log_level) {
+        return; 
+    }
+
+    // 2. Get timestamp (similar to log_message)
+    time_t now;
+    struct tm timeinfo_storage; 
+    struct tm* timeinfo;
+    char timestamp[20]; 
+    time(&now);
+#ifdef _WIN32
+    errno_t err = localtime_s(&timeinfo_storage, &now);
+    timeinfo = (err == 0) ? &timeinfo_storage : NULL;
+#else
+    timeinfo = localtime_r(&now, &timeinfo_storage);
+#endif
+    if (timeinfo == NULL) {
+        strncpy(timestamp, "DATE_TIME_ERROR", sizeof(timestamp) - 1);
+        timestamp[sizeof(timestamp) - 1] = '\0';
+    } else {
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
+    }
+
+    // 3. Format the main message
+    va_list args;
+    va_start(args, format);
+    char base_message[1024]; 
+    vsnprintf(base_message, sizeof(base_message), format, args);
+    va_end(args);
+    base_message[sizeof(base_message) - 1] = '\0'; // Ensure null termination
+
+    // 4. Output based on format
+    // TODO: Add mutex lock/unlock around file/stderr access
+     if (g_log_format == MCP_LOG_FORMAT_JSON) {
+        char escaped_message[sizeof(base_message) * 2];
+        char escaped_component[256]; // Assume max component/event length
+        char escaped_event[256];
+
+        escape_json_string(base_message, escaped_message, sizeof(escaped_message));
+        escape_json_string(component ? component : "", escaped_component, sizeof(escaped_component));
+        escape_json_string(event ? event : "", escaped_event, sizeof(escaped_event));
+
+        const char* json_fmt = "{\"timestamp\":\"%s\", \"level\":\"%s\", \"component\":\"%s\", \"event\":\"%s\", \"message\":\"%s\"}\n";
+        
+        if (g_log_file != NULL) {
+             fprintf(g_log_file, json_fmt, 
+                     timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
+             fflush(g_log_file);
+        }
+         fprintf(stderr, json_fmt, 
+                 timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
+
+    } else { // Default to TEXT format
+        const char* text_fmt = "[%s] [%s] [%s|%s] %s\n";
+         if (g_log_file != NULL) {
+             fprintf(g_log_file, text_fmt, 
+                     timestamp, g_log_level_names[level], 
+                     component ? component : "-", 
+                     event ? event : "-", 
+                     base_message);
+             fflush(g_log_file);
+        }
+         fprintf(stderr, text_fmt, 
+                 timestamp, g_log_level_names[level], 
+                 component ? component : "-", 
+                 event ? event : "-", 
+                 base_message);
+    }
+    // TODO: Unlock mutex
 }
