@@ -44,7 +44,9 @@ typedef struct mcp_server mcp_server_t;
  * @brief Callback function type for handling resource read requests.
  *
  * The implementation of this function is responsible for finding the resource
- * identified by `uri` and returning its content.
+ * identified by `uri` and returning its content. This function may be called
+ * concurrently by multiple server worker threads. Implementations must be thread-safe
+ * if they access shared mutable state.
  *
  * @param server Pointer to the server instance handling the request.
  * @param uri The URI of the requested resource.
@@ -71,7 +73,9 @@ typedef int (*mcp_server_resource_handler_t)(
  * @brief Callback function type for handling tool call requests.
  *
  * The implementation of this function is responsible for executing the tool
- * identified by `name` with the given `params` and returning the result.
+ * identified by `name` with the given `params` and returning the result. This function
+ * may be called concurrently by multiple server worker threads. Implementations must be
+ * thread-safe if they access shared mutable state.
  *
  * @param server Pointer to the server instance handling the request.
  * @param name The name of the tool being called.
@@ -105,7 +109,9 @@ typedef int (*mcp_server_tool_handler_t)(
  * @brief Creates an MCP server instance.
  *
  * Allocates and initializes a server handle based on the provided configuration
- * and capabilities. The configuration strings are copied internally.
+ * and capabilities. The configuration strings (`name`, `version`, `description`, `api_key`)
+ * are copied internally using `mcp_strdup` (malloc). Other configuration values are copied directly.
+ * Creates internal resources like the thread pool, cache, and rate limiter.
  *
  * @param config Pointer to the server configuration. Must not be NULL.
  * @param capabilities Pointer to the server capabilities flags. Must not be NULL.
@@ -122,13 +128,14 @@ mcp_server_t* mcp_server_create(
  *
  * Associates the server with the given transport and initiates the transport's
  * message processing loop (e.g., starts listening for connections or reading
- * from stdio).
+ * from stdio). Sets the server's internal transport pointer.
  *
- * @param server Pointer to the initialized server instance.
- * @param transport Pointer to the initialized transport handle to use for communication.
+ * @param server Pointer to the initialized server instance. Must not be NULL.
+ * @param transport Pointer to the initialized transport handle to use for communication. Must not be NULL.
  *                  The server does *not* take ownership of the transport; the caller
- *                  is responsible for managing the transport's lifecycle.
+ *                  is responsible for managing the transport's lifecycle separately.
  * @return 0 on success, non-zero if the transport fails to start.
+ * @note This function is not thread-safe with respect to other server operations.
  */
 int mcp_server_start(
     mcp_server_t* server,
@@ -138,11 +145,13 @@ int mcp_server_start(
 /**
  * @brief Stops the server and the associated transport.
  *
- * Signals the server to stop processing and calls the stop function of the
- * associated transport.
+ * Signals the server to stop processing, stops the associated transport,
+ * and initiates the shutdown of the internal thread pool (waiting for tasks).
  *
- * @param server Pointer to the server instance.
+ * @param server Pointer to the server instance. Must not be NULL.
  * @return 0 on success, non-zero if the transport fails to stop.
+ * @note This function is not thread-safe with respect to other server operations.
+ *       It should only be called once during shutdown.
  */
 int mcp_server_stop(mcp_server_t* server);
 
@@ -150,10 +159,13 @@ int mcp_server_stop(mcp_server_t* server);
  * @brief Destroys the server instance and frees associated resources.
  *
  * Implicitly calls mcp_server_stop() if the server is running. Frees internally
- * copied configuration strings and any added resources, templates, or tools.
- * Does *not* destroy the transport passed to mcp_server_start().
+ * copied configuration strings, destroys the thread pool, cache, and rate limiter,
+ * and frees any added resources, templates, or tools.
+ * Does *not* destroy the transport handle originally passed to mcp_server_start().
  *
  * @param server Pointer to the server instance to destroy. If NULL, the function does nothing.
+ * @note This function is not thread-safe. Ensure no other threads are accessing the server
+ *       instance during or after this call.
  */
 void mcp_server_destroy(mcp_server_t* server);
 
