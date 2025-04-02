@@ -24,6 +24,7 @@ typedef struct {
     size_t rate_limit_capacity; /**< Approx max clients to track for rate limiting. Default: 1024 if 0. */
     size_t rate_limit_window_seconds; /**< Time window for rate limit checks. Default: 60 if 0. */
     size_t rate_limit_max_requests; /**< Max requests per client per window. Default: 100 if 0. */
+    const char* api_key;     /**< Optional API key required for requests. If NULL or empty, no key is required. */
 } mcp_server_config_t;
 
 /**

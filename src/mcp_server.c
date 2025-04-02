@@ -260,6 +260,7 @@ mcp_server_t* mcp_server_create(
     server->config.rate_limit_capacity = config->rate_limit_capacity;
     server->config.rate_limit_window_seconds = config->rate_limit_window_seconds;
     server->config.rate_limit_max_requests = config->rate_limit_max_requests;
+    server->config.api_key = config->api_key ? mcp_strdup(config->api_key) : NULL; // Copy API key
 
 
     // Copy capabilities
@@ -292,7 +293,8 @@ mcp_server_t* mcp_server_create(
     // Check for allocation failures during config copy
     if ((config->name && !server->config.name) ||
         (config->version && !server->config.version) ||
-        (config->description && !server->config.description))
+        (config->description && !server->config.description) ||
+        (config->api_key && !server->config.api_key)) // Check API key copy
     {
         // Free potentially allocated strings
         free((void*)server->config.name);
@@ -401,6 +403,7 @@ void mcp_server_destroy(mcp_server_t* server) {
     free((void*)server->config.name);
     free((void*)server->config.version);
     free((void*)server->config.description);
+    free((void*)server->config.api_key); // Free API key
 
     // Free resources (copies use malloc)
     for (size_t i = 0; i < server->resource_count; i++) {
@@ -584,7 +587,44 @@ static char* handle_message(mcp_server_t* server, const void* data, size_t size,
     // Assume 'data' is null-terminated by the caller (tcp_client_handler_thread_func)
     const char* json_str = (const char*)data;
 
-    // Parse the message using the arena
+    // --- API Key Check (before full parsing) ---
+    if (server->config.api_key != NULL && strlen(server->config.api_key) > 0) {
+        // Temporarily parse just enough to check for apiKey field
+        mcp_arena_t temp_arena;
+        mcp_arena_init(&temp_arena, 1024); // Small temporary arena
+        mcp_json_t* temp_json = mcp_json_parse(&temp_arena, json_str);
+        bool key_valid = false;
+        uint64_t request_id_for_error = 0; // Try to get ID for error response
+
+        if (temp_json && mcp_json_get_type(temp_json) == MCP_JSON_OBJECT) { // Use accessor
+            mcp_json_t* id_node = mcp_json_object_get_property(temp_json, "id");
+            double id_num;
+            if (id_node && mcp_json_get_type(id_node) == MCP_JSON_NUMBER && mcp_json_get_number(id_node, &id_num) == 0) { // Use accessors
+                request_id_for_error = (uint64_t)id_num;
+            }
+
+            mcp_json_t* key_node = mcp_json_object_get_property(temp_json, "apiKey");
+            const char* received_key = NULL;
+            if (key_node && mcp_json_get_type(key_node) == MCP_JSON_STRING && mcp_json_get_string(key_node, &received_key) == 0) { // Use accessors
+                if (received_key && strcmp(received_key, server->config.api_key) == 0) {
+                    key_valid = true;
+                }
+            }
+        }
+        mcp_arena_destroy(&temp_arena); // Clean up temp arena
+
+        if (!key_valid) {
+            fprintf(stderr, "Error: Invalid or missing API key in request.\n");
+            *error_code = MCP_ERROR_INVALID_REQUEST; // Or a specific auth error code?
+            mcp_arena_destroy(&arena); // Clean up main arena
+            // Return error response (requires request ID, which we tried to get)
+            return create_error_response(request_id_for_error, *error_code, "Invalid API Key");
+        }
+    }
+    // --- End API Key Check ---
+
+
+    // Parse the message using the main arena
     mcp_message_t message;
     // Pass the arena to the message parser
     int parse_result = mcp_json_parse_message(&arena, json_str, &message);
