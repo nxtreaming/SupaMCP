@@ -23,6 +23,7 @@
 #include "mcp_log.h"
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_transport.h"
+#include "mcp_profiler.h"
 
 // Global server instance for signal handling
 static mcp_server_t* g_server = NULL;
@@ -149,6 +150,9 @@ static int example_tool_handler(
  */
 static void cleanup(void) {
     log_message(LOG_LEVEL_INFO, "Cleaning up resources");
+#ifdef MCP_ENABLE_PROFILING
+    mcp_profile_report(stdout); // Print profile report on exit if enabled
+#endif
     if (g_server != NULL) {
         // mcp_server_destroy calls stop internally
         mcp_server_destroy(g_server);

@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <assert.h>
 #include "mcp_json.h"
-#include "mcp_arena.h" // Include arena allocator header
+#include "mcp_arena.h"
+#include "mcp_profiler.h"
 
 // --- Hash Table Implementation for JSON Objects ---
 // This uses a simple separate chaining hash table.
@@ -988,9 +989,11 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
     if (json_str == NULL || message == NULL) {
         return -1;
     }
+    PROFILE_START("mcp_json_parse_message");
     // Parse using the provided arena (or malloc if arena is NULL)
     mcp_json_t* json = mcp_json_parse(arena, json_str);
     if (json == NULL) {
+        PROFILE_END("mcp_json_parse_message"); // End profile on error
         // Arena cleanup is handled by the caller if parsing fails
         return -1;
     }
@@ -1106,6 +1109,7 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
     }
     // If arena was used, the parsed 'json' tree lives in the arena and will be
     // cleaned up when the arena is reset or destroyed by the caller.
+    PROFILE_END("mcp_json_parse_message");
 
     return parse_status;
 }
@@ -1116,9 +1120,11 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
     if (message == NULL) {
         return NULL;
     }
+    PROFILE_START("mcp_json_stringify_message");
     // Pass NULL arena, forcing malloc for nodes
     mcp_json_t* json = mcp_json_object_create(NULL);
     if (json == NULL) {
+        PROFILE_END("mcp_json_stringify_message"); // End profile on error
         return NULL;
     }
 
@@ -1204,5 +1210,6 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
     }
 
     mcp_json_destroy(json); // Destroy the temporary JSON structure
+    PROFILE_END("mcp_json_stringify_message");
     return final_json_string; // Return the malloc'd string
 }

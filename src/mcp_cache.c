@@ -1,6 +1,7 @@
 #include "mcp_types.h"
 #include "mcp_cache.h"
 #include "mcp_log.h"
+#include "mcp_profiler.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -157,6 +158,7 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     *content = NULL;
     *content_count = 0;
     int result = -1; // Default to not found/expired
+    PROFILE_START("mcp_cache_get");
 
     mutex_lock(&cache->lock);
 
@@ -207,11 +209,13 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     // else: entry not found, result remains -1
 
     mutex_unlock(&cache->lock);
+    PROFILE_END("mcp_cache_get");
     return result;
 }
 
 int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_content_item_t* content, size_t content_count, int ttl_seconds) {
     if (!cache || !uri || !content || content_count == 0) return -1;
+    PROFILE_START("mcp_cache_put");
 
     mutex_lock(&cache->lock);
 
@@ -297,6 +301,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, const mcp_conten
     cache->count++; // Increment count for the new valid entry
 
     mutex_unlock(&cache->lock);
+    PROFILE_END("mcp_cache_put");
     return 0; // Success
 }
 

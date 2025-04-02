@@ -14,6 +14,7 @@
 #include <mcp_thread_pool.h>
 #include <mcp_cache.h>
 #include <mcp_rate_limiter.h>
+#include <mcp_profiler.h>
 
 #ifndef _WIN32 // Only include netinet/in.h if not Windows (winsock2.h covers htonl)
 #include <netinet/in.h>
@@ -99,6 +100,7 @@ typedef struct {
 
 // Worker function executed by the thread pool
 static void process_message_task(void* arg) {
+    PROFILE_START("process_message_task"); // Profile task execution
     message_task_data_t* task_data = (message_task_data_t*)arg;
     if (!task_data || !task_data->server || !task_data->transport || !task_data->message_data) {
         fprintf(stderr, "Error: Invalid task data in process_message_task.\n");
@@ -158,6 +160,7 @@ static void process_message_task(void* arg) {
     // Clean up task data
     free(task_data->message_data);
     free(task_data);
+    PROFILE_END("process_message_task");
 }
 
 
@@ -586,6 +589,7 @@ static char* handle_message(mcp_server_t* server, const void* data, size_t size,
 
     // Assume 'data' is null-terminated by the caller (tcp_client_handler_thread_func)
     const char* json_str = (const char*)data;
+    PROFILE_START("handle_message"); // Profile overall message handling
 
     // --- API Key Check (before full parsing) ---
     if (server->config.api_key != NULL && strlen(server->config.api_key) > 0) {
@@ -665,6 +669,7 @@ static char* handle_message(mcp_server_t* server, const void* data, size_t size,
     // assuming message sizes might vary significantly. Reset could be used
     // for potentially higher performance if memory usage isn't a concern.
     mcp_arena_destroy(&arena);
+    PROFILE_END("handle_message");
 
     return response_str; // Return malloc'd response string (or NULL)
 }

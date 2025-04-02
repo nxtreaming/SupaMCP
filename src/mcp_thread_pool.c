@@ -1,4 +1,5 @@
 #include "mcp_thread_pool.h"
+#include "mcp_profiler.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
@@ -137,6 +138,7 @@ int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), v
     if (pool == NULL || function == NULL) {
         return -1; // Invalid arguments
     }
+    PROFILE_START("mcp_thread_pool_add_task");
 
     if (mutex_lock(&pool->lock) != 0) {
         return -1; // Failed to lock mutex
@@ -179,6 +181,7 @@ int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), v
     if (mutex_unlock(&pool->lock) != 0) {
         err = -1; // Failed to unlock mutex
     }
+    PROFILE_END("mcp_thread_pool_add_task");
 
     return err;
 }
@@ -304,7 +307,9 @@ static void* thread_pool_worker(void* arg) {
             }
 
             // Execute the task
+            PROFILE_START("thread_pool_task_execution");
             (*(task.function))(task.argument);
+            PROFILE_END("thread_pool_task_execution");
 
             // Task execution finished, loop back to acquire lock
         } else {

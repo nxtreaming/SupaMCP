@@ -34,6 +34,7 @@ set(COMMON_SOURCES
     src/mcp_thread_pool.c
     src/mcp_cache.c
     src/mcp_rate_limiter.c
+    src/mcp_profiler.c
 )
 
 # Common library header files
@@ -49,6 +50,7 @@ set(COMMON_HEADERS
     include/mcp_thread_pool.h
     include/mcp_cache.h
     include/mcp_rate_limiter.h
+    include/mcp_profiler.h
 )
 
 # Server-specific source files
