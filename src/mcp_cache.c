@@ -6,6 +6,9 @@
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
+#include <limits.h>
+
+#define LRU_K_VALUE 2 // Define K for LRU-K
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN // Exclude less-used parts of windows.h
@@ -31,7 +34,10 @@ typedef struct {
     mcp_content_item_t** content;   // Value (array of pointers to copies, malloc'd)
     size_t content_count;           // Number of items in the content array
     time_t expiry_time;             // Absolute expiration time (0 for never expires)
-    time_t last_accessed;           // For potential LRU eviction (not implemented yet)
+    // LRU-K specific fields
+    time_t access_history[LRU_K_VALUE]; // Timestamps of last K accesses (history[0] is latest)
+    size_t access_count;            // Number of accesses recorded (up to K)
+    // ---
     bool valid;                     // Flag indicating if the entry is currently valid
 } mcp_cache_entry_t;
 
@@ -95,7 +101,7 @@ static mcp_cache_entry_t* find_cache_entry(mcp_resource_cache_t* cache, const ch
 }
 
 // Free resources associated with a cache entry
-// Free resources associated with a cache entry
+// Free resources associated with a cache entry and reset LRU-K fields
 static void free_cache_entry_contents(mcp_cache_entry_t* entry) {
     if (!entry) return;
     free(entry->uri);
@@ -110,6 +116,11 @@ static void free_cache_entry_contents(mcp_cache_entry_t* entry) {
     entry->content = NULL;
     entry->content_count = 0;
     entry->valid = false;
+    // Reset LRU-K fields
+    entry->access_count = 0;
+    for (int k = 0; k < LRU_K_VALUE; ++k) {
+        entry->access_history[k] = 0;
+    }
 }
 
 // --- Public API Implementation ---
@@ -123,9 +134,16 @@ mcp_resource_cache_t* mcp_cache_create(size_t capacity, time_t default_ttl_secon
     cache->capacity = capacity;
     cache->count = 0;
     cache->default_ttl_seconds = default_ttl_seconds;
-    cache->entries = (mcp_cache_entry_t*)calloc(capacity, sizeof(mcp_cache_entry_t)); // calloc initializes valid=false
+    // calloc initializes memory to zero, which is suitable for our new fields
+    // (valid=false, access_count=0, access_history={0})
+    cache->entries = (mcp_cache_entry_t*)calloc(capacity, sizeof(mcp_cache_entry_t));
 
-    if (!cache->entries || mutex_init(&cache->lock) != 0) {
+    if (!cache->entries) { // Check allocation before mutex init
+        free(cache);
+        return NULL;
+    }
+
+    if (mutex_init(&cache->lock) != 0) {
         free(cache->entries);
         free(cache);
         return NULL;
@@ -187,7 +205,20 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
                 if (!copy_error) {
                     *content = content_copy_ptrs; // Return the array of pointers
                     *content_count = entry->content_count;
-                    entry->last_accessed = now; // Update last accessed time
+
+                    // --- Update LRU-K history ---
+                    // Shift older times
+                    for (int k = LRU_K_VALUE - 1; k > 0; --k) {
+                        entry->access_history[k] = entry->access_history[k - 1];
+                    }
+                    // Record current access time
+                    entry->access_history[0] = now;
+                    // Increment access count (capped at K)
+                    if (entry->access_count < LRU_K_VALUE) {
+                        entry->access_count++;
+                    }
+                    // --- End LRU-K update ---
+
                     result = 0; // Success
                 } else {
                     // Free partially copied items on error
@@ -220,20 +251,56 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
 
     mutex_lock(&cache->lock);
 
-    mcp_cache_entry_t* entry = find_cache_entry(cache, uri, true);
+    mcp_cache_entry_t* entry = find_cache_entry(cache, uri, true); // Try to find existing or an empty slot
 
-    if (!entry) {
-        // Cache is full, need eviction strategy.
-        // Simple strategy: Evict the entry at the hash index (overwrite).
-        // TODO: Implement LRU or other strategy if needed.
-        unsigned long hash = hash_uri(uri);
-        size_t index = hash % cache->capacity;
-        entry = &cache->entries[index];
-        fprintf(stdout, "Cache full, evicting entry at index %zu for URI %s\n", index, uri); // Log eviction
-        free_cache_entry_contents(entry); // Free the old entry's contents
-        // Note: cache->count is not decremented here because we are replacing an invalid entry
+    if (!entry) { // Cache is full (no empty slots found)
+        // --- Implement LRU-K (K=2) Eviction ---
+        size_t evict_index = SIZE_MAX;
+        time_t oldest_k_minus_1_time = time(NULL) + 1; // Initialize to future time
+        time_t oldest_0_time_for_less_than_k = time(NULL) + 1; // Initialize to future time
+        bool found_less_than_k = false;
+
+        for (size_t i = 0; i < cache->capacity; ++i) {
+            mcp_cache_entry_t* candidate = &cache->entries[i];
+            // Consider only valid, non-permanent entries for eviction
+            if (!candidate->valid || candidate->expiry_time == 0) {
+                continue;
+            }
+
+            if (candidate->access_count < LRU_K_VALUE) {
+                // Priority 1: Entries accessed less than K times
+                if (!found_less_than_k || candidate->access_history[0] < oldest_0_time_for_less_than_k) {
+                    oldest_0_time_for_less_than_k = candidate->access_history[0];
+                    evict_index = i;
+                    found_less_than_k = true;
+                }
+            } else if (!found_less_than_k) {
+                // Priority 2: Entries accessed K times (only if no <K entries found)
+                // Compare based on the K-th last access time (index K-1)
+                if (candidate->access_history[LRU_K_VALUE - 1] < oldest_k_minus_1_time) {
+                    oldest_k_minus_1_time = candidate->access_history[LRU_K_VALUE - 1];
+                    evict_index = i;
+                }
+            }
+        }
+
+        if (evict_index == SIZE_MAX) {
+            // Should not happen if cache is full of evictable items.
+            // Fallback or error? For now, log and maybe evict index 0 as a last resort.
+            log_message(LOG_LEVEL_WARN, "LRU-K eviction failed to find a candidate. Evicting index 0.");
+            evict_index = 0; // Simple fallback
+        }
+
+        entry = &cache->entries[evict_index];
+        log_message(LOG_LEVEL_INFO, "Cache full, LRU-K evicting entry at index %zu (URI: %s) for new URI %s",
+                evict_index, entry->uri ? entry->uri : "<empty>", uri);
+        free_cache_entry_contents(entry); // Free the victim's contents
+        // cache->count remains the same as we are replacing a valid entry
+        // --- End LRU-K Eviction ---
+
     } else if (entry->valid) {
-        // Overwriting existing valid entry
+        // Overwriting existing valid entry (found by find_cache_entry)
+        log_message(LOG_LEVEL_DEBUG, "Overwriting existing cache entry for URI: %s", uri);
         free_cache_entry_contents(entry);
         cache->count--; // Decrement count since we are replacing a valid entry
     }
@@ -278,9 +345,16 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
 
     // Set metadata
     entry->valid = true;
-    entry->last_accessed = time(NULL);
+    time_t now = time(NULL);
+    // Initialize LRU-K history for new entry
+    entry->access_history[0] = now;
+    for (int k = 1; k < LRU_K_VALUE; ++k) {
+        entry->access_history[k] = 0; // Initialize older history slots
+    }
+    entry->access_count = 1; // First access
+
     time_t effective_ttl = (ttl_seconds == 0) ? cache->default_ttl_seconds : (time_t)ttl_seconds;
-    entry->expiry_time = (effective_ttl < 0) ? 0 : entry->last_accessed + effective_ttl; // 0 means never expires
+    entry->expiry_time = (effective_ttl < 0) ? 0 : now + effective_ttl; // 0 means never expires
 
     cache->count++; // Increment count for the new valid entry
 
