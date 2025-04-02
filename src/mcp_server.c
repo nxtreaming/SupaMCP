@@ -107,6 +107,7 @@ static void process_message_task(void* arg) {
         // Attempt cleanup even with invalid data
         if (task_data) free(task_data->message_data);
         free(task_data);
+        PROFILE_END("process_message_task"); // End profile on error
         return;
     }
 
@@ -123,6 +124,7 @@ static void process_message_task(void* arg) {
         // The connection will likely be closed by the transport layer after this task finishes.
         free(task_data->message_data); // Free copied data
         free(task_data);
+        PROFILE_END("process_message_task"); // End profile on error
         return;
     }
     // --- End Input Validation ---
@@ -303,6 +305,7 @@ mcp_server_t* mcp_server_create(
         free((void*)server->config.name);
         free((void*)server->config.version);
         free((void*)server->config.description);
+        free((void*)server->config.api_key);
         free(server);
         return NULL;
     }
@@ -350,7 +353,8 @@ create_error_cleanup:
     free((void*)server->config.name);
     free((void*)server->config.version);
     free((void*)server->config.description);
-    free(server); // Free the server struct itself
+    free((void*)server->config.api_key);
+    free(server);
     return NULL;
 }
 
@@ -785,18 +789,22 @@ static char* create_success_response(uint64_t id, char* result_str) {
  * Uses malloc for building the JSON response structure.
  */
 static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
+    PROFILE_START("handle_list_resources");
     // This request has no parameters, arena is not used for parsing here.
     (void)arena;
 
     if (server == NULL || request == NULL || error_code == NULL) {
          if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         PROFILE_END("handle_list_resources"); // End profile on error
          return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
     if (!server->capabilities.resources_supported) {
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        return create_error_response(request->id, *error_code, "Resources not supported");
+        char* response = create_error_response(request->id, *error_code, "Resources not supported");
+        PROFILE_END("handle_list_resources");
+        return response;
     }
 
     // Create response JSON structure using malloc (not arena) because the
@@ -804,7 +812,9 @@ static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* ar
     mcp_json_t* resources_json = mcp_json_array_create(NULL);
     if (!resources_json) {
         *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
-        return create_error_response(request->id, *error_code, "Failed to create resources array");
+        char* response = create_error_response(request->id, *error_code, "Failed to create resources array");
+        PROFILE_END("handle_list_resources");
+        return response;
     }
 
     bool build_error = false;
@@ -827,7 +837,9 @@ static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* ar
     if (build_error) {
         mcp_json_destroy(resources_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to build resource JSON");
+        char* response = create_error_response(request->id, *error_code, "Failed to build resource JSON");
+        PROFILE_END("handle_list_resources");
+        return response;
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
@@ -835,18 +847,24 @@ static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* ar
         mcp_json_destroy(resources_json);
         mcp_json_destroy(result_obj);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to create result object");
+        char* response = create_error_response(request->id, *error_code, "Failed to create result object");
+        PROFILE_END("handle_list_resources");
+        return response;
     }
 
     char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj); // Destroys nested resources_json
     if (!result_str) {
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to stringify result");
+        char* response = create_error_response(request->id, *error_code, "Failed to stringify result");
+        PROFILE_END("handle_list_resources");
+        return response;
     }
 
     // Create the final success response message string (takes ownership of result_str)
-    return create_success_response(request->id, result_str);
+    char* response = create_success_response(request->id, result_str);
+    PROFILE_END("handle_list_resources");
+    return response;
 }
 
 /**
@@ -856,25 +874,31 @@ static char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* ar
  * Uses malloc for building the JSON response structure.
  */
 static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
+    PROFILE_START("handle_list_resource_templates");
     // No params, arena unused here.
     (void)arena;
 
     if (server == NULL || request == NULL || error_code == NULL) {
          if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         PROFILE_END("handle_list_resource_templates"); // End profile on error
          return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
      if (!server->capabilities.resources_supported) {
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        return create_error_response(request->id, *error_code, "Resources not supported");
+        char* response = create_error_response(request->id, *error_code, "Resources not supported");
+        PROFILE_END("handle_list_resource_templates");
+        return response;
     }
 
     // Create response JSON structure using malloc.
     mcp_json_t* templates_json = mcp_json_array_create(NULL);
      if (!templates_json) {
          *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
-         return create_error_response(request->id, *error_code, "Failed to create templates array");
+         char* response = create_error_response(request->id, *error_code, "Failed to create templates array");
+         PROFILE_END("handle_list_resource_templates");
+         return response;
      }
 
     bool build_error = false;
@@ -897,7 +921,9 @@ static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_ar
     if (build_error) {
         mcp_json_destroy(templates_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to build template JSON");
+        char* response = create_error_response(request->id, *error_code, "Failed to build template JSON");
+        PROFILE_END("handle_list_resource_templates");
+        return response;
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
@@ -905,17 +931,23 @@ static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_ar
         mcp_json_destroy(templates_json);
         mcp_json_destroy(result_obj);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to create result object");
+        char* response = create_error_response(request->id, *error_code, "Failed to create result object");
+        PROFILE_END("handle_list_resource_templates");
+        return response;
     }
 
     char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj);
     if (!result_str) {
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to stringify result");
+        char* response = create_error_response(request->id, *error_code, "Failed to stringify result");
+        PROFILE_END("handle_list_resource_templates");
+        return response;
     }
 
-    return create_success_response(request->id, result_str);
+    char* response = create_success_response(request->id, result_str);
+    PROFILE_END("handle_list_resource_templates");
+    return response;
 }
 
 /**
@@ -926,34 +958,44 @@ static char* handle_list_resource_templates_request(mcp_server_t* server, mcp_ar
  * and builds the JSON response (using malloc).
  */
 static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
+    PROFILE_START("handle_read_resource");
     if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
          if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         PROFILE_END("handle_read_resource"); // End profile on error
          return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
      if (!server->capabilities.resources_supported) {
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        return create_error_response(request->id, *error_code, "Resources not supported");
+        char* response = create_error_response(request->id, *error_code, "Resources not supported");
+        PROFILE_END("handle_read_resource");
+        return response;
     }
 
     if (request->params == NULL) {
         *error_code = MCP_ERROR_INVALID_PARAMS;
-        return create_error_response(request->id, *error_code, "Missing parameters");
+        char* response = create_error_response(request->id, *error_code, "Missing parameters");
+        PROFILE_END("handle_read_resource");
+        return response;
     }
 
     // Parse params using the arena
     mcp_json_t* params_json = mcp_json_parse(arena, request->params);
     if (params_json == NULL) {
         *error_code = MCP_ERROR_INVALID_PARAMS;
-        return create_error_response(request->id, *error_code, "Invalid parameters JSON");
+        char* response = create_error_response(request->id, *error_code, "Invalid parameters JSON");
+        PROFILE_END("handle_read_resource");
+        return response;
     }
 
     mcp_json_t* uri_json = mcp_json_object_get_property(params_json, "uri");
     const char* uri = NULL;
     if (uri_json == NULL || mcp_json_get_type(uri_json) != MCP_JSON_STRING || mcp_json_get_string(uri_json, &uri) != 0 || uri == NULL) {
         *error_code = MCP_ERROR_INVALID_PARAMS;
-        return create_error_response(request->id, *error_code, "Missing or invalid 'uri' parameter");
+        char* response = create_error_response(request->id, *error_code, "Missing or invalid 'uri' parameter");
+        PROFILE_END("handle_read_resource");
+        return response;
     }
 
     mcp_content_item_t** content_items = NULL; // Array of POINTERS to content items
@@ -982,7 +1024,9 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
             if (handler_status != 0 || handler_content_items_struct_array == NULL || content_count == 0) {
                 free(handler_content_items_struct_array);
                 *error_code = MCP_ERROR_INTERNAL_ERROR;
-                return create_error_response(request->id, *error_code, "Resource handler failed or resource not found");
+                char* response = create_error_response(request->id, *error_code, "Resource handler failed or resource not found");
+                PROFILE_END("handle_read_resource");
+                return response;
             }
 
             // Allocate our array of pointers (mcp_content_item_t**)
@@ -990,7 +1034,9 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
             if (!content_items) {
                  free(handler_content_items_struct_array);
                  *error_code = MCP_ERROR_INTERNAL_ERROR;
-                 return create_error_response(request->id, *error_code, "Failed to allocate content pointer array");
+                 char* response = create_error_response(request->id, *error_code, "Failed to allocate content pointer array");
+                 PROFILE_END("handle_read_resource");
+                 return response;
             }
 
             // Copy data from handler's array of structs into our array of pointers
@@ -1018,13 +1064,17 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
 
             if (copy_error) {
                  *error_code = MCP_ERROR_INTERNAL_ERROR;
-                 return create_error_response(request->id, *error_code, "Failed to copy content items from handler");
+                 char* response = create_error_response(request->id, *error_code, "Failed to copy content items from handler");
+                 PROFILE_END("handle_read_resource");
+                 return response;
             }
 
             fetched_from_handler = true;
         } else {
              *error_code = MCP_ERROR_INTERNAL_ERROR;
-             return create_error_response(request->id, *error_code, "Resource handler not configured");
+             char* response = create_error_response(request->id, *error_code, "Resource handler not configured");
+             PROFILE_END("handle_read_resource");
+             return response;
         }
     }
 
@@ -1095,7 +1145,9 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
             free(content_items);
         }
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to create contents array");
+        char* response = create_error_response(request->id, *error_code, "Failed to create contents array");
+        PROFILE_END("handle_read_resource");
+        return response;
     }
 
     bool json_build_error = false;
@@ -1128,7 +1180,9 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
     if (json_build_error) {
         mcp_json_destroy(contents_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to build content item JSON");
+        char* response = create_error_response(request->id, *error_code, "Failed to build content item JSON");
+        PROFILE_END("handle_read_resource");
+        return response;
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
@@ -1136,18 +1190,24 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
         mcp_json_destroy(contents_json);
         mcp_json_destroy(result_obj);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to create result object");
+        char* response = create_error_response(request->id, *error_code, "Failed to create result object");
+        PROFILE_END("handle_read_resource");
+        return response;
     }
 
     char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj);
     if (!result_str) {
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to stringify result");
+        char* response = create_error_response(request->id, *error_code, "Failed to stringify result");
+        PROFILE_END("handle_read_resource");
+        return response;
     }
 
     // Arena handles params_json cleanup via handle_message caller.
-    return create_success_response(request->id, result_str);
+    char* response = create_success_response(request->id, result_str);
+    PROFILE_END("handle_read_resource");
+    return response;
 }
 
 /**
@@ -1157,25 +1217,31 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
  * including the input schema for each tool. Uses malloc for building the response.
  */
 static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
+    PROFILE_START("handle_list_tools");
     // No params, arena unused.
     (void)arena;
 
     if (server == NULL || request == NULL || error_code == NULL) {
          if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         PROFILE_END("handle_list_tools"); // End profile on error
          return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
     if (!server->capabilities.tools_supported) {
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        return create_error_response(request->id, *error_code, "Tools not supported");
+        char* response = create_error_response(request->id, *error_code, "Tools not supported");
+        PROFILE_END("handle_list_tools");
+        return response;
     }
 
     // Create response JSON structure using malloc.
     mcp_json_t* tools_json = mcp_json_array_create(NULL);
     if (!tools_json) {
         *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
-        return create_error_response(request->id, *error_code, "Failed to create tools array");
+        char* response = create_error_response(request->id, *error_code, "Failed to create tools array");
+        PROFILE_END("handle_list_tools");
+        return response;
     }
 
     bool json_build_error = false;
@@ -1255,7 +1321,9 @@ static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena,
     if (json_build_error) {
         mcp_json_destroy(tools_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to build tool JSON");
+        char* response = create_error_response(request->id, *error_code, "Failed to build tool JSON");
+        PROFILE_END("handle_list_tools");
+        return response;
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
@@ -1263,17 +1331,23 @@ static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena,
         mcp_json_destroy(tools_json);
         mcp_json_destroy(result_obj);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to create result object");
+        char* response = create_error_response(request->id, *error_code, "Failed to create result object");
+        PROFILE_END("handle_list_tools");
+        return response;
     }
 
     char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj);
     if (!result_str) {
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to stringify result");
+        char* response = create_error_response(request->id, *error_code, "Failed to stringify result");
+        PROFILE_END("handle_list_tools");
+        return response;
     }
 
-    return create_success_response(request->id, result_str);
+    char* response = create_success_response(request->id, result_str);
+    PROFILE_END("handle_list_tools");
+    return response;
 }
 
 /**
@@ -1283,34 +1357,44 @@ static char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena,
  * calls the registered tool handler, and builds the JSON response (using malloc).
  */
 static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
+    PROFILE_START("handle_call_tool");
     if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
          if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+         PROFILE_END("handle_call_tool"); // End profile on error
          return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
     if (!server->capabilities.tools_supported) {
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;
-        return create_error_response(request->id, *error_code, "Tools not supported");
+        char* response = create_error_response(request->id, *error_code, "Tools not supported");
+        PROFILE_END("handle_call_tool");
+        return response;
     }
 
      if (request->params == NULL) {
         *error_code = MCP_ERROR_INVALID_PARAMS;
-        return create_error_response(request->id, *error_code, "Missing parameters");
+        char* response = create_error_response(request->id, *error_code, "Missing parameters");
+        PROFILE_END("handle_call_tool");
+        return response;
     }
 
     // Parse params using arena
     mcp_json_t* params_json = mcp_json_parse(arena, request->params);
     if (params_json == NULL) {
         *error_code = MCP_ERROR_INVALID_PARAMS;
-        return create_error_response(request->id, *error_code, "Invalid parameters JSON");
+        char* response = create_error_response(request->id, *error_code, "Invalid parameters JSON");
+        PROFILE_END("handle_call_tool");
+        return response;
     }
 
     mcp_json_t* name_json = mcp_json_object_get_property(params_json, "name");
     const char* name = NULL;
     if (name_json == NULL || mcp_json_get_type(name_json) != MCP_JSON_STRING || mcp_json_get_string(name_json, &name) != 0) {
         *error_code = MCP_ERROR_INVALID_PARAMS;
-        return create_error_response(request->id, *error_code, "Missing or invalid 'name' parameter");
+        char* response = create_error_response(request->id, *error_code, "Missing or invalid 'name' parameter");
+        PROFILE_END("handle_call_tool");
+        return response;
     }
 
     mcp_json_t* args_json = mcp_json_object_get_property(params_json, "arguments");
@@ -1320,7 +1404,9 @@ static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, 
         args_str = mcp_json_stringify(args_json); // Uses malloc
         if (args_str == NULL) {
             *error_code = MCP_ERROR_INTERNAL_ERROR;
-            return create_error_response(request->id, *error_code, "Failed to stringify arguments");
+            char* response = create_error_response(request->id, *error_code, "Failed to stringify arguments");
+            PROFILE_END("handle_call_tool");
+            return response;
         }
     }
 
@@ -1338,7 +1424,9 @@ static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, 
     if (handler_status != 0 || content_items == NULL || content_count == 0) {
         free(content_items);
         *error_code = MCP_ERROR_INTERNAL_ERROR; // Or more specific
-        return create_error_response(request->id, *error_code, "Tool handler failed or tool not found");
+        char* response = create_error_response(request->id, *error_code, "Tool handler failed or tool not found");
+        PROFILE_END("handle_call_tool");
+        return response;
     }
 
     // Create response JSON structure using malloc.
@@ -1348,7 +1436,9 @@ static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, 
          for (size_t i = 0; i < content_count; i++) mcp_content_item_free(&content_items[i]);
          free(content_items);
          *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
-         return create_error_response(request->id, *error_code, "Failed to create content array");
+         char* response = create_error_response(request->id, *error_code, "Failed to create content array");
+         PROFILE_END("handle_call_tool");
+         return response;
     }
 
     bool json_build_error = false;
@@ -1383,7 +1473,9 @@ static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, 
      if (json_build_error) {
         mcp_json_destroy(content_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to build content item JSON");
+        char* response = create_error_response(request->id, *error_code, "Failed to build content item JSON");
+        PROFILE_END("handle_call_tool");
+        return response;
     }
 
     mcp_json_t* result_obj = mcp_json_object_create(NULL);
@@ -1394,16 +1486,22 @@ static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, 
         mcp_json_destroy(content_json);
         mcp_json_destroy(result_obj);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to create result object");
+        char* response = create_error_response(request->id, *error_code, "Failed to create result object");
+        PROFILE_END("handle_call_tool");
+        return response;
     }
 
     char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
     mcp_json_destroy(result_obj);
     if (!result_str) {
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return create_error_response(request->id, *error_code, "Failed to stringify result");
+        char* response = create_error_response(request->id, *error_code, "Failed to stringify result");
+        PROFILE_END("handle_call_tool");
+        return response;
     }
 
     // Arena handles params_json cleanup via caller
-    return create_success_response(request->id, result_str);
+    char* response = create_success_response(request->id, result_str);
+    PROFILE_END("handle_call_tool");
+    return response;
 }
