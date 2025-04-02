@@ -18,10 +18,11 @@ extern "C" {
  *
  * @param host The hostname or IP address to bind to (e.g., "0.0.0.0" for all interfaces, "127.0.0.1" for localhost).
  * @param port The port number to listen on.
+ * @param idle_timeout_ms Idle connection timeout in milliseconds (0 to disable).
  * @return A pointer to the created transport instance, or NULL on failure.
  *         The caller is responsible for destroying the transport using mcp_transport_destroy().
  */
-mcp_transport_t* mcp_transport_tcp_create(const char* host, uint16_t port);
+mcp_transport_t* mcp_transport_tcp_create(const char* host, uint16_t port, uint32_t idle_timeout_ms);
 
 #ifdef __cplusplus
 }

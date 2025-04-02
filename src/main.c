@@ -335,7 +335,9 @@ int main(int argc, char** argv) {
         transport = mcp_transport_stdio_create();
     } else if (strcmp(config.transport_type, "tcp") == 0) {
         log_message(LOG_LEVEL_INFO, "Using TCP transport on %s:%d", config.host, config.port);
-        transport = mcp_transport_tcp_create(config.host, config.port);
+        // Pass idle timeout (e.g., 60000ms = 1 minute, 0 to disable)
+        uint32_t idle_timeout = 60000; // TODO: Make this configurable via command line args
+        transport = mcp_transport_tcp_create(config.host, config.port, idle_timeout);
     } else {
         log_message(LOG_LEVEL_ERROR, "Unknown transport type: %s", config.transport_type);
         mcp_server_destroy(g_server); g_server = NULL;

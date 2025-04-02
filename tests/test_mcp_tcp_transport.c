@@ -52,7 +52,8 @@ void test_tcp_transport_lifecycle(void) {
     printf("Testing TCP Transport Lifecycle (Host: %s, Port: %u)...\n", host, port);
 
     // Test Create
-    transport = mcp_transport_tcp_create(host, port);
+    uint32_t idle_timeout_ms = 0; // Disable idle timeout for this test
+    transport = mcp_transport_tcp_create(host, port, idle_timeout_ms);
     TEST_ASSERT_NOT_NULL_MESSAGE(transport, "mcp_transport_tcp_create failed");
     if (!transport) return; // Avoid crashing following tests
 

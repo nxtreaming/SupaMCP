@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <time.h>
 
 // Platform-specific socket includes
 #ifdef _WIN32
@@ -19,6 +20,8 @@
     typedef int socklen_t;
     #define close_socket closesocket
     #define sock_errno WSAGetLastError()
+    // Windows doesn't have MSG_NOSIGNAL, but send/recv handle broken pipes differently
+    #define SEND_FLAGS 0
 #else
 #   include <sys/socket.h>
 #   include <netinet/in.h>
@@ -26,12 +29,15 @@
 #   include <unistd.h>
 #   include <pthread.h>
 #   include <fcntl.h>
-#   include <sys/select.h> // For select()
+#   include <sys/select.h>
+#   include <poll.h>
     typedef int socket_t;
     #define INVALID_SOCKET (-1)
     #define SOCKET_ERROR   (-1)
     #define close_socket close
     #define sock_errno errno
+    // Prevent SIGPIPE signal on send to closed socket
+    #define SEND_FLAGS MSG_NOSIGNAL
 #endif
 
 // Max message size limit for sanity check (remains relevant)
@@ -47,6 +53,7 @@ typedef struct {
     socket_t socket;
     struct sockaddr_in address; // Assuming IPv4 for simplicity
     bool active;
+    time_t last_activity_time; // Timestamp of the last successful read/write
 #ifdef _WIN32
     HANDLE thread_handle;
 #else
@@ -60,6 +67,7 @@ typedef struct {
 typedef struct {
     char* host;
     uint16_t port;
+    uint32_t idle_timeout_ms; // Idle timeout in milliseconds (0 = disabled)
     socket_t listen_socket;
     bool running;
     tcp_client_connection_t clients[MAX_TCP_CLIENTS];
@@ -76,10 +84,8 @@ typedef struct {
 
 
 // --- Forward Declarations for Static Functions ---
-// Note: tcp_transport_start signature matches the updated mcp_transport.h/mcp_transport_internal.h
 static int tcp_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data, mcp_transport_error_callback_t error_callback);
 static int tcp_transport_stop(mcp_transport_t* transport);
-// static int tcp_transport_send(mcp_transport_t* transport, const void* data, size_t size); // Sending handled by client handler
 static void tcp_transport_destroy(mcp_transport_t* transport);
 #ifdef _WIN32
 static DWORD WINAPI tcp_accept_thread_func(LPVOID arg);
@@ -92,6 +98,7 @@ static void initialize_winsock(); // Helper for Windows
 #ifndef _WIN32
 static void close_stop_pipe(mcp_tcp_transport_data_t* data); // Helper
 #endif
+static int wait_for_socket_read(socket_t sock, uint32_t timeout_ms, bool* should_stop);
 
 
 // --- Static Implementation Functions ---
@@ -110,32 +117,45 @@ static void initialize_winsock() { /* No-op on non-Windows */ }
 #endif
 
 // Helper function to send exactly n bytes to a socket (checks client stop flag)
+// Returns 0 on success, -1 on error, -2 on stop signal, -3 on connection closed/reset
 static int send_exact(socket_t sock, const char* buf, size_t len, bool* client_should_stop_flag) {
     size_t total_sent = 0;
     while (total_sent < len) {
         if (client_should_stop_flag && *client_should_stop_flag) return -2; // Interrupted by stop signal
 
-        // Note: send() typically takes int/ssize_t for length. We might need to cast
-        // or send in chunks if len > INT_MAX (highly unlikely for JSON-RPC).
-        // For simplicity, assume len fits in send()'s length parameter type.
-        // On Windows, send takes int. On POSIX, it takes size_t.
 #ifdef _WIN32
         int chunk_len = (len - total_sent > INT_MAX) ? INT_MAX : (int)(len - total_sent);
-        int bytes_sent = send(sock, buf + total_sent, chunk_len, 0);
+        int bytes_sent = send(sock, buf + total_sent, chunk_len, SEND_FLAGS);
 #else
-        ssize_t bytes_sent = send(sock, buf + total_sent, len - total_sent, 0);
+        ssize_t bytes_sent = send(sock, buf + total_sent, len - total_sent, SEND_FLAGS);
 #endif
 
         if (bytes_sent == SOCKET_ERROR) {
-            return -1; // Socket error
+            // Check if the error is due to a broken pipe (connection closed by peer)
+            int error_code = sock_errno;
+#ifdef _WIN32
+            if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN) {
+                return -3; // Indicate connection closed/reset
+            }
+#else
+            if (error_code == EPIPE || error_code == ECONNRESET || error_code == ENOTCONN) {
+                return -3; // Indicate connection closed/reset
+            }
+#endif
+            return -1; // Other socket error
+        }
+        if (bytes_sent == 0) {
+             // Should not happen with blocking sockets unless len was 0
+             return -1;
         }
         total_sent += bytes_sent;
     }
-    return (int)total_sent; // Should be equal to len if successful
+    return 0; // Success
 }
 
 
 // Helper function to read exactly n bytes from a socket (checks client stop flag)
+// Returns: 0 on success, -1 on error, -2 on stop signal, -3 on connection closed
 static int recv_exact(socket_t sock, char* buf, int len, bool* client_should_stop_flag) {
     int total_read = 0;
     while (total_read < len) {
@@ -145,11 +165,76 @@ static int recv_exact(socket_t sock, char* buf, int len, bool* client_should_sto
         if (bytes_read == SOCKET_ERROR) {
             return -1; // Socket error
         } else if (bytes_read == 0) {
-            return 0;  // Connection closed gracefully
+            return -3;  // Connection closed gracefully
         }
         total_read += bytes_read;
     }
-    return total_read; // Should be equal to len if successful
+    return 0; // Success
+}
+
+/**
+ * @internal
+ * @brief Waits for readability on a socket or a stop signal.
+ * Uses poll() on POSIX and select() on Windows for simplicity.
+ * @param sock The socket descriptor.
+ * @param timeout_ms Timeout in milliseconds. 0 means no timeout (wait indefinitely).
+ * @param should_stop Pointer to the thread's stop flag.
+ * @return 1 if socket is readable, 0 if timeout occurred, -1 on error, -2 if stop signal received.
+ */
+static int wait_for_socket_read(socket_t sock, uint32_t timeout_ms, bool* should_stop) {
+    if (should_stop && *should_stop) return -2;
+
+#ifdef _WIN32
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(sock, &read_fds);
+    struct timeval tv;
+    struct timeval* tv_ptr = NULL;
+
+    if (timeout_ms > 0) {
+        // Use a smaller timeout for select to check should_stop more often
+        uint32_t select_timeout_ms = (timeout_ms < 500) ? timeout_ms : 500; // Check every 500ms max
+        tv.tv_sec = select_timeout_ms / 1000;
+        tv.tv_usec = (select_timeout_ms % 1000) * 1000;
+        tv_ptr = &tv;
+    }
+
+    int result = select(0, &read_fds, NULL, NULL, tv_ptr);
+
+    if (should_stop && *should_stop) return -2; // Check again after select
+
+    if (result == SOCKET_ERROR) {
+        return -1; // select error
+    } else if (result == 0) {
+        return 0; // timeout (or intermediate check)
+    } else {
+        return 1; // readable
+    }
+#else
+    struct pollfd pfd;
+    pfd.fd = sock;
+    pfd.events = POLLIN;
+    // Use a smaller timeout for poll to check should_stop more often
+    int poll_timeout = (timeout_ms == 0) ? -1 : ((timeout_ms < 500) ? (int)timeout_ms : 500); // Check every 500ms max
+
+    int result = poll(&pfd, 1, poll_timeout);
+
+    if (should_stop && *should_stop) return -2; // Check again after poll
+
+    if (result < 0) {
+        if (errno == EINTR) return -2; // Interrupted, treat like stop signal
+        return -1; // poll error
+    } else if (result == 0) {
+        return 0; // timeout (or intermediate check)
+    } else {
+        if (pfd.revents & POLLIN) {
+            return 1; // readable
+        } else {
+            // Other event (e.g., POLLERR, POLLHUP), treat as error/closed
+            return -1;
+        }
+    }
+#endif
 }
 
 
@@ -168,6 +253,7 @@ static void* tcp_client_handler_thread_func(void* arg) {
     bool buffer_malloced = false; // Flag to track if we used malloc fallback
     int read_result;
     client_conn->should_stop = false; // Initialize stop flag for this handler
+    client_conn->last_activity_time = time(NULL); // Initialize activity time
 
 #ifdef _WIN32
     log_message(LOG_LEVEL_DEBUG, "Client handler started for socket %p", (void*)client_conn->socket);
@@ -175,15 +261,53 @@ static void* tcp_client_handler_thread_func(void* arg) {
     log_message(LOG_LEVEL_DEBUG, "Client handler started for socket %d", client_conn->socket);
 #endif
 
-    // Main receive loop with length prefix framing
-    while (!client_conn->should_stop && client_conn->active) { // Check both flags
-        // 1. Read the 4-byte length prefix
-        // Use select/poll for non-blocking read with timeout and stop signal check?
-        // For simplicity, stick with blocking recv_exact for now, stop signal checked inside.
-        read_result = recv_exact(client_conn->socket, length_buf, 4, &client_conn->should_stop); // Pass client stop flag
+    // Main receive loop with length prefix framing and idle timeout
+    while (!client_conn->should_stop && client_conn->active) {
+        // Calculate overall deadline for this read operation
+        time_t deadline = 0;
+        if (tcp_data->idle_timeout_ms > 0) {
+            deadline = client_conn->last_activity_time + (tcp_data->idle_timeout_ms / 1000) + ((tcp_data->idle_timeout_ms % 1000) > 0 ? 1 : 0);
+        }
 
-        if (read_result == SOCKET_ERROR) {
-             if (!client_conn->should_stop) { // Avoid error log if stopping
+        // 1. Wait for data or timeout
+        uint32_t wait_ms = tcp_data->idle_timeout_ms; // Start with full timeout for select/poll
+        if (wait_ms == 0) wait_ms = 500; // If no idle timeout, check stop flag periodically
+
+        int wait_result = wait_for_socket_read(client_conn->socket, wait_ms, &client_conn->should_stop);
+
+        if (wait_result == -2) { // Stop signal
+             log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
+             goto client_cleanup;
+        } else if (wait_result == -1) { // Socket error
+             if (!client_conn->should_stop) {
+                 char err_buf[128];
+#ifdef _WIN32
+                 strerror_s(err_buf, sizeof(err_buf), sock_errno);
+                 log_message(LOG_LEVEL_ERROR, "wait_for_socket_read failed for socket %p: %d (%s)", (void*)client_conn->socket, sock_errno, err_buf);
+#else
+                 if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
+                     log_message(LOG_LEVEL_ERROR, "wait_for_socket_read failed for socket %d: %d (%s)", client_conn->socket, sock_errno, err_buf);
+                 } else {
+                     log_message(LOG_LEVEL_ERROR, "wait_for_socket_read failed for socket %d: %d (strerror_r failed)", client_conn->socket, sock_errno);
+                 }
+#endif
+             }
+             goto client_cleanup;
+        } else if (wait_result == 0) { // Timeout from select/poll
+             if (tcp_data->idle_timeout_ms > 0 && time(NULL) >= deadline) {
+                 log_message(LOG_LEVEL_INFO, "Idle timeout exceeded for socket %d. Closing connection.", (int)client_conn->socket);
+                 goto client_cleanup;
+             }
+             // If no idle timeout configured, or deadline not reached, just loop again
+             continue;
+        }
+        // else: wait_result == 1 (socket is readable)
+
+        // 2. Read the 4-byte length prefix
+        read_result = recv_exact(client_conn->socket, length_buf, 4, &client_conn->should_stop);
+
+        if (read_result == -1) { // Socket error
+             if (!client_conn->should_stop) {
                 char err_buf[128];
 #ifdef _WIN32
                 strerror_s(err_buf, sizeof(err_buf), sock_errno);
@@ -197,66 +321,62 @@ static void* tcp_client_handler_thread_func(void* arg) {
 #endif
              }
              goto client_cleanup;
-        } else if (read_result == 0) { // Connection closed gracefully
+        } else if (read_result == -3) { // Connection closed
 #ifdef _WIN32
              log_message(LOG_LEVEL_INFO, "Client disconnected socket %p while reading length", (void*)client_conn->socket);
 #else
              log_message(LOG_LEVEL_INFO, "Client disconnected socket %d while reading length", client_conn->socket);
 #endif
              goto client_cleanup;
-        } else if (read_result == -2) { // Interrupted by stop signal
+        } else if (read_result == -2) { // Stop signal
              log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
              goto client_cleanup;
-        } else if (read_result != 4) { // Should not happen with recv_exact logic
-             log_message(LOG_LEVEL_ERROR, "Incomplete length received (%d bytes) for socket %d", read_result, (int)client_conn->socket);
-             goto client_cleanup; // Should not happen with recv_exact logic
+        } else if (read_result != 0) { // Should be 0 on success from recv_exact
+             log_message(LOG_LEVEL_ERROR, "recv_exact (length) returned unexpected code %d for socket %d", read_result, (int)client_conn->socket);
+             goto client_cleanup;
         }
 
+        // Update activity time after successful read
+        client_conn->last_activity_time = time(NULL);
 
-        // 2. Decode length (Network to Host byte order)
+        // 3. Decode length (Network to Host byte order)
         memcpy(&message_length_net, length_buf, 4);
         message_length_host = ntohl(message_length_net);
 
-        // 3. Sanity check length
+        // 4. Sanity check length
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
              log_message(LOG_LEVEL_ERROR, "Invalid message length received: %u on socket %d", message_length_host, (int)client_conn->socket);
              goto client_cleanup; // Invalid length, close connection
         }
 
-        // 4. Allocate buffer for message body using buffer pool or malloc
+        // 5. Allocate buffer for message body using buffer pool or malloc
         size_t required_size = message_length_host + 1; // +1 for null terminator
         size_t pool_buffer_size = mcp_buffer_pool_get_buffer_size(tcp_data->buffer_pool);
 
         if (required_size <= pool_buffer_size) {
-            // Try to acquire from pool
             message_buf = (char*)mcp_buffer_pool_acquire(tcp_data->buffer_pool);
-            if (message_buf != NULL) {
-                buffer_malloced = false;
-                // log_message(LOG_LEVEL_DEBUG, "Acquired buffer from pool for socket %d", (int)client_conn->socket);
-            } else {
-                // Pool empty, fallback to malloc
+            if (message_buf != NULL) buffer_malloced = false;
+            else {
                 log_message(LOG_LEVEL_WARN, "Buffer pool empty, falling back to malloc for %zu bytes on socket %d", required_size, (int)client_conn->socket);
                 message_buf = (char*)malloc(required_size);
                 buffer_malloced = true;
             }
         } else {
-            // Message too large for pool buffers, use malloc
             log_message(LOG_LEVEL_WARN, "Message size %u exceeds pool buffer size %zu, using malloc on socket %d", message_length_host, pool_buffer_size, (int)client_conn->socket);
             message_buf = (char*)malloc(required_size);
             buffer_malloced = true;
         }
 
-        // Check allocation result
         if (message_buf == NULL) {
              log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer for message size %u on socket %d", message_length_host, (int)client_conn->socket);
              goto client_cleanup; // Allocation failure
         }
 
-        // 5. Read the message body
+        // 6. Read the message body
         read_result = recv_exact(client_conn->socket, message_buf, message_length_host, &client_conn->should_stop);
 
-         if (read_result == SOCKET_ERROR) {
-             if (!client_conn->should_stop) { // Avoid error log if stopping
+         if (read_result == -1) { // Socket error
+             if (!client_conn->should_stop) {
                 char err_buf[128];
 #ifdef _WIN32
                 strerror_s(err_buf, sizeof(err_buf), sock_errno);
@@ -269,41 +389,41 @@ static void* tcp_client_handler_thread_func(void* arg) {
                 }
 #endif
              }
-             goto client_cleanup; // Exit thread on error
-         } else if (read_result == 0) { // Connection closed gracefully
+             goto client_cleanup;
+         } else if (read_result == -3) { // Connection closed
 #ifdef _WIN32
              log_message(LOG_LEVEL_INFO, "Client disconnected socket %p while reading body", (void*)client_conn->socket);
 #else
              log_message(LOG_LEVEL_INFO, "Client disconnected socket %d while reading body", client_conn->socket);
 #endif
-             goto client_cleanup; // Exit thread on disconnect
-         } else if (read_result == -2) { // Interrupted by stop signal
+             goto client_cleanup;
+         } else if (read_result == -2) { // Stop signal
              log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
              goto client_cleanup;
-         } else if (read_result != (int)message_length_host) { // Should not happen
+         } else if (read_result != 0) { // Should be 0 on success
              log_message(LOG_LEVEL_ERROR, "Incomplete message body received (%d/%u bytes) for socket %d", read_result, message_length_host, (int)client_conn->socket);
-             goto client_cleanup; // Should not happen with recv_exact logic
+             goto client_cleanup;
          }
 
+        // Update activity time after successful read
+        client_conn->last_activity_time = time(NULL);
 
-        // 6. Null-terminate and process the message via callback
+        // 7. Null-terminate and process the message via callback
         message_buf[message_length_host] = '\0';
         char* response_str = NULL;
         int callback_error_code = 0;
         if (transport->message_callback != NULL) {
             response_str = transport->message_callback(transport->callback_user_data, message_buf, message_length_host, &callback_error_code);
-            // response_str is malloc'd by the callback, or NULL
         }
 
-        // 7. Free or release the received message buffer (moved to step 8a)
-        // if (buffer_malloced) {
-        //     free(message_buf);
-        // } else {
-        //     mcp_buffer_pool_release(tcp_data->buffer_pool, message_buf);
-        // }
-        // message_buf = NULL; // Avoid double free in cleanup
+        // 8. Release or free the received message buffer (before potential send)
+        if (message_buf != NULL) {
+            if (buffer_malloced) free(message_buf);
+            else mcp_buffer_pool_release(tcp_data->buffer_pool, message_buf);
+            message_buf = NULL;
+        }
 
-        // 8. If callback returned a response string, send it back
+        // 9. If callback returned a response string, send it back
         if (response_str != NULL) {
             size_t response_len = strlen(response_str);
             if (response_len > 0 && response_len <= MAX_MCP_MESSAGE_SIZE) {
@@ -315,10 +435,11 @@ static void* tcp_client_handler_thread_func(void* arg) {
                     memcpy(send_buffer, &net_len, sizeof(net_len));
                     memcpy(send_buffer + sizeof(net_len), response_str, response_len);
 
-                    // Pass size_t total_send_len directly
                     int send_result = send_exact(client_conn->socket, send_buffer, total_send_len, &client_conn->should_stop);
-                    if (send_result == SOCKET_ERROR) { // send_exact returns -1 on error
-                        if (!client_conn->should_stop) { // Avoid error log if stopping
+                    free(send_buffer); // Free send buffer regardless of result
+
+                    if (send_result == -1) { // Socket error
+                        if (!client_conn->should_stop) {
                             char err_buf[128];
 #ifdef _WIN32
                             strerror_s(err_buf, sizeof(err_buf), sock_errno);
@@ -331,44 +452,30 @@ static void* tcp_client_handler_thread_func(void* arg) {
                             }
 #endif
                         }
-                        free(send_buffer);
-                        free(response_str); // Free callback response
-                        goto client_cleanup; // Error sending response
-                    } else if (send_result == -2) { // Interrupted by stop signal
-                         free(send_buffer);
+                        free(response_str);
+                        goto client_cleanup;
+                    } else if (send_result == -2) { // Stop signal
+                         free(response_str);
+                         goto client_cleanup;
+                    } else if (send_result == -3) { // Connection closed
+                         log_message(LOG_LEVEL_INFO, "Client disconnected socket %d during send", (int)client_conn->socket);
                          free(response_str);
                          goto client_cleanup;
                     }
-                    free(send_buffer);
+                    // Update activity time after successful send
+                    client_conn->last_activity_time = time(NULL);
                 } else {
                     log_message(LOG_LEVEL_ERROR, "Failed to allocate send buffer for response on socket %d", (int)client_conn->socket);
-                    // Continue without sending response? Or disconnect? Disconnect for safety.
                     free(response_str);
                     goto client_cleanup;
                 }
             } else if (response_len > MAX_MCP_MESSAGE_SIZE) {
                  log_message(LOG_LEVEL_ERROR, "Response generated by callback is too large (%zu bytes) for socket %d", response_len, (int)client_conn->socket);
-                 // Disconnect client?
             }
-            // Free the response string returned by the callback
             free(response_str);
             response_str = NULL;
         } else if (callback_error_code != 0) {
-            // Callback indicated an error but didn't return a response string
             log_message(LOG_LEVEL_WARN, "Message callback indicated error (%d) but returned no response string for socket %d", callback_error_code, (int)client_conn->socket);
-             // Decide if we should disconnect? For now, continue.
-        }
-        // If response_str is NULL and no error, it was likely a notification - no response needed.
-
-        // 8a. Release or free the message buffer
-        if (message_buf != NULL) { // Check if buffer was allocated
-            if (buffer_malloced) {
-                free(message_buf);
-            } else {
-                mcp_buffer_pool_release(tcp_data->buffer_pool, message_buf);
-                // log_message(LOG_LEVEL_DEBUG, "Released buffer to pool for socket %d", (int)client_conn->socket);
-            }
-            message_buf = NULL; // Avoid double free/release in cleanup
         }
 
     } // End of main while loop
@@ -376,11 +483,8 @@ static void* tcp_client_handler_thread_func(void* arg) {
 client_cleanup:
     // Free or release buffer if loop exited unexpectedly
     if (message_buf != NULL) {
-        if (buffer_malloced) {
-            free(message_buf);
-        } else {
-            mcp_buffer_pool_release(tcp_data->buffer_pool, message_buf);
-        }
+        if (buffer_malloced) free(message_buf);
+        else mcp_buffer_pool_release(tcp_data->buffer_pool, message_buf);
     }
 
  #ifdef _WIN32
@@ -403,7 +507,6 @@ client_cleanup:
         client_conn->thread_handle = NULL;
     }
 #else
-    // Pthreads were detached, no need to join or manage handle here.
     client_conn->thread_handle = 0;
 #endif
 #ifdef _WIN32
@@ -444,83 +547,109 @@ static void* tcp_accept_thread_func(void* arg) {
     mcp_transport_t* transport = (mcp_transport_t*)arg;
     mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)transport->transport_data;
     struct sockaddr_in client_addr;
+    memset(&client_addr, 0, sizeof(client_addr)); // Initialize client_addr
     socklen_t client_addr_len = sizeof(client_addr);
-    socket_t client_socket;
+    socket_t client_socket = INVALID_SOCKET; // Initialize to invalid
     char client_ip_str[INET6_ADDRSTRLEN]; // Use INET6 for future-proofing
 
     log_message(LOG_LEVEL_INFO, "Accept thread started, listening on %s:%d", data->host, data->port);
 
 #ifdef _WIN32
-    // Windows: Use WSAEventSelect or similar for robust stop signal handling?
-    // For now, stick to closing the socket to unblock accept.
-    while (data->running) {
-        client_socket = accept(data->listen_socket, (struct sockaddr*)&client_addr, &client_addr_len);
-
-        if (!data->running) break; // Check flag again after blocking accept
-
-        if (client_socket == INVALID_SOCKET) {
-            if (data->running) { // Avoid error message if stopped intentionally
-                 // Check if error is due to socket closure during stop
-                 int error_code = sock_errno;
-                 if (error_code != WSAEINTR && error_code != WSAENOTSOCK && error_code != WSAEINVAL) {
-                     char err_buf[128];
-                     strerror_s(err_buf, sizeof(err_buf), error_code);
-                     log_message(LOG_LEVEL_ERROR, "accept failed: %d (%s)", error_code, err_buf);
-                 } else {
-                      log_message(LOG_LEVEL_DEBUG, "Accept interrupted likely due to stop signal.");
-                      break; // Exit loop if socket closed during stop
-                 }
-            } else {
-                 break; // Exit if not running
-            }
-            continue; // Try again if it was a different error
-        }
-        // --- Common connection handling logic (Windows) ---
-        const char* client_ip = NULL;
-        if (InetNtop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) != NULL) {
-             client_ip = client_ip_str;
-        } else {
-             log_message(LOG_LEVEL_WARN, "InetNtop failed: %d", sock_errno);
-             client_ip = "?.?.?.?";
-        }
-        log_message(LOG_LEVEL_INFO, "Accepted connection from %s:%d on socket %p",
-               client_ip, ntohs(client_addr.sin_port), (void*)client_socket);
-
-        // Find an empty slot and launch handler thread (common logic below)
-
-#else // POSIX
+    // Windows: Use select with a timeout to allow checking data->running periodically
     fd_set read_fds;
-    int max_fd = (data->stop_pipe[0] > data->listen_socket) ? data->stop_pipe[0] : data->listen_socket;
-
+    struct timeval tv;
     while (data->running) {
         FD_ZERO(&read_fds);
-        FD_SET(data->stop_pipe[0], &read_fds); // Monitor stop pipe
-        FD_SET(data->listen_socket, &read_fds); // Monitor listen socket
+        // Only set FD if socket is valid (it might be closed during stop)
+        if (data->listen_socket != INVALID_SOCKET) {
+            FD_SET(data->listen_socket, &read_fds);
+        } else {
+            Sleep(100); // Avoid busy-waiting if socket is closed
+            continue;
+        }
+        tv.tv_sec = 1; // Check every second
+        tv.tv_usec = 0;
 
-        int activity = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
+        int activity = select(0, &read_fds, NULL, NULL, &tv);
 
         if (!data->running) break; // Check flag again after select
 
+        if (activity == SOCKET_ERROR) {
+             if (data->running) {
+                 int error_code = sock_errno;
+                 if (error_code != WSAEINTR && error_code != WSAENOTSOCK && error_code != WSAEINVAL) { // Ignore interrupt/socket closed
+                     char err_buf[128];
+                     strerror_s(err_buf, sizeof(err_buf), error_code);
+                     log_message(LOG_LEVEL_ERROR, "select failed in accept thread: %d (%s)", error_code, err_buf);
+                 } else {
+                     log_message(LOG_LEVEL_DEBUG, "Select interrupted likely due to stop signal.");
+                     break;
+                 }
+             } else {
+                 break;
+             }
+             continue;
+        }
+
+        if (activity > 0 && FD_ISSET(data->listen_socket, &read_fds)) {
+            // Accept connection
+            client_socket = accept(data->listen_socket, (struct sockaddr*)&client_addr, &client_addr_len);
+
+            if (client_socket == INVALID_SOCKET) {
+                 if (data->running) {
+                     char err_buf[128];
+                     strerror_s(err_buf, sizeof(err_buf), sock_errno);
+                     log_message(LOG_LEVEL_ERROR, "accept failed: %d (%s)", sock_errno, err_buf);
+                 }
+                 continue;
+            }
+            // --- Common connection handling logic (Windows) ---
+            const char* client_ip = NULL;
+            if (InetNtop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) != NULL) {
+                 client_ip = client_ip_str;
+            } else {
+                 log_message(LOG_LEVEL_WARN, "InetNtop failed: %d", sock_errno);
+                 client_ip = "?.?.?.?";
+            }
+            log_message(LOG_LEVEL_INFO, "Accepted connection from %s:%d on socket %p",
+                   client_ip, ntohs(client_addr.sin_port), (void*)client_socket);
+
+            // Find an empty slot and launch handler thread (common logic below)
+            goto handle_connection;
+        }
+        // If activity == 0, it was a timeout, loop continues to check data->running
+
+#else // POSIX
+    struct pollfd fds[2];
+    fds[0].fd = data->listen_socket;
+    fds[0].events = POLLIN;
+    fds[1].fd = data->stop_pipe[0]; // Read end of stop pipe
+    fds[1].events = POLLIN;
+
+    while (data->running) {
+        int activity = poll(fds, 2, -1); // Wait indefinitely
+
+        if (!data->running) break; // Check flag again after poll
+
         if (activity < 0 && errno != EINTR) {
-            log_message(LOG_LEVEL_ERROR, "select error in accept thread: %s", strerror(errno));
-            continue; // Or break? Decide on error handling policy
+            log_message(LOG_LEVEL_ERROR, "poll error in accept thread: %s", strerror(errno));
+            continue;
         }
 
         // Check if stop pipe has data
-        if (FD_ISSET(data->stop_pipe[0], &read_fds)) {
+        if (fds[1].revents & POLLIN) {
             log_message(LOG_LEVEL_DEBUG, "Stop signal received in accept thread.");
-            // Drain the pipe
             char buf[16];
-            while (read(data->stop_pipe[0], buf, sizeof(buf)) > 0);
+            while (read(data->stop_pipe[0], buf, sizeof(buf)) > 0); // Drain pipe
             break; // Exit loop
         }
 
         // Check for incoming connection
-        if (FD_ISSET(data->listen_socket, &read_fds)) {
+        if (fds[0].revents & POLLIN) {
             client_socket = accept(data->listen_socket, (struct sockaddr*)&client_addr, &client_addr_len);
 
             if (client_socket == INVALID_SOCKET) {
-                 if (data->running) { // Avoid error message if stopped intentionally
+                 if (data->running) {
                      char err_buf[128];
                      if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
                         log_message(LOG_LEVEL_ERROR, "accept failed: %d (%s)", sock_errno, err_buf);
@@ -528,7 +657,7 @@ static void* tcp_accept_thread_func(void* arg) {
                         log_message(LOG_LEVEL_ERROR, "accept failed: %d (strerror_r failed)", sock_errno);
                      }
                  }
-                 continue; // Don't exit thread on accept error, just try again
+                 continue;
             }
             // --- Common connection handling logic (POSIX) ---
             const char* client_ip = NULL;
@@ -547,9 +676,11 @@ static void* tcp_accept_thread_func(void* arg) {
                    client_ip, ntohs(client_addr.sin_port), client_socket);
 
             // Find an empty slot and launch handler thread (common logic below)
-
+            goto handle_connection;
+        }
 #endif // Platform-specific accept loop end
 
+handle_connection: {} // Label for common connection handling logic
             // --- Common logic for handling accepted connection ---
             int client_index = -1;
 #ifdef _WIN32
@@ -576,6 +707,7 @@ static void* tcp_accept_thread_func(void* arg) {
                 client_conn->address = client_addr;
                 client_conn->transport = transport; // Link back
                 client_conn->should_stop = false; // Ensure flag is reset
+                client_conn->last_activity_time = time(NULL); // Initialize activity time
 
                 // Create a handler thread for this client
 #ifdef _WIN32
@@ -601,8 +733,16 @@ static void* tcp_accept_thread_func(void* arg) {
                 }
 #endif
             } else {
+                // This uses client_ip which might be out of scope if the goto was inside the #ifdef block
+                // Re-declare and get IP here if needed, or restructure the #ifdefs
+                const char* reject_client_ip = NULL;
+                if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) != NULL) {
+                    reject_client_ip = client_ip_str;
+                } else {
+                    reject_client_ip = "?.?.?.?";
+                }
                 log_message(LOG_LEVEL_WARN, "Max clients (%d) reached, rejecting connection from %s:%d",
-                        MAX_TCP_CLIENTS, client_ip, ntohs(client_addr.sin_port));
+                        MAX_TCP_CLIENTS, reject_client_ip, ntohs(client_addr.sin_port));
                 close_socket(client_socket);
             }
 #ifndef _WIN32 // Closing brace for the 'if (FD_ISSET(data->listen_socket, &read_fds))' block in POSIX case
@@ -844,7 +984,6 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
             // Note: Closing the socket here might be redundant if shutdown works,
             // but it ensures the resource is released. The handler thread will
             // also call close_socket upon exiting its loop.
-            // close_socket(data->clients[i].socket); // Keep or remove? Keep for safety.
             close_socket(data->clients[i].socket);
 
 #ifdef _WIN32
@@ -897,7 +1036,7 @@ static void tcp_transport_destroy(mcp_transport_t* transport) {
 
 // --- Public Creation Function ---
 
-mcp_transport_t* mcp_transport_tcp_create(const char* host, uint16_t port) {
+mcp_transport_t* mcp_transport_tcp_create(const char* host, uint16_t port, uint32_t idle_timeout_ms) {
     if (host == NULL) return NULL;
 
     mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
@@ -917,6 +1056,7 @@ mcp_transport_t* mcp_transport_tcp_create(const char* host, uint16_t port) {
      }
 
      tcp_data->port = port;
+     tcp_data->idle_timeout_ms = idle_timeout_ms; // Store timeout
      tcp_data->listen_socket = INVALID_SOCKET;
      tcp_data->running = false;
      tcp_data->buffer_pool = NULL; // Initialize pool pointer
