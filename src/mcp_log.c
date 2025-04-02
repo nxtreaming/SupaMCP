@@ -11,6 +11,7 @@
 #include <time.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -20,7 +21,24 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #   define PATH_SEPARATOR "/"
+#include <pthread.h>
 #endif
+
+// Platform-specific mutex implementation
+#ifdef _WIN32
+typedef CRITICAL_SECTION mcp_log_mutex_t;
+#define INIT_LOG_MUTEX(mutex) InitializeCriticalSection(mutex)
+#define DESTROY_LOG_MUTEX(mutex) DeleteCriticalSection(mutex)
+#define LOCK_LOG_MUTEX(mutex) EnterCriticalSection(mutex)
+#define UNLOCK_LOG_MUTEX(mutex) LeaveCriticalSection(mutex)
+#else
+typedef pthread_mutex_t mcp_log_mutex_t;
+#define INIT_LOG_MUTEX(mutex) pthread_mutex_init(mutex, NULL)
+#define DESTROY_LOG_MUTEX(mutex) pthread_mutex_destroy(mutex)
+#define LOCK_LOG_MUTEX(mutex) pthread_mutex_lock(mutex)
+#define UNLOCK_LOG_MUTEX(mutex) pthread_mutex_unlock(mutex)
+#endif
+
 
 // --- Static Global Variables ---
 
@@ -32,9 +50,11 @@ static log_level_t g_log_level = LOG_LEVEL_INFO; // Default level
 static const char* g_log_level_names[] = {"ERROR", "WARN", "INFO", "DEBUG"};
 /** @internal Current log output format. */
 static mcp_log_format_t g_log_format = MCP_LOG_FORMAT_TEXT; // Default format
-/** @internal Mutex for thread safety (important when changing format or writing to file). */
-// TODO: Initialize and use mutex for thread safety
-// static pthread_mutex_t g_log_mutex; 
+/** @internal Mutex for thread safety. */
+static mcp_log_mutex_t g_log_mutex;
+/** @internal Flag indicating if the mutex has been initialized. */
+static bool g_log_mutex_initialized = false;
+
 
 // --- Internal Helper ---
 
@@ -147,7 +167,8 @@ void log_message(log_level_t level, const char* format, ...) {
     fprintf(stderr, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
 
     // 5. Output the formatted message based on g_log_format
-    // TODO: Add mutex lock/unlock around file/stderr access
+    LOCK_LOG_MUTEX(&g_log_mutex); // Lock before accessing shared resources (g_log_format, g_log_file, stderr)
+    
     if (g_log_format == MCP_LOG_FORMAT_JSON) {
         char escaped_message[sizeof(message) * 2]; // Estimate escaped size
         escape_json_string(message, escaped_message, sizeof(escaped_message));
@@ -157,17 +178,20 @@ void log_message(log_level_t level, const char* format, ...) {
                      timestamp, g_log_level_names[level], escaped_message);
              fflush(g_log_file);
         }
+         // Outputting to stderr might still interleave output from different threads,
+         // but the access to g_log_file and g_log_format is protected.
          fprintf(stderr, "{\"timestamp\":\"%s\", \"level\":\"%s\", \"message\":\"%s\"}\n", 
                  timestamp, g_log_level_names[level], escaped_message);
 
     } else { // Default to TEXT format
         if (g_log_file != NULL) {
             fprintf(g_log_file, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
-            fflush(g_log_file);
+            fflush(g_log_file); // Ensure immediate write to file
         }
          fprintf(stderr, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
     }
-    // TODO: Unlock mutex
+    
+    UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock after accessing shared resources
 }
 
 /**
@@ -285,11 +309,27 @@ int init_logging(const char* log_file_path, log_level_t level) {
         level = LOG_LEVEL_INFO;
     }
     g_log_level = level;
+    
+    // Initialize mutex if not already done
+    if (!g_log_mutex_initialized) {
+#ifdef _WIN32
+        // InitializeCriticalSection is void and doesn't return an error code directly.
+        // Assume success for simplicity, or use structured exception handling if needed.
+        INIT_LOG_MUTEX(&g_log_mutex); 
+#else
+        if (INIT_LOG_MUTEX(&g_log_mutex) != 0) { // Check return value for pthreads
+             fprintf(stderr, "[ERROR] Failed to initialize log mutex.\n");
+             return -1; // Indicate failure
+        }
+#endif
+        g_log_mutex_initialized = true;
+    }
 
-    // 2. Close any previously opened log file
-    close_logging();
+    // 2. Close any previously opened log file (needs lock)
+    close_logging(); // close_logging now handles locking internally
 
-    // 3. If a log file path is provided, attempt to open it
+    // 3. If a log file path is provided, attempt to open it (needs lock)
+    LOCK_LOG_MUTEX(&g_log_mutex);
     if (log_file_path != NULL && strlen(log_file_path) > 0) {
         // 3a. Ensure the directory exists
         if (create_log_directory(log_file_path) != 0) {
@@ -318,11 +358,14 @@ int init_logging(const char* log_file_path, log_level_t level) {
                  fprintf(stderr, "[ERROR] Failed to open log file '%s': (errno: %d, strerror_r failed)\n", log_file_path, errno);
              }
 #endif
+            UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock before returning error
             return -1; // File open failed
         }
+        UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock after successful open or if no file path
         // Log successful file opening (will go to stderr and the file itself)
         log_message(LOG_LEVEL_INFO, "Logging initialized to file: %s (Level: %s)", log_file_path, g_log_level_names[g_log_level]);
     } else {
+         UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock if no file path
          // Log that file logging is disabled (will go to stderr only)
          log_message(LOG_LEVEL_INFO, "File logging disabled. Logging to stderr only. (Level: %s)", g_log_level_names[g_log_level]);
     }
@@ -331,16 +374,28 @@ int init_logging(const char* log_file_path, log_level_t level) {
 }
 
 void close_logging(void) {
+    if (!g_log_mutex_initialized) return; // Nothing to close or destroy if not initialized
+
+    LOCK_LOG_MUTEX(&g_log_mutex);
     // Check if a log file is currently open
     if (g_log_file != NULL) {
         // Log the closing event (will go to stderr and the file)
+        // Temporarily unlock to allow log_message to lock
+        UNLOCK_LOG_MUTEX(&g_log_mutex); 
         log_message(LOG_LEVEL_INFO, "Closing log file.");
-        // Close the file stream
+        LOCK_LOG_MUTEX(&g_log_mutex); // Re-lock
+
         fclose(g_log_file);
-        // Reset the global file pointer
         g_log_file = NULL;
     }
-    // TODO: Destroy mutex
+    UNLOCK_LOG_MUTEX(&g_log_mutex);
+
+    // Destroy mutex - should ideally happen only once at application exit
+    // For simplicity here, we destroy it, but a real app might need a separate shutdown function.
+    // if (g_log_mutex_initialized) {
+    //     DESTROY_LOG_MUTEX(&g_log_mutex);
+    //     g_log_mutex_initialized = false;
+    // }
 }
 
 
@@ -351,8 +406,10 @@ void close_logging(void) {
  */
 void mcp_log_set_format(mcp_log_format_t format) {
     if (format == MCP_LOG_FORMAT_TEXT || format == MCP_LOG_FORMAT_JSON) {
-        // TODO: Add mutex lock/unlock for thread safety
+        LOCK_LOG_MUTEX(&g_log_mutex);
         g_log_format = format;
+        UNLOCK_LOG_MUTEX(&g_log_mutex);
+        
         log_message(LOG_LEVEL_INFO, "Log format set to %s.", 
                     (format == MCP_LOG_FORMAT_JSON) ? "JSON" : "TEXT");
     } else {
@@ -402,7 +459,8 @@ void mcp_log_structured(
     base_message[sizeof(base_message) - 1] = '\0'; // Ensure null termination
 
     // 4. Output based on format
-    // TODO: Add mutex lock/unlock around file/stderr access
+    LOCK_LOG_MUTEX(&g_log_mutex); // Lock before accessing shared resources
+
      if (g_log_format == MCP_LOG_FORMAT_JSON) {
         char escaped_message[sizeof(base_message) * 2];
         char escaped_component[256]; // Assume max component/event length
@@ -419,6 +477,7 @@ void mcp_log_structured(
                      timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
              fflush(g_log_file);
         }
+         // Outputting to stderr might still interleave, but file access is protected
          fprintf(stderr, json_fmt, 
                  timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
 
@@ -438,5 +497,6 @@ void mcp_log_structured(
                  event ? event : "-", 
                  base_message);
     }
-    // TODO: Unlock mutex
+    
+    UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock after accessing shared resources
 }
