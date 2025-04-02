@@ -1020,7 +1020,9 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
     if (content_items == NULL) {
         if (server->resource_handler != NULL) {
             // Handler is expected to return an array of structs (mcp_content_item_t*)
+            PROFILE_START("resource_handler_callback");
             int handler_status = server->resource_handler(server, uri, server->resource_handler_user_data, &handler_content_items_struct_array, &content_count);
+            PROFILE_END("resource_handler_callback");
             if (handler_status != 0 || handler_content_items_struct_array == NULL || content_count == 0) {
                 free(handler_content_items_struct_array);
                 *error_code = MCP_ERROR_INTERNAL_ERROR;
@@ -1417,7 +1419,9 @@ static char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, 
     int handler_status = -1;
 
     if (server->tool_handler != NULL) {
+        PROFILE_START("tool_handler_callback");
         handler_status = server->tool_handler(server, name, args_str ? args_str : "{}", server->tool_handler_user_data, &content_items, &content_count, &is_error);
+        PROFILE_END("tool_handler_callback");
     }
     free(args_str); // Free stringified arguments
 
