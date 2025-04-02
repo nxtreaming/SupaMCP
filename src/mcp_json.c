@@ -634,6 +634,13 @@ static char* parse_string(const char** json) {
         return NULL; // Unterminated string
     }
     size_t length = *json - start;
+    // Validate string content for embedded null bytes
+    for (size_t i = 0; i < length; ++i) {
+        if (*(start + i) == '\0') {
+            fprintf(stderr, "Error: Embedded null byte found in JSON string.\n");
+            return NULL; // Invalid string content
+        }
+    }
     // Need to handle escape sequences properly here for accurate length/copy
     // For simplicity, this basic parser doesn't handle escapes within the string value itself.
     // A robust parser would need to allocate based on unescaped length and copy char by char.
