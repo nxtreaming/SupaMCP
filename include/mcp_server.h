@@ -19,6 +19,7 @@ typedef struct {
     size_t task_queue_size;  /**< Maximum number of pending requests in the queue. Default: 1024 if 0. */
     size_t cache_capacity;   /**< Maximum number of entries in the resource cache. Default: 128 if 0. */
     time_t cache_default_ttl_seconds; /**< Default TTL for cache entries in seconds. Default: 300 (5 min) if 0. */
+    size_t max_message_size; /**< Maximum allowed size for incoming messages in bytes. Default: 1MB if 0. */
 } mcp_server_config_t;
 
 /**

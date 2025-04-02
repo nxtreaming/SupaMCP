@@ -24,6 +24,7 @@
 #define DEFAULT_TASK_QUEUE_SIZE 1024
 #define DEFAULT_CACHE_CAPACITY 128
 #define DEFAULT_CACHE_TTL_SECONDS 300 // 5 minutes
+#define DEFAULT_MAX_MESSAGE_SIZE (1024 * 1024) // 1MB
 
 // Server structure
 struct mcp_server {
@@ -106,6 +107,19 @@ static void process_message_task(void* arg) {
     mcp_transport_t* transport = task_data->transport;
     void* data = task_data->message_data;
     size_t size = task_data->message_size;
+    size_t max_size = server->config.max_message_size > 0 ? server->config.max_message_size : DEFAULT_MAX_MESSAGE_SIZE;
+
+    // --- Input Validation: Check message size ---
+    if (size > max_size) {
+        fprintf(stderr, "Error: Received message size (%zu) exceeds limit (%zu).\n", size, max_size);
+        // We cannot generate a JSON-RPC error here as we haven't parsed the ID yet.
+        // The connection will likely be closed by the transport layer after this task finishes.
+        free(task_data->message_data); // Free copied data
+        free(task_data);
+        return;
+    }
+    // --- End Input Validation ---
+
 
     int error_code = 0;
     char* response_json = handle_message(server, data, size, &error_code);
@@ -224,6 +238,7 @@ mcp_server_t* mcp_server_create(
     server->config.task_queue_size = config->task_queue_size;
     server->config.cache_capacity = config->cache_capacity;
     server->config.cache_default_ttl_seconds = config->cache_default_ttl_seconds;
+    server->config.max_message_size = config->max_message_size; // Copy max message size
 
 
     // Copy capabilities
@@ -930,7 +945,6 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
     if (fetched_from_handler && server->resource_cache != NULL) {
         // mcp_cache_put expects an array of structs (const mcp_content_item_t*)
         // We need to pass the data *before* we copied it into content_items (array of pointers)
-        // But we already freed handler_content_items_struct_array.
         // Let's re-create the array of structs from our copied pointers for caching.
         mcp_content_item_t* items_for_cache = (mcp_content_item_t*)malloc(content_count * sizeof(mcp_content_item_t));
         if (items_for_cache) {
