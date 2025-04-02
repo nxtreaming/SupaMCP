@@ -1,4 +1,4 @@
-#ifndef MCP_BENCHMARK_H
+﻿#ifndef MCP_BENCHMARK_H
 #define MCP_BENCHMARK_H
 
 #include <stddef.h>
@@ -46,7 +46,7 @@ typedef struct {
 
 /**
  * @brief Runs a benchmark based on the provided configuration.
- * 
+ *
  * @param config The benchmark configuration.
  * @param result Pointer to store the benchmark results.
  * @return 0 on success, -1 on failure.
@@ -55,7 +55,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
 
 /**
  * @brief Saves benchmark results to a CSV file.
- * 
+ *
  * @param filename The name of the CSV file to save to.
  * @param results An array of benchmark results.
  * @param count The number of results in the array.
@@ -65,7 +65,7 @@ int mcp_benchmark_save_results(const char* filename, const mcp_benchmark_result_
 
 /**
  * @brief Compares two benchmark results and prints a summary.
- * 
+ *
  * @param baseline The baseline benchmark result.
  * @param current The current benchmark result to compare against the baseline.
  */

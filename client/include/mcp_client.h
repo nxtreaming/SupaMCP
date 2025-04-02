@@ -1,4 +1,4 @@
-#ifndef MCP_CLIENT_H
+﻿#ifndef MCP_CLIENT_H
 #define MCP_CLIENT_H
 
 #include <stdint.h>

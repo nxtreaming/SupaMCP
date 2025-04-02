@@ -1,4 +1,4 @@
-#include "mcp_hashtable.h"
+﻿#include "mcp_hashtable.h"
 #include "mcp_types.h"
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +14,7 @@ static bool is_power_of_two(size_t n) {
 static size_t next_power_of_two(size_t n) {
     if (n == 0) return 1;
     if (is_power_of_two(n)) return n;
-    
+
     size_t power = 1;
     while (power < n) {
         power <<= 1;
@@ -45,11 +45,11 @@ static int mcp_hashtable_resize(mcp_hashtable_t* table, size_t new_capacity) {
 
             // Calculate new bucket index using bitwise AND for power-of-2 capacity
             size_t new_index = table->hash_func(entry->key) & (new_capacity - 1);
-            
+
             // Insert at the head of the new bucket
             entry->next = new_buckets[new_index];
             new_buckets[new_index] = entry;
-            
+
             entry = next_entry; // Move to the stored next
         }
     }
@@ -58,7 +58,7 @@ static int mcp_hashtable_resize(mcp_hashtable_t* table, size_t new_capacity) {
     free(table->buckets);
     table->buckets = new_buckets;
     table->capacity = new_capacity;
-    
+
     return 0;
 }
 
@@ -288,13 +288,13 @@ void mcp_hashtable_clear(mcp_hashtable_t* table) {
         mcp_hashtable_entry_t* entry = table->buckets[i];
         while (entry) {
             mcp_hashtable_entry_t* next = entry->next;
-            
+
             // Free key and value
             table->key_free(entry->key);
             if (table->value_free) {
                 table->value_free(entry->value);
             }
-            
+
             // Free entry
             free(entry);
             entry = next;
@@ -359,12 +359,12 @@ unsigned long mcp_hashtable_int_hash(const void* key) {
     unsigned long hash = 2166136261UL; // FNV offset basis
     const unsigned char* bytes = (const unsigned char*)key;
     size_t size = sizeof(int);
-    
+
     for (size_t i = 0; i < size; i++) {
         hash ^= bytes[i];
         hash *= 16777619UL; // FNV prime
     }
-    
+
     return hash;
 }
 
@@ -393,12 +393,12 @@ unsigned long mcp_hashtable_ptr_hash(const void* key) {
     // Use XOR of upper and lower bits to avoid truncation on 64-bit systems
     uintptr_t ptr_val = (uintptr_t)key;
     unsigned long hash = (unsigned long)(ptr_val & 0xFFFFFFFFUL);
-    
+
     // On 64-bit systems, also include the upper bits
     #if UINTPTR_MAX > 0xFFFFFFFFUL
     hash ^= (unsigned long)((ptr_val >> 32) & 0xFFFFFFFFUL);
     #endif
-    
+
     return hash;
 }
 

@@ -1,4 +1,4 @@
-#include "mcp_types.h"
+﻿#include "mcp_types.h"
 #include "mcp_tcp_client_transport.h"
 #include "mcp_transport_internal.h"
 #include "mcp_log.h"
@@ -293,7 +293,7 @@ static void* tcp_client_receive_thread_func(void* arg) {
               }
               // Free or release buffer before exiting
               if (buffer_malloced) {
-                  free(message_buf); 
+                  free(message_buf);
               } else {
                   mcp_buffer_pool_release(data->buffer_pool, message_buf);
               }

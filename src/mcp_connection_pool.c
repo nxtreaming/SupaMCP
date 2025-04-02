@@ -1,10 +1,10 @@
-#include "mcp_connection_pool.h"
+﻿#include "mcp_connection_pool.h"
 #include "mcp_log.h"
 #include "mcp_profiler.h"
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h> 
+#include <stdio.h>
 #include <stdbool.h>
 #include <time.h>
 
@@ -13,7 +13,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
-#pragma comment(lib, "ws2_32.lib") 
+#pragma comment(lib, "ws2_32.lib")
 // Define pthread types for Windows compatibility if using a wrapper library,
 // or use Windows native synchronization primitives (CRITICAL_SECTION, CONDITION_VARIABLE).
 // Using Windows native for this example.
@@ -105,12 +105,12 @@ static char* mcp_strdup(const char* s) {
  * @brief Creates a connection pool.
  */
 mcp_connection_pool_t* mcp_connection_pool_create(
-    const char* host, 
-    int port, 
-    size_t min_connections, 
+    const char* host,
+    int port,
+    size_t min_connections,
     size_t max_connections,
     int idle_timeout_ms,
-    int connect_timeout_ms) 
+    int connect_timeout_ms)
 {
     // Use fprintf for initial checks as logging might not be ready
     if (!host || port <= 0 || max_connections == 0 || min_connections > max_connections) {
@@ -152,7 +152,7 @@ mcp_connection_pool_t* mcp_connection_pool_create(
     // TODO: Pre-populate pool with min_connections (potentially in a background thread)
     // This is complex and might be better done lazily or in a separate maintenance thread.
     // For now, connections are created on demand by mcp_connection_pool_get.
-    log_message(LOG_LEVEL_INFO, "Connection pool created for %s:%d (min:%zu, max:%zu).", 
+    log_message(LOG_LEVEL_INFO, "Connection pool created for %s:%d (min:%zu, max:%zu).",
             pool->host, pool->port, pool->min_connections, pool->max_connections);
 
     // TODO: Start maintenance thread if idle_timeout_ms > 0 or min_connections > 0
@@ -164,7 +164,7 @@ mcp_connection_pool_t* mcp_connection_pool_create(
 static long long get_current_time_ms() {
 #ifdef _WIN32
     // GetTickCount64 is simpler and often sufficient for intervals
-    return (long long)GetTickCount64(); 
+    return (long long)GetTickCount64();
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -285,7 +285,7 @@ SOCKET mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout_ms) { //
             pool->idle_count--;
             pool->active_count++;
             sock = pooled_conn->socket_fd;
-            
+
             // TODO: Implement idle timeout check more robustly if needed
             // time_t now = time(NULL);
             // if (pool->idle_timeout_ms > 0 && difftime(now, pooled_conn->last_used_time) * 1000 > pool->idle_timeout_ms) {
@@ -293,7 +293,7 @@ SOCKET mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout_ms) { //
             //    close_connection(sock);
             //    sock = INVALID_SOCKET; // Mark as invalid, loop will try again or create new
             //    pool->active_count--; // Was incremented above
-            //    pool->total_count--; 
+            //    pool->total_count--;
             //    free(pooled_conn);
             //    continue; // Try again immediately
             // }
@@ -337,7 +337,7 @@ SOCKET mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout_ms) { //
                  pool_unlock(pool);
                  return INVALID_SOCKET;
              }
-             
+
              int wait_timeout = timeout_ms;
              if (timeout_ms > 0) {
                  long long elapsed_ms = get_current_time_ms() - start_time_ms;
@@ -382,14 +382,14 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, SOCKET connection, 
     pool_lock(pool);
 
     // Find the connection in the active list - this requires tracking active connections,
-    // which the current simple implementation doesn't do explicitly. 
+    // which the current simple implementation doesn't do explicitly.
     // For now, we just decrement the active count assuming the caller provides a valid active handle.
     // A more robust implementation would track active handles.
     if (pool->active_count == 0) {
          log_message(LOG_LEVEL_WARN, "mcp_connection_pool_release: Releasing connection %d but active count is zero.", (int)connection);
          // Proceeding anyway, but indicates a potential issue in usage or tracking.
     } else {
-        pool->active_count--; 
+        pool->active_count--;
     }
 
 
@@ -403,7 +403,7 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, SOCKET connection, 
         close_connection(connection); // No cast needed
         pool->total_count--;
         // Signal potentially waiting getters that a slot might be free for creation
-        pool_signal(pool); 
+        pool_signal(pool);
     } else {
         // Add valid connection back to idle list
         mcp_pooled_connection_t* pooled_conn = (mcp_pooled_connection_t*)malloc(sizeof(mcp_pooled_connection_t));
@@ -415,7 +415,7 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, SOCKET connection, 
             pool->idle_count++;
             log_message(LOG_LEVEL_DEBUG, "Returned connection %d to idle pool.", (int)connection);
             // Signal one waiting getter that a connection is available
-            pool_signal(pool); 
+            pool_signal(pool);
         } else {
             // Failed to allocate node, just close the connection
              log_message(LOG_LEVEL_ERROR, "Failed to allocate node for idle connection %d, closing.", (int)connection);
@@ -465,8 +465,8 @@ void mcp_connection_pool_destroy(mcp_connection_pool_t* pool) {
     }
     pool->idle_list = NULL;
     pool->idle_count = 0;
-    
-    // Note: Active connections are not explicitly waited for here. 
+
+    // Note: Active connections are not explicitly waited for here.
     // They will fail on next use if the pool is destroyed.
     // A more robust shutdown might wait for active_count to reach zero,
     // but requires careful design to avoid deadlocks if connections aren't released.
@@ -501,7 +501,7 @@ static SOCKET create_new_connection(const char* host, int port, int connect_time
     WSADATA wsaData;
     // Only call WSAStartup once per process if possible, but for simplicity here...
     // A better approach uses a global counter or initialization flag.
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) { 
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         log_message(LOG_LEVEL_ERROR, "WSAStartup failed.");
         return INVALID_SOCKET;
     }
@@ -565,7 +565,7 @@ static SOCKET create_new_connection(const char* host, int port, int connect_time
             err = WSAGetLastError();
             // WSAEINPROGRESS is not typically returned on Windows for non-blocking connect,
             // WSAEWOULDBLOCK indicates the operation is in progress.
-            if (err != WSAEWOULDBLOCK) { 
+            if (err != WSAEWOULDBLOCK) {
                 log_message(LOG_LEVEL_WARN, "connect() failed immediately: %d", err);
                 closesocket(sock);
                 sock = INVALID_SOCKET;
@@ -573,7 +573,7 @@ static SOCKET create_new_connection(const char* host, int port, int connect_time
             }
             // Connection is in progress (WSAEWOULDBLOCK), use poll/select to wait
             err = WSAEWOULDBLOCK; // Set err for unified handling below
-        } 
+        }
         // else rv == 0 means immediate success (less common for non-blocking)
 #else // POSIX
         if (rv == -1) {
@@ -588,17 +588,17 @@ static SOCKET create_new_connection(const char* host, int port, int connect_time
         }
         // else rv == 0 means immediate success
 #endif
-        
+
         // If connect returned 0 (immediate success) or EINPROGRESS/WSAEWOULDBLOCK (in progress)
         if (rv == 0 || err == EINPROGRESS || err == WSAEWOULDBLOCK) {
             // If connect succeeded immediately (rv == 0), skip waiting
-            if (rv != 0) { 
+            if (rv != 0) {
                 struct pollfd pfd;
                 pfd.fd = sock;
                 pfd.events = POLLOUT; // Check for writability
 
 #ifdef _WIN32
-                rv = WSAPoll(&pfd, 1, connect_timeout_ms); 
+                rv = WSAPoll(&pfd, 1, connect_timeout_ms);
 #else
                 rv = poll(&pfd, 1, connect_timeout_ms);
 #endif
@@ -621,7 +621,7 @@ static SOCKET create_new_connection(const char* host, int port, int connect_time
             }
 
             // Check SO_ERROR to confirm connection success after waiting or immediate success
-            int optval = 0; 
+            int optval = 0;
             socklen_t optlen = sizeof(optval);
             if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&optval, &optlen) == SOCKET_ERROR) {
                  #ifdef _WIN32
@@ -633,7 +633,7 @@ static SOCKET create_new_connection(const char* host, int port, int connect_time
                  sock = INVALID_SOCKET;
                  continue; // Try next address
             }
-            
+
             if (optval != 0) { // Connect failed
                 #ifdef _WIN32
                     log_message(LOG_LEVEL_WARN, "connect() failed after wait: SO_ERROR=%d (WSA: %d)", optval, optval); // Use optval as error code
@@ -645,7 +645,7 @@ static SOCKET create_new_connection(const char* host, int port, int connect_time
                 continue; // Try next address
             }
             // Connection successful!
-        } else { 
+        } else {
              // This case should not be reached if connect returned other errors handled above
              log_message(LOG_LEVEL_ERROR, "Unexpected state after connect() call (rv=%d, err=%d)", rv, err);
              close_connection(sock);
@@ -724,11 +724,11 @@ int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_con
     }
 
     pool_lock(pool);
-    
+
     *total_connections = pool->total_count;
     *idle_connections = pool->idle_count;
     *active_connections = pool->active_count;
-    
+
     pool_unlock(pool);
 
     return 0;

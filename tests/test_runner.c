@@ -1,4 +1,4 @@
-#include "unity.h"
+﻿#include "unity.h"
 
 // Forward declarations for test suite runners
 void run_mcp_arena_tests(void);

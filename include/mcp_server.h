@@ -1,4 +1,4 @@
-#ifndef MCP_SERVER_H
+﻿#ifndef MCP_SERVER_H
 #define MCP_SERVER_H
 
 #include <mcp_types.h>

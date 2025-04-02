@@ -1,4 +1,4 @@
-#ifndef MCP_TYPES_H
+﻿#ifndef MCP_TYPES_H
 #define MCP_TYPES_H
 
 #include <stdint.h>

@@ -1,4 +1,4 @@
-#ifndef MCP_PROFILER_H
+﻿#ifndef MCP_PROFILER_H
 #define MCP_PROFILER_H
 
 #include <stdio.h>

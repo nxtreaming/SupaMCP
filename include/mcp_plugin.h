@@ -1,4 +1,4 @@
-#ifndef MCP_PLUGIN_H
+﻿#ifndef MCP_PLUGIN_H
 #define MCP_PLUGIN_H
 
 #include <stddef.h>
@@ -17,7 +17,7 @@ typedef struct mcp_plugin mcp_plugin_t;
 
 /**
  * @brief Describes the capabilities and entry points of an MCP plugin.
- * 
+ *
  * Each plugin shared library must export a function (e.g., `mcp_plugin_get_descriptor`)
  * that returns a pointer to a statically defined instance of this structure.
  */
@@ -78,7 +78,7 @@ typedef struct {
 
 /**
  * @brief Loads a plugin from a shared library file.
- * 
+ *
  * This function dynamically loads the shared library (e.g., .so, .dll) specified by `path`,
  * finds the exported `mcp_plugin_get_descriptor` function, retrieves the descriptor,
  * and calls the plugin's `initialize` function.
@@ -92,7 +92,7 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context);
 
 /**
  * @brief Unloads a previously loaded plugin.
- * 
+ *
  * Calls the plugin's `finalize` function and then unloads the shared library,
  * freeing associated resources.
  *

@@ -1,4 +1,4 @@
-#ifndef MCP_CONNECTION_POOL_H
+﻿#ifndef MCP_CONNECTION_POOL_H
 #define MCP_CONNECTION_POOL_H
 
 #include <stddef.h>
@@ -7,7 +7,7 @@
 // Include platform-specific socket headers to define SOCKET and INVALID_SOCKET
 #ifdef _WIN32
     // Minimal include to get SOCKET type, avoiding potential conflicts with windows.h
-    #include <winsock2.h> 
+    #include <winsock2.h>
     // INVALID_SOCKET is defined in winsock2.h
 #else // Linux/macOS etc.
     #include <sys/socket.h>
@@ -27,7 +27,7 @@ typedef struct mcp_connection_pool mcp_connection_pool_t;
 
 /**
  * @brief Creates a connection pool for managing connections to a target server.
- * 
+ *
  * The pool maintains a set of reusable connections to avoid the overhead of
  * establishing a new connection for each request.
  *
@@ -43,16 +43,16 @@ typedef struct mcp_connection_pool mcp_connection_pool_t;
  * @return Pointer to the created connection pool instance, or NULL on failure (e.g., allocation error, invalid arguments).
  */
 mcp_connection_pool_t* mcp_connection_pool_create(
-    const char* host, 
-    int port, 
-    size_t min_connections, 
+    const char* host,
+    int port,
+    size_t min_connections,
     size_t max_connections,
     int idle_timeout_ms,
     int connect_timeout_ms);
 
 /**
  * @brief Retrieves a connection handle from the pool.
- * 
+ *
  * This function attempts to get an available connection from the pool. If no idle
  * connection is available and the pool is not at its maximum capacity, it may
  * attempt to create a new connection. If the pool is at maximum capacity and no
@@ -70,7 +70,7 @@ SOCKET mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout_ms); // 
 
 /**
  * @brief Returns a connection handle back to the pool.
- * 
+ *
  * This function should be called after the client is finished using the connection
  * obtained via `mcp_connection_pool_get`.
  *
@@ -85,7 +85,7 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, SOCKET connection, 
 
 /**
  * @brief Destroys the connection pool and closes all associated connections.
- * 
+ *
  * This function gracefully closes all connections currently managed by the pool
  * and frees all allocated resources associated with the pool.
  *

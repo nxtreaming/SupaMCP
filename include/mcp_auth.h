@@ -1,4 +1,4 @@
-#ifndef MCP_AUTH_H
+﻿#ifndef MCP_AUTH_H
 #define MCP_AUTH_H
 
 #include <stdbool.h>
@@ -36,7 +36,7 @@ typedef struct {
 
 /**
  * @brief Verifies client credentials based on the specified authentication type.
- * 
+ *
  * This function is responsible for validating the provided credentials against a
  * configured store (e.g., database, configuration file, external service).
  * On successful authentication, it allocates and populates an mcp_auth_context_t structure.
@@ -52,7 +52,7 @@ int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth
 
 /**
  * @brief Checks if the authenticated client has permission to access a specific resource.
- * 
+ *
  * This function compares the requested resource URI against the allowed resource patterns
  * stored in the authentication context. It should support wildcard matching (e.g., '*').
  *
@@ -64,7 +64,7 @@ bool mcp_auth_check_resource_access(const mcp_auth_context_t* context, const cha
 
 /**
  * @brief Checks if the authenticated client has permission to call a specific tool.
- * 
+ *
  * This function compares the requested tool name against the allowed tool patterns
  * stored in the authentication context. It should support wildcard matching (e.g., '*').
  *
@@ -76,7 +76,7 @@ bool mcp_auth_check_tool_access(const mcp_auth_context_t* context, const char* t
 
 /**
  * @brief Frees the memory allocated for an authentication context structure.
- * 
+ *
  * This includes freeing the identifier string, the arrays of allowed resources/tools,
  * and each string within those arrays, before finally freeing the context structure itself.
  *

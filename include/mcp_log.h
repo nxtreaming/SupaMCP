@@ -1,4 +1,4 @@
-#ifndef MCP_LOG_H
+﻿#ifndef MCP_LOG_H
 #define MCP_LOG_H
 
 #include <stdarg.h>
@@ -63,7 +63,7 @@ void mcp_log_set_format(mcp_log_format_t format);
 
 /**
  * @brief Records a structured log message with additional context.
- * 
+ *
  * This allows logging key-value pairs or specific event details in a structured way,
  * especially useful when using JSON format.
  *

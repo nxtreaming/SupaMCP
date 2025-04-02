@@ -1,4 +1,4 @@
-#include "mcp_types.h"
+﻿#include "mcp_types.h"
 #include "mcp_cache.h"
 #include "mcp_log.h"
 #include "mcp_profiler.h"
@@ -124,7 +124,7 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     mcp_cache_entry_t* entry = NULL;
     if (mcp_hashtable_get(cache->table, uri, (void**)&entry) == 0 && entry != NULL) {
         time_t now = time(NULL);
-        
+
         // Check expiration (0 means never expires)
         if (entry->expiry_time == 0 || now < entry->expiry_time) {
             // Cache hit and valid! Create copies for the caller.
@@ -133,7 +133,7 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
             if (content_copy_ptrs) {
                 size_t copied_count = 0;
                 bool copy_error = false;
-                
+
                 for (size_t i = 0; i < entry->content_count; ++i) {
                     // Use mcp_content_item_copy to create a deep copy of the item pointed to by the internal pointer
                     content_copy_ptrs[i] = mcp_content_item_copy(entry->content[i]); // Corrected: Use pointer directly
@@ -185,7 +185,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
         // Simple random eviction for now
         // TODO: Implement LRU or other eviction strategy
         fprintf(stdout, "Cache full, performing random eviction for URI %s\n", uri);
-        
+
         // For now, just remove the entry for this URI if it exists
         mcp_hashtable_remove(cache->table, uri);
     }
@@ -258,7 +258,7 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
     // mcp_hashtable_remove calls the value free function (free_cache_entry)
     int result = mcp_hashtable_remove(cache->table, uri);
     mutex_unlock(&cache->lock);
-    
+
     return result;
 }
 
@@ -276,7 +276,7 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
     const char* uri = (const char*)key;
     mcp_cache_entry_t* entry = (mcp_cache_entry_t*)value;
     expired_keys_data_t* data = (expired_keys_data_t*)user_data;
-    
+
     if (entry->expiry_time != 0 && data->now >= entry->expiry_time) {
         // This entry is expired, add its key to our list
         if (*(data->keys_count) >= *(data->keys_capacity)) {
@@ -291,7 +291,7 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
             data->keys_to_remove = new_keys;
             *(data->keys_capacity) = new_capacity;
         }
-        
+
         // Duplicate the key string for removal later
         data->keys_to_remove[*(data->keys_count)] = mcp_strdup(uri);
         if (!data->keys_to_remove[*(data->keys_count)]) {
@@ -310,19 +310,19 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
 
     size_t removed_count = 0;
     time_t now = time(NULL);
-    
+
     // We need to collect keys to remove since we can't modify the hash table during iteration
     char** keys_to_remove = NULL;
     size_t keys_count = 0;
     size_t keys_capacity = 16; // Initial capacity
-    
+
     keys_to_remove = (char**)malloc(keys_capacity * sizeof(char*));
     if (!keys_to_remove) {
         log_message(LOG_LEVEL_ERROR, "Failed to allocate initial keys_to_remove in prune_expired");
         mutex_unlock(&cache->lock);
         return 0;
     }
-    
+
     // Create the data structure for the callback
     expired_keys_data_t callback_data = {
         .now = now,
@@ -331,10 +331,10 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
         .keys_capacity = &keys_capacity,
         .removed_count = &removed_count
     };
-    
+
     // Iterate through all entries to find expired ones
     mcp_hashtable_foreach(cache->table, collect_expired_keys, &callback_data);
-    
+
     // Update keys_to_remove pointer in case realloc changed it
     keys_to_remove = callback_data.keys_to_remove;
 
@@ -346,9 +346,9 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
             free(keys_to_remove[i]); // Free the duplicated key string
         }
     }
-    
+
     free(keys_to_remove); // Free the array of key pointers
     mutex_unlock(&cache->lock);
-    
+
     return removed_count;
 }

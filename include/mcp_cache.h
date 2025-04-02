@@ -1,4 +1,4 @@
-#ifndef MCP_CACHE_H
+﻿#ifndef MCP_CACHE_H
 #define MCP_CACHE_H
 
 #include <mcp_types.h>

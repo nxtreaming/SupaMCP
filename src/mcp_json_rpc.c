@@ -1,4 +1,4 @@
-#include <stdlib.h>
+﻿#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -403,7 +403,7 @@ int mcp_json_parse_resources(
         mcp_json_destroy(json);
         return 0;
     }
-    
+
     *count = (size_t)array_size;
 
     // Allocate resources array
@@ -504,7 +504,7 @@ int mcp_json_parse_resource_templates(
         mcp_json_destroy(json);
         return 0;
     }
-    
+
     *count = (size_t)array_size;
 
     // Allocate resource templates array
@@ -605,7 +605,7 @@ int mcp_json_parse_content(
         mcp_json_destroy(json);
         return 0;
     }
-    
+
     *count = (size_t)array_size;
 
     // Allocate contents array
@@ -712,7 +712,7 @@ int mcp_json_parse_tools(
         mcp_json_destroy(json);
         return 0;
     }
-    
+
     *count = (size_t)array_size;
 
     // Allocate tools array
@@ -777,18 +777,18 @@ int mcp_json_parse_tools(
                     mcp_json_t* required_json = mcp_json_object_get_property(input_schema_json, "required");
                     char** required_properties = NULL;
                     size_t required_count = 0;
-                    
+
                     if (required_json != NULL && mcp_json_get_type(required_json) == MCP_JSON_ARRAY) {
                         int required_array_size = mcp_json_array_get_size(required_json);
                         if (required_array_size > 0) {
                             required_count = (size_t)required_array_size;
                             required_properties = (char**)malloc(required_count * sizeof(char*));
-                            
+
                             if (required_properties != NULL) {
                                 for (size_t j = 0; j < required_count; j++) {
                                     required_properties[j] = NULL;
                                     mcp_json_t* required_property_json = mcp_json_array_get_item(required_json, (int)j);
-                                    
+
                                     if (required_property_json != NULL && mcp_json_get_type(required_property_json) == MCP_JSON_STRING) {
                                         const char* required_property_name;
                                         if (mcp_json_get_string(required_property_json, &required_property_name) == 0) {
@@ -822,7 +822,7 @@ int mcp_json_parse_tools(
                             // Check if property is required
                             bool required = false;
                             for (size_t k = 0; k < required_count; k++) {
-                                if (required_properties != NULL && required_properties[k] != NULL && 
+                                if (required_properties != NULL && required_properties[k] != NULL &&
                                     strcmp(required_properties[k], property_name) == 0) {
                                     required = true;
                                     break;
@@ -893,7 +893,7 @@ int mcp_json_parse_tool_result(
         mcp_json_destroy(json);
         return 0;
     }
-    
+
     *count = (size_t)array_size;
 
     // Allocate content array

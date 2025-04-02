@@ -1,4 +1,4 @@
-#include "mcp_benchmark.h"
+﻿#include "mcp_benchmark.h"
 #include "../include/mcp_log.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,10 +105,10 @@ static int compare_doubles(const void* a, const void* b) {
 }
 
 // Helper function to get current time in milliseconds (if not already available)
-#ifndef get_current_time_ms 
+#ifndef get_current_time_ms
 static long long get_current_time_ms() {
 #ifdef _WIN32
-    return (long long)GetTickCount64(); 
+    return (long long)GetTickCount64();
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -130,26 +130,26 @@ static void* client_thread_func(void* arg) {
     size_t timeout = 0; // Placeholder for timeout tracking
 
     // Seed random generator per thread if using random delays
-    srand((unsigned int)time(NULL) ^ (unsigned int)args->client_id); 
+    srand((unsigned int)time(NULL) ^ (unsigned int)args->client_id);
 
     for (size_t i = 0; i < args->num_requests; ++i) {
         long long req_start_time = get_current_time_ms();
-        
+
         // Simulate performing a request (e.g., connect, send/recv, close)
         // Using simplified connect/close for now
         SOCKET sock = connect_socket(config->server_host, config->server_port, config->request_timeout_ms);
-        
+
         long long req_end_time = get_current_time_ms();
         double latency_ms = (double)(req_end_time - req_start_time);
 
         if (sock != INVALID_SOCKET) {
             // Simulate work & close
-            close_socket(sock); 
+            close_socket(sock);
             args->latencies[success] = latency_ms; // Store latency only on success
             success++;
         } else {
             // Simple failure simulation for now
-            failure++; 
+            failure++;
             // TODO: Differentiate between connection failure and timeout
         }
 
@@ -200,12 +200,12 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
 
     size_t total_requests_to_run = config->client_count * config->requests_per_client;
     // Allocate space for all potential latencies (only successful ones will be stored contiguously later)
-    double* all_latencies = (double*)malloc(total_requests_to_run * sizeof(double)); 
+    double* all_latencies = (double*)malloc(total_requests_to_run * sizeof(double));
     if (!all_latencies) {
         log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for latency results.");
         return -1;
     }
-    
+
     aggregated_results_t aggregated = {0};
     aggregated.min_latency = (double)INT_MAX; // Initialize min latency
 
@@ -225,7 +225,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
     }
 
     // Seed random number generator once for the main thread (used by connect_socket placeholder)
-    srand((unsigned int)time(NULL)); 
+    srand((unsigned int)time(NULL));
 
     long long benchmark_start_time = get_current_time_ms();
 
@@ -235,8 +235,8 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
         thread_args[i].client_id = i;
         thread_args[i].num_requests = config->requests_per_client;
         // Assign a portion of the pre-allocated array to each thread
-        thread_args[i].latencies = all_latencies + (i * config->requests_per_client); 
-        thread_args[i].success_count = (size_t*)calloc(1, sizeof(size_t)); 
+        thread_args[i].latencies = all_latencies + (i * config->requests_per_client);
+        thread_args[i].success_count = (size_t*)calloc(1, sizeof(size_t));
         thread_args[i].failure_count = (size_t*)calloc(1, sizeof(size_t));
         thread_args[i].timeout_count = (size_t*)calloc(1, sizeof(size_t));
 
@@ -322,7 +322,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
         // Calculate Percentiles (requires sorting successful latencies)
         // We have already compacted successful latencies into the start of all_latencies
         if (current_latency_write_idx != result->successful_requests) {
-             log_message(LOG_LEVEL_WARN, "Mismatch between successful requests (%zu) and compacted latencies (%zu). Percentiles might be inaccurate.", 
+             log_message(LOG_LEVEL_WARN, "Mismatch between successful requests (%zu) and compacted latencies (%zu). Percentiles might be inaccurate.",
                      result->successful_requests, current_latency_write_idx);
              // Use the smaller count to avoid reading uninitialized memory
              size_t count_for_sort = (current_latency_write_idx < result->successful_requests) ? current_latency_write_idx : result->successful_requests;
@@ -343,7 +343,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
             // Ensure index doesn't exceed bounds for P99
             size_t p99_index = (size_t)(result->successful_requests * 0.99);
             if (p99_index >= result->successful_requests) {
-                 p99_index = result->successful_requests > 0 ? result->successful_requests - 1 : 0; 
+                 p99_index = result->successful_requests > 0 ? result->successful_requests - 1 : 0;
             }
              // Handle case where successful_requests is 0 after check
             result->p99_latency_ms = (result->successful_requests > 0) ? all_latencies[p99_index] : 0.0;
@@ -372,7 +372,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
     free(threads);
     free(thread_args);
 
-    return 0; 
+    return 0;
 }
 
 // Placeholder for saving results
@@ -418,7 +418,7 @@ static void print_comparison_line(const char* metric, double baseline, double cu
     const char* indicator = "";
     // Determine indicator based on metric (lower is better for latency/failures, higher for throughput/success)
     bool lower_is_better = (strstr(metric, "Latency") != NULL || strstr(metric, "Failed") != NULL || strstr(metric, "Timeout") != NULL);
-    
+
     if (baseline > 1e-9 || baseline < -1e-9) { // Avoid division by zero or near-zero
         change = ((current - baseline) / baseline) * 100.0;
          if (fabs(change) < 0.01) {

@@ -1,4 +1,4 @@
-#ifndef MCP_ARENA_H
+﻿#ifndef MCP_ARENA_H
 #define MCP_ARENA_H
 
 #include <stddef.h>

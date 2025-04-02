@@ -1,4 +1,4 @@
-/* =========================================================================
+﻿/* =========================================================================
     Unity - A Test Framework for C
     ThrowTheSwitch.org
     Copyright (c) 2007-25 Mike Karlesky, Mark VanderVoord, & Greg Williams
@@ -119,7 +119,7 @@ void verifyTest(void);
  *-------------------------------------------------------
 
  * These macros do nothing, but they are useful for additional build context.
- * Tools (like Ceedling) can scan for these directives and make use of them for 
+ * Tools (like Ceedling) can scan for these directives and make use of them for
  * per-test-executable #include search paths and linking. */
 
 /* Add source files to a test executable's compilation and linking. Ex: TEST_SOURCE_FILE("sandwiches.c") */

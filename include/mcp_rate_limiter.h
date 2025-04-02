@@ -1,4 +1,4 @@
-#ifndef MCP_RATE_LIMITER_H
+﻿#ifndef MCP_RATE_LIMITER_H
 #define MCP_RATE_LIMITER_H
 
 #include <stddef.h>

@@ -1,4 +1,4 @@
-#ifdef _WIN32
+﻿#ifdef _WIN32
 #   ifndef _CRT_SECURE_NO_WARNINGS
 #       define _CRT_SECURE_NO_WARNINGS
 #   endif
@@ -168,19 +168,19 @@ void log_message(log_level_t level, const char* format, ...) {
 
     // 5. Output the formatted message based on g_log_format
     LOCK_LOG_MUTEX(&g_log_mutex); // Lock before accessing shared resources (g_log_format, g_log_file, stderr)
-    
+
     if (g_log_format == MCP_LOG_FORMAT_JSON) {
         char escaped_message[sizeof(message) * 2]; // Estimate escaped size
         escape_json_string(message, escaped_message, sizeof(escaped_message));
-        
+
         if (g_log_file != NULL) {
-             fprintf(g_log_file, "{\"timestamp\":\"%s\", \"level\":\"%s\", \"message\":\"%s\"}\n", 
+             fprintf(g_log_file, "{\"timestamp\":\"%s\", \"level\":\"%s\", \"message\":\"%s\"}\n",
                      timestamp, g_log_level_names[level], escaped_message);
              fflush(g_log_file);
         }
          // Outputting to stderr might still interleave output from different threads,
          // but the access to g_log_file and g_log_format is protected.
-         fprintf(stderr, "{\"timestamp\":\"%s\", \"level\":\"%s\", \"message\":\"%s\"}\n", 
+         fprintf(stderr, "{\"timestamp\":\"%s\", \"level\":\"%s\", \"message\":\"%s\"}\n",
                  timestamp, g_log_level_names[level], escaped_message);
 
     } else { // Default to TEXT format
@@ -190,7 +190,7 @@ void log_message(log_level_t level, const char* format, ...) {
         }
          fprintf(stderr, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
     }
-    
+
     UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock after accessing shared resources
 }
 
@@ -309,13 +309,13 @@ int init_logging(const char* log_file_path, log_level_t level) {
         level = LOG_LEVEL_INFO;
     }
     g_log_level = level;
-    
+
     // Initialize mutex if not already done
     if (!g_log_mutex_initialized) {
 #ifdef _WIN32
         // InitializeCriticalSection is void and doesn't return an error code directly.
         // Assume success for simplicity, or use structured exception handling if needed.
-        INIT_LOG_MUTEX(&g_log_mutex); 
+        INIT_LOG_MUTEX(&g_log_mutex);
 #else
         if (INIT_LOG_MUTEX(&g_log_mutex) != 0) { // Check return value for pthreads
              fprintf(stderr, "[ERROR] Failed to initialize log mutex.\n");
@@ -381,7 +381,7 @@ void close_logging(void) {
     if (g_log_file != NULL) {
         // Log the closing event (will go to stderr and the file)
         // Temporarily unlock to allow log_message to lock
-        UNLOCK_LOG_MUTEX(&g_log_mutex); 
+        UNLOCK_LOG_MUTEX(&g_log_mutex);
         log_message(LOG_LEVEL_INFO, "Closing log file.");
         LOCK_LOG_MUTEX(&g_log_mutex); // Re-lock
 
@@ -409,8 +409,8 @@ void mcp_log_set_format(mcp_log_format_t format) {
         LOCK_LOG_MUTEX(&g_log_mutex);
         g_log_format = format;
         UNLOCK_LOG_MUTEX(&g_log_mutex);
-        
-        log_message(LOG_LEVEL_INFO, "Log format set to %s.", 
+
+        log_message(LOG_LEVEL_INFO, "Log format set to %s.",
                     (format == MCP_LOG_FORMAT_JSON) ? "JSON" : "TEXT");
     } else {
         log_message(LOG_LEVEL_WARN, "Attempted to set invalid log format (%d).", format);
@@ -424,18 +424,18 @@ void mcp_log_structured(
     log_level_t level,
     const char* component,
     const char* event,
-    const char* format, ...) 
+    const char* format, ...)
 {
      // 1. Check if the message level is high enough to be logged
     if (level > g_log_level) {
-        return; 
+        return;
     }
 
     // 2. Get timestamp (similar to log_message)
     time_t now;
-    struct tm timeinfo_storage; 
+    struct tm timeinfo_storage;
     struct tm* timeinfo;
-    char timestamp[20]; 
+    char timestamp[20];
     time(&now);
 #ifdef _WIN32
     errno_t err = localtime_s(&timeinfo_storage, &now);
@@ -453,7 +453,7 @@ void mcp_log_structured(
     // 3. Format the main message
     va_list args;
     va_start(args, format);
-    char base_message[1024]; 
+    char base_message[1024];
     vsnprintf(base_message, sizeof(base_message), format, args);
     va_end(args);
     base_message[sizeof(base_message) - 1] = '\0'; // Ensure null termination
@@ -471,32 +471,32 @@ void mcp_log_structured(
         escape_json_string(event ? event : "", escaped_event, sizeof(escaped_event));
 
         const char* json_fmt = "{\"timestamp\":\"%s\", \"level\":\"%s\", \"component\":\"%s\", \"event\":\"%s\", \"message\":\"%s\"}\n";
-        
+
         if (g_log_file != NULL) {
-             fprintf(g_log_file, json_fmt, 
+             fprintf(g_log_file, json_fmt,
                      timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
              fflush(g_log_file);
         }
          // Outputting to stderr might still interleave, but file access is protected
-         fprintf(stderr, json_fmt, 
+         fprintf(stderr, json_fmt,
                  timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
 
     } else { // Default to TEXT format
         const char* text_fmt = "[%s] [%s] [%s|%s] %s\n";
          if (g_log_file != NULL) {
-             fprintf(g_log_file, text_fmt, 
-                     timestamp, g_log_level_names[level], 
-                     component ? component : "-", 
-                     event ? event : "-", 
+             fprintf(g_log_file, text_fmt,
+                     timestamp, g_log_level_names[level],
+                     component ? component : "-",
+                     event ? event : "-",
                      base_message);
              fflush(g_log_file);
         }
-         fprintf(stderr, text_fmt, 
-                 timestamp, g_log_level_names[level], 
-                 component ? component : "-", 
-                 event ? event : "-", 
+         fprintf(stderr, text_fmt,
+                 timestamp, g_log_level_names[level],
+                 component ? component : "-",
+                 event ? event : "-",
                  base_message);
     }
-    
+
     UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock after accessing shared resources
 }

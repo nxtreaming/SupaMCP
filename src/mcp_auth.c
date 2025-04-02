@@ -1,4 +1,4 @@
-#include "mcp_auth.h"
+﻿#include "mcp_auth.h"
 #include "mcp_log.h"
 #include "mcp_profiler.h"
 #include <stdlib.h>
@@ -11,7 +11,7 @@
 // A real implementation might use fnmatch or a more robust pattern matching library.
 static bool simple_wildcard_match(const char* pattern, const char* text) {
     if (!pattern || !text) return false; // Handle NULL inputs
-    
+
     size_t pattern_len = strlen(pattern);
     size_t text_len = strlen(text);
 
@@ -22,7 +22,7 @@ static bool simple_wildcard_match(const char* pattern, const char* text) {
     if (pattern[pattern_len - 1] == '*') {
         if (pattern_len == 1) return true; // Pattern "*" matches everything
         // Match prefix if pattern ends with '*' (and pattern is longer than just "*")
-        return pattern_len - 1 <= text_len && 
+        return pattern_len - 1 <= text_len &&
                strncmp(pattern, text, pattern_len - 1) == 0;
     } else {
         // Exact match required
@@ -47,8 +47,8 @@ static char* mcp_strdup(const char* s) {
 /**
  * @brief Verifies client credentials. (Placeholder - Basic Functionality Only)
  * @note This implementation provides basic functionality for MCP_AUTH_NONE and a single
- *       hardcoded API key ("TEST_API_KEY_123") for testing purposes. 
- *       A production implementation MUST replace this with secure credential storage 
+ *       hardcoded API key ("TEST_API_KEY_123") for testing purposes.
+ *       A production implementation MUST replace this with secure credential storage
  *       (e.g., config file, database) and proper validation logic.
  */
 int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth_context_t** context_out) {
@@ -62,7 +62,7 @@ int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth
         mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
         if (!context) return -1;
         context->type = MCP_AUTH_NONE;
-        context->identifier = mcp_strdup("anonymous"); 
+        context->identifier = mcp_strdup("anonymous");
         context->allowed_resources = (char**)malloc(sizeof(char*));
         if (!context->allowed_resources) {
             mcp_auth_context_free(context); // Cleanup on allocation failure
@@ -107,9 +107,9 @@ int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth
 
         context->allowed_tools_count = 1;
         context->allowed_tools = (char**)malloc(context->allowed_tools_count * sizeof(char*));
-         if (!context->allowed_tools) { 
+         if (!context->allowed_tools) {
              free(context->allowed_resources[0]); free(context->allowed_resources[1]); free(context->allowed_resources);
-             free(context->identifier); free(context); return -1; 
+             free(context->identifier); free(context); return -1;
          }
         context->allowed_tools[0] = mcp_strdup("get_forecast");
 
@@ -129,7 +129,7 @@ int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth
 
     // Fail all other authentication attempts in this placeholder
     log_message(LOG_LEVEL_WARN, "Authentication failed for type %d (credentials not recognized or type not implemented).", auth_type);
-    return -1; 
+    return -1;
 }
 
 /**

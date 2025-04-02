@@ -1,4 +1,4 @@
-#ifndef MCP_TCP_TRANSPORT_H
+﻿#ifndef MCP_TCP_TRANSPORT_H
 #define MCP_TCP_TRANSPORT_H
 
 #include <mcp_transport.h>
