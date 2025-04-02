@@ -132,6 +132,36 @@ add_subdirectory(tests)
 # Add examples subdirectory (optional, if examples exist)
 add_subdirectory(examples)
 
+# --- Benchmark Setup ---
+# Define benchmark sources
+set(BENCHMARK_SOURCES
+    benchmark/mcp_benchmark.c
+    benchmark/benchmark_cli.c
+)
+set(BENCHMARK_HEADERS
+    benchmark/mcp_benchmark.h
+)
+
+# Create benchmark executable
+add_executable(mcp_benchmark_cli ${BENCHMARK_SOURCES} ${BENCHMARK_HEADERS})
+target_link_libraries(mcp_benchmark_cli PRIVATE mcp_common)
+# Benchmark needs access to its own headers and common headers
+target_include_directories(mcp_benchmark_cli PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/benchmark
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Needed if benchmark uses mcp_client directly
+)
+# Link platform-specific libraries (needed if benchmark uses threads/sockets directly, 
+# otherwise inherited from mcp_common)
+# if(WIN32)
+#     target_link_libraries(mcp_benchmark_cli ws2_32)
+# else()
+#     target_link_libraries(mcp_benchmark_cli ${CMAKE_THREAD_LIBS_INIT})
+# endif()
+
+# Optionally install the benchmark tool
+# install(TARGETS mcp_benchmark_cli DESTINATION bin)
+
 # Print configuration
 message(STATUS "CMAKE_SYSTEM_NAME: ${CMAKE_SYSTEM_NAME}")
 message(STATUS "CMAKE_C_COMPILER: ${CMAKE_C_COMPILER}")
