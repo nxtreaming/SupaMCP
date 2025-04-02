@@ -20,6 +20,10 @@ typedef struct {
     size_t cache_capacity;   /**< Maximum number of entries in the resource cache. Default: 128 if 0. */
     time_t cache_default_ttl_seconds; /**< Default TTL for cache entries in seconds. Default: 300 (5 min) if 0. */
     size_t max_message_size; /**< Maximum allowed size for incoming messages in bytes. Default: 1MB if 0. */
+    // Rate Limiter Config (0 disables rate limiting)
+    size_t rate_limit_capacity; /**< Approx max clients to track for rate limiting. Default: 1024 if 0. */
+    size_t rate_limit_window_seconds; /**< Time window for rate limit checks. Default: 60 if 0. */
+    size_t rate_limit_max_requests; /**< Max requests per client per window. Default: 100 if 0. */
 } mcp_server_config_t;
 
 /**

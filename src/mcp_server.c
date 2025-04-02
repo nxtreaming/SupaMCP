@@ -13,6 +13,7 @@
 #include <mcp_log.h>
 #include <mcp_thread_pool.h>
 #include <mcp_cache.h>
+#include <mcp_rate_limiter.h>
 
 #ifndef _WIN32 // Only include netinet/in.h if not Windows (winsock2.h covers htonl)
 #include <netinet/in.h>
@@ -25,6 +26,9 @@
 #define DEFAULT_CACHE_CAPACITY 128
 #define DEFAULT_CACHE_TTL_SECONDS 300 // 5 minutes
 #define DEFAULT_MAX_MESSAGE_SIZE (1024 * 1024) // 1MB
+#define DEFAULT_RATE_LIMIT_CAPACITY 1024
+#define DEFAULT_RATE_LIMIT_WINDOW_SECONDS 60
+#define DEFAULT_RATE_LIMIT_MAX_REQUESTS 100
 
 // Server structure
 struct mcp_server {
@@ -33,6 +37,7 @@ struct mcp_server {
     mcp_transport_t* transport;         // Transport associated via start()
     mcp_thread_pool_t* thread_pool;     // Thread pool for request handling
     mcp_resource_cache_t* resource_cache; // Resource cache
+    mcp_rate_limiter_t* rate_limiter;   // Rate limiter instance
     bool running;
 
     // Resources
@@ -179,6 +184,18 @@ static char* transport_message_callback(void* user_data, const void* data, size_
     }
     *error_code = MCP_ERROR_NONE;
 
+    // --- Rate Limiting Check ---
+    // TODO: Need a client identifier from the transport layer (e.g., IP address)
+    // const char* client_id = get_client_identifier_from_transport(transport); // Placeholder
+    // if (server->rate_limiter && client_id && !mcp_rate_limiter_check(server->rate_limiter, client_id)) {
+    //     fprintf(stderr, "Rate limit exceeded for client: %s\n", client_id);
+    //     *error_code = MCP_ERROR_INTERNAL_ERROR; // Or a specific rate limit error code?
+    //     // Don't dispatch task, potentially close connection?
+    //     return NULL;
+    // }
+    // --- End Rate Limiting Check ---
+
+
     // Create task data - must copy message data as the original buffer might be reused/freed
     message_task_data_t* task_data = (message_task_data_t*)malloc(sizeof(message_task_data_t));
     if (!task_data) {
@@ -238,7 +255,11 @@ mcp_server_t* mcp_server_create(
     server->config.task_queue_size = config->task_queue_size;
     server->config.cache_capacity = config->cache_capacity;
     server->config.cache_default_ttl_seconds = config->cache_default_ttl_seconds;
-    server->config.max_message_size = config->max_message_size; // Copy max message size
+    server->config.max_message_size = config->max_message_size;
+    // Copy rate limiter config
+    server->config.rate_limit_capacity = config->rate_limit_capacity;
+    server->config.rate_limit_window_seconds = config->rate_limit_window_seconds;
+    server->config.rate_limit_max_requests = config->rate_limit_max_requests;
 
 
     // Copy capabilities
@@ -264,8 +285,9 @@ mcp_server_t* mcp_server_create(
     server->resource_handler_user_data = NULL;
     server->tool_handler = NULL;
     server->tool_handler_user_data = NULL;
-    server->thread_pool = NULL; // Initialize thread pool pointer
-    server->resource_cache = NULL; // Initialize cache pointer
+    server->thread_pool = NULL;
+    server->resource_cache = NULL;
+    server->rate_limiter = NULL; // Initialize rate limiter pointer
 
     // Check for allocation failures during config copy
     if ((config->name && !server->config.name) ||
@@ -297,6 +319,20 @@ mcp_server_t* mcp_server_create(
         if (server->resource_cache == NULL) {
             fprintf(stderr, "Failed to create server resource cache.\n");
             mcp_thread_pool_destroy(server->thread_pool); // Cleanup thread pool
+             goto create_error_cleanup;
+         }
+    }
+
+    // Create the rate limiter if configured
+    if (server->config.rate_limit_window_seconds > 0 && server->config.rate_limit_max_requests > 0) {
+        size_t rl_cap = server->config.rate_limit_capacity > 0 ? server->config.rate_limit_capacity : DEFAULT_RATE_LIMIT_CAPACITY;
+        size_t rl_win = server->config.rate_limit_window_seconds; // Use configured value directly
+        size_t rl_max = server->config.rate_limit_max_requests;   // Use configured value directly
+        server->rate_limiter = mcp_rate_limiter_create(rl_cap, rl_win, rl_max);
+        if (server->rate_limiter == NULL) {
+            fprintf(stderr, "Failed to create server rate limiter.\n");
+            if (server->resource_cache) mcp_cache_destroy(server->resource_cache);
+            mcp_thread_pool_destroy(server->thread_pool);
             goto create_error_cleanup;
         }
     }
@@ -392,8 +428,14 @@ void mcp_server_destroy(mcp_server_t* server) {
 
     // Destroy the resource cache
     if (server->resource_cache != NULL) {
-        mcp_cache_destroy(server->resource_cache);
-        server->resource_cache = NULL;
+         mcp_cache_destroy(server->resource_cache);
+         server->resource_cache = NULL;
+     }
+
+    // Destroy the rate limiter
+    if (server->rate_limiter != NULL) {
+        mcp_rate_limiter_destroy(server->rate_limiter);
+        server->rate_limiter = NULL;
     }
 
     // Free the server
