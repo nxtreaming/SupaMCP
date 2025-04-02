@@ -1,7 +1,7 @@
 #ifndef MCP_ARENA_H
 #define MCP_ARENA_H
 
-#include <stddef.h> // For size_t
+#include <stddef.h>
 
 /**
  * @brief Default size in bytes for newly allocated memory blocks within an arena.
@@ -43,6 +43,9 @@ typedef struct mcp_arena {
  * @param arena Pointer to the mcp_arena_t structure to initialize. Must not be NULL.
  * @param default_block_size The default size for new memory blocks allocated by the arena.
  *                           If 0, MCP_ARENA_DEFAULT_BLOCK_SIZE is used.
+ * @note This function is primarily for manual arena management. For thread-local usage,
+ *       arenas are typically initialized automatically on first use via mcp_arena_alloc
+ *       or mcp_arena_get_current.
  */
 void mcp_arena_init(mcp_arena_t* arena, size_t default_block_size);
 
@@ -50,10 +53,10 @@ void mcp_arena_init(mcp_arena_t* arena, size_t default_block_size);
  * @brief Destroys an arena allocator and frees all associated memory blocks.
  *
  * Releases all memory blocks allocated by the arena. The arena structure itself
- * is not freed (as it might be stack-allocated). After calling destroy, the arena
- * should not be used further unless re-initialized with mcp_arena_init.
+ * is not freed (as it might be stack-allocated or managed elsewhere).
  *
  * @param arena Pointer to the mcp_arena_t structure to destroy. Must not be NULL.
+ * @note For thread-local arenas managed automatically, use mcp_arena_destroy_current_thread() instead.
  */
 void mcp_arena_destroy(mcp_arena_t* arena);
 
@@ -64,14 +67,18 @@ void mcp_arena_destroy(mcp_arena_t* arena);
  * does not have enough space, a new block is allocated (either of the default size
  * or `size`, whichever is larger) and added to the arena's list.
  * Allocations are aligned to the size of a pointer.
+ * This function uses the arena associated with the calling thread. If no arena
+ * exists for the thread, one will be created automatically with a default block size.
  *
- * @param arena Pointer to the initialized mcp_arena_t structure. Must not be NULL.
  * @param size The number of bytes to allocate.
  * @return Pointer to the allocated memory block, or NULL if allocation fails (e.g., out of memory).
  * @note Memory allocated with this function should *not* be freed individually using free().
- *       It will be freed when the entire arena is destroyed or reset.
+ *       It will be freed when the thread's arena is destroyed (using mcp_arena_destroy_current_thread)
+ *       or reset (using mcp_arena_reset_current_thread).
+ * @warning Threads using this function *must* call mcp_arena_destroy_current_thread() before exiting
+ *          to prevent memory leaks.
  */
-void* mcp_arena_alloc(mcp_arena_t* arena, size_t size);
+void* mcp_arena_alloc(size_t size);
 
 /**
  * @brief Resets an arena allocator, marking all allocated memory as reusable
@@ -83,8 +90,41 @@ void* mcp_arena_alloc(mcp_arena_t* arena, size_t size);
  * the existing blocks starting from the beginning.
  *
  * @param arena Pointer to the mcp_arena_t structure to reset. Must not be NULL.
+ * @note For thread-local arenas managed automatically, use mcp_arena_reset_current_thread() instead.
  */
 void mcp_arena_reset(mcp_arena_t* arena);
+
+/**
+ * @brief Retrieves the arena associated with the current thread.
+ *
+ * If no arena exists for the current thread, one is created and initialized
+ * with a default block size. This function is useful if you need direct access
+ * to the arena structure itself, but typically mcp_arena_alloc is sufficient.
+ *
+ * @return Pointer to the current thread's arena, or NULL on failure (e.g., out of memory
+ *         during initial creation).
+ * @warning Threads using this function *must* call mcp_arena_destroy_current_thread() before exiting
+ *          to prevent memory leaks.
+ */
+mcp_arena_t* mcp_arena_get_current(void);
+
+/**
+ * @brief Resets the arena associated with the current thread.
+ *
+ * Marks all memory allocated in the current thread's arena as reusable
+ * without freeing the underlying memory blocks.
+ * If no arena exists for the current thread, this function does nothing.
+ */
+void mcp_arena_reset_current_thread(void);
+
+/**
+ * @brief Destroys the arena associated with the current thread and frees its memory blocks.
+ *
+ * This function *must* be called by any thread that used mcp_arena_alloc() or
+ * mcp_arena_get_current() before the thread exits, to prevent memory leaks.
+ * If no arena exists for the current thread, this function does nothing.
+ */
+void mcp_arena_destroy_current_thread(void);
 
 /**
  * @internal

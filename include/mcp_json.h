@@ -29,77 +29,67 @@ typedef struct mcp_json mcp_json_t;
 
 /**
  * @brief Creates a JSON null value.
- * @param arena Optional arena allocator. If NULL, uses malloc for the node.
- * @return Pointer to the created JSON value, or NULL on error.
- * @note If using malloc (arena is NULL), the caller must free the returned pointer using free()
- *       after potentially calling mcp_json_destroy() (though destroy is a no-op for null).
- *       If using an arena, the arena manages the node's memory.
+ * @return Pointer to the created JSON value (allocated using the thread-local arena), or NULL on error.
+ * @note The returned node's memory is managed by the thread-local arena.
+ *       Call mcp_json_destroy() before resetting/destroying the arena if necessary.
  */
-mcp_json_t* mcp_json_null_create(mcp_arena_t* arena);
+mcp_json_t* mcp_json_null_create(void);
 
 /**
  * @brief Creates a JSON boolean value.
- * @param arena Optional arena allocator. If NULL, uses malloc for the node.
  * @param value The boolean value (true or false).
- * @return Pointer to the created JSON value, or NULL on error.
- * @note See mcp_json_null_create() for memory management details.
+ * @return Pointer to the created JSON value (allocated using the thread-local arena), or NULL on error.
+ * @note See mcp_json_null_create() note regarding arena management.
  */
-mcp_json_t* mcp_json_boolean_create(mcp_arena_t* arena, bool value);
+mcp_json_t* mcp_json_boolean_create(bool value);
 
 /**
  * @brief Creates a JSON number value.
- * @param arena Optional arena allocator. If NULL, uses malloc for the node.
  * @param value The numeric value (stored as double).
- * @return Pointer to the created JSON value, or NULL on error.
- * @note See mcp_json_null_create() for memory management details.
+ * @return Pointer to the created JSON value (allocated using the thread-local arena), or NULL on error.
+ * @note See mcp_json_null_create() note regarding arena management.
  */
-mcp_json_t* mcp_json_number_create(mcp_arena_t* arena, double value);
+mcp_json_t* mcp_json_number_create(double value);
 
 /**
  * @brief Creates a JSON string value.
- * @param arena Optional arena allocator. If NULL, uses malloc for the node.
  * @param value The null-terminated string value. This string is *always* duplicated
- *              internally using malloc/strdup, regardless of whether an arena is used
- *              for the node itself. Can be NULL, which results in an error.
- * @return Pointer to the created JSON value, or NULL on error (e.g., NULL input, allocation failure).
+ *              internally using malloc/strdup. Can be NULL, which results in an error.
+ * @return Pointer to the created JSON value (node allocated using the thread-local arena), or NULL on error.
  * @note The internal string copy is freed by mcp_json_destroy().
- *       See mcp_json_null_create() for node memory management details.
+ *       See mcp_json_null_create() note regarding arena management for the node itself.
  */
-mcp_json_t* mcp_json_string_create(mcp_arena_t* arena, const char* value);
+mcp_json_t* mcp_json_string_create(const char* value);
 
 /**
  * @brief Creates an empty JSON array value.
- * @param arena Optional arena allocator. If NULL, uses malloc for the node.
- * @return Pointer to the created JSON array value, or NULL on error.
+ * @return Pointer to the created JSON array value (node allocated using the thread-local arena), or NULL on error.
  * @note Internal storage for array items uses malloc/realloc and is freed by mcp_json_destroy().
- *       See mcp_json_null_create() for node memory management details.
+ *       See mcp_json_null_create() note regarding arena management for the node itself.
  */
-mcp_json_t* mcp_json_array_create(mcp_arena_t* arena);
+mcp_json_t* mcp_json_array_create(void);
 
 /**
  * @brief Creates an empty JSON object value.
- * @param arena Optional arena allocator. If NULL, uses malloc for the node.
- * @return Pointer to the created JSON object value, or NULL on error.
+ * @return Pointer to the created JSON object value (node allocated using the thread-local arena), or NULL on error.
  * @note Internal storage for object properties (hash table, keys, values) uses malloc/realloc/strdup
  *       and is freed by mcp_json_destroy().
- *       See mcp_json_null_create() for node memory management details.
+ *       See mcp_json_null_create() note regarding arena management for the node itself.
  */
-mcp_json_t* mcp_json_object_create(mcp_arena_t* arena);
+mcp_json_t* mcp_json_object_create(void);
 
 /**
  * @brief Parses a JSON string into a tree of mcp_json_t nodes.
  *
- * @param arena Optional arena allocator. If NULL, uses malloc for all nodes.
- *              If provided, only the mcp_json_t nodes themselves are allocated from the arena.
- *              Internal strings, array storage, and object hash tables *always* use malloc/strdup/realloc.
+ * Uses the calling thread's thread-local arena for allocating mcp_json_t nodes.
+ * Internal strings, array storage, and object hash tables *always* use malloc/strdup/realloc.
  * @param json The null-terminated JSON string to parse.
  * @return Pointer to the root mcp_json_t node of the parsed tree, or NULL on parse error or allocation failure.
- * @note If using malloc (arena is NULL), the caller must free the entire tree using mcp_json_destroy()
- *       followed by free() on the returned root node pointer.
- *       If using an arena, the caller must still call mcp_json_destroy() on the root node to free
- *       internal malloc'd strings/tables, and then reset/destroy the arena to free the nodes.
+ * @note The caller must call mcp_json_destroy() on the root node to free
+ *       internal malloc'd strings/tables, and *then* reset or destroy the thread-local arena
+ *       to free the nodes themselves.
  */
-mcp_json_t* mcp_json_parse(mcp_arena_t* arena, const char* json);
+mcp_json_t* mcp_json_parse(const char* json);
 
 /**
  * @brief Converts a JSON value tree back into a JSON string representation.
@@ -257,12 +247,10 @@ int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names, si
  *
  * **IMPORTANT Memory Management Notes:**
  * 1.  This function **DOES NOT** free the `mcp_json_t` node itself pointed to by `json`.
- * 2.  If the `mcp_json_t` node was allocated using `malloc` (e.g., `mcp_json_parse(NULL, ...)`),
- *     you MUST call `free(json)` *after* calling `mcp_json_destroy(json)`.
- * 3.  If the `mcp_json_t` node was allocated using an arena (e.g., `mcp_json_parse(arena, ...)`),
- *     you MUST call `mcp_json_destroy(json)` first to free any internally `malloc`-ed data
- *     (like strings or object keys), and *then* reset or destroy the arena to free the node itself.
- *     DO NOT call `free(json)` on an arena-allocated node.
+ * 2.  This function **DOES NOT** free the `mcp_json_t` node itself pointed to by `json`.
+ *     The node's memory is managed by the thread-local arena.
+ * 3.  You MUST call `mcp_json_destroy(json)` first to free any internally `malloc`-ed data
+ *     (like strings or object keys), and *then* reset or destroy the thread-local arena to free the node itself.
  *
  * @param json Pointer to the JSON value whose internal data should be freed. If NULL, the function does nothing.
  */
@@ -271,17 +259,16 @@ void mcp_json_destroy(mcp_json_t* json);
 /**
  * @brief Parses a JSON string representing an MCP message (request, response, or notification).
  *
- * @param arena Optional arena allocator for `mcp_json_t` nodes within the message's params/result.
- *              If NULL, `malloc` is used. Note that top-level strings like `method` are still `malloc`-ed.
+ * Uses the calling thread's thread-local arena for parsing the JSON structure.
+ * Note that top-level strings like `method` within the output `message` struct are still `malloc`-ed.
  * @param json The null-terminated JSON string representing the message.
  * @param[out] message Pointer to an `mcp_message_t` structure where the parsed message will be stored.
  *                     The caller typically allocates this structure on the stack.
  * @return 0 on success, non-zero on error (e.g., parse error, invalid message structure).
  * @note On success, the `message` structure will contain pointers to dynamically allocated data
- *       (strings, parsed JSON for params/result). The caller MUST call `mcp_message_release_contents(message)`
- *       to free this internal data before the `message` structure goes out of scope or is reused.
- */
-int mcp_json_parse_message(mcp_arena_t* arena, const char* json, mcp_message_t* message);
+ *       (strings like method, error_message, result/params). The caller MUST call `mcp_message_release_contents(message)`
+ *       to free this internal data before the `message` structure goes out of scope or is reused. The parsed JSON tree itself lives in the thread-local arena. */
+int mcp_json_parse_message(const char* json, mcp_message_t* message);
 
 /**
  * @brief Converts an MCP message structure into a JSON string representation.
@@ -289,7 +276,8 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json, mcp_message_t* 
  * @param message Pointer to the `mcp_message_t` structure to stringify.
  * @return A newly allocated null-terminated JSON string, or NULL on error (e.g., allocation failure).
  * @note The caller is responsible for freeing the returned string using `free()`.
- */
+ * @note This function uses the thread-local arena for temporary JSON nodes during stringification,
+ *       but the final returned string is allocated using `malloc`. */
 char* mcp_json_stringify_message(const mcp_message_t* message);
 
 /**

@@ -2,17 +2,17 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
+#include <stdbool.h>
 #include "mcp_json.h"
 #include "mcp_arena.h"
 #include "mcp_profiler.h"
-#include "mcp_log.h" // Added missing include for log_message
+#include "mcp_log.h"
+#include "mcp_types.h"
 
 // --- Hash Table Implementation for JSON Objects ---
-// This uses a simple separate chaining hash table.
 // IMPORTANT: This internal implementation uses malloc/free/mcp_strdup/realloc
-//            for its own structures (buckets, entries, keys), *not* the arena
-//            passed to mcp_json_object_create. Only the mcp_json_t *value* nodes
-//            stored in the table might be arena-allocated if the caller used one.
+//            for its own structures (buckets, entries, keys). Only the mcp_json_t *value* nodes
+//            stored in the table are allocated using the thread-local arena.
 
 /** @internal Initial capacity for the hash table bucket array. Should be power of 2. */
 #define MCP_JSON_HASH_TABLE_INITIAL_CAPACITY 16
@@ -25,7 +25,7 @@
  */
 typedef struct mcp_json_object_entry {
     char* name;                         /**< Property name (key), allocated using mcp_strdup (malloc). */
-    mcp_json_t* value;                  /**< Property value (mcp_json_t node), allocated using arena or malloc by the caller. */
+    mcp_json_t* value;                  /**< Property value (mcp_json_t node), allocated using thread-local arena. */
     struct mcp_json_object_entry* next; /**< Pointer to the next entry in the same bucket (separate chaining). */
 } mcp_json_object_entry_t;
 
@@ -61,8 +61,8 @@ static unsigned long hash_string(const char* str) {
 static int mcp_json_object_table_init(mcp_json_object_table_t* table, size_t capacity);
 /** @internal Destroys a hash table, freeing all entries, keys, and the bucket array. Calls mcp_json_destroy on values. */
 static void mcp_json_object_table_destroy(mcp_json_object_table_t* table);
-/** @internal Sets a key-value pair. Handles collisions and potential resize. Allocates new entries using malloc (arena parameter is currently unused here). */
-static int mcp_json_object_table_set(mcp_arena_t* arena, mcp_json_object_table_t* table, const char* name, mcp_json_t* value);
+/** @internal Sets a key-value pair. Handles collisions and potential resize. Allocates new entries using malloc. */
+static int mcp_json_object_table_set(mcp_json_object_table_t* table, const char* name, mcp_json_t* value); // Ensure arena param is removed
 /** @internal Finds an entry by key name. */
 static mcp_json_object_entry_t* mcp_json_object_table_find(mcp_json_object_table_t* table, const char* name);
 /** @internal Deletes an entry by key name. Frees the entry, key, and calls mcp_json_destroy on the value. */
@@ -94,35 +94,31 @@ struct mcp_json {
 
 /**
  * @internal
- * @brief Helper function to allocate an mcp_json_t node using either the arena or malloc.
- * @param arena Optional arena allocator. If NULL, uses malloc.
+ * @brief Helper function to allocate an mcp_json_t node using the thread-local arena.
  * @return Pointer to the allocated node, or NULL on failure.
  */
-static mcp_json_t* mcp_json_alloc_node(mcp_arena_t* arena) {
-    if (arena != NULL) {
-        // Allocate node from the arena
-        return (mcp_json_t*)mcp_arena_alloc(arena, sizeof(mcp_json_t));
-    } else {
-        // Allocate node using standard malloc
-        return (mcp_json_t*)malloc(sizeof(mcp_json_t));
-    }
+static mcp_json_t* mcp_json_alloc_node(void) {
+    // Always allocate node from the thread-local arena
+    return (mcp_json_t*)mcp_arena_alloc(sizeof(mcp_json_t));
 }
 
 // --- Public JSON API Implementation ---
 
-mcp_json_t* mcp_json_null_create(mcp_arena_t* arena) {
-    // Allocate the node structure itself
-    mcp_json_t* json = mcp_json_alloc_node(arena);
+mcp_json_t* mcp_json_null_create(void) {
+    // Allocate the node structure itself using thread-local arena
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON null node from arena.");
         return NULL;
     }
     json->type = MCP_JSON_NULL;
     return json;
 }
 
-mcp_json_t* mcp_json_boolean_create(mcp_arena_t* arena, bool value) {
-    mcp_json_t* json = mcp_json_alloc_node(arena);
+mcp_json_t* mcp_json_boolean_create(bool value) {
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON boolean node from arena.");
         return NULL;
     }
     json->type = MCP_JSON_BOOLEAN;
@@ -130,9 +126,10 @@ mcp_json_t* mcp_json_boolean_create(mcp_arena_t* arena, bool value) {
     return json;
 }
 
-mcp_json_t* mcp_json_number_create(mcp_arena_t* arena, double value) {
-    mcp_json_t* json = mcp_json_alloc_node(arena);
+mcp_json_t* mcp_json_number_create(double value) {
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON number node from arena.");
         return NULL;
     }
     json->type = MCP_JSON_NUMBER;
@@ -140,36 +137,35 @@ mcp_json_t* mcp_json_number_create(mcp_arena_t* arena, double value) {
     return json;
 }
 
-// NOTE: String values *always* use mcp_strdup/malloc for the internal copy,
-// regardless of whether the node itself is arena-allocated.
-mcp_json_t* mcp_json_string_create(mcp_arena_t* arena, const char* value) {
+// NOTE: String values *always* use mcp_strdup/malloc for the internal copy.
+mcp_json_t* mcp_json_string_create(const char* value) {
     if (value == NULL) {
         return NULL; // Cannot create string from NULL
     }
-    // Allocate the node structure
-    mcp_json_t* json = mcp_json_alloc_node(arena);
+    // Allocate the node structure using thread-local arena
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON string node from arena.");
         return NULL;
     }
     json->type = MCP_JSON_STRING;
     // Duplicate the input string using our helper
     json->string_value = mcp_strdup(value);
     if (json->string_value == NULL) {
-        // mcp_strdup failed. If node was malloc'd, free it.
-        // If node was arena'd, it will be cleaned up by arena reset/destroy,
-        // but this indicates an error state.
-        if (arena == NULL) free(json);
+        // mcp_strdup failed. Node is arena allocated, will be cleaned up by arena reset/destroy.
+        log_message(LOG_LEVEL_ERROR, "mcp_strdup failed for JSON string value.");
+        // No need to free(json) as it's from the arena.
         return NULL;
     }
     return json;
 }
 
-// NOTE: Array backing storage (the array of pointers `items`) *always* uses
-// malloc/realloc, regardless of whether the node itself is arena-allocated.
-mcp_json_t* mcp_json_array_create(mcp_arena_t* arena) {
-    // Allocate the node structure
-    mcp_json_t* json = mcp_json_alloc_node(arena);
+// NOTE: Array backing storage (the array of pointers `items`) *always* uses malloc/realloc.
+mcp_json_t* mcp_json_array_create(void) {
+    // Allocate the node structure using thread-local arena
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON array node from arena.");
         return NULL;
     }
     json->type = MCP_JSON_ARRAY;
@@ -179,19 +175,20 @@ mcp_json_t* mcp_json_array_create(mcp_arena_t* arena) {
     return json;
 }
 
-// NOTE: Object hash table structures (buckets, entries, keys) *always* use
-// malloc/realloc/mcp_strdup, regardless of whether the node itself is arena-allocated.
-mcp_json_t* mcp_json_object_create(mcp_arena_t* arena) {
-    // Allocate the node structure
-    mcp_json_t* json = mcp_json_alloc_node(arena);
+// NOTE: Object hash table structures (buckets, entries, keys) *always* use malloc/realloc/mcp_strdup.
+mcp_json_t* mcp_json_object_create(void) {
+    // Allocate the node structure using thread-local arena
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON object node from arena.");
         return NULL;
     }
     json->type = MCP_JSON_OBJECT;
-    // Initialize the internal hash table (which uses malloc)
+    // Initialize the internal hash table (which uses malloc for its parts)
     if (mcp_json_object_table_init(&json->object, MCP_JSON_HASH_TABLE_INITIAL_CAPACITY) != 0) {
-        // Table init failed. Free node if it was malloc'd.
-        if (arena == NULL) free(json);
+        // Table init failed. Node is arena allocated, will be cleaned up by arena reset/destroy.
+        log_message(LOG_LEVEL_ERROR, "Failed to initialize JSON object hash table.");
+        // No need to free(json) as it's from the arena.
         return NULL; // Return error
     }
     return json;
@@ -332,9 +329,8 @@ int mcp_json_object_set_property(mcp_json_t* json, const char* name, mcp_json_t*
     if (json == NULL || name == NULL || value == NULL || json->type != MCP_JSON_OBJECT) {
         return -1; // Invalid input
     }
-    // Pass NULL arena to internal set function, as the hash table itself uses malloc.
-    // The 'value' retains its original allocation method (arena or malloc).
-    return mcp_json_object_table_set(NULL, &json->object, name, value);
+    // Pass table directly to internal set function
+    return mcp_json_object_table_set(&json->object, name, value);
 }
 
 int mcp_json_object_delete_property(mcp_json_t* json, const char* name) {
@@ -495,15 +491,13 @@ static int mcp_json_object_table_resize(mcp_json_object_table_t* table, size_t n
  * Handles resizing if the load factor is exceeded.
  * Destroys the old value if the key already exists.
  * Allocates new entries and duplicates keys using malloc/mcp_strdup.
- * @param arena Unused in this implementation (new entries always use malloc).
  * @param table The hash table.
  * @param name The property name (key).
  * @param value The JSON value node (ownership transferred to table logic via mcp_json_destroy).
  * @return 0 on success, -1 on failure.
  */
-static int mcp_json_object_table_set(mcp_arena_t* arena, mcp_json_object_table_t* table, const char* name, mcp_json_t* value) {
-    (void)arena; // Arena is not used for allocating hash table entries/keys
-
+// Corrected: Removed unused arena parameter
+static int mcp_json_object_table_set(mcp_json_object_table_t* table, const char* name, mcp_json_t* value) {
     // Resize if load factor is too high
     if (table->capacity == 0 || ((double)table->count + 1) / table->capacity > MCP_JSON_HASH_TABLE_MAX_LOAD_FACTOR) {
         size_t new_capacity = (table->capacity == 0) ? MCP_JSON_HASH_TABLE_INITIAL_CAPACITY : table->capacity * 2;
@@ -599,19 +593,19 @@ static int mcp_json_object_table_delete(mcp_json_object_table_t* table, const ch
 
 // --- JSON Parser Implementation ---
 // Simple recursive descent parser.
-// Uses the provided arena (if not NULL) for allocating mcp_json_t nodes.
+// Uses the thread-local arena for allocating mcp_json_t nodes.
 // String values are always duplicated using malloc/mcp_strdup.
 
 // Max parsing depth to prevent stack overflow from deeply nested structures
 #define MCP_JSON_MAX_PARSE_DEPTH 100
 
-// Forward declarations for parser helper functions (pass arena and depth)
-static mcp_json_t* parse_value(mcp_arena_t* arena, const char** json, int depth);
+// Forward declarations for parser helper functions (pass depth, use thread-local arena)
+static mcp_json_t* parse_value(const char** json, int depth);
 static void skip_whitespace(const char** json);
-static char* parse_string(const char** json); // Uses malloc/mcp_strdup, no arena
-static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json, int depth);
-static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json, int depth);
-static mcp_json_t* parse_number(mcp_arena_t* arena, const char** json); // Depth not needed here
+static char* parse_string(const char** json); // Uses malloc/mcp_strdup
+static mcp_json_t* parse_object(const char** json, int depth);
+static mcp_json_t* parse_array(const char** json, int depth);
+static mcp_json_t* parse_number(const char** json);
 
 static void skip_whitespace(const char** json) {
     while (**json == ' ' || **json == '\t' || **json == '\n' || **json == '\r') {
@@ -649,7 +643,7 @@ static char* parse_string(const char** json) {
                         if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') || (*p >= 'A' && *p <= 'F'))) {
                              fprintf(stderr, "Error: Invalid hex digit in \\u escape.\n");
                              return NULL; // Invalid hex
-                        }
+                         }
                         p++;
                     }
                     // TODO: Proper UTF-8 conversion needed here for correct length/value
@@ -711,16 +705,18 @@ static char* parse_string(const char** json) {
     return result;
 }
 
-static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json, int depth) {
+// Ensure definition matches forward declaration (no arena)
+static mcp_json_t* parse_object(const char** json, int depth) {
     if (depth > MCP_JSON_MAX_PARSE_DEPTH) {
-        fprintf(stderr, "Error: JSON parsing depth exceeded limit (%d).\n", MCP_JSON_MAX_PARSE_DEPTH);
+        log_message(LOG_LEVEL_ERROR, "JSON parsing depth exceeded limit (%d).", MCP_JSON_MAX_PARSE_DEPTH);
         return NULL; // Depth limit exceeded
     }
     if (**json != '{') {
         return NULL;
     }
-    mcp_json_t* object = mcp_json_object_create(arena);
+    mcp_json_t* object = mcp_json_object_create(); // Uses thread-local arena
     if (object == NULL) {
+        // Error already logged by create function
         return NULL;
     }
     (*json)++; // Skip '{'
@@ -738,18 +734,22 @@ static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json, int depth
         }
         skip_whitespace(json);
         if (**json != ':') {
+            log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected ':' after object key '%s'.", name);
             free(name);
             return NULL; // Expected colon
         }
         (*json)++; // Skip ':'
         skip_whitespace(json);
-        mcp_json_t* value = parse_value(arena, json, depth + 1); // Value uses arena (recursively), increment depth
+        // Corrected: Call parse_value without arena
+        mcp_json_t* value = parse_value(json, depth + 1);
         if (value == NULL) {
+            log_message(LOG_LEVEL_ERROR, "JSON parse error: Failed to parse value for object key '%s'.", name);
             free(name);
             return NULL; // Invalid value
         }
-        // Set property - uses malloc for entry/name, value is from arena
-        if (mcp_json_object_table_set(arena, &object->object, name, value) != 0) {
+        // Set property - uses malloc for entry/name, value is from thread-local arena
+        if (mcp_json_object_table_set(&object->object, name, value) != 0) { // Pass table directly
+            log_message(LOG_LEVEL_ERROR, "JSON parse error: Failed to set property '%s'.", name);
             free(name);
             // Don't destroy value (it's in arena), don't destroy object
             return NULL; // Set property failed
@@ -761,22 +761,25 @@ static mcp_json_t* parse_object(mcp_arena_t* arena, const char** json, int depth
             return object;
         }
         if (**json != ',') {
+            log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected ',' or '}' after object property.");
             return NULL; // Expected comma or closing brace
         }
         (*json)++; // Skip ','
     }
 }
 
-static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json, int depth) {
+// Ensure definition matches forward declaration (no arena)
+static mcp_json_t* parse_array(const char** json, int depth) {
      if (depth > MCP_JSON_MAX_PARSE_DEPTH) {
-        fprintf(stderr, "Error: JSON parsing depth exceeded limit (%d).\n", MCP_JSON_MAX_PARSE_DEPTH);
+        log_message(LOG_LEVEL_ERROR, "JSON parsing depth exceeded limit (%d).", MCP_JSON_MAX_PARSE_DEPTH);
         return NULL; // Depth limit exceeded
     }
     if (**json != '[') {
         return NULL;
     }
-    mcp_json_t* array = mcp_json_array_create(arena);
+    mcp_json_t* array = mcp_json_array_create(); // Uses thread-local arena
     if (array == NULL) {
+        // Error logged by create function
         return NULL;
     }
     (*json)++; // Skip '['
@@ -787,13 +790,16 @@ static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json, int depth)
     }
     while (1) {
         skip_whitespace(json);
-        mcp_json_t* value = parse_value(arena, json, depth + 1); // Value uses arena (recursively), increment depth
+        // Corrected: Call parse_value without arena
+        mcp_json_t* value = parse_value(json, depth + 1);
         if (value == NULL) {
+            log_message(LOG_LEVEL_ERROR, "JSON parse error: Failed to parse value in array.");
             // Don't destroy array, let caller handle via arena
             return NULL; // Invalid value in array
         }
         // Add item uses realloc for backing store, not arena
         if (mcp_json_array_add_item(array, value) != 0) {
+            log_message(LOG_LEVEL_ERROR, "JSON parse error: Failed to add item to array.");
             // Don't destroy value (it's in arena)
             return NULL; // Add item failed
         }
@@ -803,13 +809,15 @@ static mcp_json_t* parse_array(mcp_arena_t* arena, const char** json, int depth)
             return array;
         }
         if (**json != ',') {
+            log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected ',' or ']' after array element.");
             return NULL; // Expected comma or closing bracket
         }
         (*json)++; // Skip ','
     }
 }
 
-static mcp_json_t* parse_number(mcp_arena_t* arena, const char** json) {
+// Ensure definition matches forward declaration (no arena)
+static mcp_json_t* parse_number(const char** json) {
     const char* start = *json;
     if (**json == '-') (*json)++;
     if (**json < '0' || **json > '9') return NULL; // Must have at least one digit
@@ -828,68 +836,79 @@ static mcp_json_t* parse_number(mcp_arena_t* arena, const char** json) {
     char* end;
     double value = strtod(start, &end);
     if (end != *json) {
+        log_message(LOG_LEVEL_ERROR, "JSON parse error: Invalid number format near '%s'.", start);
         return NULL; // Invalid number format
     }
-    return mcp_json_number_create(arena, value); // Uses arena
+    return mcp_json_number_create(value); // Uses thread-local arena (already updated)
 }
 
-static mcp_json_t* parse_value(mcp_arena_t* arena, const char** json, int depth) {
+// Ensure definition matches forward declaration (no arena)
+static mcp_json_t* parse_value(const char** json, int depth) {
     skip_whitespace(json);
     switch (**json) {
-        case '{': return parse_object(arena, json, depth); // Pass depth
-        case '[': return parse_array(arena, json, depth);  // Pass depth
+        // Corrected: Calls without arena
+        case '{': return parse_object(json, depth);
+        case '[': return parse_array(json, depth);
         case '"': {
             // TODO: Add string content validation here if needed
             char* string = parse_string(json); // Uses malloc
             if (string == NULL) return NULL;
-            mcp_json_t* result = mcp_json_string_create(arena, string); // Uses arena for node
+            mcp_json_t* result = mcp_json_string_create(string); // Uses thread-local arena for node
             free(string); // Free malloc'd string
             return result;
         }
         case 'n':
             if (strncmp(*json, "null", 4) == 0) {
                 *json += 4;
-                return mcp_json_null_create(arena); // Uses arena
+                return mcp_json_null_create(); // Uses thread-local arena
             }
+             log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected 'null'.");
             return NULL;
         case 't':
             if (strncmp(*json, "true", 4) == 0) {
                 *json += 4;
-                return mcp_json_boolean_create(arena, true); // Uses arena
+                return mcp_json_boolean_create(true); // Uses thread-local arena
             }
+             log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected 'true'.");
             return NULL;
         case 'f':
             if (strncmp(*json, "false", 5) == 0) {
                 *json += 5;
-                return mcp_json_boolean_create(arena, false); // Uses arena
+                return mcp_json_boolean_create(false); // Uses thread-local arena
             }
+             log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected 'false'.");
             return NULL;
         case '-':
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
-            return parse_number(arena, json); // Uses arena, depth doesn't increase
+             // Corrected: Call without arena
+            return parse_number(json);
         default:
+             log_message(LOG_LEVEL_ERROR, "JSON parse error: Unexpected character '%c'.", **json);
             return NULL; // Invalid character
     }
 }
 
-// Main parse function
-mcp_json_t* mcp_json_parse(mcp_arena_t* arena, const char* json) {
+// Ensure definition matches header (no arena param)
+mcp_json_t* mcp_json_parse(const char* json) {
     if (json == NULL) {
         return NULL;
     }
     const char* current = json; // Use a temporary pointer
     skip_whitespace(&current);
-    mcp_json_t* result = parse_value(arena, &current, 0); // Start parsing at depth 0
+    // Corrected: Call parse_value without arena
+    mcp_json_t* result = parse_value(&current, 0); // Start parsing at depth 0
     if (result == NULL) {
-        // Parsing failed, arena contains partially allocated nodes.
-        // Caller should reset/destroy the arena.
+        // Parsing failed, thread-local arena contains partially allocated nodes.
+        // Caller should reset/destroy the thread-local arena if appropriate.
+        log_message(LOG_LEVEL_ERROR, "JSON parsing failed.");
         return NULL;
     }
     skip_whitespace(&current);
     if (*current != '\0') {
+        log_message(LOG_LEVEL_ERROR, "JSON parse error: Trailing characters found after valid JSON: '%s'", current);
         // Trailing characters after valid JSON
-        // Don't destroy result (it's in arena), let caller handle arena.
+        // Don't destroy result (it's in thread-local arena), let caller handle arena.
         return NULL;
     }
     return result;
@@ -1037,24 +1056,27 @@ char* mcp_json_stringify(const mcp_json_t* json) {
 
 
 // --- MCP Message Parsing/Stringification ---
-// These functions now accept an arena for parsing the main JSON structure,
-// but still use malloc/mcp_strdup for strings within the mcp_message_t struct
-// and for the stringified result/params.
+// These functions now use the thread-local arena implicitly for parsing/creating
+// the main JSON structure, but still use malloc/mcp_strdup for strings within
+// the mcp_message_t struct and for the stringified result/params.
 
-int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message_t* message) {
+// Ensure definition matches header (no arena param)
+int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
     if (json_str == NULL || message == NULL) {
         return -1;
     }
     PROFILE_START("mcp_json_parse_message");
-    // Parse using the provided arena (or malloc if arena is NULL)
-    mcp_json_t* json = mcp_json_parse(arena, json_str);
+    // Parse using the thread-local arena (call already updated)
+    mcp_json_t* json = mcp_json_parse(json_str);
     if (json == NULL) {
         PROFILE_END("mcp_json_parse_message"); // End profile on error
-        // Arena cleanup is handled by the caller if parsing fails
+        // Thread-local arena cleanup is handled by the caller
         return -1;
     }
     if (json->type != MCP_JSON_OBJECT) {
-        mcp_json_destroy(json);
+        // Parsed something, but not an object. Arena contains the invalid node.
+        log_message(LOG_LEVEL_ERROR, "MCP message parse error: Root element is not a JSON object.");
+        // Let caller handle arena cleanup.
         return -1;
     }
 
@@ -1086,12 +1108,11 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                         free(message->request.method); // Method might be allocated
                         free(message->request.params); // Params might be allocated
                         message->type = MCP_MESSAGE_TYPE_INVALID; // Reset type
-                        // LEAK FIX: If arena is NULL, we must destroy and free the parsed json tree
-                        if (arena == NULL && json != NULL) {
-                            mcp_json_destroy(json);
-                            free(json);
-                            json = NULL; // Avoid double free later
-                        }
+                        // Allocation failure during stringify/mcp_strdup
+                        free(message->request.method); // Method might be allocated
+                        free(message->request.params); // Params might be allocated
+                        message->type = MCP_MESSAGE_TYPE_INVALID; // Reset type
+                        // Parsed JSON tree is in thread-local arena, caller handles cleanup.
                     }
                 }
             }
@@ -1109,12 +1130,11 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                     free(message->notification.method);
                     free(message->notification.params);
                     message->type = MCP_MESSAGE_TYPE_INVALID;
-                     // LEAK FIX: If arena is NULL, we must destroy and free the parsed json tree
-                    if (arena == NULL && json != NULL) {
-                        mcp_json_destroy(json);
-                        free(json);
-                        json = NULL; // Avoid double free later
-                    }
+                    // Allocation failure
+                    free(message->notification.method);
+                    free(message->notification.params);
+                    message->type = MCP_MESSAGE_TYPE_INVALID;
+                    // Parsed JSON tree is in thread-local arena, caller handles cleanup.
                 }
             }
         }
@@ -1143,21 +1163,20 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                             } else {
                                 // mcp_strdup failed
                                 message->type = MCP_MESSAGE_TYPE_INVALID;
-                                // LEAK FIX: If arena is NULL, we must destroy and free the parsed json tree
-                                if (arena == NULL && json != NULL) {
-                                    mcp_json_destroy(json);
-                                    free(json);
-                                    json = NULL; // Avoid double free later
-                                }
+                                // mcp_strdup failed
+                                message->type = MCP_MESSAGE_TYPE_INVALID;
+                                // Parsed JSON tree is in thread-local arena, caller handles cleanup.
                             }
                         } else { // Invalid error message type
+                            log_message(LOG_LEVEL_ERROR, "MCP message parse error: Response 'error.message' is not a string.");
                              message->type = MCP_MESSAGE_TYPE_INVALID;
                         }
                     } else { // Invalid error code type
+                        log_message(LOG_LEVEL_ERROR, "MCP message parse error: Response 'error.code' is not a number.");
                         message->type = MCP_MESSAGE_TYPE_INVALID;
                     }
                 }
-            } else if (result != NULL) {
+            } else if (result != NULL) { // Success Response
                 // Success Response (result can be any JSON type)
                 message->response.error_code = MCP_ERROR_NONE;
                 message->response.error_message = NULL;
@@ -1166,128 +1185,128 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json_str, mcp_message
                     parse_status = 0; // Success
                 } else {
                     // stringify failed
+                    log_message(LOG_LEVEL_ERROR, "Failed to stringify response result.");
                     message->type = MCP_MESSAGE_TYPE_INVALID;
-                    // LEAK FIX: If arena is NULL, we must destroy and free the parsed json tree
-                    if (arena == NULL && json != NULL) {
-                        mcp_json_destroy(json);
-                        free(json);
-                        json = NULL; // Avoid double free later
-                    }
+                    // Parsed JSON tree is in thread-local arena, caller handles cleanup.
                 }
             } else {
                  // Invalid response: Must have 'result' or 'error'
+                 log_message(LOG_LEVEL_ERROR, "MCP message parse error: Response must have 'result' or 'error'.");
                  message->type = MCP_MESSAGE_TYPE_INVALID;
             }
+        } else { // Invalid ID type
+             log_message(LOG_LEVEL_ERROR, "MCP message parse error: Response 'id' is not a number.");
+             message->type = MCP_MESSAGE_TYPE_INVALID;
         }
+    } else { // Not a request, notification, or response
+        log_message(LOG_LEVEL_ERROR, "MCP message parse error: Message is not a valid request, response, or notification.");
+        message->type = MCP_MESSAGE_TYPE_INVALID;
     }
 
-    // Don't destroy json here if arena was used, as it's managed by the arena.
-    // If arena is NULL, mcp_json_destroy should be called, but the current
-    // destroy logic assumes malloc for the node itself, which is incorrect if
-    // arena was NULL but parsing succeeded.
-    // For simplicity with arena: let the caller manage the arena's lifetime.
-    // If arena was NULL and parsing succeeded but message construction failed,
-    // the 'json' pointer would have been set to NULL by the LEAK FIX blocks above.
-    // If parsing failed initially, json is NULL.
-    // If parsing succeeded and message construction succeeded, we still need to clean up.
-    if (arena == NULL && json != NULL) {
-         mcp_json_destroy(json); // Free internal mallocs
-         free(json);             // Free the node itself
-    }
-    // If arena was used, the parsed 'json' tree lives in the arena and will be
-    // cleaned up when the arena is reset or destroyed by the caller.
+    // Parsed JSON tree ('json') lives in the thread-local arena.
+    // The caller is responsible for calling mcp_arena_reset_current_thread()
+    // or mcp_arena_destroy_current_thread() eventually.
     PROFILE_END("mcp_json_parse_message");
 
     return parse_status;
 }
 
-// Stringify message uses the object_create/string_create functions which now
-// require an arena. Since we don't have one here, we pass NULL, forcing malloc.
+// Stringify message uses the _create and _parse functions which now use the
+// thread-local arena implicitly for temporary node creation during stringification.
+// The final output string is still allocated with malloc.
 char* mcp_json_stringify_message(const mcp_message_t* message) {
     if (message == NULL) {
         return NULL;
     }
     PROFILE_START("mcp_json_stringify_message");
-    // Pass NULL arena, forcing malloc for nodes
-    mcp_json_t* json = mcp_json_object_create(NULL);
+    // Create the root JSON object using the thread-local arena
+    mcp_json_t* json = mcp_json_object_create();
     if (json == NULL) {
         PROFILE_END("mcp_json_stringify_message"); // End profile on error
+        log_message(LOG_LEVEL_ERROR, "Failed to create root JSON object for stringify.");
         return NULL;
     }
 
-    char* final_json_string = NULL; // Store result here
+    char* final_json_string = NULL; // Store final malloc'd string here
 
     switch (message->type) {
         case MCP_MESSAGE_TYPE_REQUEST: {
-            mcp_json_t* id_node = mcp_json_number_create(NULL, (double)message->request.id);
-            mcp_json_t* method_node = mcp_json_string_create(NULL, message->request.method);
-            mcp_json_t* params_node = (message->request.params != NULL) ? mcp_json_parse(NULL, message->request.params) : NULL;
+            // Create nodes using thread-local arena (calls already updated)
+            mcp_json_t* id_node = mcp_json_number_create((double)message->request.id);
+            mcp_json_t* method_node = mcp_json_string_create(message->request.method);
+            // Parse params string (if exists) using thread-local arena (call needs update)
+            mcp_json_t* params_node = (message->request.params != NULL) ? mcp_json_parse(message->request.params) : NULL; // Corrected call
 
             if (id_node && method_node && (message->request.params == NULL || params_node)) {
-                mcp_json_object_set_property(json, "id", id_node);
-                mcp_json_object_set_property(json, "method", method_node);
+                mcp_json_object_set_property(json, "id", id_node); // table_set uses malloc for entry/key
+                mcp_json_object_set_property(json, "method", method_node); // table_set uses malloc for entry/key
                 if (params_node) {
-                    mcp_json_object_set_property(json, "params", params_node);
+                    mcp_json_object_set_property(json, "params", params_node); // table_set uses malloc for entry/key
                 }
-                final_json_string = mcp_json_stringify(json);
+                final_json_string = mcp_json_stringify(json); // Stringify uses malloc for output buffer
             } else {
-                // Cleanup nodes if creation or parsing failed
-                mcp_json_destroy(id_node);
-                mcp_json_destroy(method_node);
-                mcp_json_destroy(params_node);
+                log_message(LOG_LEVEL_ERROR, "Failed to create/parse nodes for stringifying request.");
+                // Nodes are in thread-local arena, no manual destroy needed here.
             }
             break;
         }
         case MCP_MESSAGE_TYPE_RESPONSE: {
-            mcp_json_t* id_node = mcp_json_number_create(NULL, (double)message->response.id);
+            // Create nodes using thread-local arena (calls already updated)
+            mcp_json_t* id_node = mcp_json_number_create((double)message->response.id);
             if (!id_node) break; // Failed to create ID node
-            mcp_json_object_set_property(json, "id", id_node);
+            mcp_json_object_set_property(json, "id", id_node); // table_set uses malloc
 
             if (message->response.error_code != MCP_ERROR_NONE) {
-                mcp_json_t* error_obj = mcp_json_object_create(NULL);
-                mcp_json_t* code_node = mcp_json_number_create(NULL, (double)message->response.error_code);
-                mcp_json_t* msg_node = (message->response.error_message != NULL) ? mcp_json_string_create(NULL, message->response.error_message) : NULL;
+                mcp_json_t* error_obj = mcp_json_object_create(); // Uses arena
+                mcp_json_t* code_node = mcp_json_number_create((double)message->response.error_code); // Uses arena
+                mcp_json_t* msg_node = (message->response.error_message != NULL) ? mcp_json_string_create(message->response.error_message) : NULL; // Uses arena
 
                 if (error_obj && code_node && (message->response.error_message == NULL || msg_node)) {
-                    mcp_json_object_set_property(error_obj, "code", code_node);
+                    mcp_json_object_set_property(error_obj, "code", code_node); // table_set uses malloc
                     if (msg_node) {
-                        mcp_json_object_set_property(error_obj, "message", msg_node);
+                        mcp_json_object_set_property(error_obj, "message", msg_node); // table_set uses malloc
                     }
-                    mcp_json_object_set_property(json, "error", error_obj);
-                    final_json_string = mcp_json_stringify(json);
+                    mcp_json_object_set_property(json, "error", error_obj); // table_set uses malloc
+                    final_json_string = mcp_json_stringify(json); // Stringify uses malloc
                 } else {
-                    mcp_json_destroy(error_obj);
-                    mcp_json_destroy(code_node);
-                    mcp_json_destroy(msg_node);
+                     log_message(LOG_LEVEL_ERROR, "Failed to create nodes for stringifying error response.");
+                    // Nodes are in thread-local arena.
                 }
             } else if (message->response.result != NULL) {
-                mcp_json_t* result_node = mcp_json_parse(NULL, message->response.result);
+                // Parse result string using thread-local arena (call needs update)
+                mcp_json_t* result_node = mcp_json_parse(message->response.result); // Corrected call
                 if (result_node) {
-                    mcp_json_object_set_property(json, "result", result_node);
-                    final_json_string = mcp_json_stringify(json);
+                    mcp_json_object_set_property(json, "result", result_node); // table_set uses malloc
+                    final_json_string = mcp_json_stringify(json); // Stringify uses malloc
+                } else {
+                     log_message(LOG_LEVEL_ERROR, "Failed to parse result string for stringifying response.");
                 }
             } else { // Null result
-                mcp_json_t* result_node = mcp_json_null_create(NULL);
+                mcp_json_t* result_node = mcp_json_null_create(); // Uses arena
                  if (result_node) {
-                    mcp_json_object_set_property(json, "result", result_node);
-                    final_json_string = mcp_json_stringify(json);
+                    mcp_json_object_set_property(json, "result", result_node); // table_set uses malloc
+                    final_json_string = mcp_json_stringify(json); // Stringify uses malloc
+                 } else {
+                      log_message(LOG_LEVEL_ERROR, "Failed to create null result node for stringifying response.");
                 }
             }
             break;
         }
         case MCP_MESSAGE_TYPE_NOTIFICATION: {
-             mcp_json_t* method_node = mcp_json_string_create(NULL, message->notification.method);
-             mcp_json_t* params_node = (message->notification.params != NULL) ? mcp_json_parse(NULL, message->notification.params) : NULL;
+             // Create nodes using thread-local arena (calls already updated)
+             mcp_json_t* method_node = mcp_json_string_create(message->notification.method);
+             // Parse params string (if exists) using thread-local arena (call needs update)
+             mcp_json_t* params_node = (message->notification.params != NULL) ? mcp_json_parse(message->notification.params) : NULL; // Corrected call
 
              if (method_node && (message->notification.params == NULL || params_node)) {
-                 mcp_json_object_set_property(json, "method", method_node);
+                 mcp_json_object_set_property(json, "method", method_node); // table_set uses malloc
                  if (params_node) {
-                     mcp_json_object_set_property(json, "params", params_node);
+                     mcp_json_object_set_property(json, "params", params_node); // table_set uses malloc
                  }
-                 final_json_string = mcp_json_stringify(json);
+                 final_json_string = mcp_json_stringify(json); // Stringify uses malloc
              } else {
-                 mcp_json_destroy(method_node);
-                 mcp_json_destroy(params_node);
+                  log_message(LOG_LEVEL_ERROR, "Failed to create/parse nodes for stringifying notification.");
+                 // Nodes are in thread-local arena.
              }
              break;
         }
@@ -1296,9 +1315,11 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
             break;
     }
 
-    mcp_json_destroy(json); // Destroy the temporary JSON structure
+    // Temporary JSON structure 'json' and its sub-nodes were allocated in the
+    // thread-local arena. They will be cleaned up when the caller resets or
+    // destroys the thread's arena. We don't call mcp_json_destroy on 'json' here.
     PROFILE_END("mcp_json_stringify_message");
-    return final_json_string; // Return the malloc'd string
+    return final_json_string; // Return the malloc'd final string
 }
 
 // --- Security Enhancement Functions (Placeholders) ---

@@ -9,36 +9,16 @@
 // Define a test group runner function
 void run_mcp_json_tests(void);
 
-// --- Test Globals / Setup / Teardown ---
-
-static mcp_arena_t test_arena;
-
-// Setup function: Called before each test in this file
-void setUp_json(void) {
-    mcp_arena_init(&test_arena, 0); // Initialize arena with default size
-}
-
-// Teardown function: Called after each test in this file
-void tearDown_json(void) {
-    mcp_arena_destroy(&test_arena); // Clean up arena
-}
-
 // --- Test Cases ---
 
 // Test NULL creation
 void test_json_create_null(void) {
-    // Test with malloc
-    mcp_json_t* json_malloc = mcp_json_null_create(NULL);
-    TEST_ASSERT_NOT_NULL(json_malloc);
-    TEST_ASSERT_EQUAL(MCP_JSON_NULL, mcp_json_get_type(json_malloc));
-    mcp_json_destroy(json_malloc); // Clean up internal (none for null)
-    free(json_malloc);             // Clean up node
-
-    // Test with arena
-    mcp_json_t* json_arena = mcp_json_null_create(&test_arena);
-    TEST_ASSERT_NOT_NULL(json_arena);
-    TEST_ASSERT_EQUAL(MCP_JSON_NULL, mcp_json_get_type(json_arena));
-    // No destroy needed for arena version, teardown handles it
+    // Test creation (now always uses thread-local arena)
+    mcp_json_t* json_node = mcp_json_null_create();
+    TEST_ASSERT_NOT_NULL(json_node);
+    TEST_ASSERT_EQUAL(MCP_JSON_NULL, mcp_json_get_type(json_node));
+    // Cleanup thread-local arena
+    mcp_arena_destroy_current_thread();
 }
 
 // Test Boolean creation
@@ -47,20 +27,21 @@ void test_json_create_boolean(void) {
     bool val_false = false;
     bool out_val;
 
-    // Test true with malloc
-    mcp_json_t* json_true_malloc = mcp_json_boolean_create(NULL, val_true);
-    TEST_ASSERT_NOT_NULL(json_true_malloc);
-    TEST_ASSERT_EQUAL(MCP_JSON_BOOLEAN, mcp_json_get_type(json_true_malloc));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_boolean(json_true_malloc, &out_val));
+    // Test true (uses thread-local arena)
+    mcp_json_t* json_true = mcp_json_boolean_create(val_true);
+    TEST_ASSERT_NOT_NULL(json_true);
+    TEST_ASSERT_EQUAL(MCP_JSON_BOOLEAN, mcp_json_get_type(json_true));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_boolean(json_true, &out_val));
     TEST_ASSERT_TRUE(out_val);
-    mcp_json_destroy(json_true_malloc); free(json_true_malloc);
+    mcp_arena_destroy_current_thread(); // Clean up arena
 
-    // Test false with arena
-    mcp_json_t* json_false_arena = mcp_json_boolean_create(&test_arena, val_false);
-    TEST_ASSERT_NOT_NULL(json_false_arena);
-    TEST_ASSERT_EQUAL(MCP_JSON_BOOLEAN, mcp_json_get_type(json_false_arena));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_boolean(json_false_arena, &out_val));
+    // Test false (uses thread-local arena)
+    mcp_json_t* json_false = mcp_json_boolean_create(val_false);
+    TEST_ASSERT_NOT_NULL(json_false);
+    TEST_ASSERT_EQUAL(MCP_JSON_BOOLEAN, mcp_json_get_type(json_false));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_boolean(json_false, &out_val));
     TEST_ASSERT_FALSE(out_val);
+    mcp_arena_destroy_current_thread(); // Clean up arena
 }
 
 // Test Number creation
@@ -69,20 +50,21 @@ void test_json_create_number(void) {
     double val2 = -987;
     double out_val;
 
-    // Test positive double with malloc
-    mcp_json_t* json1_malloc = mcp_json_number_create(NULL, val1);
-    TEST_ASSERT_NOT_NULL(json1_malloc);
-    TEST_ASSERT_EQUAL(MCP_JSON_NUMBER, mcp_json_get_type(json1_malloc));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_number(json1_malloc, &out_val));
+    // Test positive double (uses thread-local arena)
+    mcp_json_t* json1 = mcp_json_number_create(val1);
+    TEST_ASSERT_NOT_NULL(json1);
+    TEST_ASSERT_EQUAL(MCP_JSON_NUMBER, mcp_json_get_type(json1));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_number(json1, &out_val));
     TEST_ASSERT_EQUAL_DOUBLE(val1, out_val);
-    mcp_json_destroy(json1_malloc); free(json1_malloc);
+    mcp_arena_destroy_current_thread(); // Clean up arena
 
-    // Test negative integer with arena
-    mcp_json_t* json2_arena = mcp_json_number_create(&test_arena, val2);
-    TEST_ASSERT_NOT_NULL(json2_arena);
-    TEST_ASSERT_EQUAL(MCP_JSON_NUMBER, mcp_json_get_type(json2_arena));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_number(json2_arena, &out_val));
+    // Test negative integer (uses thread-local arena)
+    mcp_json_t* json2 = mcp_json_number_create(val2);
+    TEST_ASSERT_NOT_NULL(json2);
+    TEST_ASSERT_EQUAL(MCP_JSON_NUMBER, mcp_json_get_type(json2));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_number(json2, &out_val));
     TEST_ASSERT_EQUAL_DOUBLE(val2, out_val);
+    mcp_arena_destroy_current_thread(); // Clean up arena
 }
 
 // Test String creation
@@ -91,91 +73,81 @@ void test_json_create_string(void) {
     const char* val2 = "";
     const char* out_val;
 
-    // Test normal string with malloc
-    mcp_json_t* json1_malloc = mcp_json_string_create(NULL, val1);
-    TEST_ASSERT_NOT_NULL(json1_malloc);
-    TEST_ASSERT_EQUAL(MCP_JSON_STRING, mcp_json_get_type(json1_malloc));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_string(json1_malloc, &out_val));
+    // Test normal string (uses thread-local arena)
+    mcp_json_t* json1 = mcp_json_string_create(val1);
+    TEST_ASSERT_NOT_NULL(json1);
+    TEST_ASSERT_EQUAL(MCP_JSON_STRING, mcp_json_get_type(json1));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_string(json1, &out_val));
     TEST_ASSERT_EQUAL_STRING(val1, out_val);
-    mcp_json_destroy(json1_malloc); free(json1_malloc); // Frees internal strdup + node
+    mcp_json_destroy(json1); // Free internal strdup
+    mcp_arena_destroy_current_thread(); // Clean up arena
 
-    // Test empty string with arena
-    mcp_json_t* json2_arena = mcp_json_string_create(&test_arena, val2);
-    TEST_ASSERT_NOT_NULL(json2_arena);
-    TEST_ASSERT_EQUAL(MCP_JSON_STRING, mcp_json_get_type(json2_arena));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_string(json2_arena, &out_val));
+    // Test empty string (uses thread-local arena)
+    mcp_json_t* json2 = mcp_json_string_create(val2);
+    TEST_ASSERT_NOT_NULL(json2);
+    TEST_ASSERT_EQUAL(MCP_JSON_STRING, mcp_json_get_type(json2));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_get_string(json2, &out_val));
     TEST_ASSERT_EQUAL_STRING(val2, out_val);
-    mcp_json_destroy(json2_arena); // Call destroy to free internal string
+    mcp_json_destroy(json2); // Free internal strdup
+    mcp_arena_destroy_current_thread(); // Clean up arena
 
      // Test NULL input
-    mcp_json_t* json_null = mcp_json_string_create(&test_arena, NULL);
+    mcp_json_t* json_null = mcp_json_string_create(NULL);
     TEST_ASSERT_NULL(json_null);
+    // No arena cleanup needed if creation failed
 }
 
 // Test Array creation
 void test_json_create_array(void) {
-     // Test with malloc
-    mcp_json_t* json_malloc = mcp_json_array_create(NULL);
-    TEST_ASSERT_NOT_NULL(json_malloc);
-    TEST_ASSERT_EQUAL(MCP_JSON_ARRAY, mcp_json_get_type(json_malloc));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_get_size(json_malloc));
-    mcp_json_destroy(json_malloc); free(json_malloc);
-
-    // Test with arena
-    mcp_json_t* json_arena = mcp_json_array_create(&test_arena);
-    TEST_ASSERT_NOT_NULL(json_arena);
-    TEST_ASSERT_EQUAL(MCP_JSON_ARRAY, mcp_json_get_type(json_arena));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_get_size(json_arena));
+    // Test creation (uses thread-local arena)
+    mcp_json_t* json_node = mcp_json_array_create();
+    TEST_ASSERT_NOT_NULL(json_node);
+    TEST_ASSERT_EQUAL(MCP_JSON_ARRAY, mcp_json_get_type(json_node));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_get_size(json_node));
+    mcp_json_destroy(json_node); // Clean up internal (none for empty array)
+    mcp_arena_destroy_current_thread(); // Clean up arena
 }
 
 // Test Object creation
 void test_json_create_object(void) {
     size_t count = 99; // Initialize to non-zero
-    // Test with malloc
-    mcp_json_t* json_malloc = mcp_json_object_create(NULL);
-    TEST_ASSERT_NOT_NULL(json_malloc);
-    TEST_ASSERT_EQUAL(MCP_JSON_OBJECT, mcp_json_get_type(json_malloc));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_get_property_names(json_malloc, NULL, &count));
+    // Test creation (uses thread-local arena)
+    mcp_json_t* json_node = mcp_json_object_create();
+    TEST_ASSERT_NOT_NULL(json_node);
+    TEST_ASSERT_EQUAL(MCP_JSON_OBJECT, mcp_json_get_type(json_node));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_get_property_names(json_node, NULL, &count));
     TEST_ASSERT_EQUAL_UINT(0, count);
-    mcp_json_destroy(json_malloc); free(json_malloc);
-
-    // Test with arena
-    mcp_json_t* json_arena = mcp_json_object_create(&test_arena);
-    TEST_ASSERT_NOT_NULL(json_arena);
-    TEST_ASSERT_EQUAL(MCP_JSON_OBJECT, mcp_json_get_type(json_arena));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_get_property_names(json_arena, NULL, &count));
-    TEST_ASSERT_EQUAL_UINT(0, count);
+    mcp_json_destroy(json_node); // Clean up internal hash table
+    mcp_arena_destroy_current_thread(); // Clean up arena
 }
 
 // Test Array Operations
 void test_json_array_operations(void) {
-    mcp_json_t* arr_malloc = mcp_json_array_create(NULL);
-    mcp_json_t* arr_arena = mcp_json_array_create(&test_arena);
-    mcp_json_t* item1 = mcp_json_number_create(NULL, 1);
-    mcp_json_t* item2 = mcp_json_string_create(NULL, "two");
-    mcp_json_t* item3 = mcp_json_boolean_create(&test_arena, true); // Mix allocators
+    mcp_json_t* arr = mcp_json_array_create(); // Uses TLS arena
+    mcp_json_t* item1 = mcp_json_number_create(1); // Uses TLS arena
+    mcp_json_t* item2 = mcp_json_string_create("two"); // Uses TLS arena (node), malloc (string)
+    mcp_json_t* item3 = mcp_json_boolean_create(true); // Uses TLS arena
 
-    TEST_ASSERT_NOT_NULL(arr_malloc);
-    TEST_ASSERT_NOT_NULL(arr_arena);
+    TEST_ASSERT_NOT_NULL(arr);
     TEST_ASSERT_NOT_NULL(item1);
     TEST_ASSERT_NOT_NULL(item2);
     TEST_ASSERT_NOT_NULL(item3);
 
     // Test Add Item
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr_malloc, item1));
-    TEST_ASSERT_EQUAL_INT(1, mcp_json_array_get_size(arr_malloc));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr, item1));
+    TEST_ASSERT_EQUAL_INT(1, mcp_json_array_get_size(arr));
 
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr_malloc, item2));
-    TEST_ASSERT_EQUAL_INT(2, mcp_json_array_get_size(arr_malloc));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr, item2));
+    TEST_ASSERT_EQUAL_INT(2, mcp_json_array_get_size(arr));
 
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr_arena, item3));
-    TEST_ASSERT_EQUAL_INT(1, mcp_json_array_get_size(arr_arena));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr, item3));
+    TEST_ASSERT_EQUAL_INT(3, mcp_json_array_get_size(arr));
 
     // Test Get Item
-    mcp_json_t* retrieved1 = mcp_json_array_get_item(arr_malloc, 0);
-    mcp_json_t* retrieved2 = mcp_json_array_get_item(arr_malloc, 1);
-    mcp_json_t* retrieved3 = mcp_json_array_get_item(arr_arena, 0);
-    mcp_json_t* retrieved_invalid = mcp_json_array_get_item(arr_malloc, 2); // Out of bounds
+    mcp_json_t* retrieved1 = mcp_json_array_get_item(arr, 0);
+    mcp_json_t* retrieved2 = mcp_json_array_get_item(arr, 1);
+    mcp_json_t* retrieved3 = mcp_json_array_get_item(arr, 2);
+    mcp_json_t* retrieved_invalid = mcp_json_array_get_item(arr, 3); // Out of bounds
 
     TEST_ASSERT_EQUAL_PTR(item1, retrieved1);
     TEST_ASSERT_EQUAL_PTR(item2, retrieved2);
@@ -193,105 +165,98 @@ void test_json_array_operations(void) {
      TEST_ASSERT_EQUAL_INT(0, mcp_json_get_boolean(retrieved3, &bool_val));
     TEST_ASSERT_TRUE(bool_val);
 
-
-    // Cleanup (important: destroy assumes malloc for items added)
-    mcp_json_destroy(arr_malloc); free(arr_malloc);
-    // For arr_arena, items were malloc'd, so destroy is needed before arena cleanup
-    mcp_arena_reset(&test_arena); // Reset arena first
-    arr_arena = mcp_json_array_create(&test_arena);
-    item1 = mcp_json_number_create(&test_arena, 1);
-    item2 = mcp_json_string_create(&test_arena, "two_arena"); // Use arena, but string inside is still malloc
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr_arena, item1));
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_array_add_item(arr_arena, item2));
-    mcp_json_destroy(arr_arena); // Call this to free internal mallocs (like the string in item2)
+    // Cleanup
+    mcp_json_destroy(arr); // Frees internal mallocs (string in item2, array backing store)
+    mcp_arena_destroy_current_thread(); // Frees nodes (arr, item1, item2, item3)
 }
 
 // Test Object Operations (Hash Table)
 void test_json_object_operations(void) {
-    mcp_json_t* obj_malloc = mcp_json_object_create(NULL);
-    mcp_json_t* obj_arena = mcp_json_object_create(&test_arena);
+    mcp_json_t* obj = mcp_json_object_create(); // Uses TLS arena
 
-    // Create some values (mix allocators)
-    mcp_json_t* val_num = mcp_json_number_create(NULL, 100);
-    mcp_json_t* val_str = mcp_json_string_create(NULL, "value");
-    mcp_json_t* val_bool = mcp_json_boolean_create(&test_arena, false);
-    mcp_json_t* val_null = mcp_json_null_create(&test_arena);
-    mcp_json_t* val_arr = mcp_json_array_create(NULL); // Empty array
+    // Create some values (all use TLS arena for nodes)
+    mcp_json_t* val_num = mcp_json_number_create(100);
+    mcp_json_t* val_str = mcp_json_string_create("value"); // Internal string malloc'd
+    mcp_json_t* val_bool = mcp_json_boolean_create(false);
+    mcp_json_t* val_null = mcp_json_null_create();
+    mcp_json_t* val_arr = mcp_json_array_create(); // Empty array
 
-    TEST_ASSERT_NOT_NULL(obj_malloc);
-    TEST_ASSERT_NOT_NULL(obj_arena);
+    TEST_ASSERT_NOT_NULL(obj);
     TEST_ASSERT_NOT_NULL(val_num);
     TEST_ASSERT_NOT_NULL(val_str);
     TEST_ASSERT_NOT_NULL(val_bool);
     TEST_ASSERT_NOT_NULL(val_null);
     TEST_ASSERT_NOT_NULL(val_arr);
 
-    // Test Set/Has/Get (malloc object)
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj_malloc, "key1", val_num));
-    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj_malloc, "key1"));
-    TEST_ASSERT_FALSE(mcp_json_object_has_property(obj_malloc, "key_missing"));
-    TEST_ASSERT_EQUAL_PTR(val_num, mcp_json_object_get_property(obj_malloc, "key1"));
-    TEST_ASSERT_NULL(mcp_json_object_get_property(obj_malloc, "key_missing"));
+    // Test Set/Has/Get
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj, "key1", val_num));
+    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj, "key1"));
+    TEST_ASSERT_FALSE(mcp_json_object_has_property(obj, "key_missing"));
+    TEST_ASSERT_EQUAL_PTR(val_num, mcp_json_object_get_property(obj, "key1"));
+    TEST_ASSERT_NULL(mcp_json_object_get_property(obj, "key_missing"));
 
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj_malloc, "key2", val_str));
-    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj_malloc, "key2"));
-    TEST_ASSERT_EQUAL_PTR(val_str, mcp_json_object_get_property(obj_malloc, "key2"));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj, "key2", val_str));
+    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj, "key2"));
+    TEST_ASSERT_EQUAL_PTR(val_str, mcp_json_object_get_property(obj, "key2"));
 
-    // Test Update (malloc object)
-    mcp_json_t* val_num_updated = mcp_json_number_create(NULL, 200);
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj_malloc, "key1", val_num_updated)); // val_num should be destroyed internally
-    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj_malloc, "key1"));
-    TEST_ASSERT_EQUAL_PTR(val_num_updated, mcp_json_object_get_property(obj_malloc, "key1"));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj, "boolKey", val_bool));
+    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj, "boolKey"));
+    TEST_ASSERT_EQUAL_PTR(val_bool, mcp_json_object_get_property(obj, "boolKey"));
 
-    // Test Set/Has/Get (arena object)
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj_arena, "boolKey", val_bool));
-    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj_arena, "boolKey"));
-    TEST_ASSERT_EQUAL_PTR(val_bool, mcp_json_object_get_property(obj_arena, "boolKey"));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj, "nullKey", val_null));
+    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj, "nullKey"));
+    TEST_ASSERT_EQUAL_PTR(val_null, mcp_json_object_get_property(obj, "nullKey"));
 
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj_arena, "nullKey", val_null));
-    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj_arena, "nullKey"));
-    TEST_ASSERT_EQUAL_PTR(val_null, mcp_json_object_get_property(obj_arena, "nullKey"));
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj, "arrKey", val_arr));
+    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj, "arrKey"));
+    TEST_ASSERT_EQUAL_PTR(val_arr, mcp_json_object_get_property(obj, "arrKey"));
 
-    // Test Get Names (malloc object)
+    // Test Update
+    mcp_json_t* val_num_updated = mcp_json_number_create(200); // Uses TLS arena
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_set_property(obj, "key1", val_num_updated)); // val_num should be destroyed internally
+    TEST_ASSERT_TRUE(mcp_json_object_has_property(obj, "key1"));
+    TEST_ASSERT_EQUAL_PTR(val_num_updated, mcp_json_object_get_property(obj, "key1"));
+
+    // Test Get Names
     char** names = NULL;
     size_t count = 0;
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_get_property_names(obj_malloc, &names, &count));
-    TEST_ASSERT_EQUAL_UINT(2, count);
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_get_property_names(obj, &names, &count));
+    TEST_ASSERT_EQUAL_UINT(5, count); // key1, key2, boolKey, nullKey, arrKey
     TEST_ASSERT_NOT_NULL(names);
     // Note: Order is not guaranteed with hash table
-    bool found_key1 = false, found_key2 = false;
-    if (names) { // Add check for static analysis
+    int found_mask = 0;
+    if (names) {
         for(size_t i=0; i<count; ++i) {
-            if (names[i] != NULL) { // Check individual name pointer
-                if (strcmp(names[i], "key1") == 0) found_key1 = true;
-                if (strcmp(names[i], "key2") == 0) found_key2 = true;
+            if (names[i] != NULL) {
+                if (strcmp(names[i], "key1") == 0) found_mask |= 1;
+                if (strcmp(names[i], "key2") == 0) found_mask |= 2;
+                if (strcmp(names[i], "boolKey") == 0) found_mask |= 4;
+                if (strcmp(names[i], "nullKey") == 0) found_mask |= 8;
+                if (strcmp(names[i], "arrKey") == 0) found_mask |= 16;
                 free(names[i]); // Free names allocated by get_property_names
             }
         }
         free(names);
     }
-    TEST_ASSERT_TRUE(found_key1);
-    TEST_ASSERT_TRUE(found_key2);
+    TEST_ASSERT_EQUAL_INT(0x1F, found_mask); // Check all keys were found
 
-    // Test Delete (malloc object)
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_delete_property(obj_malloc, "key1")); // val_num_updated destroyed internally
-    TEST_ASSERT_FALSE(mcp_json_object_has_property(obj_malloc, "key1"));
-    TEST_ASSERT_EQUAL_INT(-1, mcp_json_object_delete_property(obj_malloc, "key_missing")); // Delete non-existent
+    // Test Delete
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_delete_property(obj, "key1")); // val_num_updated destroyed internally
+    TEST_ASSERT_FALSE(mcp_json_object_has_property(obj, "key1"));
+    TEST_ASSERT_EQUAL_INT(-1, mcp_json_object_delete_property(obj, "key_missing")); // Delete non-existent
 
-    // Verify remaining property
-    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_get_property_names(obj_malloc, &names, &count));
-    TEST_ASSERT_EQUAL_UINT(1, count);
-    TEST_ASSERT_NOT_NULL(names);
-    if (names && names[0]) { // Add check for static analysis
-        TEST_ASSERT_EQUAL_STRING("key2", names[0]);
-        free(names[0]);
+    // Verify remaining properties
+    TEST_ASSERT_EQUAL_INT(0, mcp_json_object_get_property_names(obj, &names, &count));
+    TEST_ASSERT_EQUAL_UINT(4, count);
+    // Free names array
+    if (names) {
+        for(size_t i=0; i<count; ++i) free(names[i]);
+        free(names);
     }
-    free(names);
 
     // Cleanup
-    mcp_json_destroy(obj_malloc); free(obj_malloc); // Frees internal val_str + node
-    mcp_json_destroy(obj_arena);
-    mcp_json_destroy(val_arr); free(val_arr); // Clean up unused array
+    mcp_json_destroy(obj); // Frees internal mallocs (string in val_str, hash table stuff)
+    mcp_arena_destroy_current_thread(); // Frees all nodes (obj, val_*, etc.)
 }
 
 // Test JSON Parsing
@@ -302,53 +267,60 @@ void test_json_parse_basic_types(void) {
     const char* str_val;
 
     // Test Null
-    json = mcp_json_parse(&test_arena, "  null  ");
+    json = mcp_json_parse("  null  "); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_NULL, mcp_json_get_type(json));
+    mcp_arena_destroy_current_thread();
 
     // Test True
-    json = mcp_json_parse(&test_arena, "true");
+    json = mcp_json_parse("true"); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_BOOLEAN, mcp_json_get_type(json));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_get_boolean(json, &bool_val));
     TEST_ASSERT_TRUE(bool_val);
+    mcp_arena_destroy_current_thread();
 
     // Test False
-    json = mcp_json_parse(&test_arena, "false");
+    json = mcp_json_parse("false"); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_BOOLEAN, mcp_json_get_type(json));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_get_boolean(json, &bool_val));
     TEST_ASSERT_FALSE(bool_val);
+    mcp_arena_destroy_current_thread();
 
     // Test Integer
-    json = mcp_json_parse(&test_arena, "123");
+    json = mcp_json_parse("123"); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_NUMBER, mcp_json_get_type(json));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_get_number(json, &num_val));
     TEST_ASSERT_EQUAL_DOUBLE(123.0, num_val);
+    mcp_arena_destroy_current_thread();
 
     // Test Float
-    json = mcp_json_parse(&test_arena, "-45.67");
+    json = mcp_json_parse("-45.67"); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_NUMBER, mcp_json_get_type(json));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_get_number(json, &num_val));
     TEST_ASSERT_EQUAL_DOUBLE(-45.67, num_val);
+    mcp_arena_destroy_current_thread();
 
      // Test String
-    json = mcp_json_parse(&test_arena, "\"hello\\nworld\"");
+    json = mcp_json_parse("\"hello\\nworld\""); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_STRING, mcp_json_get_type(json));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_get_string(json, &str_val));
     TEST_ASSERT_EQUAL_STRING("hello\\nworld", str_val); // Note: parser doesn't unescape yet
     mcp_json_destroy(json); // Free internal string
+    mcp_arena_destroy_current_thread(); // Free node
 
     // Test Empty String
-    json = mcp_json_parse(&test_arena, "\"\"");
+    json = mcp_json_parse("\"\""); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_STRING, mcp_json_get_type(json));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_get_string(json, &str_val));
     TEST_ASSERT_EQUAL_STRING("", str_val);
     mcp_json_destroy(json); // Free internal string
+    mcp_arena_destroy_current_thread(); // Free node
 }
 
 void test_json_parse_structures(void) {
@@ -356,13 +328,14 @@ void test_json_parse_structures(void) {
     const char* json_str;
 
     // Test Empty Array
-    json = mcp_json_parse(&test_arena, "[]");
+    json = mcp_json_parse("[]"); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_ARRAY, mcp_json_get_type(json));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_array_get_size(json));
+    mcp_arena_destroy_current_thread();
 
     // Test Simple Array
-    json = mcp_json_parse(&test_arena, "[1, \"two\", true]");
+    json = mcp_json_parse("[1, \"two\", true]"); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_ARRAY, mcp_json_get_type(json));
     TEST_ASSERT_EQUAL_INT(3, mcp_json_array_get_size(json));
@@ -370,16 +343,18 @@ void test_json_parse_structures(void) {
     TEST_ASSERT_EQUAL(MCP_JSON_STRING, mcp_json_get_type(mcp_json_array_get_item(json, 1)));
     TEST_ASSERT_EQUAL(MCP_JSON_BOOLEAN, mcp_json_get_type(mcp_json_array_get_item(json, 2)));
     mcp_json_destroy(json); // Free internal string
+    mcp_arena_destroy_current_thread(); // Free nodes
 
     // Test Empty Object
-    json = mcp_json_parse(&test_arena, "{}");
+    json = mcp_json_parse("{}"); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_OBJECT, mcp_json_get_type(json));
     TEST_ASSERT_FALSE(mcp_json_object_has_property(json, "any"));
+    mcp_arena_destroy_current_thread();
 
     // Test Simple Object
     json_str = "{\"a\": 1, \"b\": \"bee\", \"c\": null}";
-    json = mcp_json_parse(&test_arena, json_str);
+    json = mcp_json_parse(json_str); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_OBJECT, mcp_json_get_type(json));
     TEST_ASSERT_TRUE(mcp_json_object_has_property(json, "a"));
@@ -389,10 +364,11 @@ void test_json_parse_structures(void) {
     TEST_ASSERT_EQUAL(MCP_JSON_STRING, mcp_json_get_type(mcp_json_object_get_property(json, "b")));
     TEST_ASSERT_EQUAL(MCP_JSON_NULL, mcp_json_get_type(mcp_json_object_get_property(json, "c")));
     mcp_json_destroy(json); // Free internal strings, hash table entries/names
+    mcp_arena_destroy_current_thread(); // Free nodes
 
     // Test Nested Structure
     json_str = "[{\"id\": 1, \"ok\": true}, {\"id\": 2, \"ok\": false}]";
-    json = mcp_json_parse(&test_arena, json_str);
+    json = mcp_json_parse(json_str); // Use TLS arena
     TEST_ASSERT_NOT_NULL(json);
     TEST_ASSERT_EQUAL(MCP_JSON_ARRAY, mcp_json_get_type(json));
     TEST_ASSERT_EQUAL_INT(2, mcp_json_array_get_size(json));
@@ -403,18 +379,19 @@ void test_json_parse_structures(void) {
     TEST_ASSERT_TRUE(mcp_json_object_has_property(obj1, "id"));
     TEST_ASSERT_TRUE(mcp_json_object_has_property(obj2, "ok"));
     mcp_json_destroy(json); // Free internal hash table stuff
+    mcp_arena_destroy_current_thread(); // Free nodes
 }
 
 void test_json_parse_invalid(void) {
-    TEST_ASSERT_NULL(mcp_json_parse(&test_arena, ""));
-    TEST_ASSERT_NULL(mcp_json_parse(&test_arena, "[1, 2")); // Unterminated array
-    TEST_ASSERT_NULL(mcp_json_parse(&test_arena, "{\"a\": 1")); // Unterminated object
-    TEST_ASSERT_NULL(mcp_json_parse(&test_arena, "{\"a\": }")); // Missing value
-    TEST_ASSERT_NULL(mcp_json_parse(&test_arena, "{a: 1}")); // Unquoted key
-    TEST_ASSERT_NULL(mcp_json_parse(&test_arena, "[1, ]")); // Trailing comma in array
-    TEST_ASSERT_NULL(mcp_json_parse(&test_arena, "{\"a\":1,}")); // Trailing comma in object
-    TEST_ASSERT_NULL(mcp_json_parse(&test_arena, "123a")); // Trailing chars
-    TEST_ASSERT_NULL(mcp_json_parse(&test_arena, "\"hello")); // Unterminated string
+    TEST_ASSERT_NULL(mcp_json_parse("")); mcp_arena_destroy_current_thread();
+    TEST_ASSERT_NULL(mcp_json_parse("[1, 2")); mcp_arena_destroy_current_thread();
+    TEST_ASSERT_NULL(mcp_json_parse("{\"a\": 1")); mcp_arena_destroy_current_thread();
+    TEST_ASSERT_NULL(mcp_json_parse("{\"a\": }")); mcp_arena_destroy_current_thread();
+    TEST_ASSERT_NULL(mcp_json_parse("{a: 1}")); mcp_arena_destroy_current_thread();
+    TEST_ASSERT_NULL(mcp_json_parse("[1, ]")); mcp_arena_destroy_current_thread();
+    TEST_ASSERT_NULL(mcp_json_parse("{\"a\":1,}")); mcp_arena_destroy_current_thread();
+    TEST_ASSERT_NULL(mcp_json_parse("123a")); mcp_arena_destroy_current_thread();
+    TEST_ASSERT_NULL(mcp_json_parse("\"hello")); mcp_arena_destroy_current_thread();
 }
 
 // Test JSON Stringification
@@ -422,50 +399,50 @@ void test_json_stringify(void) {
     mcp_json_t* json;
     char* str = NULL;
 
-    // Test simple types (use malloc for easy cleanup)
-    json = mcp_json_null_create(NULL);
+    // Test simple types (use thread-local arena)
+    json = mcp_json_null_create();
     str = mcp_json_stringify(json);
     TEST_ASSERT_EQUAL_STRING("null", str);
-    free(str); mcp_json_destroy(json); free(json);
+    free(str); mcp_arena_destroy_current_thread();
 
-    json = mcp_json_boolean_create(NULL, true);
+    json = mcp_json_boolean_create(true);
     str = mcp_json_stringify(json);
     TEST_ASSERT_EQUAL_STRING("true", str);
-    free(str); mcp_json_destroy(json); free(json);
+    free(str); mcp_arena_destroy_current_thread();
 
-    json = mcp_json_number_create(NULL, -12.34);
+    json = mcp_json_number_create(-12.34);
     str = mcp_json_stringify(json);
     TEST_ASSERT_EQUAL_STRING("-12.34", str); // Precision might vary slightly
-    free(str); mcp_json_destroy(json); free(json);
+    free(str); mcp_arena_destroy_current_thread();
 
-    json = mcp_json_string_create(NULL, "ab\"c\\d\n");
+    json = mcp_json_string_create("ab\"c\\d\n");
     str = mcp_json_stringify(json);
     TEST_ASSERT_EQUAL_STRING("\"ab\\\"c\\\\d\\n\"", str); // Check escaping
-    free(str); mcp_json_destroy(json); free(json);
+    free(str); mcp_json_destroy(json); mcp_arena_destroy_current_thread();
 
     // Test empty array/object
-    json = mcp_json_array_create(NULL);
+    json = mcp_json_array_create();
     str = mcp_json_stringify(json);
     TEST_ASSERT_EQUAL_STRING("[]", str);
-    free(str); mcp_json_destroy(json); free(json);
+    free(str); mcp_json_destroy(json); mcp_arena_destroy_current_thread();
 
-    json = mcp_json_object_create(NULL);
+    json = mcp_json_object_create();
     str = mcp_json_stringify(json);
     TEST_ASSERT_EQUAL_STRING("{}", str);
-    free(str); mcp_json_destroy(json); free(json);
+    free(str); mcp_json_destroy(json); mcp_arena_destroy_current_thread();
 
     // Test simple array
-    json = mcp_json_array_create(NULL);
-    mcp_json_array_add_item(json, mcp_json_number_create(NULL, 1));
-    mcp_json_array_add_item(json, mcp_json_string_create(NULL, "two"));
+    json = mcp_json_array_create();
+    mcp_json_array_add_item(json, mcp_json_number_create(1));
+    mcp_json_array_add_item(json, mcp_json_string_create("two"));
     str = mcp_json_stringify(json);
     TEST_ASSERT_EQUAL_STRING("[1,\"two\"]", str);
-    free(str); mcp_json_destroy(json); free(json);
+    free(str); mcp_json_destroy(json); mcp_arena_destroy_current_thread();
 
     // Test simple object
-    json = mcp_json_object_create(NULL);
-    mcp_json_object_set_property(json, "a", mcp_json_number_create(NULL, 1));
-    mcp_json_object_set_property(json, "b", mcp_json_string_create(NULL, "bee"));
+    json = mcp_json_object_create();
+    mcp_json_object_set_property(json, "a", mcp_json_number_create(1));
+    mcp_json_object_set_property(json, "b", mcp_json_string_create("bee"));
     str = mcp_json_stringify(json);
     // Order not guaranteed by hash table, check both possibilities
     TEST_ASSERT_TRUE(strcmp(str, "{\"a\":1,\"b\":\"bee\"}") == 0 || strcmp(str, "{\"b\":\"bee\",\"a\":1}") == 0);
