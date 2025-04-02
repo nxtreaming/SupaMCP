@@ -6,74 +6,373 @@
 #include <time.h>
 #include <math.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <assert.h>
 
-// Placeholder for actual benchmark logic
+// Platform-specific includes for threads and sockets
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN // Exclude rarely-used stuff from Windows headers
+#include <winsock2.h> // MUST be included before windows.h
+#include <windows.h>
+#include <process.h> // For _beginthreadex
+#else
+#include <pthread.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <sys/time.h>
+#endif
+
+// Define SOCKET type if not defined (e.g., on POSIX)
+#ifndef _WIN32
+#ifndef SOCKET
+typedef int SOCKET;
+#endif
+#ifndef INVALID_SOCKET
+#define INVALID_SOCKET (-1)
+#endif
+#endif
+
+
+// --- Benchmark Implementation ---
+
+// Structure to pass arguments to each client thread
+typedef struct {
+    const mcp_benchmark_config_t* config;
+    size_t client_id;
+    size_t num_requests;
+    double* latencies; // Array to store latencies for this thread
+    size_t* success_count;
+    size_t* failure_count;
+    size_t* timeout_count;
+    // Add atomic counters if using C11 atomics or platform specifics
+} client_thread_args_t;
+
+// Structure to hold aggregated results from all threads
+typedef struct {
+    size_t total_success;
+    size_t total_failure;
+    size_t total_timeout;
+    double min_latency;
+    double max_latency;
+    double total_latency;
+    size_t total_requests_processed; // successful + failed + timeout
+} aggregated_results_t;
+
+
+// Forward declaration for the client thread function
+#ifdef _WIN32
+static unsigned __stdcall client_thread_func(void* arg);
+#else
+static void* client_thread_func(void* arg);
+#endif
+
+// Forward declaration for socket connection helper (assuming it exists elsewhere or define basic one)
+// For simplicity, let's assume a basic connect/close helper exists or is defined here.
+// If using connection pool, include mcp_connection_pool.h and use its functions.
+// #include "../include/mcp_connection_pool.h" // Example if using pool
+
+// Basic socket connection helper (replace with actual implementation or pool usage)
+// NOTE: This is a VERY basic simulation and doesn't use the real connection pool logic yet.
+static SOCKET connect_socket(const char* host, int port, int timeout_ms) {
+     // Simplified: Use a function similar to create_new_connection from pool example
+     // This is just a placeholder call, real implementation needed
+     (void)host; (void)port; (void)timeout_ms;
+     // Simulate connection attempt
+     #ifdef _WIN32
+        // usleep not standard on Windows, use Sleep
+        Sleep(5 + rand() % 10); // Simulate 5-15ms connection time
+     #else
+        usleep((5000 + rand() % 10000)); // Simulate 5-15ms connection time
+     #endif
+     // Simulate connection failure/timeout based on random chance for this placeholder
+     int outcome = rand() % 100;
+     if (outcome < 5) return INVALID_SOCKET; // 5% failure
+     // if (outcome < 8) return -2; // Simulate timeout (using a different code) - Not used here yet
+     return 1; // Return dummy valid socket
+}
+static void close_socket(SOCKET sock) {
+    (void)sock; // No-op for dummy socket
+}
+
+// Comparison function for qsort (sorting latencies for percentile calculation)
+static int compare_doubles(const void* a, const void* b) {
+    double da = *(const double*)a;
+    double db = *(const double*)b;
+    if (da < db) return -1;
+    if (da > db) return 1;
+    return 0;
+}
+
+// Helper function to get current time in milliseconds (if not already available)
+#ifndef get_current_time_ms 
+static long long get_current_time_ms() {
+#ifdef _WIN32
+    return (long long)GetTickCount64(); 
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return ((long long)tv.tv_sec * 1000) + (tv.tv_usec / 1000);
+#endif
+}
+#endif
+
+// --- Client Thread Function ---
+#ifdef _WIN32
+static unsigned __stdcall client_thread_func(void* arg) {
+#else
+static void* client_thread_func(void* arg) {
+#endif
+    client_thread_args_t* args = (client_thread_args_t*)arg;
+    const mcp_benchmark_config_t* config = args->config;
+    size_t success = 0;
+    size_t failure = 0;
+    size_t timeout = 0; // Placeholder for timeout tracking
+
+    // Seed random generator per thread if using random delays
+    srand((unsigned int)time(NULL) ^ (unsigned int)args->client_id); 
+
+    for (size_t i = 0; i < args->num_requests; ++i) {
+        long long req_start_time = get_current_time_ms();
+        
+        // Simulate performing a request (e.g., connect, send/recv, close)
+        // Using simplified connect/close for now
+        SOCKET sock = connect_socket(config->server_host, config->server_port, config->request_timeout_ms);
+        
+        long long req_end_time = get_current_time_ms();
+        double latency_ms = (double)(req_end_time - req_start_time);
+
+        if (sock != INVALID_SOCKET) {
+            // Simulate work & close
+            close_socket(sock); 
+            args->latencies[success] = latency_ms; // Store latency only on success
+            success++;
+        } else {
+            // Simple failure simulation for now
+            failure++; 
+            // TODO: Differentiate between connection failure and timeout
+        }
+
+        // Optional random delay between requests
+        if (config->random_delays && config->max_delay_ms > 0) {
+            int delay = config->min_delay_ms;
+            if (config->max_delay_ms > config->min_delay_ms) {
+                delay += rand() % (config->max_delay_ms - config->min_delay_ms + 1);
+            }
+            #ifdef _WIN32
+                Sleep(delay);
+            #else
+                usleep(delay * 1000);
+            #endif
+        }
+    }
+
+    // Store results back (using simple pointers, assumes no race condition after join)
+    *(args->success_count) = success;
+    *(args->failure_count) = failure;
+    *(args->timeout_count) = timeout; // Timeout tracking not implemented in this simple version
+
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+
+// --- Main Benchmark Function ---
 int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result_t* result) {
     if (!config || !result) {
-        // Use fprintf as logging might not be initialized
-        fprintf(stderr, "Error: mcp_run_benchmark received NULL arguments.\n"); 
+        log_message(LOG_LEVEL_ERROR, "mcp_run_benchmark received NULL arguments.");
+        return -1;
+    }
+    if (config->client_count == 0 || config->requests_per_client == 0) {
+         log_message(LOG_LEVEL_ERROR, "mcp_run_benchmark: client_count and requests_per_client must be > 0.");
         return -1;
     }
 
-    fprintf(stdout, "Info: Running benchmark: %s (Placeholder Implementation)\n", config->name);
-    fprintf(stdout, "Info:   Clients: %zu, Requests/Client: %zu\n", config->client_count, config->requests_per_client);
-    fprintf(stdout, "Info:   Server: %s:%d\n", config->server_host, config->server_port);
+    log_message(LOG_LEVEL_INFO, "Starting benchmark: %s", config->name);
+    log_message(LOG_LEVEL_INFO, "  Clients: %zu, Requests/Client: %zu", config->client_count, config->requests_per_client);
+    log_message(LOG_LEVEL_INFO, "  Server: %s:%d", config->server_host, config->server_port);
 
-    // --- Placeholder Implementation ---
-    // In a real implementation, this function would:
-    // 1. Set up client connections (potentially using mcp_client or a dedicated benchmark client).
-    // 2. Create threads/processes for each client.
-    // 3. Have each client send `requests_per_client` requests (resource or tool calls).
-    // 4. Record latency for each request.
-    // 5. Handle concurrency limits (`concurrent_requests`).
-    // 6. Implement random delays if `random_delays` is true.
-    // 7. Collect results (success/failure/timeout counts, latencies).
-    // 8. Calculate statistics (min, max, avg, percentiles, throughput).
-    
-    // Simulate some results for now
-    srand((unsigned int)time(NULL)); // Seed random number generator
-    memset(result, 0, sizeof(mcp_benchmark_result_t)); // Initialize results
+    memset(result, 0, sizeof(mcp_benchmark_result_t));
+    result->min_latency_ms = (double)INT_MAX; // Initialize min to max possible value
 
-    // Basic simulation assuming some work is done
-    result->min_latency_ms = 5.0 + (rand() % 1000) / 100.0; // More variance
-    result->max_latency_ms = 50.0 + (rand() % 5000) / 100.0;
-    if (result->min_latency_ms > result->max_latency_ms) { // Ensure min <= max
-         double temp = result->min_latency_ms;
-         result->min_latency_ms = result->max_latency_ms;
-         result->max_latency_ms = temp;
+    size_t total_requests_to_run = config->client_count * config->requests_per_client;
+    // Allocate space for all potential latencies (only successful ones will be stored contiguously later)
+    double* all_latencies = (double*)malloc(total_requests_to_run * sizeof(double)); 
+    if (!all_latencies) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for latency results.");
+        return -1;
     }
-    result->avg_latency_ms = (result->min_latency_ms + result->max_latency_ms) / 2.0 + (rand() % 1000 - 500) / 100.0;
-    if (result->avg_latency_ms < result->min_latency_ms) result->avg_latency_ms = result->min_latency_ms;
-    if (result->avg_latency_ms > result->max_latency_ms) result->avg_latency_ms = result->max_latency_ms;
-
-    result->p50_latency_ms = result->avg_latency_ms * (0.9 + (rand() % 20) / 100.0); // Closer to avg
-    result->p90_latency_ms = result->max_latency_ms * (0.8 + (rand() % 15) / 100.0);
-    result->p99_latency_ms = result->max_latency_ms * (0.9 + (rand() % 9) / 100.0);
     
-    // Ensure percentiles are ordered correctly and within bounds
-    if (result->p50_latency_ms < result->min_latency_ms) result->p50_latency_ms = result->min_latency_ms;
-    if (result->p90_latency_ms < result->p50_latency_ms) result->p90_latency_ms = result->p50_latency_ms;
-    if (result->p99_latency_ms < result->p90_latency_ms) result->p99_latency_ms = result->p90_latency_ms;
-    if (result->p50_latency_ms > result->max_latency_ms) result->p50_latency_ms = result->max_latency_ms;
-    if (result->p90_latency_ms > result->max_latency_ms) result->p90_latency_ms = result->max_latency_ms;
-    if (result->p99_latency_ms > result->max_latency_ms) result->p99_latency_ms = result->max_latency_ms;
+    aggregated_results_t aggregated = {0};
+    aggregated.min_latency = (double)INT_MAX; // Initialize min latency
 
+#ifdef _WIN32
+    HANDLE* threads = (HANDLE*)malloc(config->client_count * sizeof(HANDLE));
+#else
+    pthread_t* threads = (pthread_t*)malloc(config->client_count * sizeof(pthread_t));
+#endif
+    client_thread_args_t* thread_args = (client_thread_args_t*)malloc(config->client_count * sizeof(client_thread_args_t));
 
-    result->total_duration_s = (config->client_count * config->requests_per_client * result->avg_latency_ms / 1000.0) / (config->client_count * 0.8); // Rough estimate
-     if (result->total_duration_s < 0.1) result->total_duration_s = 0.1; // Minimum duration
+    if (!threads || !thread_args) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for threads or arguments.");
+        free(all_latencies);
+        free(threads); // threads might be NULL here, free(NULL) is safe
+        free(thread_args); // thread_args might be NULL here
+        return -1;
+    }
 
-    size_t total_requests = config->client_count * config->requests_per_client;
-    result->failed_requests = rand() % (total_requests / 20 + 1); // Small percentage fail
-    result->timeout_requests = rand() % (total_requests / 50 + 1); // Smaller percentage timeout
-    result->successful_requests = total_requests - result->failed_requests - result->timeout_requests;
-    if ((long long)result->successful_requests < 0) result->successful_requests = 0; // Ensure non-negative
+    // Seed random number generator once for the main thread (used by connect_socket placeholder)
+    srand((unsigned int)time(NULL)); 
 
-    result->requests_per_second = (result->total_duration_s > 0) ? (size_t)(result->successful_requests / result->total_duration_s) : 0;
+    long long benchmark_start_time = get_current_time_ms();
 
-    fprintf(stdout, "Info: Benchmark '%s' finished (placeholder).\n", config->name);
-    // --- End Placeholder ---
+    // --- Create and start client threads ---
+    for (size_t i = 0; i < config->client_count; ++i) {
+        thread_args[i].config = config;
+        thread_args[i].client_id = i;
+        thread_args[i].num_requests = config->requests_per_client;
+        // Assign a portion of the pre-allocated array to each thread
+        thread_args[i].latencies = all_latencies + (i * config->requests_per_client); 
+        thread_args[i].success_count = (size_t*)calloc(1, sizeof(size_t)); 
+        thread_args[i].failure_count = (size_t*)calloc(1, sizeof(size_t));
+        thread_args[i].timeout_count = (size_t*)calloc(1, sizeof(size_t));
 
-    return 0; // Placeholder success
+        if (!thread_args[i].success_count || !thread_args[i].failure_count || !thread_args[i].timeout_count) {
+             log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for thread counters.");
+             // TODO: Proper cleanup of already created threads/args
+             free(all_latencies); free(threads); free(thread_args); // Basic cleanup
+             return -1;
+        }
+
+#ifdef _WIN32
+        threads[i] = (HANDLE)_beginthreadex(NULL, 0, client_thread_func, &thread_args[i], 0, NULL);
+        if (threads[i] == 0) {
+            log_message(LOG_LEVEL_ERROR, "Failed to create client thread %zu: %d", i, errno); // errno might not be set correctly by _beginthreadex
+            // TODO: Proper cleanup
+             free(all_latencies); free(threads); free(thread_args); // Basic cleanup
+            return -1;
+        }
+#else
+        int rc = pthread_create(&threads[i], NULL, client_thread_func, &thread_args[i]);
+        if (rc) {
+            log_message(LOG_LEVEL_ERROR, "Failed to create client thread %zu: %s", i, strerror(rc));
+             // TODO: Proper cleanup
+             free(all_latencies); free(threads); free(thread_args); // Basic cleanup
+            return -1;
+        }
+#endif
+    }
+
+    // --- Wait for threads to complete and aggregate results ---
+    size_t current_latency_write_idx = 0; // Track where to write next successful latency
+    for (size_t i = 0; i < config->client_count; ++i) {
+#ifdef _WIN32
+        WaitForSingleObject(threads[i], INFINITE);
+        CloseHandle(threads[i]);
+#else
+        pthread_join(threads[i], NULL);
+#endif
+        // Aggregate results (simple sum, not atomic - safe because threads are joined)
+        aggregated.total_success += *thread_args[i].success_count;
+        aggregated.total_failure += *thread_args[i].failure_count;
+        aggregated.total_timeout += *thread_args[i].timeout_count;
+
+        // Aggregate latencies (find min/max, sum for average) and compact the array
+        size_t thread_success_count = *thread_args[i].success_count;
+        double* thread_latencies = thread_args[i].latencies; // Pointer to this thread's section
+        for(size_t j=0; j < thread_success_count; ++j) {
+            double latency = thread_latencies[j];
+            if (latency >= 0) { // Check for valid latency (should be >= 0)
+                 aggregated.total_latency += latency;
+                 if (latency < aggregated.min_latency) aggregated.min_latency = latency;
+                 if (latency > aggregated.max_latency) aggregated.max_latency = latency;
+                 // Compact successful latencies into the beginning of all_latencies
+                 if (current_latency_write_idx < total_requests_to_run) {
+                    all_latencies[current_latency_write_idx++] = latency;
+                 } else {
+                     // Should not happen if allocation was correct
+                     log_message(LOG_LEVEL_WARN, "Latency array overflow during aggregation.");
+                 }
+            }
+        }
+
+        // Free thread-specific counters
+        free(thread_args[i].success_count);
+        free(thread_args[i].failure_count);
+        free(thread_args[i].timeout_count);
+    }
+
+    long long benchmark_end_time = get_current_time_ms();
+    result->total_duration_s = (double)(benchmark_end_time - benchmark_start_time) / 1000.0;
+
+    // --- Calculate final statistics ---
+    result->successful_requests = aggregated.total_success;
+    result->failed_requests = aggregated.total_failure;
+    result->timeout_requests = aggregated.total_timeout;
+    aggregated.total_requests_processed = result->successful_requests + result->failed_requests + result->timeout_requests;
+
+    if (result->successful_requests > 0) {
+        result->min_latency_ms = aggregated.min_latency;
+        result->max_latency_ms = aggregated.max_latency;
+        result->avg_latency_ms = aggregated.total_latency / result->successful_requests;
+
+        // Calculate Percentiles (requires sorting successful latencies)
+        // We have already compacted successful latencies into the start of all_latencies
+        if (current_latency_write_idx != result->successful_requests) {
+             log_message(LOG_LEVEL_WARN, "Mismatch between successful requests (%zu) and compacted latencies (%zu). Percentiles might be inaccurate.", 
+                     result->successful_requests, current_latency_write_idx);
+             // Use the smaller count to avoid reading uninitialized memory
+             size_t count_for_sort = (current_latency_write_idx < result->successful_requests) ? current_latency_write_idx : result->successful_requests;
+             qsort(all_latencies, count_for_sort, sizeof(double), compare_doubles);
+             // Indicate potential inaccuracy
+             result->p50_latency_ms = (count_for_sort > 0) ? all_latencies[(size_t)(count_for_sort * 0.50)] : 0.0;
+             result->p90_latency_ms = (count_for_sort > 0) ? all_latencies[(size_t)(count_for_sort * 0.90)] : 0.0;
+             size_t p99_index = (size_t)(count_for_sort * 0.99);
+             if (p99_index >= count_for_sort) p99_index = count_for_sort > 0 ? count_for_sort - 1 : 0;
+             result->p99_latency_ms = (count_for_sort > 0) ? all_latencies[p99_index] : 0.0;
+
+        } else {
+            // Sort the compacted array of successful latencies
+            qsort(all_latencies, result->successful_requests, sizeof(double), compare_doubles);
+
+            result->p50_latency_ms = all_latencies[(size_t)(result->successful_requests * 0.50)];
+            result->p90_latency_ms = all_latencies[(size_t)(result->successful_requests * 0.90)];
+            // Ensure index doesn't exceed bounds for P99
+            size_t p99_index = (size_t)(result->successful_requests * 0.99);
+            if (p99_index >= result->successful_requests) {
+                 p99_index = result->successful_requests > 0 ? result->successful_requests - 1 : 0; 
+            }
+             // Handle case where successful_requests is 0 after check
+            result->p99_latency_ms = (result->successful_requests > 0) ? all_latencies[p99_index] : 0.0;
+        }
+
+    } else {
+        // Handle case with zero successful requests
+        result->min_latency_ms = 0.0;
+        result->max_latency_ms = 0.0;
+        result->avg_latency_ms = 0.0;
+        result->p50_latency_ms = 0.0;
+        result->p90_latency_ms = 0.0;
+        result->p99_latency_ms = 0.0;
+    }
+
+    if (result->total_duration_s > 0) {
+        result->requests_per_second = (size_t)(aggregated.total_requests_processed / result->total_duration_s);
+    } else {
+        result->requests_per_second = 0;
+    }
+
+    log_message(LOG_LEVEL_INFO, "Benchmark '%s' finished.", config->name);
+
+    // --- Cleanup ---
+    free(all_latencies);
+    free(threads);
+    free(thread_args);
+
+    return 0; 
 }
 
 // Placeholder for saving results
