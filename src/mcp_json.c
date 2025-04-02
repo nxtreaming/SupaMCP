@@ -1213,3 +1213,41 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
     PROFILE_END("mcp_json_stringify_message");
     return final_json_string; // Return the malloc'd string
 }
+
+// --- Security Enhancement Functions (Placeholders) ---
+
+/**
+ * @brief Validate if a JSON message conforms to a specified schema. (Placeholder)
+ * @note Requires integration with a JSON schema validation library.
+ */
+int mcp_json_validate_schema(const char* json_str, const char* schema_str) {
+    // Placeholder implementation: Assume valid for now.
+    // TODO: Integrate a JSON schema validator library (e.g., cJSON Schema, jsonschema-c)
+    // 1. Parse json_str and schema_str into the library's representation.
+    // 2. Perform validation using the library's API.
+    // 3. Return 0 on success, -1 on failure or error.
+    (void)json_str;   // Mark as unused for placeholder
+    (void)schema_str; // Mark as unused for placeholder
+    fprintf(stderr, "Warning: mcp_json_validate_schema is not implemented.\n");
+    return 0; // Placeholder: Assume valid
+}
+
+/**
+ * @brief Set maximum depth and size limits for JSON parsing. (Placeholder)
+ * @note Requires the underlying JSON parser (e.g., cJSON) to support these limits.
+ */
+void mcp_json_set_limits(int max_depth, size_t max_size) {
+    // Placeholder implementation: Log the request.
+    // TODO: If the underlying parser (e.g., cJSON) supports limits, call its API here.
+    //       Otherwise, this function might need to be implemented within the
+    //       custom parser logic (e.g., checking depth in parse_value/object/array).
+    //       The current simple parser has a hardcoded depth limit.
+    (void)max_depth; // Mark as unused for placeholder
+    (void)max_size;  // Mark as unused for placeholder
+    fprintf(stderr, "Warning: mcp_json_set_limits is not fully implemented. Max depth is currently hardcoded to %d.\n", MCP_JSON_MAX_PARSE_DEPTH);
+    // Example with cJSON (if used):
+    // cJSON_Hooks hooks = {malloc, free}; // Get current hooks
+    // hooks.decode_depth = max_depth;
+    // cJSON_InitHooks(&hooks);
+    // Note: cJSON doesn't directly support max_size limit during parsing.
+}

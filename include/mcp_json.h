@@ -292,6 +292,25 @@ int mcp_json_parse_message(mcp_arena_t* arena, const char* json, mcp_message_t* 
  */
 char* mcp_json_stringify_message(const mcp_message_t* message);
 
+/**
+ * @brief Validate if a JSON message conforms to a specified schema.
+ * @param json_str JSON string to validate.
+ * @param schema_str JSON Schema string.
+ * @return 0 for validation success, -1 for validation failure or error.
+ * @note This function requires a JSON schema validation library (e.g., cJSON Schema, jsonschema-c).
+ *       The implementation details depend on the chosen library.
+ */
+int mcp_json_validate_schema(const char* json_str, const char* schema_str);
+
+/**
+ * @brief Set maximum depth and size limits for JSON parsing.
+ * @param max_depth Maximum nesting depth allowed during parsing.
+ * @param max_size Maximum JSON string size (in bytes) allowed for parsing.
+ * @note These limits help prevent denial-of-service attacks via deeply nested or overly large JSON inputs.
+ *       The underlying JSON parser (e.g., cJSON) needs to support these limits.
+ */
+void mcp_json_set_limits(int max_depth, size_t max_size);
+
 #ifdef __cplusplus
 }
 #endif
