@@ -39,6 +39,7 @@ set(COMMON_SOURCES
     src/mcp_server.c
     src/mcp_auth.c
     src/mcp_connection_pool.c
+    src/mcp_plugin.c
 )
 
 # Common library header files
@@ -59,6 +60,7 @@ set(COMMON_HEADERS
     include/mcp_server.h
     include/mcp_auth.h
     include/mcp_connection_pool.h
+    include/mcp_plugin.h
 )
 
 # Server-specific source files (Now only contains the server's main entry point)
@@ -115,7 +117,8 @@ target_include_directories(mcp_client PRIVATE
 if(WIN32)
     target_link_libraries(mcp_common ws2_32)
 else()
-    target_link_libraries(mcp_common ${CMAKE_THREAD_LIBS_INIT})
+    # Link pthreads and dl (for dynamic loading) on non-Windows
+    target_link_libraries(mcp_common ${CMAKE_THREAD_LIBS_INIT} dl) 
 endif()
 
 # Install
