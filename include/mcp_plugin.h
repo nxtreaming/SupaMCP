@@ -1,4 +1,4 @@
-﻿#ifndef MCP_PLUGIN_H
+#ifndef MCP_PLUGIN_H
 #define MCP_PLUGIN_H
 
 #include <stddef.h>

@@ -1,4 +1,4 @@
-﻿#include "mcp_thread_pool.h"
+#include "mcp_thread_pool.h"
 #include "mcp_profiler.h"
 #include <stdlib.h>
 #include <stdio.h>

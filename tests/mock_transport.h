@@ -1,4 +1,4 @@
-﻿#ifndef MOCK_TRANSPORT_H
+#ifndef MOCK_TRANSPORT_H
 #define MOCK_TRANSPORT_H
 
 #include "../include/mcp_transport.h"

@@ -1,4 +1,4 @@
-﻿#include "unity.h"
+#include "unity.h"
 #include "mcp_json.h"
 #include "mcp_json_rpc.h"
 #include "mcp_arena.h"

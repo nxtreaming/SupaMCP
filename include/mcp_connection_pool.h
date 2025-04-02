@@ -1,4 +1,4 @@
-﻿#ifndef MCP_CONNECTION_POOL_H
+#ifndef MCP_CONNECTION_POOL_H
 #define MCP_CONNECTION_POOL_H
 
 #include <stddef.h>

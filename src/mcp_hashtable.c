@@ -1,4 +1,4 @@
-﻿#include "mcp_hashtable.h"
+#include "mcp_hashtable.h"
 #include "mcp_types.h"
 #include <stdlib.h>
 #include <string.h>

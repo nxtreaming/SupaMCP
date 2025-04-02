@@ -1,4 +1,4 @@
-﻿#ifndef MCP_TRANSPORT_INTERNAL_H
+#ifndef MCP_TRANSPORT_INTERNAL_H
 #define MCP_TRANSPORT_INTERNAL_H
 
 #include "mcp_transport.h"

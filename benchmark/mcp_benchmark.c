@@ -1,4 +1,4 @@
-﻿#include "mcp_benchmark.h"
+#include "mcp_benchmark.h"
 #include "../include/mcp_log.h"
 #include <stdio.h>
 #include <stdlib.h>

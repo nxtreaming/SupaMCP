@@ -1,4 +1,4 @@
-﻿#include "mcp_tcp_transport.h"
+#include "mcp_tcp_transport.h"
 #include "mcp_transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_types.h"

@@ -1,4 +1,4 @@
-﻿#ifndef MCP_BUFFER_POOL_H
+#ifndef MCP_BUFFER_POOL_H
 #define MCP_BUFFER_POOL_H
 
 #include <stddef.h>

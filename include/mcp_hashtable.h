@@ -1,4 +1,4 @@
-﻿#ifndef MCP_HASHTABLE_H
+#ifndef MCP_HASHTABLE_H
 #define MCP_HASHTABLE_H
 
 #include <stddef.h>

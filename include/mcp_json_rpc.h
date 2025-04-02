@@ -1,4 +1,4 @@
-﻿#ifndef MCP_JSON_RPC_H
+#ifndef MCP_JSON_RPC_H
 #define MCP_JSON_RPC_H
 
 #include "mcp_types.h"

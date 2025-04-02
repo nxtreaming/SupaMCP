@@ -1,4 +1,4 @@
-﻿#ifndef MCP_AUTH_H
+#ifndef MCP_AUTH_H
 #define MCP_AUTH_H
 
 #include <stdbool.h>

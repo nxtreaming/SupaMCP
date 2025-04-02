@@ -1,4 +1,4 @@
-﻿#include "mcp_connection_pool.h"
+#include "mcp_connection_pool.h"
 #include "mcp_log.h"
 #include "mcp_profiler.h"
 

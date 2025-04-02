@@ -1,4 +1,4 @@
-﻿#include "unity.h"
+#include "unity.h"
 #include "mcp_buffer_pool.h"
 #include <stdlib.h>
 #include <stdio.h>

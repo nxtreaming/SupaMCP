@@ -1,4 +1,4 @@
-﻿#ifndef MCP_THREAD_POOL_H
+#ifndef MCP_THREAD_POOL_H
 #define MCP_THREAD_POOL_H
 
 #include <stddef.h>

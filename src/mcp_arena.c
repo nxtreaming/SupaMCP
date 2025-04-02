@@ -1,4 +1,4 @@
-﻿#include "mcp_arena.h"
+#include "mcp_arena.h"
 #include "mcp_log.h"
 #include <stdlib.h>
 #include <string.h>

@@ -1,4 +1,4 @@
-﻿#include "mcp_plugin.h"
+#include "mcp_plugin.h"
 #include "mcp_log.h"
 
 #include <stdlib.h>

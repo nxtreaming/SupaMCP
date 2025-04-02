@@ -1,4 +1,4 @@
-﻿#include <mcp_client.h>
+#include <mcp_client.h>
 #include <mcp_tcp_client_transport.h>
 #include <mcp_log.h>
 #include <stdio.h>

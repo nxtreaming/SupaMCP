@@ -1,4 +1,4 @@
-﻿#include "unity.h"
+#include "unity.h"
 #include "mcp_hashtable.h"
 #include <string.h>
 #include <stdlib.h>

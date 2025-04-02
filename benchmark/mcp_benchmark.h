@@ -1,4 +1,4 @@
-﻿#ifndef MCP_BENCHMARK_H
+#ifndef MCP_BENCHMARK_H
 #define MCP_BENCHMARK_H
 
 #include <stddef.h>

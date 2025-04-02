@@ -1,4 +1,4 @@
-﻿#include "mcp_auth.h"
+#include "mcp_auth.h"
 #include "mcp_log.h"
 #include "mcp_profiler.h"
 #include <stdlib.h>

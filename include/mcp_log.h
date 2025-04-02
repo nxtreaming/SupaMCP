@@ -1,4 +1,4 @@
-﻿#ifndef MCP_LOG_H
+#ifndef MCP_LOG_H
 #define MCP_LOG_H
 
 #include <stdarg.h>
