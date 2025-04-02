@@ -5,6 +5,7 @@
 #include "mcp_json.h"
 #include "mcp_arena.h"
 #include "mcp_profiler.h"
+#include "mcp_log.h" // Added missing include for log_message
 
 // --- Hash Table Implementation for JSON Objects ---
 // This uses a simple separate chaining hash table.
@@ -1218,36 +1219,35 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
 
 /**
  * @brief Validate if a JSON message conforms to a specified schema. (Placeholder)
- * @note Requires integration with a JSON schema validation library.
+ * @note Requires integration with a JSON schema validation library. This function
+ *       cannot be fully implemented without adding such a dependency (e.g., jsonschema-c).
  */
 int mcp_json_validate_schema(const char* json_str, const char* schema_str) {
-    // Placeholder implementation: Assume valid for now.
-    // TODO: Integrate a JSON schema validator library (e.g., cJSON Schema, jsonschema-c)
-    // 1. Parse json_str and schema_str into the library's representation.
-    // 2. Perform validation using the library's API.
-    // 3. Return 0 on success, -1 on failure or error.
-    (void)json_str;   // Mark as unused for placeholder
-    (void)schema_str; // Mark as unused for placeholder
-    fprintf(stderr, "Warning: mcp_json_validate_schema is not implemented.\n");
+    // Placeholder implementation: Returns success without validation.
+    // A real implementation requires integrating an external library.
+    (void)json_str;   // Mark as unused
+    (void)schema_str; // Mark as unused
+    log_message(LOG_LEVEL_WARN, "mcp_json_validate_schema: Function not implemented (requires external JSON schema library). Assuming valid.");
+    // Example steps if using a library 'libjsonschema':
+    // 1. schema = libjsonschema_parse(schema_str); if (!schema) return -1;
+    // 2. json_doc = libjsonschema_parse_json(json_str); if (!json_doc) { libjsonschema_free(schema); return -1; }
+    // 3. result = libjsonschema_validate(schema, json_doc);
+    // 4. libjsonschema_free(schema); libjsonschema_free(json_doc);
+    // 5. return (result == VALID) ? 0 : -1;
     return 0; // Placeholder: Assume valid
 }
 
 /**
  * @brief Set maximum depth and size limits for JSON parsing. (Placeholder)
- * @note Requires the underlying JSON parser (e.g., cJSON) to support these limits.
+ * @note The current custom parser only supports a hardcoded depth limit.
+ *       Implementing a size limit requires modifying the parser itself.
  */
 void mcp_json_set_limits(int max_depth, size_t max_size) {
-    // Placeholder implementation: Log the request.
-    // TODO: If the underlying parser (e.g., cJSON) supports limits, call its API here.
-    //       Otherwise, this function might need to be implemented within the
-    //       custom parser logic (e.g., checking depth in parse_value/object/array).
-    //       The current simple parser has a hardcoded depth limit.
-    (void)max_depth; // Mark as unused for placeholder
-    (void)max_size;  // Mark as unused for placeholder
-    fprintf(stderr, "Warning: mcp_json_set_limits is not fully implemented. Max depth is currently hardcoded to %d.\n", MCP_JSON_MAX_PARSE_DEPTH);
-    // Example with cJSON (if used):
-    // cJSON_Hooks hooks = {malloc, free}; // Get current hooks
-    // hooks.decode_depth = max_depth;
-    // cJSON_InitHooks(&hooks);
-    // Note: cJSON doesn't directly support max_size limit during parsing.
+    // Placeholder implementation: Notes limitations.
+    // The current parser uses MCP_JSON_MAX_PARSE_DEPTH (hardcoded).
+    // A size limit (max_size) is not supported by this simple parser.
+    // A more robust parser library (like cJSON with hooks, or others) might support these.
+    (void)max_depth; // Mark as unused - depth is currently hardcoded
+    (void)max_size;  // Mark as unused - size limit not implemented
+    log_message(LOG_LEVEL_WARN, "mcp_json_set_limits: Function partially implemented. Max depth is hardcoded (%d), max size limit is not supported by current parser.", MCP_JSON_MAX_PARSE_DEPTH);
 }

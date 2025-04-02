@@ -45,35 +45,38 @@ static char* mcp_strdup(const char* s) {
 
 
 /**
- * @brief Verifies client credentials. (Placeholder)
+ * @brief Verifies client credentials. (Placeholder - Basic Functionality Only)
+ * @note This implementation provides basic functionality for MCP_AUTH_NONE and a single
+ *       hardcoded API key ("TEST_API_KEY_123") for testing purposes. 
+ *       A production implementation MUST replace this with secure credential storage 
+ *       (e.g., config file, database) and proper validation logic.
  */
 int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth_context_t** context_out) {
     if (!context_out) return -1;
     *context_out = NULL; // Ensure output is NULL on failure
 
-    // --- Placeholder Implementation ---
-    // TODO: Replace with actual credential verification logic.
-    // This would involve:
-    // 1. Checking auth_type.
-    // 2. Looking up credentials in a secure store (config, DB, etc.).
-    // 3. Validating the provided credentials (e.g., comparing API keys, verifying token signature/expiry).
-    // 4. On success, fetching associated permissions (allowed resources/tools).
-    // 5. Allocating and populating the mcp_auth_context_t structure.
-
-    // Use fprintf for now as logging might not be configured yet
-    fprintf(stdout, "Info: mcp_auth_verify called (placeholder). Type: %d\n", auth_type);
+    log_message(LOG_LEVEL_INFO, "mcp_auth_verify called (basic placeholder). Type: %d", auth_type);
 
     if (auth_type == MCP_AUTH_NONE) {
-        // Allow unauthenticated access with broad permissions (adjust as needed)
+        // Allow unauthenticated access with default broad permissions
         mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
         if (!context) return -1;
         context->type = MCP_AUTH_NONE;
         context->identifier = mcp_strdup("anonymous"); 
-        context->allowed_resources_count = 1;
         context->allowed_resources = (char**)malloc(sizeof(char*));
+        if (!context->allowed_resources) {
+            mcp_auth_context_free(context); // Cleanup on allocation failure
+            return -1;
+        }
+        context->allowed_resources_count = 1;
         context->allowed_resources[0] = mcp_strdup("*"); // Allow all resources
-        context->allowed_tools_count = 1;
+
         context->allowed_tools = (char**)malloc(sizeof(char*));
+        if (!context->allowed_tools) {
+            mcp_auth_context_free(context); // Cleanup on allocation failure
+            return -1;
+        }
+        context->allowed_tools_count = 1;
         context->allowed_tools[0] = mcp_strdup("*"); // Allow all tools
 
         if (!context->identifier || !context->allowed_resources || !context->allowed_resources[0] ||
@@ -82,13 +85,15 @@ int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth
             return -1;
         }
         *context_out = context;
+        log_message(LOG_LEVEL_DEBUG, "Authenticated as 'anonymous' (MCP_AUTH_NONE).");
         return 0; // Success for AUTH_NONE
     }
 
     // Example: Allow a specific hardcoded API key for testing
+    // WARNING: This is insecure and for demonstration/testing only.
     if (auth_type == MCP_AUTH_API_KEY && credentials && strcmp(credentials, "TEST_API_KEY_123") == 0) {
         mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
-        if (!context) return -1;
+        if (!context) { log_message(LOG_LEVEL_ERROR, "Failed to allocate auth context."); return -1; }
         context->type = MCP_AUTH_API_KEY;
         context->identifier = mcp_strdup("test_client_1");
         context->expiry = 0; // Non-expiring for this example
@@ -116,18 +121,19 @@ int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth
         }
 
         *context_out = context;
-        fprintf(stdout, "Info: Successfully authenticated client '%s' via API Key.\n", context->identifier);
+        log_message(LOG_LEVEL_DEBUG, "Successfully authenticated client '%s' via hardcoded API Key.", context->identifier);
         return 0; // Success
     }
 
-    // --- End Placeholder ---
+    // --- End Basic Placeholder ---
 
-    fprintf(stderr, "Warning: Authentication failed for type %d.\n", auth_type);
-    return -1; // Placeholder: Fail all other types/credentials
+    // Fail all other authentication attempts in this placeholder
+    log_message(LOG_LEVEL_WARN, "Authentication failed for type %d (credentials not recognized or type not implemented).", auth_type);
+    return -1; 
 }
 
 /**
- * @brief Checks resource access permission. (Placeholder)
+ * @brief Checks resource access permission using simple wildcard matching.
  */
 bool mcp_auth_check_resource_access(const mcp_auth_context_t* context, const char* resource_uri) {
     if (!context || !resource_uri) {
@@ -136,26 +142,26 @@ bool mcp_auth_check_resource_access(const mcp_auth_context_t* context, const cha
 
     // Check expiry if applicable
     if (context->expiry != 0 && time(NULL) > context->expiry) {
-        fprintf(stderr, "Warning: Auth context for '%s' expired.\n", context->identifier ? context->identifier : "unknown");
+        log_message(LOG_LEVEL_WARN, "Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
         return false; // Context expired
     }
 
-    // Check against allowed patterns
+    // Check against allowed patterns using simple wildcard matching
     for (size_t i = 0; i < context->allowed_resources_count; ++i) {
         if (context->allowed_resources[i] && simple_wildcard_match(context->allowed_resources[i], resource_uri)) {
-            // fprintf(stdout, "Debug: Access granted for '%s' to resource '%s' (match: %s)\n",
-            //         context->identifier ? context->identifier : "unknown", resource_uri, context->allowed_resources[i]);
+            log_message(LOG_LEVEL_DEBUG, "Access granted for '%s' to resource '%s' (match: %s)",
+                    context->identifier ? context->identifier : "unknown", resource_uri, context->allowed_resources[i]);
             return true; // Found a matching allowed pattern
         }
     }
 
-    fprintf(stdout, "Info: Access denied for '%s' to resource '%s'.\n",
+    log_message(LOG_LEVEL_INFO, "Access denied for '%s' to resource '%s'. No matching rule found.",
             context->identifier ? context->identifier : "unknown", resource_uri);
     return false; // No matching pattern found
 }
 
 /**
- * @brief Checks tool access permission. (Placeholder)
+ * @brief Checks tool access permission using simple wildcard matching.
  */
 bool mcp_auth_check_tool_access(const mcp_auth_context_t* context, const char* tool_name) {
      if (!context || !tool_name) {
@@ -164,20 +170,20 @@ bool mcp_auth_check_tool_access(const mcp_auth_context_t* context, const char* t
 
     // Check expiry if applicable
     if (context->expiry != 0 && time(NULL) > context->expiry) {
-         fprintf(stderr, "Warning: Auth context for '%s' expired.\n", context->identifier ? context->identifier : "unknown");
+         log_message(LOG_LEVEL_WARN, "Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
         return false; // Context expired
     }
 
-    // Check against allowed patterns
+    // Check against allowed patterns using simple wildcard matching
     for (size_t i = 0; i < context->allowed_tools_count; ++i) {
         if (context->allowed_tools[i] && simple_wildcard_match(context->allowed_tools[i], tool_name)) {
-            //  fprintf(stdout, "Debug: Access granted for '%s' to tool '%s' (match: %s)\n",
-            //         context->identifier ? context->identifier : "unknown", tool_name, context->allowed_tools[i]);
+             log_message(LOG_LEVEL_DEBUG, "Access granted for '%s' to tool '%s' (match: %s)",
+                    context->identifier ? context->identifier : "unknown", tool_name, context->allowed_tools[i]);
             return true; // Found a matching allowed pattern
         }
     }
 
-     fprintf(stdout, "Info: Access denied for '%s' to tool '%s'.\n",
+     log_message(LOG_LEVEL_INFO, "Access denied for '%s' to tool '%s'. No matching rule found.",
             context->identifier ? context->identifier : "unknown", tool_name);
     return false; // No matching pattern found
 }
