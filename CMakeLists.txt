@@ -38,6 +38,7 @@ set(COMMON_SOURCES
     client/src/mcp_client.c
     src/mcp_server.c
     src/mcp_auth.c
+    src/mcp_connection_pool.c
 )
 
 # Common library header files
@@ -57,6 +58,7 @@ set(COMMON_HEADERS
     client/include/mcp_client.h
     include/mcp_server.h
     include/mcp_auth.h
+    include/mcp_connection_pool.h
 )
 
 # Server-specific source files (Now only contains the server's main entry point)
