@@ -1,5 +1,5 @@
 #include <mcp_server.h>
-#include <mcp_tcp_transport.h>
+#include <mcp_transport_factory.h>
 #include <mcp_log.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -165,11 +165,23 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Create TCP Transport
+    // Create TCP Transport using the Transport Factory
     const char* host = "127.0.0.1";
     uint16_t port = 18889; // Use a different port than default server
     uint32_t idle_timeout = 300000; // 5 minutes idle timeout
-    mcp_transport_t* transport = mcp_transport_tcp_create(host, port, idle_timeout);
+
+    // Configure transport using factory config
+    mcp_transport_config_t transport_config = {0};
+    transport_config.tcp.host = host;
+    transport_config.tcp.port = port;
+    transport_config.tcp.idle_timeout_ms = idle_timeout;
+
+    // Create transport using factory
+    mcp_transport_t* transport = mcp_transport_factory_create(
+        MCP_TRANSPORT_TCP,
+        &transport_config
+    );
+
     if (transport == NULL) {
         log_message(LOG_LEVEL_ERROR, "Failed to create TCP transport");
         mcp_server_destroy(g_echo_server);

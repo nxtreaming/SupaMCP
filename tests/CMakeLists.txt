@@ -9,6 +9,7 @@ set(TEST_RUNNER_SOURCES
     test_mcp_client_async.c
     test_mcp_hashtable.c
     test_mcp_cache.c
+    test_mcp_transport_factory.c
     ../client/src/mcp_client.c
     ../src/mcp_hashtable.c
     ../src/mcp_cache.c

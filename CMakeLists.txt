@@ -28,6 +28,7 @@ set(COMMON_SOURCES
     src/mcp_json_message.c
     src/mcp_json_rpc.c
     src/mcp_transport.c
+    src/mcp_transport_factory.c
     src/mcp_stdio_transport.c
     src/mcp_tcp_transport.c
     src/mcp_tcp_socket_utils.c
@@ -65,6 +66,7 @@ set(COMMON_HEADERS
     include/mcp_json.h
     include/mcp_json_rpc.h
     include/mcp_transport.h
+    include/mcp_transport_factory.h
     include/mcp_stdio_transport.h
     include/mcp_tcp_transport.h
     include/mcp_types.h

@@ -1,5 +1,5 @@
 #include <mcp_client.h>
-#include <mcp_tcp_client_transport.h>
+#include <mcp_transport_factory.h>
 #include <mcp_log.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,8 +26,16 @@ int main(int argc, char** argv) {
         // Add .api_key = "your-key" here if the server requires it
     };
 
-    // Create TCP Client Transport
-    mcp_transport_t* transport = mcp_transport_tcp_client_create(server_host, server_port);
+    // Create TCP Client Transport using the Transport Factory
+    mcp_transport_config_t transport_config = {0};
+    transport_config.tcp.host = server_host;
+    transport_config.tcp.port = server_port;
+
+    mcp_transport_t* transport = mcp_transport_factory_create(
+        MCP_TRANSPORT_TCP_CLIENT,
+        &transport_config
+    );
+
     if (transport == NULL) {
         log_message(LOG_LEVEL_ERROR, "Failed to create TCP client transport");
         return 1;
