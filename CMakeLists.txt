@@ -26,6 +26,9 @@ set(COMMON_SOURCES
     src/mcp_transport.c
     src/mcp_stdio_transport.c
     src/mcp_tcp_transport.c
+    src/mcp_tcp_socket_utils.c
+    src/mcp_tcp_client_handler.c
+    src/mcp_tcp_acceptor.c
     src/mcp_tcp_client_transport.c
     src/mcp_types.c
     src/mcp_arena.c
