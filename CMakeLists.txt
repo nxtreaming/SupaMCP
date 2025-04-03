@@ -21,44 +21,44 @@ endif()
 
 # Common library source files
 set(COMMON_SOURCES
-    src/mcp_json.c
-    src/mcp_json_hashtable.c
-    src/mcp_json_parser.c
-    src/mcp_json_stringifier.c
-    src/mcp_json_message.c
-    src/mcp_json_rpc.c
-    src/mcp_transport.c
-    src/mcp_transport_factory.c
-    src/mcp_stdio_transport.c
-    src/mcp_tcp_transport.c
-    src/mcp_tcp_socket_utils.c
-    src/mcp_tcp_client_handler.c
-    src/mcp_tcp_acceptor.c
-    src/mcp_tcp_client_transport.c
-    src/mcp_tcp_client_socket_utils.c
-    src/mcp_tcp_client_receiver.c
-    src/mcp_types.c
-    src/mcp_arena.c
-    src/mcp_log.c
-    src/mcp_buffer_pool.c
-    src/mcp_thread_pool.c
-    # src/mcp_cache.c
-    src/mcp_cache_optimized.c
-    src/mcp_rate_limiter.c
-    src/mcp_profiler.c
-    src/mcp_hashtable.c
-    client/src/mcp_client.c
-    src/mcp_server.c
-    src/mcp_server_dispatch.c
-    src/mcp_server_handlers.c
-    src/mcp_server_task.c
-    src/mcp_server_response.c
-    src/mcp_auth.c
-    src/mcp_connection_pool.c
-    src/mcp_connection_pool_socket.c
-    src/mcp_connection_pool_sync.c
-    src/mcp_connection_pool_utils.c
-    src/mcp_plugin.c
+    src/json/mcp_json.c
+    src/json/mcp_json_hashtable.c
+    src/json/mcp_json_parser.c
+    src/json/mcp_json_stringifier.c
+    src/json/mcp_json_message.c
+    src/json/mcp_json_rpc.c
+    src/transport/mcp_transport.c
+    src/transport/mcp_transport_factory.c
+    src/transport/mcp_stdio_transport.c
+    src/transport/mcp_tcp_transport.c
+    src/transport/mcp_tcp_socket_utils.c
+    src/transport/mcp_tcp_client_handler.c # Belongs to TCP Server Transport
+    src/transport/mcp_tcp_acceptor.c       # Belongs to TCP Server Transport
+    src/transport/mcp_tcp_client_transport.c
+    src/transport/mcp_tcp_client_socket_utils.c
+    src/transport/mcp_tcp_client_receiver.c
+    src/common/mcp_types.c
+    src/common/mcp_arena.c
+    src/common/mcp_log.c
+    src/server/mcp_buffer_pool.c # Moved to server as it seems server-specific
+    src/server/mcp_thread_pool.c # Moved to server as it seems server-specific
+    src/server/mcp_cache.c       # Moved original cache to server
+    src/server/mcp_cache_optimized.c # Moved optimized cache to server
+    src/server/mcp_rate_limiter.c # Moved to server
+    src/server/mcp_profiler.c     # Moved to server
+    src/common/mcp_hashtable.c
+    client/src/mcp_client.c       # Client source remains separate
+    src/server/mcp_server.c
+    src/server/mcp_server_dispatch.c
+    src/server/mcp_server_handlers.c
+    src/server/mcp_server_task.c
+    src/server/mcp_server_response.c
+    src/server/mcp_auth.c
+    src/connection_pool/mcp_connection_pool.c
+    src/connection_pool/mcp_connection_pool_socket.c
+    src/connection_pool/mcp_connection_pool_sync.c
+    src/connection_pool/mcp_connection_pool_utils.c
+    src/server/mcp_plugin.c
 )
 
 # Common library header files
@@ -112,9 +112,13 @@ target_include_directories(mcp_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/client/include
 )
-# Add internal headers needed for compiling the library itself
+# Add module source directories as private include paths so internal headers can be found
 target_include_directories(mcp_common PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src # For mcp_transport_internal.h etc.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/transport
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/server
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/connection_pool
 )
 
 # Create server executable
