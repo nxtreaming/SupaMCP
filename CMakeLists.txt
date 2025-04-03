@@ -22,6 +22,10 @@ endif()
 # Common library source files
 set(COMMON_SOURCES
     src/mcp_json.c
+    src/mcp_json_hashtable.c
+    src/mcp_json_parser.c
+    src/mcp_json_stringifier.c
+    src/mcp_json_message.c
     src/mcp_json_rpc.c
     src/mcp_transport.c
     src/mcp_stdio_transport.c
@@ -99,7 +103,7 @@ target_sources(mcp_common PRIVATE ${COMMON_SOURCES})
 # Make the public headers available to consumers
 target_include_directories(mcp_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Add client include path publicly
+    ${CMAKE_CURRENT_SOURCE_DIR}/client/include
 )
 # Add internal headers needed for compiling the library itself
 target_include_directories(mcp_common PRIVATE
