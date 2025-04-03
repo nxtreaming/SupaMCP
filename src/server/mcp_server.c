@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "gateway.h"
 
 // --- Public API Implementation ---
 
@@ -61,6 +62,8 @@ mcp_server_t* mcp_server_create(
     server->thread_pool = NULL;
     server->resource_cache = NULL;
     server->rate_limiter = NULL;
+    server->backends = NULL; // Initialize gateway fields
+    server->backend_count = 0; // Initialize gateway fields
 
     // Check for allocation failures during config copy
     if ((config->name && !server->config.name) ||
@@ -174,6 +177,9 @@ void mcp_server_destroy(mcp_server_t* server) {
     free((void*)server->config.version);
     free((void*)server->config.description);
     free((void*)server->config.api_key);
+
+    // Free gateway backend list
+    mcp_free_backend_list(server->backends, server->backend_count);
 
     // Free dynamically allocated resource/template/tool lists and their contents
     for (size_t i = 0; i < server->resource_count; i++) {

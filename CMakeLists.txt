@@ -58,6 +58,9 @@ set(COMMON_SOURCES
     src/connection_pool/mcp_connection_pool_sync.c
     src/connection_pool/mcp_connection_pool_utils.c
     src/server/mcp_plugin.c
+    src/gateway/gateway_config.c
+    src/gateway/gateway_routing.c
+    src/gateway/gateway_pool.c
 )
 
 # Common library header files
@@ -118,6 +121,7 @@ target_include_directories(mcp_common PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/transport
     ${CMAKE_CURRENT_SOURCE_DIR}/src/server
     ${CMAKE_CURRENT_SOURCE_DIR}/src/connection_pool
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gateway
 )
 
 # Create server executable

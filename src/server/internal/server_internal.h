@@ -15,10 +15,11 @@
 #include <mcp_cache.h>
 #include <mcp_rate_limiter.h>
 #include <mcp_profiler.h>
-#include <mcp_transport.h> // Needed for transport handle in struct
+#include <mcp_transport.h>
+#include "gateway.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include <stddef.h> // For size_t
+#include <stddef.h>
 
 #ifndef _WIN32 // Only include netinet/in.h if not Windows (winsock2.h covers htonl)
 #include <netinet/in.h>
@@ -66,6 +67,10 @@ struct mcp_server {
     void* resource_handler_user_data;
     mcp_server_tool_handler_t tool_handler;
     void* tool_handler_user_data;       /**< User data pointer for the tool handler. */
+
+    // Gateway Backends (Loaded from config)
+    mcp_backend_info_t* backends;       /**< Array of configured backend servers. */
+    size_t backend_count;               /**< Number of configured backend servers. */
 };
 
 // --- Internal Function Prototypes ---

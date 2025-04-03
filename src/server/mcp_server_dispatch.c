@@ -1,4 +1,5 @@
 #include "internal/server_internal.h"
+#include "gateway_routing.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -127,7 +128,31 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
     }
     *error_code = MCP_ERROR_NONE; // Default to success
 
-    // Handle the request based on its method
+    // --- Gateway Routing Check ---
+    // Check if this request should be routed to a backend
+    // Note: request->params is already parsed into an mcp_json_t* by handle_message
+    const mcp_backend_info_t* target_backend = find_backend_for_request(request, server->backends, server->backend_count);
+
+    if (target_backend) {
+        // Found a backend to route to.
+        log_message(LOG_LEVEL_INFO, "Request for method '%s' routed to backend '%s'. Forwarding...", request->method, target_backend->name);
+
+        // TODO: Implement actual forwarding logic here (Step 2.3+)
+        // This involves:
+        // 1. Getting a client connection to the target_backend (using connection pool).
+        // 2. Constructing the request payload for the backend.
+        // 3. Sending the request asynchronously.
+        // 4. Handling the backend's response and relaying it.
+
+        // For now, return a temporary error indicating forwarding is not implemented.
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return create_error_response(request->id, *error_code, "Gateway forwarding not yet implemented.");
+    }
+
+    // --- Local Handling (No backend route found) ---
+    log_message(LOG_LEVEL_DEBUG, "No backend route found for method '%s'. Handling locally.", request->method);
+
+    // Handle the request locally based on its method
     if (strcmp(request->method, "list_resources") == 0) {
         return handle_list_resources_request(server, arena, request, error_code);
     } else if (strcmp(request->method, "list_resource_templates") == 0) {

@@ -1,0 +1,25 @@
+[
+  {
+    "name": "echo_backend",
+    "address": "tcp://127.0.0.1:18889",
+    "routing": {
+      "tool_names": ["echo", "reverse"]
+    },
+    "timeout_ms": 5000
+  },
+  {
+    "name": "weather_service",
+    "address": "stdio:/path/to/hypothetical/weather_server.exe",
+    "routing": {
+      "resource_prefixes": ["weather://"],
+      "tool_names": ["get_forecast"]
+    }
+  },
+  {
+    "name": "local_files",
+    "address": "tcp://127.0.0.1:9002",
+    "routing": {
+       "resource_prefixes": ["file://"]
+    }
+  }
+]

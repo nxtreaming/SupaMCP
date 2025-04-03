@@ -26,10 +26,13 @@
 #include "mcp_tcp_transport.h"
 #include "mcp_profiler.h"
 #include "mcp_json.h"
+#include "gateway.h"
 
 
 // Global server instance for signal handling
 static mcp_server_t* g_server = NULL;
+static mcp_backend_info_t* g_backends = NULL;
+static size_t g_backend_count = 0;
 
 // Configuration structure
 typedef struct {
@@ -289,6 +292,11 @@ static void cleanup(void) {
 #ifdef MCP_ENABLE_PROFILING
     mcp_profile_report(stdout); // Print profile report on exit if enabled
 #endif
+    // Free gateway backend list first
+    mcp_free_backend_list(g_backends, g_backend_count);
+    g_backends = NULL;
+    g_backend_count = 0;
+
     if (g_server != NULL) {
         // mcp_server_destroy calls stop internally
         mcp_server_destroy(g_server);
@@ -446,9 +454,25 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Load gateway configuration
+    // TODO: Make config path configurable? Using absolute path for testing.
+    const char* gateway_config_path = "d:/workspace/SupaMCPServer/gateway_config.json";
+    mcp_error_code_t load_err = load_gateway_config(gateway_config_path, &g_backends, &g_backend_count);
+    if (load_err != MCP_ERROR_NONE && load_err != MCP_ERROR_INVALID_REQUEST /* Allow file not found */) {
+        log_message(LOG_LEVEL_ERROR, "Failed to load gateway config '%s' (Error %d). Exiting.", gateway_config_path, load_err);
+        mcp_server_destroy(g_server); g_server = NULL;
+        return 1;
+    } else if (load_err == MCP_ERROR_NONE) {
+         log_message(LOG_LEVEL_INFO, "Loaded %zu backend(s) from gateway config '%s'.", g_backend_count, gateway_config_path);
+    } else {
+         log_message(LOG_LEVEL_INFO, "Gateway config file '%s' not found or empty. Running without gateway backends.", gateway_config_path);
+    }
+
+
+    // Set local handlers (these might be used if no backend matches a request)
     if (mcp_server_set_resource_handler(g_server, example_resource_handler, NULL) != 0 ||
         mcp_server_set_tool_handler(g_server, example_tool_handler, NULL) != 0) {
-        log_message(LOG_LEVEL_ERROR, "Failed to set handlers");
+        log_message(LOG_LEVEL_ERROR, "Failed to set local handlers");
         mcp_server_destroy(g_server); // cleanup will call destroy again, but it's safe
         g_server = NULL;
         return 1;
