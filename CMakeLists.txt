@@ -39,6 +39,10 @@ set(COMMON_SOURCES
     src/mcp_hashtable.c
     client/src/mcp_client.c
     src/mcp_server.c
+    src/mcp_server_dispatch.c
+    src/mcp_server_handlers.c
+    src/mcp_server_task.c
+    src/mcp_server_response.c
     src/mcp_auth.c
     src/mcp_connection_pool.c
     src/mcp_plugin.c
@@ -121,7 +125,7 @@ if(WIN32)
     target_link_libraries(mcp_common ws2_32)
 else()
     # Link pthreads and dl (for dynamic loading) on non-Windows
-    target_link_libraries(mcp_common ${CMAKE_THREAD_LIBS_INIT} dl) 
+    target_link_libraries(mcp_common ${CMAKE_THREAD_LIBS_INIT} dl)
 endif()
 
 # Install
@@ -161,7 +165,7 @@ target_include_directories(mcp_benchmark_cli PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Needed if benchmark uses mcp_client directly
 )
-# Link platform-specific libraries (needed if benchmark uses threads/sockets directly, 
+# Link platform-specific libraries (needed if benchmark uses threads/sockets directly,
 # otherwise inherited from mcp_common)
 # if(WIN32)
 #     target_link_libraries(mcp_benchmark_cli ws2_32)
