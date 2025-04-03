@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <mcp_json.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -14,73 +15,135 @@
 
 static mcp_server_t* g_echo_server = NULL;
 
-// Simple echo tool handler
-static int echo_tool_handler(
+// Simple echo tool handler - Updated Signature
+static mcp_error_code_t echo_tool_handler(
     mcp_server_t* server,
     const char* name,
-    const char* params_json, // Expecting JSON like {"text": "some string"}
+    const mcp_json_t* params, // Now a parsed JSON object
     void* user_data,
-    mcp_content_item_t** content,
+    mcp_content_item_t*** content, // Now pointer-to-pointer-to-pointer
     size_t* content_count,
-    bool* is_error)
+    bool* is_error,
+    char** error_message) // Added error message output
 {
     (void)server; (void)user_data; (void)name; // Unused
 
-    log_message(LOG_LEVEL_INFO, "Echo tool called with params: %s", params_json);
+    log_message(LOG_LEVEL_INFO, "Echo tool called.");
 
+    // Initialize output parameters
     *is_error = false;
     *content = NULL;
     *content_count = 0;
-    char* echo_text = NULL;
+    *error_message = NULL;
+    char* echo_text_copy = NULL;
+    const char* extracted_text = NULL;
+    mcp_error_code_t err_code = MCP_ERROR_NONE;
 
-    // Basic parsing (a real server might use a JSON library here)
-    // Find "text": "..." part
-    const char* text_key = "\"text\":";
-    const char* key_ptr = strstr(params_json, text_key);
-    if (key_ptr) {
-        const char* value_start = key_ptr + strlen(text_key);
-        while (*value_start == ' ' || *value_start == '\t') value_start++; // Skip whitespace
-        if (*value_start == '"') {
-            value_start++; // Skip opening quote
-            const char* value_end = strchr(value_start, '"');
-            if (value_end) {
-                size_t len = value_end - value_start;
-                echo_text = (char*)malloc(len + 1);
-                if (echo_text) {
-                    memcpy(echo_text, value_start, len);
-                    echo_text[len] = '\0';
-                }
-            }
-        }
-    }
-
-    if (!echo_text) {
-        // If parsing failed or text not found, echo an error message
-        echo_text = mcp_strdup("Error: Could not parse 'text' parameter.");
+    // Use mcp_json library to parse params
+    if (params == NULL || mcp_json_get_type(params) != MCP_JSON_OBJECT) {
+        log_message(LOG_LEVEL_WARN, "Echo tool: Invalid or missing params object.");
         *is_error = true;
-        if (!echo_text) return -1; // Allocation failed even for error message
+        *error_message = mcp_strdup("Missing or invalid parameters object.");
+        err_code = MCP_ERROR_INVALID_PARAMS;
+        goto cleanup;
     }
 
-    // Create the response content item
-    *content = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+    mcp_json_t* text_node = mcp_json_object_get_property(params, "text");
+    if (text_node == NULL || mcp_json_get_type(text_node) != MCP_JSON_STRING || mcp_json_get_string(text_node, &extracted_text) != 0 || extracted_text == NULL) {
+        log_message(LOG_LEVEL_WARN, "Echo tool: Missing or invalid 'text' string parameter.");
+        *is_error = true;
+        *error_message = mcp_strdup("Missing or invalid 'text' string parameter.");
+        err_code = MCP_ERROR_INVALID_PARAMS;
+        goto cleanup;
+    }
+
+    // Duplicate the extracted text as we need to transfer ownership
+    echo_text_copy = mcp_strdup(extracted_text);
+    if (!echo_text_copy) {
+        log_message(LOG_LEVEL_ERROR, "Echo tool: Failed to duplicate echo text.");
+        *is_error = true;
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
+    }
+
+    // --- Create the response content ---
+
+    // 1. Allocate the array of pointers (size 1)
+    *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
     if (!*content) {
-        free(echo_text);
-        return -1; // Allocation failed
+        log_message(LOG_LEVEL_ERROR, "Echo tool: Failed to allocate content array.");
+        *is_error = true;
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
     }
+    (*content)[0] = NULL; // Initialize pointer
 
-    (*content)->type = MCP_CONTENT_TYPE_TEXT;
-    (*content)->mime_type = mcp_strdup("text/plain");
-    (*content)->data = echo_text; // Transfer ownership of echo_text
-    (*content)->data_size = strlen(echo_text);
-
-    if (!(*content)->mime_type) { // Check mime type allocation
-        mcp_content_item_free(*content); // Frees data and struct pointer
+    // 2. Allocate the content item struct
+    mcp_content_item_t* item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+    if (!item) {
+        log_message(LOG_LEVEL_ERROR, "Echo tool: Failed to allocate content item struct.");
+        *is_error = true;
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        // Need to free the already allocated array *content
+        free(*content);
         *content = NULL;
-        return -1;
+        goto cleanup;
     }
 
+    // 3. Populate the item
+    item->type = MCP_CONTENT_TYPE_TEXT;
+    item->mime_type = mcp_strdup("text/plain");
+    item->data = echo_text_copy; // Transfer ownership of the duplicated string
+    item->data_size = strlen(echo_text_copy);
+    echo_text_copy = NULL; // Avoid double free in cleanup
+
+    if (!item->mime_type) {
+        log_message(LOG_LEVEL_ERROR, "Echo tool: Failed to allocate mime type string.");
+        *is_error = true;
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        mcp_content_item_free(item); // Frees data if allocated
+        free(item);
+        free(*content);
+        *content = NULL;
+        goto cleanup;
+    }
+
+    // 4. Assign item to array
+    (*content)[0] = item;
     *content_count = 1;
-    return 0; // Success
+    err_code = MCP_ERROR_NONE; // Success
+
+cleanup:
+    // Free the duplicated text only if it wasn't transferred to the content item
+    free(echo_text_copy);
+
+    // If an error occurred but no specific message was allocated, provide a default
+    if (err_code != MCP_ERROR_NONE && *error_message == NULL) {
+        *error_message = mcp_strdup("An unexpected error occurred in the echo tool.");
+        // If even this fails, we can't do much more
+    }
+
+    // Ensure content is NULL if an error occurred
+    if (err_code != MCP_ERROR_NONE) {
+        // Content should have been freed during error handling above
+        if (*content) {
+             log_message(LOG_LEVEL_ERROR, "Echo tool: Content array not freed on error path!");
+             // Attempt cleanup anyway
+             if ((*content)[0]) {
+                 mcp_content_item_free((*content)[0]);
+                 free((*content)[0]);
+             }
+             free(*content);
+             *content = NULL;
+        }
+        *content_count = 0;
+    }
+
+    return err_code;
 }
 
 static void echo_cleanup(void) {

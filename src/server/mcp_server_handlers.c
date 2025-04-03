@@ -225,8 +225,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     mcp_content_item_t** content_items = NULL; // Array of POINTERS to content items
     size_t content_count = 0;
     bool fetched_from_handler = false;
-    mcp_content_item_t* handler_content_items_struct_array = NULL; // Temp storage for handler result (array of structs)
-
+ 
     // 1. Check cache first
     if (server->resource_cache != NULL) {
         if (mcp_cache_get(server->resource_cache, uri, &content_items, &content_count) == 0) {
@@ -244,55 +243,52 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     // 2. If not found in cache (or cache disabled), call the resource handler
     if (content_items == NULL) {
         if (server->resource_handler != NULL) {
-            // Handler is expected to return an array of structs (mcp_content_item_t*)
+            char* handler_error_message = NULL;
+            mcp_error_code_t handler_status = MCP_ERROR_NONE;
+
+            // Handler is expected to return an array of POINTERS (mcp_content_item_t**)
+            // and allocate the array and items via malloc.
             PROFILE_START("resource_handler_callback");
-            int handler_status = server->resource_handler(server, uri, server->resource_handler_user_data, &handler_content_items_struct_array, &content_count);
+            handler_status = server->resource_handler(
+                server,
+                uri,
+                server->resource_handler_user_data,
+                &content_items, // Now directly receives mcp_content_item_t**
+                &content_count,
+                &handler_error_message // Receives optional malloc'd error message
+            );
             PROFILE_END("resource_handler_callback");
 
-            if (handler_status != 0 || handler_content_items_struct_array == NULL || content_count == 0) {
-                free(handler_content_items_struct_array);
-                *error_code = MCP_ERROR_INTERNAL_ERROR;
-                char* response = create_error_response(request->id, *error_code, "Resource handler failed or resource not found");
+            if (handler_status != MCP_ERROR_NONE) {
+                // Handler indicated an error.
+                // Free any potentially partially allocated content by the handler (though it shouldn't allocate on error)
+                if (content_items) {
+                    for(size_t i = 0; i < content_count; ++i) {
+                        if (content_items[i]) {
+                            mcp_content_item_free(content_items[i]);
+                            free(content_items[i]);
+                        }
+                    }
+                    free(content_items);
+                    content_items = NULL;
+                }
+                *error_code = handler_status; // Use the specific error code from handler
+                // Use the handler's message if provided, otherwise a default
+                const char* msg = handler_error_message ? handler_error_message : "Resource handler failed or resource not found";
+                char* response = create_error_response(request->id, *error_code, msg);
+                free(handler_error_message); // Free the message string from handler
                 PROFILE_END("handle_read_resource");
                 return response;
             }
 
-            // Allocate our array of pointers (mcp_content_item_t**)
-            content_items = (mcp_content_item_t**)malloc(content_count * sizeof(mcp_content_item_t*));
-            if (!content_items) {
-                 free(handler_content_items_struct_array);
+            // Success from handler, content_items (mcp_content_item_t**) should be populated.
+            // No need to copy from a struct array anymore.
+            if (content_items == NULL || content_count == 0) {
+                 // Handler returned success but no content, treat as error? Or empty result?
+                 // For now, treat as internal error as content is expected on success.
+                 free(handler_error_message); // Should be NULL on success anyway
                  *error_code = MCP_ERROR_INTERNAL_ERROR;
-                 char* response = create_error_response(request->id, *error_code, "Failed to allocate content pointer array");
-                 PROFILE_END("handle_read_resource");
-                 return response;
-            }
-
-            // Copy data from handler's array of structs into our array of pointers
-            bool copy_error = false;
-            for(size_t i = 0; i < content_count; ++i) {
-                content_items[i] = mcp_content_item_copy(&handler_content_items_struct_array[i]);
-                if (!content_items[i]) {
-                    copy_error = true;
-                    // Free already copied items
-                    for(size_t j = 0; j < i; ++j) {
-                        mcp_content_item_free(content_items[j]);
-                        free(content_items[j]);
-                    }
-                    free(content_items);
-                    content_items = NULL;
-                    break;
-                }
-            }
-
-            // Free the original handler result array (structs) - no need to free internal data as it was copied
-            // Note: The handler is responsible for freeing the array it allocated, but not the internal data if copied successfully.
-            // We assume the handler allocated handler_content_items_struct_array with malloc.
-            free(handler_content_items_struct_array);
-            handler_content_items_struct_array = NULL; // Avoid potential double free
-
-            if (copy_error) {
-                 *error_code = MCP_ERROR_INTERNAL_ERROR;
-                 char* response = create_error_response(request->id, *error_code, "Failed to copy content items from handler");
+                 char* response = create_error_response(request->id, *error_code, "Resource handler returned success but no content");
                  PROFILE_END("handle_read_resource");
                  return response;
             }
@@ -356,6 +352,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     }
 
     // Free content items array and the items it points to AFTER creating JSON copies
+    // This applies whether it came from cache (copies) or handler (originals)
     if (content_items) {
         for (size_t i = 0; i < content_count; i++) {
              mcp_content_item_free(content_items[i]); // Free item contents
@@ -587,45 +584,73 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     }
 
     mcp_json_t* args_json = mcp_json_object_get_property(params_json, "arguments");
-    // Arguments can be any JSON type, stringify them for the handler
-    char* args_str = NULL;
-    if (args_json != NULL) {
-        args_str = mcp_json_stringify(args_json); // Uses malloc
-        if (args_str == NULL) {
-            *error_code = MCP_ERROR_INTERNAL_ERROR;
-            char* response = create_error_response(request->id, *error_code, "Failed to stringify arguments");
-            PROFILE_END("handle_call_tool");
-            return response;
-        }
-    }
+    // Arguments can be any JSON type. Pass the parsed mcp_json_t* directly.
+    // args_json will be NULL if "arguments" is not present or not an object/array/etc.
+    // The handler should check for NULL if arguments are expected.
 
     // Call the tool handler
-    mcp_content_item_t* content_items = NULL; // Handler allocates this array (malloc)
+    mcp_content_item_t** content_items = NULL; // Handler allocates this array of POINTERS (malloc)
     size_t content_count = 0;
-    bool is_error = false;
-    int handler_status = -1;
+    bool is_error = false; // For the 'isError' field in the response payload
+    char* handler_error_message = NULL; // Optional message from handler on error
+    mcp_error_code_t handler_status = MCP_ERROR_NONE;
 
     if (server->tool_handler != NULL) {
         PROFILE_START("tool_handler_callback");
-        handler_status = server->tool_handler(server, name, args_str ? args_str : "{}", server->tool_handler_user_data, &content_items, &content_count, &is_error);
+        handler_status = server->tool_handler(
+            server,
+            name,
+            args_json, // Pass the parsed JSON object directly
+            server->tool_handler_user_data,
+            &content_items, // Receives mcp_content_item_t**
+            &content_count,
+            &is_error, // For the response payload field
+            &handler_error_message // Receives optional malloc'd error message
+        );
         PROFILE_END("tool_handler_callback");
+    } else {
+        handler_status = MCP_ERROR_INTERNAL_ERROR; // No handler configured
+        handler_error_message = mcp_strdup("Tool handler not configured");
     }
-    free(args_str); // Free stringified arguments
+    // No need to free args_str anymore
 
-    if (handler_status != 0 || content_items == NULL || content_count == 0) {
-        free(content_items);
-        *error_code = MCP_ERROR_INTERNAL_ERROR; // Or more specific
-        char* response = create_error_response(request->id, *error_code, "Tool handler failed or tool not found");
+    if (handler_status != MCP_ERROR_NONE) {
+        // Handler indicated an error condition for the JSON-RPC response.
+        // Free any potentially partially allocated content by the handler.
+        if (content_items) {
+            for(size_t i = 0; i < content_count; ++i) {
+                if (content_items[i]) {
+                    mcp_content_item_free(content_items[i]);
+                    free(content_items[i]);
+                }
+            }
+            free(content_items);
+            content_items = NULL;
+        }
+        *error_code = handler_status; // Use the specific error code from handler
+        const char* msg = handler_error_message ? handler_error_message : "Tool handler failed or tool not found";
+        char* response = create_error_response(request->id, *error_code, msg);
+        free(handler_error_message); // Free the message string from handler
         PROFILE_END("handle_call_tool");
         return response;
     }
+
+    // Handler returned success (MCP_ERROR_NONE), proceed to build success response.
+    // Note: content_items might still be NULL/empty if the tool produces no output.
+    // The 'is_error' flag determines the 'isError' field in the result.
 
     // Create response JSON structure using thread-local arena.
     mcp_json_t* content_json = mcp_json_array_create(); // Use TLS arena
     if (!content_json) {
          // Free handler-allocated content if JSON creation fails
-         for (size_t i = 0; i < content_count; i++) mcp_content_item_free(&content_items[i]);
-         free(content_items);
+         if (content_items) {
+             for (size_t i = 0; i < content_count; i++) {
+                 mcp_content_item_free(content_items[i]);
+                 free(content_items[i]);
+             }
+             free(content_items);
+         }
+         free(handler_error_message); // Should be NULL on success
          *error_code = MCP_ERROR_INTERNAL_ERROR; // Allocation failure
          char* response = create_error_response(request->id, *error_code, "Failed to create content array");
          PROFILE_END("handle_call_tool");
@@ -633,33 +658,41 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     }
 
     bool json_build_error = false;
-    for (size_t i = 0; i < content_count; i++) {
-        mcp_content_item_t* item = &content_items[i];
-        mcp_json_t* item_obj = mcp_json_object_create(); // Use TLS arena
-        const char* type_str;
-        switch(item->type) {
+    if (content_items) { // Only iterate if content exists
+        for (size_t i = 0; i < content_count; i++) {
+            mcp_content_item_t* item = content_items[i]; // item is mcp_content_item_t*
+            mcp_json_t* item_obj = mcp_json_object_create(); // Use TLS arena
+            const char* type_str;
+            switch(item->type) {
             case MCP_CONTENT_TYPE_TEXT: type_str = "text"; break;
             case MCP_CONTENT_TYPE_JSON: type_str = "json"; break;
-            case MCP_CONTENT_TYPE_BINARY: type_str = "binary"; break;
-            default: type_str = "unknown"; break;
-        }
+                case MCP_CONTENT_TYPE_BINARY: type_str = "binary"; break;
+                default: type_str = "unknown"; break;
+            }
 
-        if (!item_obj ||
-            mcp_json_object_set_property(item_obj, "type", mcp_json_string_create(type_str)) != 0 || // Use TLS arena
-            (item->mime_type && mcp_json_object_set_property(item_obj, "mimeType", mcp_json_string_create(item->mime_type)) != 0) || // Use TLS arena
-            (item->type == MCP_CONTENT_TYPE_TEXT && item->data && mcp_json_object_set_property(item_obj, "text", mcp_json_string_create((const char*)item->data)) != 0) || // Use TLS arena
-            // TODO: Handle binary data?
-            mcp_json_array_add_item(content_json, item_obj) != 0)
-        {
-            mcp_json_destroy(item_obj);
-            json_build_error = true;
-            break;
+            if (!item_obj ||
+                mcp_json_object_set_property(item_obj, "type", mcp_json_string_create(type_str)) != 0 || // Use TLS arena
+                (item->mime_type && mcp_json_object_set_property(item_obj, "mimeType", mcp_json_string_create(item->mime_type)) != 0) || // Use TLS arena
+                (item->type == MCP_CONTENT_TYPE_TEXT && item->data && mcp_json_object_set_property(item_obj, "text", mcp_json_string_create((const char*)item->data)) != 0) || // Use TLS arena
+                // TODO: Handle binary data?
+                mcp_json_array_add_item(content_json, item_obj) != 0)
+            {
+                mcp_json_destroy(item_obj);
+                json_build_error = true;
+                break;
+            }
         }
     }
 
-    // Free handler-allocated content items
-    for (size_t i = 0; i < content_count; i++) mcp_content_item_free(&content_items[i]);
-    free(content_items);
+    // Free handler-allocated content items array and the items it points to
+    if (content_items) {
+        for (size_t i = 0; i < content_count; i++) {
+            mcp_content_item_free(content_items[i]); // Free item contents
+            free(content_items[i]); // Free the item struct pointer
+        }
+        free(content_items); // Free the array itself
+    }
+    free(handler_error_message); // Should be NULL on success
 
      if (json_build_error) {
         mcp_json_destroy(content_json);

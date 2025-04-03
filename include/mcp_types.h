@@ -33,6 +33,8 @@ typedef enum {
     MCP_ERROR_SERVER_ERROR_START = -32000,  /**< Start of reserved range for implementation-defined server-errors. */
     MCP_ERROR_SERVER_ERROR_END = -32099,    /**< End of reserved range for implementation-defined server-errors. */
     MCP_ERROR_TRANSPORT_ERROR = -32100,     /**< Custom: Error related to the transport layer (e.g., connection lost, send/receive failed). */
+    MCP_ERROR_RESOURCE_NOT_FOUND = -32101,  /**< Custom: The requested resource was not found. */
+    MCP_ERROR_TOOL_NOT_FOUND = -32102,      /**< Custom: The requested tool was not found. */
     // Add other custom error codes here if needed
 } mcp_error_code_t;
 

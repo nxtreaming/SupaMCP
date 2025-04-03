@@ -3,6 +3,7 @@
 
 #include <mcp_types.h>
 #include <mcp_transport.h>
+#include <mcp_json.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,22 +52,29 @@ typedef struct mcp_server mcp_server_t;
  * @param server Pointer to the server instance handling the request.
  * @param uri The URI of the requested resource.
  * @param user_data The user data pointer provided via mcp_server_set_resource_handler().
- * @param[out] content Pointer to a variable that should receive the allocated array
- *                     of mcp_content_item_t pointers. The handler must allocate this
- *                     array and its items using `malloc`. The server core will free
- *                     the items using `mcp_content_item_free()` and the array using `free()`.
+ * @param[out] content Pointer to a variable (`mcp_content_item_t**`) in the caller's scope.
+ *                     The handler must allocate an array of `mcp_content_item_t*` pointers
+ *                     using `malloc`, allocate each `mcp_content_item_t` struct using `malloc`,
+ *                     and assign the pointer to the allocated array to `*content`.
+ *                     The server core will free the items using `mcp_content_item_free()`
+ *                     and the array using `free()`.
+ *                     On error, this should be set to NULL.
  * @param[out] content_count Pointer to a variable that should receive the number of
- *                           items in the `content` array.
- * @return 0 on success (content found and returned), non-zero on error (e.g., resource
- *         not found, allocation failure). A non-zero return will result in an
- *         appropriate JSON-RPC error response being sent.
+ *                           items in the `content` array. On error, this should be set to 0.
+ * @param[out] error_message Pointer to a variable that should receive an optional, malloc'd
+ *                           error message string if the handler returns an error code.
+ *                           The server core will free this string using `free()`.
+ *                           Set to NULL if no specific message is needed.
+ * @return mcp_error_code_t MCP_ERROR_NONE (0) on success, or a specific MCP error code
+ *         (e.g., MCP_ERROR_RESOURCE_NOT_FOUND, MCP_ERROR_INTERNAL_ERROR) on failure.
  */
-typedef int (*mcp_server_resource_handler_t)(
+typedef mcp_error_code_t (*mcp_server_resource_handler_t)(
     mcp_server_t* server,
     const char* uri,
     void* user_data,
-    mcp_content_item_t** content, // Note: Handler must malloc this array and items
-    size_t* content_count
+    mcp_content_item_t*** content, // Note: Expects address of the caller's mcp_content_item_t**
+    size_t* content_count,
+    char** error_message // Note: Handler must malloc this string if provided
 );
 
 /**
@@ -79,30 +87,40 @@ typedef int (*mcp_server_resource_handler_t)(
  *
  * @param server Pointer to the server instance handling the request.
  * @param name The name of the tool being called.
- * @param params A JSON string containing the arguments for the tool call.
+ * @param params Pointer to a parsed JSON object (`mcp_json_t`) representing the tool arguments.
+ *               This object is typically allocated using the request's thread-local arena
+ *               and should not be modified or stored by the handler beyond the callback's scope.
+ *               Will be NULL if no arguments were provided in the request.
  * @param user_data The user data pointer provided via mcp_server_set_tool_handler().
- * @param[out] content Pointer to a variable that should receive the allocated array
- *                     of mcp_content_item_t pointers representing the tool's output.
- *                     The handler must allocate this array and its items using `malloc`.
+ * @param[out] content Pointer to a variable (`mcp_content_item_t**`) in the caller's scope.
+ *                     The handler must allocate an array of `mcp_content_item_t*` pointers
+ *                     using `malloc`, allocate each `mcp_content_item_t` struct using `malloc`,
+ *                     and assign the pointer to the allocated array to `*content`.
  *                     The server core will free the items using `mcp_content_item_free()`
- *                     and the array using `free()`.
+ *                     and the array using `free()`. On error, this should be set to NULL.
  * @param[out] content_count Pointer to a variable that should receive the number of
- *                           items in the `content` array.
+ *                           items in the `content` array. On error, this should be set to 0.
  * @param[out] is_error Pointer to a boolean that the handler should set to true if the
- *                      tool execution itself resulted in an error (even if content is
- *                      returned, e.g., an error message), false otherwise.
- * @return 0 on success (tool executed, content returned), non-zero on error (e.g., tool
- *         not found, internal execution error). A non-zero return will result in an
- *         appropriate JSON-RPC error response being sent.
+ *                      tool execution itself resulted in an error state (the 'isError'
+ *                      field in the response), false otherwise. This is independent of
+ *                      the function's return code.
+ * @param[out] error_message Pointer to a variable that should receive an optional, malloc'd
+ *                           error message string if the handler returns an error code.
+ *                           The server core will free this string using `free()`.
+ *                           Set to NULL if no specific message is needed.
+ * @return mcp_error_code_t MCP_ERROR_NONE (0) on success, or a specific MCP error code
+ *         (e.g., MCP_ERROR_TOOL_NOT_FOUND, MCP_ERROR_INVALID_PARAMS, MCP_ERROR_INTERNAL_ERROR)
+ *         on failure. A non-zero return code results in a JSON-RPC error response.
  */
-typedef int (*mcp_server_tool_handler_t)(
+typedef mcp_error_code_t (*mcp_server_tool_handler_t)(
     mcp_server_t* server,
     const char* name,
-    const char* params, // Note: This is a JSON string
+    const mcp_json_t* params, // Note: Parsed JSON object, allocated in request arena
     void* user_data,
-    mcp_content_item_t** content, // Note: Handler must malloc this array and items
+    mcp_content_item_t*** content, // Note: Expects address of the caller's mcp_content_item_t**
     size_t* content_count,
-    bool* is_error
+    bool* is_error,
+    char** error_message // Note: Handler must malloc this string if provided
 );
 
 /**

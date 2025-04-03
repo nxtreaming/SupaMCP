@@ -19,11 +19,14 @@
 #include <sys/types.h>
 #endif
 
+#include "mcp_types.h"
 #include "mcp_server.h"
 #include "mcp_log.h"
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_transport.h"
 #include "mcp_profiler.h"
+#include "mcp_json.h"
+
 
 // Global server instance for signal handling
 static mcp_server_t* g_server = NULL;
@@ -43,106 +46,239 @@ static void cleanup(void);
 
 // --- Logging functions moved to mcp_log.c ---
 
-// Example resource handler (remains the same)
-static int example_resource_handler(
+// Example resource handler - Updated Signature
+static mcp_error_code_t example_resource_handler(
     mcp_server_t* server,
     const char* uri,
     void* user_data,
-    mcp_content_item_t** content,
-    size_t* content_count
-) {
-    (void)server; // Unused parameter
-    (void)user_data; // Unused parameter
+    mcp_content_item_t*** content,
+    size_t* content_count,
+    char** error_message)
+{
+    (void)server; (void)user_data;
+
     log_message(LOG_LEVEL_INFO, "Resource requested: %s", uri);
 
+    // Initialize output params
+    *content = NULL;
+    *content_count = 0;
+    *error_message = NULL;
+    mcp_content_item_t* item = NULL;
+    char* data_copy = NULL;
+    const char* resource_name = NULL;
+    mcp_error_code_t err_code = MCP_ERROR_NONE;
+
     if (strncmp(uri, "example://", 10) != 0) {
-        log_message(LOG_LEVEL_WARN, "Invalid resource URI: %s", uri);
-        return -1;
+        log_message(LOG_LEVEL_WARN, "Invalid resource URI prefix: %s", uri);
+        *error_message = mcp_strdup("Resource not found (invalid prefix).");
+        err_code = MCP_ERROR_RESOURCE_NOT_FOUND;
+        goto cleanup;
     }
-    const char* resource_name = uri + 10;
+    resource_name = uri + 10;
 
-    *content = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
-    if (*content == NULL) return -1;
-
-    (*content)->type = MCP_CONTENT_TYPE_TEXT;
-    (*content)->mime_type = mcp_strdup("text/plain");
-    (*content)->data = NULL; // Initialize data pointer
-
+    // Determine content based on resource name
     if (strcmp(resource_name, "hello") == 0) {
-        (*content)->data = mcp_strdup("Hello, world!");
+        data_copy = mcp_strdup("Hello, world!");
     } else if (strcmp(resource_name, "info") == 0) {
-        (*content)->data = mcp_strdup("This is an example MCP server.");
+        data_copy = mcp_strdup("This is an example MCP server.");
+    } else {
+        log_message(LOG_LEVEL_WARN, "Unknown resource name: %s", resource_name);
+        *error_message = mcp_strdup("Resource not found.");
+        err_code = MCP_ERROR_RESOURCE_NOT_FOUND;
+        goto cleanup;
     }
 
-    if ((*content)->data == NULL || (*content)->mime_type == NULL) {
-        // Cleanup on allocation failure
-        free((*content)->mime_type);
-        free((*content)->data);
-        free(*content);
-        *content = NULL;
-        return -1;
+    if (!data_copy) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate data for resource: %s", resource_name);
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
     }
 
-    (*content)->data_size = strlen((const char*)(*content)->data);
+    // Allocate the array of pointers (size 1)
+    *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
+    if (!*content) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate content array for resource: %s", resource_name);
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
+    }
+    (*content)[0] = NULL; // Initialize
+
+    // Allocate the content item struct
+    item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+    if (!item) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate content item struct for resource: %s", resource_name);
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
+    }
+
+    // Populate the item
+    item->type = MCP_CONTENT_TYPE_TEXT;
+    item->mime_type = mcp_strdup("text/plain");
+    item->data = data_copy; // Transfer ownership
+    item->data_size = strlen(data_copy);
+    data_copy = NULL; // Avoid double free
+
+    if (!item->mime_type) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate mime type for resource: %s", resource_name);
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
+    }
+
+    // Assign item to array
+    (*content)[0] = item;
     *content_count = 1;
-    return 0;
+    err_code = MCP_ERROR_NONE; // Success
+
+cleanup:
+    // Free intermediate allocations on error
+    free(data_copy);
+    if (err_code != MCP_ERROR_NONE) {
+        if (item) {
+            mcp_content_item_free(item); // Frees mime_type and data if allocated
+            free(item);
+        }
+        if (*content) {
+            free(*content);
+            *content = NULL;
+        }
+        *content_count = 0;
+        if (*error_message == NULL) { // Ensure an error message exists on error
+            *error_message = mcp_strdup("An unexpected error occurred processing the resource.");
+        }
+    }
+    return err_code;
 }
 
-// Example tool handler (remains the same)
-static int example_tool_handler(
+// Example tool handler - Updated Signature
+static mcp_error_code_t example_tool_handler(
     mcp_server_t* server,
     const char* name,
-    const char* arguments,
+    const mcp_json_t* params,
     void* user_data,
-    mcp_content_item_t** content,
+    mcp_content_item_t*** content,
     size_t* content_count,
-    bool* is_error
-) {
+    bool* is_error,
+    char** error_message)
+{
     (void)server; (void)user_data;
-    log_message(LOG_LEVEL_INFO, "Tool called: %s", name);
-    log_message(LOG_LEVEL_DEBUG, "Arguments: %s", arguments);
 
+    log_message(LOG_LEVEL_INFO, "Tool called: %s", name);
+
+    // Initialize output params
+    *content = NULL;
+    *content_count = 0;
     *is_error = false;
-    *content = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
-    if (*content == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for content item");
-        return -1;
+    *error_message = NULL;
+    mcp_content_item_t* item = NULL;
+    char* result_data = NULL;
+    const char* input_text = NULL;
+    mcp_error_code_t err_code = MCP_ERROR_NONE;
+
+    // Extract "text" parameter using mcp_json
+    if (params == NULL || mcp_json_get_type(params) != MCP_JSON_OBJECT) {
+        log_message(LOG_LEVEL_WARN, "Tool '%s': Invalid or missing params object.", name);
+        *is_error = true;
+        *error_message = mcp_strdup("Missing or invalid parameters object.");
+        err_code = MCP_ERROR_INVALID_PARAMS;
+        goto cleanup;
+    }
+    mcp_json_t* text_node = mcp_json_object_get_property(params, "text");
+    if (text_node == NULL || mcp_json_get_type(text_node) != MCP_JSON_STRING || mcp_json_get_string(text_node, &input_text) != 0 || input_text == NULL) {
+        log_message(LOG_LEVEL_WARN, "Tool '%s': Missing or invalid 'text' string parameter.", name);
+        *is_error = true;
+        *error_message = mcp_strdup("Missing or invalid 'text' string parameter.");
+        err_code = MCP_ERROR_INVALID_PARAMS;
+        goto cleanup;
     }
 
-    (*content)->type = MCP_CONTENT_TYPE_TEXT;
-    (*content)->mime_type = mcp_strdup("text/plain");
-    (*content)->data = NULL; // Initialize
-
+    // Execute tool logic
     if (strcmp(name, "echo") == 0) {
-        (*content)->data = mcp_strdup(arguments ? arguments : "");
-    } else if (strcmp(name, "reverse") == 0 && arguments != NULL) {
-        size_t len = strlen(arguments);
-        char* reversed = (char*)malloc(len + 1);
-        if (reversed != NULL) {
-            for (size_t i = 0; i < len; i++) reversed[i] = arguments[len - i - 1];
-            reversed[len] = '\0';
-            (*content)->data = reversed;
+        result_data = mcp_strdup(input_text);
+    } else if (strcmp(name, "reverse") == 0) {
+        size_t len = strlen(input_text);
+        result_data = (char*)malloc(len + 1);
+        if (result_data != NULL) {
+            for (size_t i = 0; i < len; i++) result_data[i] = input_text[len - i - 1];
+            result_data[len] = '\0';
         }
     } else {
-        log_message(LOG_LEVEL_WARN, "Unknown tool or missing arguments: %s", name);
+        log_message(LOG_LEVEL_WARN, "Unknown tool name: %s", name);
         *is_error = true;
-        // Fall through to cleanup if data allocation failed or tool unknown
+        *error_message = mcp_strdup("Tool not found.");
+        err_code = MCP_ERROR_TOOL_NOT_FOUND; // More specific error
+        goto cleanup;
     }
 
-    if ((*content)->data == NULL || (*content)->mime_type == NULL) {
-        free((*content)->mime_type);
-        free((*content)->data);
-        free(*content);
-        *content = NULL;
-        *content_count = 0;
-        // If it wasn't already an error, make it one due to allocation failure
-        if (!*is_error) return -1; // Indicate internal error
-        else return 0; // Indicate tool error (is_error is true)
+    if (!result_data) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate result data for tool: %s", name);
+        *is_error = true; // Indicate tool execution failed internally
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
     }
 
-     (*content)->data_size = strlen((const char*)(*content)->data);
+    // --- Create the response content ---
+    *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
+    if (!*content) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate content array for tool: %s", name);
+        *is_error = true;
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
+    }
+    (*content)[0] = NULL; // Initialize
+
+    item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+    if (!item) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate content item struct for tool: %s", name);
+        *is_error = true;
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
+    }
+
+    item->type = MCP_CONTENT_TYPE_TEXT;
+    item->mime_type = mcp_strdup("text/plain");
+    item->data = result_data; // Transfer ownership
+    item->data_size = strlen(result_data);
+    result_data = NULL; // Avoid double free
+
+    if (!item->mime_type) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate mime type for tool: %s", name);
+        *is_error = true;
+        *error_message = mcp_strdup("Internal server error: memory allocation failed.");
+        err_code = MCP_ERROR_INTERNAL_ERROR;
+        goto cleanup;
+    }
+
+    (*content)[0] = item;
     *content_count = 1;
-    return 0; // Success (even if is_error is true, the handler succeeded)
+    err_code = MCP_ERROR_NONE; // Success
+
+cleanup:
+    // Free intermediate allocations on error
+    free(result_data);
+    if (err_code != MCP_ERROR_NONE) {
+        if (item) {
+            mcp_content_item_free(item);
+            free(item);
+        }
+        if (*content) {
+            free(*content);
+            *content = NULL;
+        }
+        *content_count = 0;
+        if (*error_message == NULL) {
+            *error_message = mcp_strdup("An unexpected error occurred processing the tool.");
+        }
+    }
+    // Note: *is_error might be true even if err_code is MCP_ERROR_NONE,
+    // if the tool logic itself represents an error state but the handler executed correctly.
+    return err_code;
 }
 
 /**
