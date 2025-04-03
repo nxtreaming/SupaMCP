@@ -1,6 +1,7 @@
 #include "mcp_auth.h"
 #include "mcp_log.h"
 #include "mcp_profiler.h"
+#include "mcp_types.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -29,19 +30,6 @@ static bool simple_wildcard_match(const char* pattern, const char* text) {
         return pattern_len == text_len && strcmp(pattern, text) == 0;
     }
 }
-
-// Helper for strdup needed if mcp_profiler isn't included or doesn't provide it
-#ifndef mcp_strdup
-static char* mcp_strdup(const char* s) {
-    if (!s) return NULL;
-    size_t len = strlen(s) + 1;
-    char* new_s = (char*)malloc(len);
-    if (new_s) {
-        memcpy(new_s, s, len);
-    }
-    return new_s;
-}
-#endif
 
 
 /**

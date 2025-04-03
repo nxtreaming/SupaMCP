@@ -2,8 +2,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-// Internal struct mcp_transport is now defined in mcp_transport_internal.h
-
 // --- Generic Transport Interface Implementation ---
 // These functions provide the public API defined in mcp_transport.h.
 // They perform basic validation and then delegate the actual work to the
