@@ -263,13 +263,15 @@ static void* tcp_client_handler_thread_func(void* arg) {
 
     // Main receive loop with length prefix framing and idle timeout
     while (!client_conn->should_stop && client_conn->active) {
-        // Calculate overall deadline for this read operation
+
+        // --- Calculate Deadline for Idle Timeout ---
         time_t deadline = 0;
         if (tcp_data->idle_timeout_ms > 0) {
             deadline = client_conn->last_activity_time + (tcp_data->idle_timeout_ms / 1000) + ((tcp_data->idle_timeout_ms % 1000) > 0 ? 1 : 0);
         }
 
-        // 1. Wait for data or timeout
+
+        // --- 1. Wait for Data or Timeout ---
         uint32_t wait_ms = tcp_data->idle_timeout_ms; // Start with full timeout for select/poll
         if (wait_ms == 0) wait_ms = 500; // If no idle timeout, check stop flag periodically
 
@@ -303,7 +305,8 @@ static void* tcp_client_handler_thread_func(void* arg) {
         }
         // else: wait_result == 1 (socket is readable)
 
-        // 2. Read the 4-byte length prefix
+
+        // --- 2. Read the 4-byte Length Prefix ---
         read_result = recv_exact(client_conn->socket, length_buf, 4, &client_conn->should_stop);
 
         if (read_result == -1) { // Socket error
@@ -339,17 +342,20 @@ static void* tcp_client_handler_thread_func(void* arg) {
         // Update activity time after successful read
         client_conn->last_activity_time = time(NULL);
 
-        // 3. Decode length (Network to Host byte order)
+
+        // --- 3. Decode Length (Network to Host Byte Order) ---
         memcpy(&message_length_net, length_buf, 4);
         message_length_host = ntohl(message_length_net);
 
-        // 4. Sanity check length
+
+        // --- 4. Sanity Check Length ---
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
              log_message(LOG_LEVEL_ERROR, "Invalid message length received: %u on socket %d", message_length_host, (int)client_conn->socket);
              goto client_cleanup; // Invalid length, close connection
         }
 
-        // 5. Allocate buffer for message body using buffer pool or malloc
+
+        // --- 5. Allocate Buffer for Message Body (Pool or Malloc) ---
         size_t required_size = message_length_host + 1; // +1 for null terminator
         size_t pool_buffer_size = mcp_buffer_pool_get_buffer_size(tcp_data->buffer_pool);
 
@@ -372,7 +378,8 @@ static void* tcp_client_handler_thread_func(void* arg) {
              goto client_cleanup; // Allocation failure
         }
 
-        // 6. Read the message body
+
+        // --- 6. Read the Message Body ---
         read_result = recv_exact(client_conn->socket, message_buf, message_length_host, &client_conn->should_stop);
 
          if (read_result == -1) { // Socket error
@@ -408,7 +415,8 @@ static void* tcp_client_handler_thread_func(void* arg) {
         // Update activity time after successful read
         client_conn->last_activity_time = time(NULL);
 
-        // 7. Null-terminate and process the message via callback
+
+        // --- 7. Null-terminate and Process Message via Callback ---
         message_buf[message_length_host] = '\0';
         char* response_str = NULL;
         int callback_error_code = 0;
@@ -423,7 +431,8 @@ static void* tcp_client_handler_thread_func(void* arg) {
             message_buf = NULL;
         }
 
-        // 9. If callback returned a response string, add length prefix and send it back
+
+        // --- 9. Send Response (if any) ---
         if (response_str != NULL) {
             size_t response_len = strlen(response_str);
             if (response_len > 0 && response_len <= MAX_MCP_MESSAGE_SIZE) {
@@ -485,6 +494,7 @@ static void* tcp_client_handler_thread_func(void* arg) {
     } // End of main while loop
 
 client_cleanup:
+    // --- Cleanup on Exit ---
     // Free or release buffer if loop exited unexpectedly
     if (message_buf != NULL) {
         if (buffer_malloced) free(message_buf);

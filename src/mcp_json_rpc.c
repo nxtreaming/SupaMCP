@@ -406,6 +406,7 @@ int mcp_json_parse_resources(
 
     *count = (size_t)array_size;
 
+
     // Allocate resources array
     *resources = (mcp_resource_t**)malloc(*count * sizeof(mcp_resource_t*));
     if (*resources == NULL) {
@@ -416,6 +417,8 @@ int mcp_json_parse_resources(
     // Parse resources
     for (size_t i = 0; i < *count; i++) {
         mcp_json_t* resource_json = mcp_json_array_get_item(resources_json, (int)i);
+
+        // --- Validate Resource Object ---
         if (resource_json == NULL || mcp_json_get_type(resource_json) != MCP_JSON_OBJECT) {
             for (size_t j = 0; j < i; j++) {
                 mcp_resource_free((*resources)[j]);
@@ -427,7 +430,8 @@ int mcp_json_parse_resources(
             return -1;
         }
 
-        // Get uri
+
+        // --- Parse Resource Properties ---
         mcp_json_t* uri_json = mcp_json_object_get_property(resource_json, "uri");
         const char* uri = NULL;
         if (uri_json != NULL && mcp_json_get_type(uri_json) == MCP_JSON_STRING) {
@@ -455,7 +459,8 @@ int mcp_json_parse_resources(
             mcp_json_get_string(description_json, &description);
         }
 
-        // Create resource
+
+        // --- Create Resource Struct ---
         (*resources)[i] = mcp_resource_create(uri, name, mime_type, description);
         if ((*resources)[i] == NULL) {
             for (size_t j = 0; j < i; j++) {
@@ -507,6 +512,7 @@ int mcp_json_parse_resource_templates(
 
     *count = (size_t)array_size;
 
+
     // Allocate resource templates array
     *templates = (mcp_resource_template_t**)malloc(*count * sizeof(mcp_resource_template_t*));
     if (*templates == NULL) {
@@ -517,6 +523,8 @@ int mcp_json_parse_resource_templates(
     // Parse resource templates
     for (size_t i = 0; i < *count; i++) {
         mcp_json_t* template_json = mcp_json_array_get_item(templates_json, (int)i);
+
+        // --- Validate Template Object ---
         if (template_json == NULL || mcp_json_get_type(template_json) != MCP_JSON_OBJECT) {
             for (size_t j = 0; j < i; j++) {
                 mcp_resource_template_free((*templates)[j]);
@@ -528,7 +536,8 @@ int mcp_json_parse_resource_templates(
             return -1;
         }
 
-        // Get uri_template
+
+        // --- Parse Template Properties ---
         mcp_json_t* uri_template_json = mcp_json_object_get_property(template_json, "uriTemplate");
         const char* uri_template = NULL;
         if (uri_template_json != NULL && mcp_json_get_type(uri_template_json) == MCP_JSON_STRING) {
@@ -556,7 +565,8 @@ int mcp_json_parse_resource_templates(
             mcp_json_get_string(description_json, &description);
         }
 
-        // Create resource template
+
+        // --- Create Resource Template Struct ---
         (*templates)[i] = mcp_resource_template_create(uri_template, name, mime_type, description);
         if ((*templates)[i] == NULL) {
             for (size_t j = 0; j < i; j++) {
@@ -715,6 +725,7 @@ int mcp_json_parse_tools(
 
     *count = (size_t)array_size;
 
+
     // Allocate tools array
     *tools = (mcp_tool_t**)malloc(*count * sizeof(mcp_tool_t*));
     if (*tools == NULL) {
@@ -725,6 +736,8 @@ int mcp_json_parse_tools(
     // Parse tools
     for (size_t i = 0; i < *count; i++) {
         mcp_json_t* tool_json = mcp_json_array_get_item(tools_json, (int)i);
+
+        // --- Validate Tool Object ---
         if (tool_json == NULL || mcp_json_get_type(tool_json) != MCP_JSON_OBJECT) {
             for (size_t j = 0; j < i; j++) {
                 mcp_tool_free((*tools)[j]);
@@ -736,7 +749,8 @@ int mcp_json_parse_tools(
             return -1;
         }
 
-        // Get name
+
+        // --- Parse Name and Description ---
         mcp_json_t* name_json = mcp_json_object_get_property(tool_json, "name");
         const char* name = NULL;
         if (name_json != NULL && mcp_json_get_type(name_json) == MCP_JSON_STRING) {
@@ -750,7 +764,8 @@ int mcp_json_parse_tools(
             mcp_json_get_string(description_json, &description);
         }
 
-        // Create tool
+
+        // --- Create Tool Struct ---
         (*tools)[i] = mcp_tool_create(name, description);
         if ((*tools)[i] == NULL) {
             for (size_t j = 0; j < i; j++) {
@@ -763,21 +778,22 @@ int mcp_json_parse_tools(
             return -1;
         }
 
-        // Get input schema
+
+        // --- Parse Input Schema ---
         mcp_json_t* input_schema_json = mcp_json_object_get_property(tool_json, "inputSchema");
         if (input_schema_json != NULL && mcp_json_get_type(input_schema_json) == MCP_JSON_OBJECT) {
-            // Get properties
+
+            // --- Parse Properties ---
             mcp_json_t* properties_json = mcp_json_object_get_property(input_schema_json, "properties");
             if (properties_json != NULL && mcp_json_get_type(properties_json) == MCP_JSON_OBJECT) {
-                // Get property names
                 char** property_names = NULL;
                 size_t property_count = 0;
                 if (mcp_json_object_get_property_names(properties_json, &property_names, &property_count) == 0) {
-                    // Get required properties
+
+                    // --- Parse Required Properties Array ---
                     mcp_json_t* required_json = mcp_json_object_get_property(input_schema_json, "required");
                     char** required_properties = NULL;
                     size_t required_count = 0;
-
                     if (required_json != NULL && mcp_json_get_type(required_json) == MCP_JSON_ARRAY) {
                         int required_array_size = mcp_json_array_get_size(required_json);
                         if (required_array_size > 0) {
@@ -800,7 +816,8 @@ int mcp_json_parse_tools(
                         }
                     }
 
-                    // Add properties to tool
+
+                    // --- Add Parameters to Tool ---
                     for (size_t j = 0; j < property_count; j++) {
                         const char* property_name = property_names[j];
                         mcp_json_t* property_json = mcp_json_object_get_property(properties_json, property_name);
@@ -834,14 +851,16 @@ int mcp_json_parse_tools(
                         }
                     }
 
-                    // Free required properties
+
+                    // --- Cleanup Required Properties Array ---
                     for (size_t j = 0; j < required_count; j++) {
                         free(required_properties[j]);
                     }
                     free(required_properties);
                 }
 
-                // Free property names
+
+                // --- Cleanup Property Names Array ---
                 for (size_t j = 0; j < property_count; j++) {
                     free(property_names[j]);
                 }
@@ -874,11 +893,13 @@ int mcp_json_parse_tool_result(
         return -1;
     }
 
-    // Get is_error
+
+    // Get is_error flag
     mcp_json_t* is_error_json = mcp_json_object_get_property(json, "isError");
     if (is_error_json != NULL && mcp_json_get_type(is_error_json) == MCP_JSON_BOOLEAN) {
         mcp_json_get_boolean(is_error_json, is_error);
     }
+
 
     // Get content array
     mcp_json_t* content_json = mcp_json_object_get_property(json, "content");
@@ -896,6 +917,7 @@ int mcp_json_parse_tool_result(
 
     *count = (size_t)array_size;
 
+
     // Allocate content array
     *content = (mcp_content_item_t**)malloc(*count * sizeof(mcp_content_item_t*));
     if (*content == NULL) {
@@ -903,9 +925,11 @@ int mcp_json_parse_tool_result(
         return -1;
     }
 
-    // Parse content
+    // Parse content items
     for (size_t i = 0; i < *count; i++) {
         mcp_json_t* item_json = mcp_json_array_get_item(content_json, (int)i);
+
+        // --- Validate Content Item Object ---
         if (item_json == NULL || mcp_json_get_type(item_json) != MCP_JSON_OBJECT) {
             for (size_t j = 0; j < i; j++) {
                 mcp_content_item_free((*content)[j]);
@@ -917,7 +941,8 @@ int mcp_json_parse_tool_result(
             return -1;
         }
 
-        // Get type
+
+        // --- Parse Content Item Properties ---
         mcp_json_t* type_json = mcp_json_object_get_property(item_json, "type");
         mcp_content_type_t type = MCP_CONTENT_TYPE_TEXT;
         if (type_json != NULL && mcp_json_get_type(type_json) == MCP_JSON_STRING) {
@@ -951,7 +976,8 @@ int mcp_json_parse_tool_result(
             }
         }
 
-        // Create content item
+
+        // --- Create Content Item Struct ---
         (*content)[i] = mcp_content_item_create(type, mime_type, text, text_size);
         if ((*content)[i] == NULL) {
             for (size_t j = 0; j < i; j++) {

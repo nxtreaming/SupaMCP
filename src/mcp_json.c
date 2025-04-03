@@ -1089,6 +1089,7 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
     int parse_status = -1; // Default to error
     message->type = MCP_MESSAGE_TYPE_INVALID; // Default type
 
+
     // --- Request Check ---
     if (method != NULL && method->type == MCP_JSON_STRING) {
         if (id != NULL) { // Must have ID for request
@@ -1116,6 +1117,7 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
                     }
                 }
             }
+
         } else { // Notification (method present, id absent)
              // Check params type (object or array allowed, or omitted)
             if (params == NULL || params->type == MCP_JSON_OBJECT || params->type == MCP_JSON_ARRAY) {
@@ -1138,6 +1140,8 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
                 }
             }
         }
+
+    // --- Response Check ---
     } else if (id != NULL && (result != NULL || error != NULL)) { // Response
         // Check ID type
         if (id->type == MCP_JSON_NUMBER) { // || id->type == MCP_JSON_STRING) { // Allow string ID? No.
@@ -1176,6 +1180,7 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
                         message->type = MCP_MESSAGE_TYPE_INVALID;
                     }
                 }
+
             } else if (result != NULL) { // Success Response
                 // Success Response (result can be any JSON type)
                 message->response.error_code = MCP_ERROR_NONE;
@@ -1194,10 +1199,13 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
                  log_message(LOG_LEVEL_ERROR, "MCP message parse error: Response must have 'result' or 'error'.");
                  message->type = MCP_MESSAGE_TYPE_INVALID;
             }
+
         } else { // Invalid ID type
              log_message(LOG_LEVEL_ERROR, "MCP message parse error: Response 'id' is not a number.");
              message->type = MCP_MESSAGE_TYPE_INVALID;
         }
+
+    // --- Invalid Message Type ---
     } else { // Not a request, notification, or response
         log_message(LOG_LEVEL_ERROR, "MCP message parse error: Message is not a valid request, response, or notification.");
         message->type = MCP_MESSAGE_TYPE_INVALID;
@@ -1243,6 +1251,7 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
                 if (params_node) {
                     mcp_json_object_set_property(json, "params", params_node); // table_set uses malloc for entry/key
                 }
+
                 final_json_string = mcp_json_stringify(json); // Stringify uses malloc for output buffer
             } else {
                 log_message(LOG_LEVEL_ERROR, "Failed to create/parse nodes for stringifying request.");
@@ -1250,13 +1259,14 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
             }
             break;
         }
+
         case MCP_MESSAGE_TYPE_RESPONSE: {
             // Create nodes using thread-local arena (calls already updated)
             mcp_json_t* id_node = mcp_json_number_create((double)message->response.id);
             if (!id_node) break; // Failed to create ID node
             mcp_json_object_set_property(json, "id", id_node); // table_set uses malloc
 
-            if (message->response.error_code != MCP_ERROR_NONE) {
+            if (message->response.error_code != MCP_ERROR_NONE) { // Error response
                 mcp_json_t* error_obj = mcp_json_object_create(); // Uses arena
                 mcp_json_t* code_node = mcp_json_number_create((double)message->response.error_code); // Uses arena
                 mcp_json_t* msg_node = (message->response.error_message != NULL) ? mcp_json_string_create(message->response.error_message) : NULL; // Uses arena
@@ -1266,13 +1276,15 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
                     if (msg_node) {
                         mcp_json_object_set_property(error_obj, "message", msg_node); // table_set uses malloc
                     }
+
                     mcp_json_object_set_property(json, "error", error_obj); // table_set uses malloc
                     final_json_string = mcp_json_stringify(json); // Stringify uses malloc
                 } else {
                      log_message(LOG_LEVEL_ERROR, "Failed to create nodes for stringifying error response.");
                     // Nodes are in thread-local arena.
                 }
-            } else if (message->response.result != NULL) {
+
+            } else if (message->response.result != NULL) { // Success response with result
                 // Parse result string using thread-local arena (call needs update)
                 mcp_json_t* result_node = mcp_json_parse(message->response.result); // Corrected call
                 if (result_node) {
@@ -1281,7 +1293,8 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
                 } else {
                      log_message(LOG_LEVEL_ERROR, "Failed to parse result string for stringifying response.");
                 }
-            } else { // Null result
+
+            } else { // Success response with null result
                 mcp_json_t* result_node = mcp_json_null_create(); // Uses arena
                  if (result_node) {
                     mcp_json_object_set_property(json, "result", result_node); // table_set uses malloc
@@ -1292,6 +1305,7 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
             }
             break;
         }
+
         case MCP_MESSAGE_TYPE_NOTIFICATION: {
              // Create nodes using thread-local arena (calls already updated)
              mcp_json_t* method_node = mcp_json_string_create(message->notification.method);
@@ -1303,6 +1317,7 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
                  if (params_node) {
                      mcp_json_object_set_property(json, "params", params_node); // table_set uses malloc
                  }
+
                  final_json_string = mcp_json_stringify(json); // Stringify uses malloc
              } else {
                   log_message(LOG_LEVEL_ERROR, "Failed to create/parse nodes for stringifying notification.");

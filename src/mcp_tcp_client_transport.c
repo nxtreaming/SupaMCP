@@ -183,10 +183,11 @@ static void* tcp_client_receive_thread_func(void* arg) {
 
     // Loop while the transport is marked as running and connected
     while (data->running && data->connected) {
-        // 1. Read the 4-byte length prefix (network byte order)
+
+        // --- 1. Read Length Prefix ---
         read_result = recv_exact_client(data->sock, length_buf, (size_t)4, &data->running);
 
-        // Check result of reading the length prefix
+        // Check result
         if (read_result == SOCKET_ERROR || read_result == 0) { // Error or connection closed
              if (data->running) { // Log only if not intentionally stopping
                  if (read_result == 0) { // Graceful close by server
@@ -218,11 +219,13 @@ static void* tcp_client_receive_thread_func(void* arg) {
         }
         // read_result == 1 means success reading length
 
-        // 2. Decode length (Network to Host byte order)
+
+        // --- 2. Decode Length ---
         memcpy(&message_length_net, length_buf, 4);
         message_length_host = ntohl(message_length_net);
 
-        // 3. Sanity check length
+
+        // --- 3. Sanity Check Length ---
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
              log_message(LOG_LEVEL_ERROR, "Invalid message length received from server: %u on socket %d", message_length_host, (int)data->sock);
              data->connected = false; // Treat as fatal error
@@ -234,7 +237,8 @@ static void* tcp_client_receive_thread_func(void* arg) {
              break; // Exit receive loop
         }
 
-        // 4. Allocate buffer for message body using buffer pool or malloc
+
+        // --- 4. Allocate Buffer (Pool or Malloc) ---
         size_t required_size = message_length_host + 1; // +1 for null terminator
         size_t pool_buffer_size = mcp_buffer_pool_get_buffer_size(data->buffer_pool);
 
@@ -269,10 +273,11 @@ static void* tcp_client_receive_thread_func(void* arg) {
              break; // Exit receive loop
         }
 
-        // 5. Read the message body
+
+        // --- 5. Read Message Body ---
         read_result = recv_exact_client(data->sock, message_buf, (size_t)message_length_host, &data->running);
 
-         // Check result of reading the message body
+         // Check result
          if (read_result == SOCKET_ERROR || read_result == 0) { // Error or connection closed
              if (data->running) { // Log only if not intentionally stopping
                  if (read_result == 0) { // Graceful close by server
@@ -318,7 +323,8 @@ static void* tcp_client_receive_thread_func(void* arg) {
           }
          // read_result == 1 means success reading body
 
-        // 6. Null-terminate the received data and pass it to the message callback
+
+        // --- 6. Process Message via Callback ---
         message_buf[message_length_host] = '\0';
         if (transport->message_callback != NULL) {
             int callback_error_code = 0;
@@ -328,11 +334,12 @@ static void* tcp_client_receive_thread_func(void* arg) {
             free(unused_response); // Free the NULL response from the client callback
             if (callback_error_code != 0) {
                  log_message(LOG_LEVEL_WARN, "Client message callback indicated error (%d) processing data from socket %d", callback_error_code, (int)data->sock);
-                 // Decide if we should continue or disconnect? For now, continue.
-            }
+                  // Decide if we should continue or disconnect? For now, continue.
+             }
         }
 
-        // 7. Free or release the message buffer
+
+        // --- 7. Release/Free Message Buffer ---
         if (message_buf != NULL) { // Check if buffer was allocated
             if (buffer_malloced) {
                 free(message_buf);

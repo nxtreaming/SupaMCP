@@ -301,12 +301,12 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     mutex_t* lock = get_lock_for_uri(cache, uri);
     mutex_lock(lock);
 
-    // Note: find_cache_entry is not thread-safe without external locking.
-    // Eviction logic also needs the lock held.
+
+    // --- 1. Find Existing Entry or Empty/Eviction Slot ---
     mcp_cache_entry_t* entry = find_cache_entry(cache, uri, true); // Try to find existing or an empty slot
 
     if (!entry) { // Cache is full (no empty slots found)
-        // --- Implement LRU-K (K=2) Eviction ---
+        // --- 1a. Cache Full: Implement LRU-K (K=2) Eviction ---
         size_t evict_index = SIZE_MAX;
         time_t oldest_k_minus_1_time = time(NULL) + 1; // Initialize to future time
         time_t oldest_0_time_for_less_than_k = time(NULL) + 1; // Initialize to future time
@@ -351,20 +351,23 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
         // --- End LRU-K Eviction ---
 
     } else if (entry->valid) {
-        // Overwriting existing valid entry (found by find_cache_entry)
+        // --- 1b. Overwriting Existing Valid Entry ---
         log_message(LOG_LEVEL_DEBUG, "Overwriting existing cache entry for URI: %s", uri);
         free_cache_entry_contents(entry);
         cache->count--; // Decrement count since we are replacing a valid entry
     }
     // else: Found an invalid slot, no need to decrement count
 
-    // Copy URI
+
+    // --- 2. Copy URI ---
     entry->uri = mcp_strdup(uri);
     if (!entry->uri) {
         mutex_unlock(lock);
         return -1; // Allocation failure
     }
 
+
+    // --- 3. Allocate and Copy Content Items ---
     // Allocate space for the array of content item POINTERS
     entry->content = (mcp_content_item_t**)malloc(content_count * sizeof(mcp_content_item_t*));
     if (!entry->content) {
@@ -395,7 +398,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
         return -1; // Allocation failure during content copy
     }
 
-    // Set metadata
+
+    // --- 4. Set Metadata (Valid, Expiry, LRU-K) ---
     entry->valid = true;
     time_t now = time(NULL);
     // Initialize LRU-K history for new entry
@@ -408,6 +412,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     time_t effective_ttl = (ttl_seconds == 0) ? cache->default_ttl_seconds : (time_t)ttl_seconds;
     entry->expiry_time = (effective_ttl < 0) ? 0 : now + effective_ttl; // 0 means never expires
 
+
+    // --- 5. Update Cache Count (Non-atomic, potential race under high contention) ---
     // Note: cache->count is not protected by the striped lock.
     // For accurate count, a separate atomic counter or global lock would be needed.
     // For now, accept potential inaccuracy in 'count' under high contention.

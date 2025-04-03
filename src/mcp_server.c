@@ -995,6 +995,7 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
         return response;
     }
 
+
     mcp_content_item_t** content_items = NULL; // Array of POINTERS to content items
     size_t content_count = 0;
     bool fetched_from_handler = false;
@@ -1013,6 +1014,7 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
         }
     }
 
+
     // 2. If not found in cache (or cache disabled), call the resource handler
     if (content_items == NULL) {
         if (server->resource_handler != NULL) {
@@ -1020,6 +1022,7 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
             PROFILE_START("resource_handler_callback");
             int handler_status = server->resource_handler(server, uri, server->resource_handler_user_data, &handler_content_items_struct_array, &content_count);
             PROFILE_END("resource_handler_callback");
+
             if (handler_status != 0 || handler_content_items_struct_array == NULL || content_count == 0) {
                 free(handler_content_items_struct_array);
                 *error_code = MCP_ERROR_INTERNAL_ERROR;
@@ -1077,6 +1080,7 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
         }
     }
 
+
     // 3. If fetched from handler, put it in the cache
     if (fetched_from_handler && server->resource_cache != NULL) {
         // mcp_cache_put now expects mcp_content_item_t** (array of pointers).
@@ -1089,6 +1093,7 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
             // Note: If cache put succeeds, the cache now owns the copies. We still free our original content_items later.
         }
     }
+
 
     // 4. Create response JSON structure using thread-local arena.
     mcp_json_t* contents_json = mcp_json_array_create(); // Use TLS arena
@@ -1160,6 +1165,7 @@ static char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* are
         PROFILE_END("handle_read_resource");
         return response;
     }
+
 
     // Arena handles params_json cleanup via handle_message caller.
     char* response = create_success_response(request->id, result_str);

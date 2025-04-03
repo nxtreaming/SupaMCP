@@ -132,17 +132,19 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
         return -1;
     }
 
-    // Check if resize is needed
+    // --- Check if resize is needed ---
     if ((float)(table->size + 1) / table->capacity > table->load_factor_threshold) {
         if (mcp_hashtable_resize(table, table->capacity * 2) != 0) {
             return -1;
         }
     }
 
-    // Calculate bucket index using bitwise AND for power-of-2 capacity
+
+    // --- Calculate bucket index ---
     size_t index = table->hash_func(key) & (table->capacity - 1);
 
-    // Check if key already exists
+
+    // --- Check if key already exists ---
     mcp_hashtable_entry_t* entry = table->buckets[index];
     mcp_hashtable_entry_t* prev = NULL;
 
@@ -159,7 +161,8 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
         entry = entry->next;
     }
 
-    // Key doesn't exist, create new entry
+
+    // --- Key doesn't exist, create and insert new entry ---
     mcp_hashtable_entry_t* new_entry = (mcp_hashtable_entry_t*)malloc(
         sizeof(mcp_hashtable_entry_t));
     if (!new_entry) {
@@ -217,29 +220,31 @@ int mcp_hashtable_remove(mcp_hashtable_t* table, const void* key) {
         return -1;
     }
 
-    // Calculate bucket index using bitwise AND for power-of-2 capacity
+    // --- Calculate bucket index ---
     size_t index = table->hash_func(key) & (table->capacity - 1);
 
-    // Search for key
+    // --- Search for key ---
     mcp_hashtable_entry_t* entry = table->buckets[index];
     mcp_hashtable_entry_t* prev = NULL;
 
     while (entry) {
         if (table->key_compare(entry->key, key)) {
-            // Remove entry from bucket
+            // --- Key found, remove entry ---
+
+            // Update linked list pointers
             if (prev) {
                 prev->next = entry->next;
             } else {
                 table->buckets[index] = entry->next;
             }
 
-            // Free key and value
+            // Free key and value data
             table->key_free(entry->key);
             if (table->value_free) {
                 table->value_free(entry->value);
             }
 
-            // Free entry and decrement size
+            // Free entry struct and decrement size
             free(entry);
             table->size--;
 
