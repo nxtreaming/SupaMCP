@@ -3,7 +3,7 @@
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_transport.h"
 #include "mcp_tcp_client_transport.h"
-#include "internal/transport_internal.h"
+#include "transport/internal/transport_internal.h"
 
 // Helper function to safely inspect the transport's function pointers
 // Returns 1 if the pointers match expected values for the transport type

@@ -1,6 +1,6 @@
 #include "mock_transport.h"
 #include "../include/mcp_transport.h"
-#include "../src/internal/transport_internal.h"
+#include "../src/transport/internal/transport_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

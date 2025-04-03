@@ -11,8 +11,8 @@ set(TEST_RUNNER_SOURCES
     test_mcp_cache.c
     test_mcp_transport_factory.c
     ../client/src/mcp_client.c
-    ../src/mcp_hashtable.c
-    ../src/mcp_cache.c
+    ../src/common/mcp_hashtable.c
+    ../src/server/mcp_cache.c
     # Add other test_*.c files here later
 )
 

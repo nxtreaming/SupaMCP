@@ -32,22 +32,22 @@ set(COMMON_SOURCES
     src/transport/mcp_stdio_transport.c
     src/transport/mcp_tcp_transport.c
     src/transport/mcp_tcp_socket_utils.c
-    src/transport/mcp_tcp_client_handler.c # Belongs to TCP Server Transport
-    src/transport/mcp_tcp_acceptor.c       # Belongs to TCP Server Transport
+    src/transport/mcp_tcp_client_handler.c
+    src/transport/mcp_tcp_acceptor.c
     src/transport/mcp_tcp_client_transport.c
     src/transport/mcp_tcp_client_socket_utils.c
     src/transport/mcp_tcp_client_receiver.c
     src/common/mcp_types.c
     src/common/mcp_arena.c
     src/common/mcp_log.c
-    src/server/mcp_buffer_pool.c # Moved to server as it seems server-specific
-    src/server/mcp_thread_pool.c # Moved to server as it seems server-specific
-    src/server/mcp_cache.c       # Moved original cache to server
-    src/server/mcp_cache_optimized.c # Moved optimized cache to server
-    src/server/mcp_rate_limiter.c # Moved to server
-    src/server/mcp_profiler.c     # Moved to server
+    src/server/mcp_buffer_pool.c
+    src/server/mcp_thread_pool.c
+    #src/server/mcp_cache.c
+    src/server/mcp_cache_optimized.c
+    src/server/mcp_rate_limiter.c
+    src/server/mcp_profiler.c
     src/common/mcp_hashtable.c
-    client/src/mcp_client.c       # Client source remains separate
+    client/src/mcp_client.c
     src/server/mcp_server.c
     src/server/mcp_server_dispatch.c
     src/server/mcp_server_handlers.c
