@@ -2,7 +2,7 @@
 #define MCP_TCP_CLIENT_TRANSPORT_INTERNAL_H
 
 #include "mcp_tcp_client_transport.h"
-#include "mcp_transport_internal.h"
+#include "transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_types.h"
 #include "mcp_buffer_pool.h"

@@ -1,4 +1,4 @@
-#include "internal/mcp_server_internal.h"
+#include "internal/server_internal.h"
 #include <stdlib.h>
 
 // --- Internal Response Helper Functions ---

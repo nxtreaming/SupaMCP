@@ -1,4 +1,4 @@
-#include "internal/mcp_json_internal.h"
+#include "internal/json_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
