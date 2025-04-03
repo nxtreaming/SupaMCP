@@ -61,7 +61,8 @@ static unsigned long hash_string(const char* str) {
 static int mcp_json_object_table_init(mcp_json_object_table_t* table, size_t capacity);
 /** @internal Destroys a hash table, freeing all entries, keys, and the bucket array. Calls mcp_json_destroy on values. */
 static void mcp_json_object_table_destroy(mcp_json_object_table_t* table);
-/** @internal Sets a key-value pair. Handles collisions and potential resize. Allocates new entries using malloc. */
+/** @internal Sets a key-value pair. Handles collisions and potential resize. 
+ *  Allocates new entries using malloc. */
 static int mcp_json_object_table_set(mcp_json_object_table_t* table, const char* name, mcp_json_t* value); // Ensure arena param is removed
 /** @internal Finds an entry by key name. */
 static mcp_json_object_entry_t* mcp_json_object_table_find(mcp_json_object_table_t* table, const char* name);

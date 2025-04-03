@@ -118,7 +118,11 @@ static void initialize_winsock() { /* No-op on non-Windows */ }
 
 // Helper function to send exactly n bytes to a socket (checks client stop flag)
 // Returns 0 on success, -1 on error, -2 on stop signal, -3 on connection closed/reset
-static int send_exact(socket_t sock, const char* buf, size_t len, bool* client_should_stop_flag) {
+static int send_exact(
+    socket_t sock, 
+    const char* buf, 
+    size_t len, 
+    bool* client_should_stop_flag) {
     size_t total_sent = 0;
     while (total_sent < len) {
         if (client_should_stop_flag && *client_should_stop_flag) return -2; // Interrupted by stop signal
@@ -156,7 +160,11 @@ static int send_exact(socket_t sock, const char* buf, size_t len, bool* client_s
 
 // Helper function to read exactly n bytes from a socket (checks client stop flag)
 // Returns: 0 on success, -1 on error, -2 on stop signal, -3 on connection closed
-static int recv_exact(socket_t sock, char* buf, int len, bool* client_should_stop_flag) {
+static int recv_exact(
+    socket_t sock, 
+    char* buf, 
+    int len, 
+    bool* client_should_stop_flag) {
     int total_read = 0;
     while (total_read < len) {
         if (client_should_stop_flag && *client_should_stop_flag) return -2; // Interrupted by stop signal
@@ -181,7 +189,10 @@ static int recv_exact(socket_t sock, char* buf, int len, bool* client_should_sto
  * @param should_stop Pointer to the thread's stop flag.
  * @return 1 if socket is readable, 0 if timeout occurred, -1 on error, -2 if stop signal received.
  */
-static int wait_for_socket_read(socket_t sock, uint32_t timeout_ms, bool* should_stop) {
+static int wait_for_socket_read(
+    socket_t sock, 
+    uint32_t timeout_ms, 
+    bool* should_stop) {
     if (should_stop && *should_stop) return -2;
 
 #ifdef _WIN32
@@ -1050,7 +1061,10 @@ static void tcp_transport_destroy(mcp_transport_t* transport) {
 
 // --- Public Creation Function ---
 
-mcp_transport_t* mcp_transport_tcp_create(const char* host, uint16_t port, uint32_t idle_timeout_ms) {
+mcp_transport_t* mcp_transport_tcp_create(
+    const char* host, 
+    uint16_t port, 
+    uint32_t idle_timeout_ms) {
     if (host == NULL) return NULL;
 
     mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));

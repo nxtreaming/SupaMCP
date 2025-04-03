@@ -67,7 +67,10 @@ static unsigned long hash_uri(const char* str) {
 // Find an entry in the cache table using linear probing
 // Returns pointer to the entry if found, or pointer to an empty/invalid slot for insertion
 // Returns NULL if table is full and key not found
-static mcp_cache_entry_t* find_cache_entry(mcp_resource_cache_t* cache, const char* uri, bool find_empty_for_insert) {
+static mcp_cache_entry_t* find_cache_entry(
+    mcp_resource_cache_t* cache, 
+    const char* uri, 
+    bool find_empty_for_insert) {
     if (!uri || cache->capacity == 0) return NULL; // Added capacity check
 
     unsigned long hash = hash_uri(uri);
@@ -218,7 +221,11 @@ void mcp_cache_destroy(mcp_resource_cache_t* cache) {
     free(cache);
 }
 
-int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item_t*** content, size_t* content_count) {
+int mcp_cache_get(
+    mcp_resource_cache_t* cache, 
+    const char* uri, 
+    mcp_content_item_t*** content, 
+    size_t* content_count) {
     if (!cache || !uri || !content || !content_count) return -1;
 
     *content = NULL;
@@ -237,7 +244,8 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
         if (entry->expiry_time == 0 || now < entry->expiry_time) {
             // Cache hit and valid! Create copies for the caller.
             // Allocate array of POINTERS for the caller
-            mcp_content_item_t** content_copy_ptrs = (mcp_content_item_t**)malloc(entry->content_count * sizeof(mcp_content_item_t*));
+            mcp_content_item_t** content_copy_ptrs = (mcp_content_item_t**)malloc(
+                entry->content_count * sizeof(mcp_content_item_t*));
             if (content_copy_ptrs) {
                 size_t copied_count = 0;
                 bool copy_error = false;
@@ -293,7 +301,12 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     return result;
 }
 
-int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item_t** content, size_t content_count, int ttl_seconds) {
+int mcp_cache_put(
+    mcp_resource_cache_t* cache, 
+    const char* uri, 
+    mcp_content_item_t** content, 
+    size_t content_count, 
+    int ttl_seconds) {
     // Note: 'content' is now mcp_content_item_t** (array of pointers)
     if (!cache || !uri || !content || content_count == 0) return -1;
     PROFILE_START("mcp_cache_put");
@@ -344,7 +357,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
         }
 
         entry = &cache->entries[evict_index];
-        log_message(LOG_LEVEL_INFO, "Cache full, LRU-K evicting entry at index %zu (URI: %s) for new URI %s",
+        log_message(LOG_LEVEL_INFO, 
+                "Cache full, LRU-K evicting entry at index %zu (URI: %s) for new URI %s",
                 evict_index, entry->uri ? entry->uri : "<empty>", uri);
         free_cache_entry_contents(entry); // Free the victim's contents
         // cache->count remains the same as we are replacing a valid entry
