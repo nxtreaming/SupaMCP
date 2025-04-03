@@ -1,4 +1,4 @@
-#include "mcp_server_internal.h"
+#include "internal/mcp_server_internal.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>

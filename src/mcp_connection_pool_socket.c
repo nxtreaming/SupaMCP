@@ -1,4 +1,4 @@
-#include "mcp_connection_pool_internal.h"
+#include "internal/mcp_connection_pool_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

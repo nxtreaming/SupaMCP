@@ -1,4 +1,4 @@
-#include "mcp_tcp_transport_internal.h"
+#include "internal/mcp_tcp_transport_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
