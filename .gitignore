@@ -54,8 +54,3 @@ DartConfiguration.tcl
 # OS specific files
 .DS_Store
 Thumbs.db
-MCP_Optimization_Report.md
-SupaMCPServer_Next_Phase_Optimization.md
-3rd_optimization.md
-4th_optimize.md
-refactor_v2.md
