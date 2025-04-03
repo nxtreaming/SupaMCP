@@ -52,6 +52,9 @@ set(COMMON_SOURCES
     src/mcp_server_response.c
     src/mcp_auth.c
     src/mcp_connection_pool.c
+    src/mcp_connection_pool_socket.c
+    src/mcp_connection_pool_sync.c
+    src/mcp_connection_pool_utils.c
     src/mcp_plugin.c
 )
 
