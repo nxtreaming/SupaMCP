@@ -10,12 +10,15 @@
 #include "mcp_client.h"
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_client_transport.h"
+#include  "mcp_log.h"
 
 int main(int argc, char** argv) {
     // Default transport
     const char* transport_type = "stdio";
     const char* host = "127.0.0.1";
     uint16_t port = 8080;
+
+    init_logging(NULL, LOG_LEVEL_INFO);
 
     // Basic argument parsing
     if (argc > 1) {

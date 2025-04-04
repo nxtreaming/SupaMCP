@@ -135,23 +135,9 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* pay
         return -1;
     }
 
-    // Prepare buffer with 4-byte length prefix + payload
-    uint32_t net_len = htonl((uint32_t)payload_size);
-    size_t total_size = sizeof(net_len) + payload_size;
-    char* send_buffer = (char*)malloc(total_size);
-    if (!send_buffer) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate send buffer for TCP client transport.");
-        return -1;
-    }
-
-    // Copy length prefix and payload
-    memcpy(send_buffer, &net_len, sizeof(net_len));
-    memcpy(send_buffer + sizeof(net_len), payload_data, payload_size);
-
-    // Send the combined buffer using helper from socket utils
-    int send_status = send_exact_client(data->sock, send_buffer, total_size, &data->running);
-
-    free(send_buffer); // Free the temporary buffer
+    // Send the payload directly (length prefix is already added by the caller)
+    // The 'payload_data' received here already contains [Length][JSON Data]
+    int send_status = send_exact_client(data->sock, (const char*)payload_data, payload_size, &data->running);
 
     if (send_status != 0) {
         log_message(LOG_LEVEL_ERROR, "send_exact_client failed (status: %d)", send_status);
