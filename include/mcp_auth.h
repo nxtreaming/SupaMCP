@@ -41,6 +41,7 @@ typedef struct {
  * configured store (e.g., database, configuration file, external service).
  * On successful authentication, it allocates and populates an mcp_auth_context_t structure.
  *
+ * @param server The server instance (needed to access configuration like API key).
  * @param auth_type The expected authentication type.
  * @param credentials The credentials string provided by the client (e.g., API key, token).
  * @param[out] context Output parameter. On success, points to a newly allocated mcp_auth_context_t.
@@ -48,7 +49,10 @@ typedef struct {
  *                     On failure, *context is set to NULL.
  * @return 0 for authentication success, -1 for authentication failure (invalid credentials, error, etc.).
  */
-int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth_context_t** context);
+// Forward declare server struct
+struct mcp_server;
+
+int mcp_auth_verify(struct mcp_server* server, mcp_auth_type_t auth_type, const char* credentials, mcp_auth_context_t** context);
 
 /**
  * @brief Checks if the authenticated client has permission to access a specific resource.

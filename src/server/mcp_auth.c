@@ -36,17 +36,21 @@ static bool simple_wildcard_match(const char* pattern, const char* text) {
  * @brief Verifies client credentials. (Placeholder - Basic Functionality Only)
  * @note This implementation provides basic functionality for MCP_AUTH_NONE and a single
  *       hardcoded API key ("TEST_API_KEY_123") for testing purposes.
- *       A production implementation MUST replace this with secure credential storage
- *       (e.g., config file, database) and proper validation logic.
+ *       A production implementation should replace this with secure credential storage
+ *       and potentially more granular permission management.
  */
-int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth_context_t** context_out) {
-    if (!context_out) return -1;
+// Include internal header for server config definition
+#include "internal/server_internal.h"
+
+int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char* credentials, mcp_auth_context_t** context_out) {
+    if (!context_out || !server) return -1; // Added server check
     *context_out = NULL; // Ensure output is NULL on failure
 
-    log_message(LOG_LEVEL_INFO, "mcp_auth_verify called (basic placeholder). Type: %d", auth_type);
+    log_message(LOG_LEVEL_DEBUG, "mcp_auth_verify called. Type: %d", auth_type);
 
-    if (auth_type == MCP_AUTH_NONE) {
-        // Allow unauthenticated access with default broad permissions
+    // --- No Authentication ---
+    if (auth_type == MCP_AUTH_NONE && server->config.api_key == NULL) {
+        // Only allow AUTH_NONE if no API key is configured on the server
         mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
         if (!context) return -1;
         context->type = MCP_AUTH_NONE;
@@ -73,50 +77,55 @@ int mcp_auth_verify(mcp_auth_type_t auth_type, const char* credentials, mcp_auth
             return -1;
         }
         *context_out = context;
-        log_message(LOG_LEVEL_DEBUG, "Authenticated as 'anonymous' (MCP_AUTH_NONE).");
-        return 0; // Success for AUTH_NONE
+        log_message(LOG_LEVEL_DEBUG, "Authenticated as 'anonymous' (MCP_AUTH_NONE allowed).");
+        return 0; // Success for AUTH_NONE when no server key is set
     }
 
-    // Example: Allow a specific hardcoded API key for testing
-    // WARNING: This is insecure and for demonstration/testing only.
-    if (auth_type == MCP_AUTH_API_KEY && credentials && strcmp(credentials, "TEST_API_KEY_123") == 0) {
-        mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
-        if (!context) { log_message(LOG_LEVEL_ERROR, "Failed to allocate auth context."); return -1; }
-        context->type = MCP_AUTH_API_KEY;
-        context->identifier = mcp_strdup("test_client_1");
-        context->expiry = 0; // Non-expiring for this example
-
-        // Example permissions for this key
-        context->allowed_resources_count = 2;
-        context->allowed_resources = (char**)malloc(context->allowed_resources_count * sizeof(char*));
-        if (!context->allowed_resources) { free(context->identifier); free(context); return -1; }
-        context->allowed_resources[0] = mcp_strdup("weather://*");
-        context->allowed_resources[1] = mcp_strdup("files:///data/*");
-
-        context->allowed_tools_count = 1;
-        context->allowed_tools = (char**)malloc(context->allowed_tools_count * sizeof(char*));
-         if (!context->allowed_tools) {
-             free(context->allowed_resources[0]); free(context->allowed_resources[1]); free(context->allowed_resources);
-             free(context->identifier); free(context); return -1;
-         }
-        context->allowed_tools[0] = mcp_strdup("get_forecast");
-
-        // Basic check for allocation failures during permission setup
-        if (!context->identifier || !context->allowed_resources[0] || !context->allowed_resources[1] ||
-            !context->allowed_tools[0]) {
-             mcp_auth_context_free(context); // Cleanup partial allocation
-             return -1;
+    // --- API Key Authentication ---
+    if (auth_type == MCP_AUTH_API_KEY) {
+        // Check if server has an API key configured
+        if (server->config.api_key == NULL || strlen(server->config.api_key) == 0) {
+            log_message(LOG_LEVEL_WARN, "API Key authentication requested, but no API key configured on server.");
+            return -1; // Fail if key requested but none set on server
         }
+        // Check if provided credentials match the configured key
+        if (credentials && strcmp(credentials, server->config.api_key) == 0) {
+            // API Key matches, create context with full permissions for now
+            mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
+            if (!context) { log_message(LOG_LEVEL_ERROR, "Failed to allocate auth context."); return -1; }
+            context->type = MCP_AUTH_API_KEY;
+            context->identifier = mcp_strdup("authenticated_client"); // Generic identifier
+            context->expiry = 0; // Non-expiring
 
-        *context_out = context;
-        log_message(LOG_LEVEL_DEBUG, "Successfully authenticated client '%s' via hardcoded API Key.", context->identifier);
-        return 0; // Success
+            // Grant full permissions ('*')
+            context->allowed_resources_count = 1;
+            context->allowed_resources = (char**)malloc(context->allowed_resources_count * sizeof(char*));
+            if (!context->allowed_resources) { mcp_auth_context_free(context); return -1; }
+            context->allowed_resources[0] = mcp_strdup("*");
+
+            context->allowed_tools_count = 1;
+            context->allowed_tools = (char**)malloc(context->allowed_tools_count * sizeof(char*));
+            if (!context->allowed_tools) { mcp_auth_context_free(context); return -1; }
+            context->allowed_tools[0] = mcp_strdup("*");
+
+            // Check allocations
+            if (!context->identifier || !context->allowed_resources[0] || !context->allowed_tools[0]) {
+                 mcp_auth_context_free(context); // Cleanup partial allocation
+                 return -1;
+            }
+
+            *context_out = context;
+            log_message(LOG_LEVEL_DEBUG, "Successfully authenticated client '%s' via configured API Key.", context->identifier);
+            return 0; // Success
+        } else {
+            log_message(LOG_LEVEL_WARN, "API Key authentication failed: Provided key does not match configured key.");
+            return -1; // Key mismatch
+        }
     }
 
-    // --- End Basic Placeholder ---
-
-    // Fail all other authentication attempts in this placeholder
-    log_message(LOG_LEVEL_WARN, "Authentication failed for type %d (credentials not recognized or type not implemented).", auth_type);
+    // --- Other Auth Types (Not Implemented) ---
+    // Fail other authentication types or if conditions not met
+    log_message(LOG_LEVEL_WARN, "Authentication failed: Type %d not supported, credentials invalid, or server config mismatch.", auth_type);
     return -1;
 }
 

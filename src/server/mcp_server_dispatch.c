@@ -1,5 +1,6 @@
 #include "internal/server_internal.h"
 #include "gateway_routing.h"
+#include "mcp_auth.h" // Include the auth header
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,43 +81,6 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     log_message(LOG_LEVEL_DEBUG, "%s", debug_buffer);
 #endif
 
-    // --- API Key Check (before full parsing) ---
-    if (server->config.api_key != NULL && strlen(server->config.api_key) > 0) {
-        // Temporarily parse just enough to check for apiKey field
-        // NOTE: This now uses the thread-local arena implicitly.
-        mcp_json_t* temp_json = mcp_json_parse(json_str);
-        bool key_valid = false;
-        uint64_t request_id_for_error = 0; // Try to get ID for error response
-
-        if (temp_json && mcp_json_get_type(temp_json) == MCP_JSON_OBJECT) { // Use accessor
-            mcp_json_t* id_node = mcp_json_object_get_property(temp_json, "id");
-            double id_num;
-            if (id_node && mcp_json_get_type(id_node) == MCP_JSON_NUMBER && mcp_json_get_number(id_node, &id_num) == 0) { // Use accessors
-                request_id_for_error = (uint64_t)id_num;
-            }
-
-            mcp_json_t* key_node = mcp_json_object_get_property(temp_json, "apiKey");
-            const char* received_key = NULL;
-            if (key_node && mcp_json_get_type(key_node) == MCP_JSON_STRING && mcp_json_get_string(key_node, &received_key) == 0) { // Use accessors
-                if (received_key && strcmp(received_key, server->config.api_key) == 0) {
-                    key_valid = true;
-                }
-            }
-        }
-        // No need to destroy temp_arena, as nodes are in thread-local arena.
-        // mcp_arena_reset_current_thread(); // Optional reset
-
-        if (!key_valid) {
-            fprintf(stderr, "Error: Invalid or missing API key in request.\n");
-            *error_code = MCP_ERROR_INVALID_REQUEST; // Or a specific auth error code?
-            mcp_arena_destroy(&arena); // Clean up main arena
-            // Return error response (requires request ID, which we tried to get)
-            return create_error_response(request_id_for_error, *error_code, "Invalid API Key");
-        }
-    }
-    // --- End API Key Check ---
-
-
     // Parse the message using the thread-local arena implicitly
     mcp_message_t message;
     int parse_result = mcp_json_parse_message(json_str, &message);
@@ -131,12 +95,53 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
         return NULL;
     }
 
+    // --- Authentication Check ---
+    mcp_auth_context_t* auth_context = NULL;
+    mcp_auth_type_t required_auth_type = (server->config.api_key != NULL && strlen(server->config.api_key) > 0)
+                                           ? MCP_AUTH_API_KEY
+                                           : MCP_AUTH_NONE;
+    const char* credentials = NULL;
+    uint64_t request_id_for_auth_error = 0; // Use 0 if ID not available
+
+    if (message.type == MCP_MESSAGE_TYPE_REQUEST) {
+        request_id_for_auth_error = message.request.id; // Get ID for potential error response
+        if (required_auth_type == MCP_AUTH_API_KEY) {
+            // Extract apiKey from params if required
+            mcp_json_t* params_json = mcp_json_parse(message.request.params); // Use TLS arena
+            if (params_json && mcp_json_get_type(params_json) == MCP_JSON_OBJECT) {
+                mcp_json_t* key_node = mcp_json_object_get_property(params_json, "apiKey");
+                if (key_node && mcp_json_get_type(key_node) == MCP_JSON_STRING) {
+                    mcp_json_get_string(key_node, &credentials); // Get pointer to key string
+                }
+            }
+            // Note: credentials will be NULL if apiKey is missing or not a string
+        }
+    }
+    // For notifications or responses, we might skip auth or handle differently,
+    // but for now, we'll verify based on server config even for these.
+    // If API key is required, notifications without it would fail here.
+
+    if (mcp_auth_verify(server, required_auth_type, credentials, &auth_context) != 0) {
+        log_message(LOG_LEVEL_WARN, "Authentication failed for incoming message.");
+        *error_code = MCP_ERROR_INVALID_REQUEST; // Use a generic auth failure code for JSON-RPC
+        char* error_response = create_error_response(request_id_for_auth_error, *error_code, "Authentication failed");
+        // Cleanup before returning error
+        mcp_message_release_contents(&message);
+        free(safe_json_str);
+        mcp_arena_destroy(&arena);
+        PROFILE_END("handle_message");
+        return error_response;
+    }
+    log_message(LOG_LEVEL_DEBUG, "Authentication successful (Identifier: %s)", auth_context ? auth_context->identifier : "N/A");
+    // --- End Authentication Check ---
+
+
     // Handle the message based on its type
     char* response_str = NULL;
     switch (message.type) {
         case MCP_MESSAGE_TYPE_REQUEST:
-            // Pass arena to request handler, get response string back
-            response_str = handle_request(server, &arena, &message.request, error_code);
+            // Pass auth_context to handle_request
+            response_str = handle_request(server, &arena, &message.request, auth_context, error_code);
             break;
         case MCP_MESSAGE_TYPE_RESPONSE:
             // Server typically doesn't process responses it receives
@@ -151,6 +156,9 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
 
     // Free the message structure contents (which used malloc/strdup)
     mcp_message_release_contents(&message);
+
+    // Free the authentication context if it was created
+    mcp_auth_context_free(auth_context);
 
     // Free the temporary buffer allocated for safe handling
     free(safe_json_str); // Free the safe JSON string we allocated earlier
@@ -170,12 +178,15 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
  * @param arena Arena used for parsing the request (can be used by handlers for param parsing).
  * @param request Pointer to the parsed request structure.
  * @param[out] error_code Set to MCP_ERROR_NONE on success, or an error code if the method is not found.
+ * @param auth_context The authentication context for the client making the request.
+ * @param[out] error_code Set to MCP_ERROR_NONE on success, or an error code if the method is not found or access denied.
  * @return A malloc'd JSON string response (success or error response).
  */
-char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
-    if (server == NULL || request == NULL || arena == NULL || error_code == NULL) {
+char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
+    // Added auth_context check
+    if (server == NULL || request == NULL || arena == NULL || auth_context == NULL || error_code == NULL) {
         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
-        return NULL;
+        return NULL; // Cannot proceed without auth context
     }
     *error_code = MCP_ERROR_NONE; // Default to success
 
@@ -204,19 +215,20 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
     log_message(LOG_LEVEL_DEBUG, "No backend route found for method '%s'. Handling locally.", request->method);
 
     // Handle the request locally based on its method
+    // Note: Pass auth_context down to specific handlers
     if (strcmp(request->method, "ping") == 0) {
         // Special handling for ping requests, all servers should support this connection health check
-        return handle_ping_request(server, arena, request, error_code);
+        return handle_ping_request(server, arena, request, auth_context, error_code);
     } else if (strcmp(request->method, "list_resources") == 0) {
-        return handle_list_resources_request(server, arena, request, error_code);
+        return handle_list_resources_request(server, arena, request, auth_context, error_code);
     } else if (strcmp(request->method, "list_resource_templates") == 0) {
-        return handle_list_resource_templates_request(server, arena, request, error_code);
+        return handle_list_resource_templates_request(server, arena, request, auth_context, error_code);
     } else if (strcmp(request->method, "read_resource") == 0) {
-        return handle_read_resource_request(server, arena, request, error_code);
+        return handle_read_resource_request(server, arena, request, auth_context, error_code);
     } else if (strcmp(request->method, "list_tools") == 0) {
-        return handle_list_tools_request(server, arena, request, error_code);
+        return handle_list_tools_request(server, arena, request, auth_context, error_code);
     } else if (strcmp(request->method, "call_tool") == 0) {
-        return handle_call_tool_request(server, arena, request, error_code);
+        return handle_call_tool_request(server, arena, request, auth_context, error_code);
     } else {
         // Unknown method - Create and return error response string
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;

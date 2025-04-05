@@ -42,6 +42,7 @@ typedef struct {
     const char* log_file;
     log_level_t log_level;
     bool daemon;
+    const char* api_key;
 } server_config_t;
 
 // Forward declarations
@@ -351,6 +352,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
     config->log_file = NULL;
     config->log_level = LOG_LEVEL_INFO;
     config->daemon = false;
+    config->api_key = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tcp") == 0) {
@@ -376,6 +378,8 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
 #else
             fprintf(stderr, "Daemon mode is not supported on Windows\n"); return -1;
 #endif
+        } else if (strcmp(argv[i], "--api-key") == 0 && i + 1 < argc) {
+            config->api_key = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("Options:\n");
@@ -385,6 +389,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             printf("  --port PORT         Port to bind to (default: 8080)\n");
             printf("  --log-file FILE     Log to file\n");
             printf("  --log-level LEVEL   Set log level (error, warn, info, debug)\n");
+            printf("  --api-key KEY       Require API key for authentication\n");
             printf("  --daemon            Run as daemon (Unix-like systems only)\n");
             printf("  --help              Show this help message\n");
             exit(0);
@@ -439,7 +444,8 @@ int main(int argc, char** argv) {
     mcp_server_config_t server_config = {
         .name = "example-mcp-server",
         .version = "1.0.0",
-        .description = "Example MCP server implementation"
+        .description = "Example MCP server implementation",
+        .api_key = config.api_key // Pass the parsed API key
     };
     mcp_server_capabilities_t capabilities = {
         .resources_supported = true,

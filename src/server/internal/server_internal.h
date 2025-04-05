@@ -17,6 +17,7 @@
 #include <mcp_profiler.h>
 #include <mcp_transport.h>
 #include "gateway.h"
+#include "mcp_auth.h" // Include auth header for mcp_auth_context_t
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -77,17 +78,20 @@ struct mcp_server {
 
 // From mcp_server_dispatch.c
 char* handle_message(mcp_server_t* server, const void* data, size_t size, int* error_code);
-char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
+// Note: handle_request now needs the auth context
+char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 
 // From mcp_server_handlers.c
-char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
-char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
-char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
-char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
-char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
+// Note: All specific handlers now need the auth context
+char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
+char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
+char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
+char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
+char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 
 // From mcp_server_ping.c
-char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
+// Note: Ping might not need auth context, but keep signature consistent for now
+char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 
 // From mcp_server_task.c
 typedef struct message_task_data_t message_task_data_t; // Forward declare task data struct

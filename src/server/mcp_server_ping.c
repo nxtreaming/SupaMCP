@@ -1,4 +1,5 @@
 #include "internal/server_internal.h"
+#include "mcp_auth.h" // Include auth header for context type
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,13 +10,15 @@
  * Simple handler that returns a pong response to confirm server is live.
  * This is primarily used as an initial handshake for connection testing.
  */
-char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code) {
-    // No params needed, arena unused
+char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
+    // No params needed, arena unused, auth_context unused for ping
     (void)arena;
+    (void)auth_context; // Explicitly mark as unused for ping
 
-    if (server == NULL || request == NULL || error_code == NULL) {
+    // Added auth_context check for consistency, though ping usually bypasses auth checks
+    if (server == NULL || request == NULL || auth_context == NULL || error_code == NULL) {
         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
-        return NULL;
+        return NULL; // Cannot proceed without auth context
     }
     *error_code = MCP_ERROR_NONE;
 
