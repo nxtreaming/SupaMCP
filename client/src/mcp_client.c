@@ -717,8 +717,9 @@ int mcp_client_list_resources(
         return -1;
     }
 
-    // Note: result and error_message are allocated by mcp_json_parse_response
-    // inside the callback and assigned via pointers. Caller is responsible for freeing them.
+    // Free the allocated strings before returning
+    free(result);
+    free(error_message);
     return 0;
 }
 
@@ -839,8 +840,9 @@ int mcp_client_list_resource_templates(
         return -1;
     }
 
-    free(error_message);
+    // Free the allocated strings before returning
     free(result);
+    free(error_message);
     return 0;
 }
 
@@ -892,8 +894,9 @@ int mcp_client_read_resource(
         return -1;
     }
 
-    free(error_message);
+    // Free the allocated strings before returning
     free(result);
+    free(error_message);
     return 0;
 }
 
@@ -936,8 +939,9 @@ int mcp_client_list_tools(
         return -1;
     }
 
-    free(error_message);
+    // Free the allocated strings before returning
     free(result);
+    free(error_message);
     return 0;
 }
 
@@ -992,8 +996,9 @@ int mcp_client_call_tool(
         return -1;
     }
 
-    free(error_message);
+    // Free the allocated strings before returning
     free(result);
+    free(error_message);
     return 0;
 }
 
