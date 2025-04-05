@@ -63,9 +63,10 @@ void* tcp_client_receive_thread_func(void* arg) {
     
     // 1. Define standard ping message
     static const char ping_content[] = "{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":0}";
+    uint32_t ping_length = (uint32_t)strlen(ping_content);
     
     // 2. Calculate message length (including NULL terminator)
-    const uint32_t content_length = (uint32_t)strlen(ping_content) + 1; // +1 for terminator
+    const uint32_t content_length = ping_length + 1; // +1 for terminator
     
     // 3. Convert to network byte order (Big-Endian)
     const uint32_t length_network_order = htonl(content_length);
@@ -81,8 +82,8 @@ void* tcp_client_receive_thread_func(void* arg) {
     
     // 5. Fill the buffer with length prefix and message content (including terminator)
     memcpy(send_buffer, &length_network_order, 4);
-    memcpy(send_buffer + 4, ping_content, strlen(ping_content)); // Copy content first
-    send_buffer[4 + strlen(ping_content)] = '\0'; // Explicitly add terminator
+    memcpy(send_buffer + 4, ping_content, ping_length); // Copy content first
+    send_buffer[4 + ping_length] = '\0'; // Explicitly add terminator
     
     // 6. Detailed logging
     log_message(LOG_LEVEL_DEBUG, "Ping message content (%u bytes): '%s'", content_length, ping_content);
