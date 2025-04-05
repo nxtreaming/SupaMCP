@@ -9,6 +9,7 @@ void run_mcp_client_async_tests(void);
 void run_mcp_hashtable_tests(void);
 void run_cache_tests(void);
 void run_mcp_transport_factory_tests(void);
+void run_test_mcp_server_handlers(void); // Added declaration
 // Add declarations for other test suite runners here later
 
 // setUp and tearDown functions are optional, run before/after each test
@@ -33,6 +34,7 @@ int main(void) {
     run_mcp_hashtable_tests();
     run_cache_tests();
     run_mcp_transport_factory_tests();
+    run_test_mcp_server_handlers(); // Call the server handler test suite
     // Add calls to other test suite runners here later
 
     return UNITY_END(); // IMPORTANT: Call this to finalize tests
@@ -61,4 +63,19 @@ void run_mcp_buffer_pool_tests(void) {
     RUN_TEST(test_mcp_buffer_pool_release_null_pool);
     RUN_TEST(test_mcp_buffer_pool_get_size);
     RUN_TEST(test_mcp_buffer_pool_get_size_null);
+}
+
+// --- Server Handlers Test Suite ---
+// Forward declarations for server handler tests
+extern void test_handle_ping_request_success(void);
+extern void test_handle_list_resources_empty(void);
+extern void test_handle_list_resources_with_data(void);
+// Add declarations for other handler tests here
+
+// Runner function for server handler tests
+void run_test_mcp_server_handlers(void) {
+    RUN_TEST(test_handle_ping_request_success);
+    RUN_TEST(test_handle_list_resources_empty);
+    RUN_TEST(test_handle_list_resources_with_data);
+    // Add RUN_TEST calls for other handler tests here
 }

@@ -10,9 +10,14 @@ set(TEST_RUNNER_SOURCES
     test_mcp_hashtable.c
     test_mcp_cache.c
     test_mcp_transport_factory.c
+    test_mcp_server_handlers.c
     ../client/src/mcp_client.c
     ../src/common/mcp_hashtable.c
     ../src/server/mcp_cache_optimized.c
+    ../src/server/mcp_server_handlers.c
+    ../src/server/mcp_server_ping.c
+    ../src/server/mcp_server_response.c
+    ../src/server/mcp_auth.c
     # Add other test_*.c files here later
 )
 
@@ -29,6 +34,7 @@ target_include_directories(mcp_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/client/include
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/server
     # Unity headers are included via unity_lib target
 )
 
