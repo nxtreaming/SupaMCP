@@ -28,7 +28,6 @@ void process_message_task(void* arg) {
     }
 
     mcp_server_t* server = task_data->server;
-    mcp_transport_t* transport = task_data->transport;
     void* data = task_data->message_data;
     size_t size = task_data->message_size;
     size_t max_size = server->config.max_message_size > 0 ? server->config.max_message_size : DEFAULT_MAX_MESSAGE_SIZE;
@@ -45,29 +44,24 @@ void process_message_task(void* arg) {
     }
     // --- End Input Validation ---
 
-
     int error_code = 0;
+    
+    // Verify if message has null terminator
+    bool has_terminator = (size > 0 && ((const char*)data)[size-1] == '\0');
+    if (!has_terminator) {
+        log_message(LOG_LEVEL_WARN, "Task data missing terminator, this may cause JSON parsing errors");
+    }
+    
     // Call handle_message from mcp_server_dispatch.c (declared in internal header)
     char* response_json = handle_message(server, data, size, &error_code);
 
-    // If handle_message produced a response, send it back via the transport
+    // Log and free the response
     if (response_json != NULL) {
-        // Framing (length prefix) should be handled by the transport layer itself.
-        // Server core just sends the JSON payload.
-        size_t json_len = strlen(response_json);
-        int send_status = mcp_transport_send(transport, response_json, json_len);
-
-        if (send_status != 0) {
-            // Log send error
-            log_message(LOG_LEVEL_ERROR, "Failed to send response via transport (status: %d)", send_status);
-            // Depending on the error, might want to close connection, but transport might handle that.
-        }
-
-        free(response_json); // Free the response from handle_message
+        // Free the response - actual response should be returned by transport_message_callback
+        free(response_json);
     } else if (error_code != MCP_ERROR_NONE) {
-        // Log if handle_message failed but didn't produce an error response string
-        // (e.g., parse error before ID was known)
-        fprintf(stderr, "Error processing message (code: %d), no response generated.\n", error_code);
+        // Log processing error
+        log_message(LOG_LEVEL_ERROR, "Error processing message (code: %d), no response generated.", error_code);
     }
 
     // Clean up task data
@@ -84,65 +78,81 @@ void process_message_task(void* arg) {
  * @brief Callback function passed to the transport layer.
  *
  * This function is invoked by the transport when a complete message is received.
- * It copies the message data and dispatches it to the thread pool for processing.
+ * It directly processes the message and returns a response string.
  *
  * @param user_data Pointer to the mcp_server_t instance.
  * @param data Pointer to the received raw message data.
  * @param size Size of the received data.
  * @param[out] error_code Pointer to store potential errors during callback processing itself (not application errors).
- * @return NULL. Responses are sent asynchronously by the worker thread.
+ * @return A dynamically allocated string (malloc'd) containing the response to send, or NULL if no response should be sent.
  */
 char* transport_message_callback(void* user_data, const void* data, size_t size, int* error_code) {
+    PROFILE_START("transport_message_callback");
     mcp_server_t* server = (mcp_server_t*)user_data;
-    if (server == NULL || data == NULL || size == 0 || error_code == NULL || server->thread_pool == NULL) {
+    if (server == NULL || data == NULL || size == 0 || error_code == NULL) {
         if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
         return NULL; // Cannot process
     }
     *error_code = MCP_ERROR_NONE;
 
-    // --- Rate Limiting Check ---
-    // TODO: Need a client identifier from the transport layer (e.g., IP address)
-    // const char* client_id = get_client_identifier_from_transport(transport); // Placeholder
-    // if (server->rate_limiter && client_id && !mcp_rate_limiter_check(server->rate_limiter, client_id)) {
-    //     fprintf(stderr, "Rate limit exceeded for client: %s\n", client_id);
-    //     *error_code = MCP_ERROR_INTERNAL_ERROR; // Or a specific rate limit error code?
-    //     // Don't dispatch task, potentially close connection?
-    //     return NULL;
-    // }
-    // --- End Rate Limiting Check ---
-
-
-    // Create task data - must copy message data as the original buffer might be reused/freed
-    message_task_data_t* task_data = (message_task_data_t*)malloc(sizeof(message_task_data_t));
-    if (!task_data) {
-        fprintf(stderr, "Error: Failed to allocate task data.\n");
-        *error_code = MCP_ERROR_INTERNAL_ERROR;
+    // --- Rate Limiting Check (optional) ---
+    // TODO: Implement rate limiting if needed
+    
+    // --- Input validation ---
+    size_t max_size = server->config.max_message_size > 0 ? 
+                      server->config.max_message_size : DEFAULT_MAX_MESSAGE_SIZE;
+    
+    if (size > max_size) {
+        log_message(LOG_LEVEL_ERROR, "Received message size (%zu) exceeds limit (%zu)", size, max_size);
+        *error_code = MCP_ERROR_INVALID_REQUEST;
         return NULL;
     }
-
-    task_data->message_data = malloc(size);
-    if (!task_data->message_data) {
-        fprintf(stderr, "Error: Failed to allocate buffer for message copy.\n");
-        free(task_data);
+    
+    // --- Prepare message data ---
+    // Check if message has terminator
+    bool has_terminator = (size > 0 && ((const char*)data)[size-1] == '\0');
+    void* message_copy;
+    
+    if (has_terminator) {
+        // If already has terminator, just copy
+        message_copy = malloc(size);
+        if (message_copy) {
+            memcpy(message_copy, data, size);
+        }
+    } else {
+        // If no terminator, add one
+        message_copy = malloc(size + 1);
+        if (message_copy) {
+            memcpy(message_copy, data, size);
+            ((char*)message_copy)[size] = '\0';
+            log_message(LOG_LEVEL_DEBUG, "Added NULL terminator to message data");
+        }
+    }
+    
+    if (!message_copy) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for message copy");
         *error_code = MCP_ERROR_INTERNAL_ERROR;
+        PROFILE_END("transport_message_callback");
         return NULL;
     }
-
-    memcpy(task_data->message_data, data, size);
-    task_data->server = server;
-    // Use the transport stored in the server struct (set during mcp_server_start)
-    task_data->transport = server->transport;
-    task_data->message_size = size;
-
-    // Add task to the thread pool
-    if (mcp_thread_pool_add_task(server->thread_pool, process_message_task, task_data) != 0) {
-        fprintf(stderr, "Error: Failed to add message processing task to thread pool.\n");
-        // Cleanup allocated data if task add failed
-        free(task_data->message_data);
-        free(task_data);
-        *error_code = MCP_ERROR_INTERNAL_ERROR; // Indicate failure to queue
+    
+    // --- Direct message processing ---
+    int handler_error_code = MCP_ERROR_NONE;
+    char* response_json = handle_message(server, message_copy, size, &handler_error_code);
+    
+    // Free message copy
+    free(message_copy);
+    
+    // --- Handle response ---
+    if (response_json != NULL) {
+        // Return response string to be sent via client socket
+        PROFILE_END("transport_message_callback");
+        return response_json; // Caller is responsible for freeing
+    } else if (handler_error_code != MCP_ERROR_NONE) {
+        // Message processing failed but no error response was generated
+        log_message(LOG_LEVEL_ERROR, "Failed to process message (error code: %d), no response generated", handler_error_code);
     }
-
-    // Callback itself doesn't return the response string anymore
-    return NULL;
+    
+    PROFILE_END("transport_message_callback");
+    return NULL; // No response
 }

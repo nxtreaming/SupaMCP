@@ -12,6 +12,9 @@
 #include <stdbool.h>
 #include <errno.h>
 
+// 全局变量，用于控制重连逻辑
+extern bool reconnection_in_progress;
+
 // Platform-specific includes and definitions (similar to connection pool)
 #ifdef _WIN32
 #   include <winsock2.h>

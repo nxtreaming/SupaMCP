@@ -124,9 +124,60 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* pay
     }
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
-    if (!data->running || !data->connected) {
-        log_message(LOG_LEVEL_ERROR, "Cannot send: TCP client transport not running or not connected.");
+    // Check connection status, if disconnected but still running, try to reconnect
+    if (!data->running) {
+        log_message(LOG_LEVEL_ERROR, "Cannot send: TCP client transport not running");
         return -1;
+    }
+    
+    if (!data->connected) {
+        log_message(LOG_LEVEL_WARN, "Connection lost, attempting to reconnect to %s:%d...", 
+                   data->host, data->port);
+                   
+        // If socket is still valid, try to close it
+        if (data->sock != INVALID_SOCKET_VAL) {
+            close_socket(data->sock);
+            data->sock = INVALID_SOCKET_VAL;
+        }
+        
+        // Attempt to reconnect
+        if (connect_to_server(data) == 0) {
+            log_message(LOG_LEVEL_INFO, "Successfully reconnected to %s:%d", data->host, data->port);
+            
+            // Restart the receive thread
+            // Set reconnection flag so receive thread doesn't send ping
+            extern bool reconnection_in_progress;
+            reconnection_in_progress = true;
+            
+#ifdef _WIN32
+            data->receive_thread = CreateThread(NULL, 0, tcp_client_receive_thread_func, transport, 0, NULL);
+            if (data->receive_thread == NULL) {
+                log_message(LOG_LEVEL_ERROR, "Failed to restart client receive thread (Error: %lu).", GetLastError());
+                close_socket(data->sock);
+                data->sock = INVALID_SOCKET_VAL;
+                data->connected = false;
+                return -1;
+            }
+#else
+            if (pthread_create(&data->receive_thread, NULL, tcp_client_receive_thread_func, transport) != 0) {
+                char err_buf[128];
+                if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
+                    log_message(LOG_LEVEL_ERROR, "Failed to restart client receive thread: %s", err_buf);
+                } else {
+                    log_message(LOG_LEVEL_ERROR, "Failed to restart client receive thread: %d (strerror_r failed)", errno);
+                }
+                close_socket(data->sock);
+                data->sock = INVALID_SOCKET_VAL;
+                data->connected = false;
+                return -1;
+            }
+#endif
+            log_message(LOG_LEVEL_INFO, "Receive thread restarted for reconnected socket");
+            
+        } else {
+            log_message(LOG_LEVEL_ERROR, "Reconnection failed to %s:%d", data->host, data->port);
+            return -1;
+        }
     }
 
     // Check payload size limit

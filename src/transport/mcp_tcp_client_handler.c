@@ -40,10 +40,20 @@ void* tcp_client_handler_thread_func(void* arg) {
 
         // --- 1. Wait for Data or Timeout ---
         uint32_t wait_ms = tcp_data->idle_timeout_ms; // Start with full timeout for select/poll
-        if (wait_ms == 0) wait_ms = 500; // If no idle timeout, check stop flag periodically
+        if (wait_ms == 0) wait_ms = 30000; // If idle timeout is not set, use 30 seconds as default
+        
+        //log_message(LOG_LEVEL_DEBUG, "Waiting for data on socket %d (hex: %p), timeout: %u ms...", 
+        //           (int)client_conn->socket, (void*)client_conn->socket, wait_ms);
 
+        if (client_conn->socket == INVALID_SOCKET_VAL) {
+            // Socket is invalid, exit the handler thread immediately
+            log_message(LOG_LEVEL_DEBUG, "Exiting handler thread for invalid socket");
+            goto client_cleanup;
+        }
+        
         // Use wait_for_socket_read from mcp_tcp_socket_utils.c
         int wait_result = wait_for_socket_read(client_conn->socket, wait_ms, &client_conn->should_stop);
+        //log_message(LOG_LEVEL_DEBUG, "Wait result for socket %d: %d", (int)client_conn->socket, wait_result);
 
         if (wait_result == -2) { // Stop signal
              log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
@@ -75,11 +85,24 @@ void* tcp_client_handler_thread_func(void* arg) {
 
 
         // --- 2. Read the 4-byte Length Prefix ---
+        log_message(LOG_LEVEL_DEBUG, "Attempting to read 4-byte length prefix from socket %d (hex: %p)...", 
+                   (int)client_conn->socket, (void*)client_conn->socket);
+        
+        // Check if socket is valid before reading
+        if (client_conn->socket == INVALID_SOCKET_VAL) {
+            log_message(LOG_LEVEL_ERROR, "Socket is invalid before read attempt!");
+            goto client_cleanup;
+        }
+        
         // Use recv_exact from mcp_tcp_socket_utils.c
         read_result = recv_exact(client_conn->socket, length_buf, 4, &client_conn->should_stop);
+        log_message(LOG_LEVEL_DEBUG, "recv_exact (len=4) returned: %d, sock_errno: %d", 
+                   read_result, sock_errno);
 
         if (read_result == -1) { // Socket error
              if (!client_conn->should_stop) {
+                 int error_code = sock_errno; // Get error code immediately
+                 log_message(LOG_LEVEL_ERROR, "recv_exact (len=4) failed with error code: %d", error_code);
                 char err_buf[128];
 #ifdef _WIN32
                 strerror_s(err_buf, sizeof(err_buf), sock_errno);
@@ -115,13 +138,17 @@ void* tcp_client_handler_thread_func(void* arg) {
         // --- 3. Decode Length (Network to Host Byte Order) ---
         memcpy(&message_length_net, length_buf, 4);
         message_length_host = ntohl(message_length_net);
+        log_message(LOG_LEVEL_DEBUG, "Received length bytes: %02X %02X %02X %02X -> net=0x%08X -> host=%u (0x%X)",
+                    (unsigned char)length_buf[0], (unsigned char)length_buf[1], (unsigned char)length_buf[2], (unsigned char)length_buf[3],
+                    message_length_net, message_length_host, message_length_host);
 
 
         // --- 4. Sanity Check Length ---
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
-             log_message(LOG_LEVEL_ERROR, "Invalid message length received: %u on socket %d", message_length_host, (int)client_conn->socket);
+             log_message(LOG_LEVEL_ERROR, "Invalid message length received: %u (0x%X) on socket %d", message_length_host, message_length_host, (int)client_conn->socket);
              goto client_cleanup; // Invalid length, close connection
         }
+        log_message(LOG_LEVEL_DEBUG, "Validated message length: %u", message_length_host);
 
 
         // --- 5. Allocate Buffer for Message Body (Pool or Malloc) ---
@@ -187,7 +214,29 @@ void* tcp_client_handler_thread_func(void* arg) {
 
 
         // --- 7. Null-terminate and Process Message via Callback ---
-        message_buf[message_length_host] = '\0';
+        // Check if terminator already exists, add one if not
+        if (message_length_host > 0 && message_buf[message_length_host - 1] != '\0') {
+            message_buf[message_length_host] = '\0'; // Add terminator
+            log_message(LOG_LEVEL_DEBUG, "Adding NULL terminator after message body");
+        } else if (message_length_host > 0 && message_buf[message_length_host - 1] == '\0') {
+            log_message(LOG_LEVEL_DEBUG, "Message already ends with NULL terminator");
+        }
+        
+        // Check and debug non-printable characters
+        size_t effective_length = message_length_host;
+        if (message_length_host > 0 && message_buf[message_length_host - 1] == '\0') {
+            effective_length = message_length_host - 1; // Exclude terminator
+        }
+        
+        for (size_t i = 0; i < effective_length; i++) {
+            if (message_buf[i] < 32 && message_buf[i] != '\t' && message_buf[i] != '\n' && message_buf[i] != '\r') {
+                log_message(LOG_LEVEL_WARN, "Found control character at position %zu: 0x%02X", 
+                           i, (unsigned char)message_buf[i]);
+                // Replace control characters with spaces to avoid JSON parsing errors
+                message_buf[i] = ' ';
+            }
+        }
+        
         char* response_str = NULL;
         int callback_error_code = 0;
         if (transport->message_callback != NULL) {
@@ -272,33 +321,56 @@ client_cleanup:
         else mcp_buffer_pool_release(tcp_data->buffer_pool, message_buf);
     }
 
- #ifdef _WIN32
-     log_message(LOG_LEVEL_DEBUG, "Closing client connection socket %p", (void*)client_conn->socket);
- #else
-     log_message(LOG_LEVEL_DEBUG, "Closing client connection socket %d", client_conn->socket);
- #endif
-    close_socket(client_conn->socket);
-
-    // Mark slot as inactive (needs mutex protection)
+    // Ensure all resources are properly cleaned up before thread exit
+    socket_t sock_to_close = INVALID_SOCKET_VAL;
+    
+    // Acquire mutex to update client_conn state
 #ifdef _WIN32
     EnterCriticalSection(&tcp_data->client_mutex);
 #else
     pthread_mutex_lock(&tcp_data->client_mutex);
 #endif
-    client_conn->active = false;
+
+    // Only clean up if slot is still active
+    if (client_conn->active) {
+        // Save socket to close, avoiding invalid socket operations after lock release
+        sock_to_close = client_conn->socket;
+        
+        // Mark as invalid socket to prevent other threads from using it
+        client_conn->socket = INVALID_SOCKET_VAL;
+        
+        // Mark slot as inactive
+        client_conn->active = false;
+        
 #ifdef _WIN32
-    if (client_conn->thread_handle) {
-        CloseHandle(client_conn->thread_handle); // Close handle now that thread is exiting
-        client_conn->thread_handle = NULL;
-    }
+        // Handle Windows thread handle
+        if (client_conn->thread_handle) {
+            CloseHandle(client_conn->thread_handle);
+            client_conn->thread_handle = NULL;
+        }
 #else
-    client_conn->thread_handle = 0;
+        client_conn->thread_handle = 0;
 #endif
+
+        // Log that client_conn has been cleaned up
+        log_message(LOG_LEVEL_DEBUG, "Client connection slot marked as inactive");
+    }
+
 #ifdef _WIN32
     LeaveCriticalSection(&tcp_data->client_mutex);
 #else
     pthread_mutex_unlock(&tcp_data->client_mutex);
 #endif
+
+    // Close socket (outside of mutex)
+    if (sock_to_close != INVALID_SOCKET_VAL) {
+#ifdef _WIN32
+        log_message(LOG_LEVEL_DEBUG, "Closing client connection socket %p", (void*)sock_to_close);
+#else
+        log_message(LOG_LEVEL_DEBUG, "Closing client connection socket %d", sock_to_close);
+#endif
+        close_socket(sock_to_close);
+    }
 
 
 #ifdef _WIN32

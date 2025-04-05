@@ -162,12 +162,11 @@ void log_message(log_level_t level, const char* format, ...) {
     // If written is non-negative and less than buffer size, vsnprintf added null terminator.
 
 
-    // 4. Output the formatted message to stderr (console)
-    // Format: [Timestamp] [LEVEL] Message
-    fprintf(stderr, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
-
+    // 4. Lock mutex before accessing shared resources
+    LOCK_LOG_MUTEX(&g_log_mutex);
+    
     // 5. Output the formatted message based on g_log_format
-    LOCK_LOG_MUTEX(&g_log_mutex); // Lock before accessing shared resources (g_log_format, g_log_file, stderr)
+    // Note: we no longer output to stderr twice, this was causing duplicate logs
 
     if (g_log_format == MCP_LOG_FORMAT_JSON) {
         char escaped_message[sizeof(message) * 2]; // Estimate escaped size

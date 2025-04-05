@@ -52,6 +52,7 @@ set(COMMON_SOURCES
     src/server/mcp_server_handlers.c
     src/server/mcp_server_task.c
     src/server/mcp_server_response.c
+    src/server/mcp_server_ping.c
     src/server/mcp_auth.c
     src/connection_pool/mcp_connection_pool.c
     src/connection_pool/mcp_connection_pool_socket.c

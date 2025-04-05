@@ -86,6 +86,9 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
 char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
 
+// From mcp_server_ping.c
+char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, int* error_code);
+
 // From mcp_server_task.c
 typedef struct message_task_data_t message_task_data_t; // Forward declare task data struct
 void process_message_task(void* arg);

@@ -140,13 +140,23 @@ int wait_for_socket_read(
         tv_ptr = &tv;
     }
 
-
     int result = select(0, &read_fds, NULL, NULL, tv_ptr);
 
     if (should_stop && *should_stop) return -2; // Check again after select
 
     if (result == SOCKET_ERROR_VAL) {
-        return -1; // select error
+        int error_code = sock_errno;
+        char err_buf[128];
+        strerror_s(err_buf, sizeof(err_buf), error_code);
+        log_message(LOG_LEVEL_ERROR, "select failed for socket %d: %d (%s)", 
+                   (int)sock, error_code, err_buf);
+        
+        // Non-fatal errors, continue waiting instead of immediately disconnecting
+        if (error_code == WSAEINTR || error_code == WSAEWOULDBLOCK) {
+            return 0; // Return timeout result, letting the caller continue waiting
+        }
+        
+        return -1; // Other select errors
     } else if (result == 0) {
         return 0; // timeout (or intermediate check)
     } else {

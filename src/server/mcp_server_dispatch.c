@@ -28,9 +28,57 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     mcp_arena_t arena;
     mcp_arena_init(&arena, 0); // Use default block size
 
-    // Assume 'data' is null-terminated by the caller (tcp_client_handler_thread_func)
-    const char* json_str = (const char*)data;
+    // Ensure data is NULL-terminated for safe handling
     PROFILE_START("handle_message"); // Profile overall message handling
+    
+    // Create a new buffer, ensuring it's always NULL-terminated
+    char* safe_json_str = (char*)malloc(size + 1);
+    if (!safe_json_str) {
+        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for JSON message");
+        if (error_code) *error_code = MCP_ERROR_INTERNAL_ERROR;
+        return NULL;
+    }
+    
+    // Copy the original data
+    memcpy(safe_json_str, data, size);
+    safe_json_str[size] = '\0'; // Ensure terminator exists
+    
+    // Check if a terminator already exists (avoid double terminators)
+    size_t actual_size = size;
+    if (size > 0 && ((const char*)data)[size-1] == '\0') {
+        // If original message already ends with NULL terminator, adjust actual size but don't change buffer
+        actual_size--;
+        log_message(LOG_LEVEL_DEBUG, "Message already ends with NULL terminator, actual content size is %zu", actual_size);
+    }
+    
+    const char* json_str = safe_json_str;
+#if 0
+    // Detailed debug logging, showing original received content
+    char debug_buffer[128] = {0};
+    size_t display_len = actual_size > 100 ? 100 : actual_size; // Limit log length
+    snprintf(debug_buffer, 128, "Received data (%zu bytes): '", actual_size);
+    
+    for (size_t i = 0; i < display_len; i++) {
+        if (i < sizeof(debug_buffer) - strlen(debug_buffer) - 10) { // Leave margin to prevent buffer overflow
+            char ch = ((const char*)data)[i];
+            if (ch >= 32 && ch < 127) { // Printable characters
+                snprintf(debug_buffer + strlen(debug_buffer), 
+                         sizeof(debug_buffer) - strlen(debug_buffer), 
+                         "%c", ch);
+            } else { // Non-printable characters shown in hexadecimal
+                snprintf(debug_buffer + strlen(debug_buffer), 
+                         sizeof(debug_buffer) - strlen(debug_buffer), 
+                         "\\x%02X", (unsigned char)ch);
+            }
+        }
+    }
+    
+    if (size > display_len) {
+        strcat(debug_buffer, "...");
+    }
+    strcat(debug_buffer, "'");
+    log_message(LOG_LEVEL_DEBUG, "%s", debug_buffer);
+#endif
 
     // --- API Key Check (before full parsing) ---
     if (server->config.api_key != NULL && strlen(server->config.api_key) > 0) {
@@ -104,6 +152,9 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     // Free the message structure contents (which used malloc/strdup)
     mcp_message_release_contents(&message);
 
+    // Free the temporary buffer allocated for safe handling
+    free(safe_json_str); // Free the safe JSON string we allocated earlier
+    
     // Clean up the arena used for this message cycle.
     mcp_arena_destroy(&arena);
     PROFILE_END("handle_message");
@@ -153,7 +204,10 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
     log_message(LOG_LEVEL_DEBUG, "No backend route found for method '%s'. Handling locally.", request->method);
 
     // Handle the request locally based on its method
-    if (strcmp(request->method, "list_resources") == 0) {
+    if (strcmp(request->method, "ping") == 0) {
+        // Special handling for ping requests, all servers should support this connection health check
+        return handle_ping_request(server, arena, request, error_code);
+    } else if (strcmp(request->method, "list_resources") == 0) {
         return handle_list_resources_request(server, arena, request, error_code);
     } else if (strcmp(request->method, "list_resource_templates") == 0) {
         return handle_list_resource_templates_request(server, arena, request, error_code);

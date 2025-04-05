@@ -146,71 +146,98 @@ void* tcp_accept_thread_func(void* arg) {
         }
 #endif // Platform-specific accept loop end
 
-handle_connection: {} // Label for common connection handling logic
-            // --- Common logic for handling accepted connection ---
-            int client_index = -1;
+handle_connection: {
+    // --- Common logic for handling accepted connection ---
+    int client_index = -1;
+    
 #ifdef _WIN32
+    EnterCriticalSection(&data->client_mutex);
+#else
+    pthread_mutex_lock(&data->client_mutex);
+#endif
+
+    // Periodically clean up connections that were closed but not properly marked
+    // 1. First, clean up existing invalid connections
+    int inactive_count = 0;
+    for (int i = 0; i < MAX_TCP_CLIENTS; ++i) {
+        if (data->clients[i].active) {
+            // Check if socket is no longer valid
+            if (data->clients[i].socket == INVALID_SOCKET_VAL) {
+                // This slot is marked as active but has an invalid socket, should clean up
+                log_message(LOG_LEVEL_INFO, "Cleaning up stale client slot %d with invalid socket", i);
+                data->clients[i].active = false;
+                inactive_count++;
+            }
+        }
+    }
+    
+    if (inactive_count > 0) {
+        log_message(LOG_LEVEL_INFO, "Cleaned up %d stale client connection slot(s)", inactive_count);
+    }
+    
+    // 2. Find an available slot for the new connection
+    for (int i = 0; i < MAX_TCP_CLIENTS; ++i) {
+        if (!data->clients[i].active) {
+            client_index = i;
+            // Initialize all fields (within the lock)
+            data->clients[i].active = true;
+            data->clients[i].socket = client_socket;
+            data->clients[i].address = client_addr;
+            data->clients[i].transport = transport;
+            data->clients[i].should_stop = false;
+            data->clients[i].last_activity_time = time(NULL);
+            break;
+        }
+    }
+    
+#ifdef _WIN32
+    LeaveCriticalSection(&data->client_mutex);
+#else
+    pthread_mutex_unlock(&data->client_mutex);
+#endif
+
+    if (client_index != -1) {
+        tcp_client_connection_t* client_conn = &data->clients[client_index];
+        
+        // Only create handler thread after all initialization is complete
+#ifdef _WIN32
+        client_conn->thread_handle = CreateThread(NULL, 0, tcp_client_handler_thread_func, client_conn, 0, NULL);
+        if (client_conn->thread_handle == NULL) {
+            log_message(LOG_LEVEL_ERROR, "Failed to create handler thread for client %d.", client_index);
+            close_socket(client_socket);
+            // Safely mark slot inactive again
             EnterCriticalSection(&data->client_mutex);
-#else
-            pthread_mutex_lock(&data->client_mutex);
-#endif
-            for (int i = 0; i < MAX_TCP_CLIENTS; ++i) {
-                if (!data->clients[i].active) {
-                    client_index = i;
-                    data->clients[i].active = true; // Mark as active immediately
-                    break;
-                }
-            }
-#ifdef _WIN32
+            client_conn->active = false;
             LeaveCriticalSection(&data->client_mutex);
+        }
 #else
+        if (pthread_create(&client_conn->thread_handle, NULL, tcp_client_handler_thread_func, client_conn) != 0) {
+            log_message(LOG_LEVEL_ERROR, "Failed to create handler thread: %s", strerror(errno));
+            close_socket(client_socket);
+            // Safely mark slot inactive again
+            pthread_mutex_lock(&data->client_mutex);
+            client_conn->active = false;
             pthread_mutex_unlock(&data->client_mutex);
+        } else {
+            pthread_detach(client_conn->thread_handle); // Detach thread
+        }
 #endif
+    } else {
+        // No free slot available
+        const char* reject_client_ip = NULL;
+        if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) != NULL) {
+            reject_client_ip = client_ip_str;
+        } else {
+            reject_client_ip = "?.?.?.?";
+        }
+        log_message(LOG_LEVEL_WARN, "Max clients (%d) reached, rejecting connection from %s:%d",
+                MAX_TCP_CLIENTS, reject_client_ip, ntohs(client_addr.sin_port));
+        close_socket(client_socket);
+    }
+} // End of handle_connection block
 
-            if (client_index != -1) {
-                tcp_client_connection_t* client_conn = &data->clients[client_index];
-                client_conn->socket = client_socket;
-                client_conn->address = client_addr;
-                client_conn->transport = transport; // Link back
-                client_conn->should_stop = false; // Ensure flag is reset
-                client_conn->last_activity_time = time(NULL); // Initialize activity time
-
-                // Create a handler thread for this client using tcp_client_handler_thread_func
-#ifdef _WIN32
-                client_conn->thread_handle = CreateThread(NULL, 0, tcp_client_handler_thread_func, client_conn, 0, NULL);
-                if (client_conn->thread_handle == NULL) {
-                    log_message(LOG_LEVEL_ERROR, "Failed to create handler thread for client %d.", client_index);
-                    close_socket(client_socket);
-                    // Safely mark slot inactive again
-                    EnterCriticalSection(&data->client_mutex);
-                    client_conn->active = false;
-                    LeaveCriticalSection(&data->client_mutex);
-                }
-#else
-                if (pthread_create(&client_conn->thread_handle, NULL, tcp_client_handler_thread_func, client_conn) != 0) {
-                     log_message(LOG_LEVEL_ERROR, "Failed to create handler thread: %s", strerror(errno));
-                     close_socket(client_socket);
-                     // Safely mark slot inactive again
-                     pthread_mutex_lock(&data->client_mutex);
-                     client_conn->active = false;
-                     pthread_mutex_unlock(&data->client_mutex);
-                } else {
-                     pthread_detach(client_conn->thread_handle); // Detach thread
-                }
-#endif
-            } else {
-                // This uses client_ip which might be out of scope if the goto was inside the #ifdef block
-                // Re-declare and get IP here if needed, or restructure the #ifdefs
-                const char* reject_client_ip = NULL;
-                if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) != NULL) {
-                    reject_client_ip = client_ip_str;
-                } else {
-                    reject_client_ip = "?.?.?.?";
-                }
-                log_message(LOG_LEVEL_WARN, "Max clients (%d) reached, rejecting connection from %s:%d",
-                        MAX_TCP_CLIENTS, reject_client_ip, ntohs(client_addr.sin_port));
-                close_socket(client_socket);
-            }
+continue_accept:
+    ; // Empty statement to ensure there's something after the label
 #ifndef _WIN32 // Closing brace for the 'if (fds[0].revents & POLLIN)' block in POSIX case
         }
 #endif

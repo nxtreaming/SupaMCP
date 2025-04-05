@@ -4,6 +4,7 @@
 #include <mcp_json.h>
 #include "mcp_client.h"
 #include <mcp_transport.h>
+#include <mcp_log.h> // Include log header for LOG_LEVEL_DEBUG
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -461,23 +462,38 @@ static int mcp_client_send_request(
         return -1;
     }
 
-    // Prepare buffer with length prefix + JSON data
-    size_t json_len = strlen(request_json);
-    uint32_t net_len = htonl((uint32_t)json_len); // Convert length to network byte order
+    // Calculate JSON length - excluding null terminator, as required by server
+    size_t json_len = strlen(request_json);  // Don't add 1, exclude null terminator
+    uint32_t net_len = htonl((uint32_t)json_len); // Convert to network byte order
+    
+    // Allocate buffer containing length prefix and JSON content
+    // Add 1 extra byte for null terminator, but don't include in transmission length
     size_t total_len = sizeof(net_len) + json_len;
-    char* send_buffer = (char*)malloc(total_len);
+    char* send_buffer = (char*)malloc(total_len + 1); // +1 for null terminator space
 
     if (send_buffer == NULL) {
         free(request_json);
         return -1; // Allocation failed
     }
 
-    // Copy length prefix and JSON data into the buffer
+    // Copy length prefix and JSON data to buffer
     memcpy(send_buffer, &net_len, sizeof(net_len));
     memcpy(send_buffer + sizeof(net_len), request_json, json_len);
+    send_buffer[total_len] = '\0'; // Add null terminator (in extra allocated space)
+
+    // DEBUG: Log before sending
+    log_message(LOG_LEVEL_DEBUG, "Sending request ID %llu, method '%s', total_len=%zu, prefix=0x%08X (%02X %02X %02X %02X), json_start='%.10s...'",
+                (unsigned long long)client->next_id, // Note: ID used here is before incrementing for pending_req
+                method,
+                total_len,
+                net_len,
+                (unsigned char)send_buffer[0], (unsigned char)send_buffer[1], (unsigned char)send_buffer[2], (unsigned char)send_buffer[3],
+                request_json);
 
     // Send the combined buffer
     int send_status = mcp_transport_send(client->transport, send_buffer, total_len);
+    log_message(LOG_LEVEL_DEBUG, "mcp_transport_send returned: %d", send_status);
+
 
     // Clean up buffers
     free(send_buffer);

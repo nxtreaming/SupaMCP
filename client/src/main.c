@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
     const char* host = "127.0.0.1";
     uint16_t port = 8080;
 
-    init_logging(NULL, LOG_LEVEL_INFO);
+    init_logging(NULL, LOG_LEVEL_DEBUG);
 
     // Basic argument parsing
     if (argc > 1) {
@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
 
     // Create client configuration (example)
     mcp_client_config_t client_config;
-    client_config.request_timeout_ms = 5000; // 5 seconds
+    client_config.request_timeout_ms = 50000; // 5 seconds
 
     // Create the client
     mcp_client_t* client = mcp_client_create(&client_config, transport);
