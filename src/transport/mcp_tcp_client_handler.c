@@ -12,6 +12,22 @@ DWORD WINAPI tcp_client_handler_thread_func(LPVOID arg) {
 void* tcp_client_handler_thread_func(void* arg) {
 #endif
     tcp_client_connection_t* client_conn = (tcp_client_connection_t*)arg;
+
+    // --- Initial Sanity Check ---
+    // Check if the handler was started with invalid arguments or an already invalid socket
+    if (client_conn == NULL || client_conn->socket == INVALID_SOCKET_VAL) {
+        log_message(LOG_LEVEL_ERROR, "Client handler started with invalid arguments or socket handle (Socket: %p). Exiting immediately.",
+                    client_conn ? (void*)client_conn->socket : NULL);
+        // Cannot reliably clean up if client_conn is NULL.
+        // If socket is invalid, the acceptor or another thread likely already handled cleanup.
+#ifdef _WIN32
+        return 1; // Indicate error
+#else
+        return NULL; // Indicate error
+#endif
+    }
+    // --- End Initial Sanity Check ---
+
     mcp_transport_t* transport = client_conn->transport;
     mcp_tcp_transport_data_t* tcp_data = (mcp_tcp_transport_data_t*)transport->transport_data;
     char length_buf[4];
@@ -29,7 +45,8 @@ void* tcp_client_handler_thread_func(void* arg) {
 #endif
 
     // Main receive loop with length prefix framing and idle timeout
-    while (!client_conn->should_stop && client_conn->active) {
+    // Loop while the state is ACTIVE and no stop signal is received
+    while (!client_conn->should_stop && client_conn->state == CLIENT_STATE_ACTIVE) {
 
         // --- Calculate Deadline for Idle Timeout ---
         time_t deadline = 0;
@@ -51,15 +68,27 @@ void* tcp_client_handler_thread_func(void* arg) {
             goto client_cleanup;
         }
         
+        // Re-check state and socket validity before blocking call
+        if (client_conn->state != CLIENT_STATE_ACTIVE || client_conn->socket == INVALID_SOCKET_VAL) {
+            log_message(LOG_LEVEL_DEBUG, "Handler %d: Detected non-active state or invalid socket before wait.", (int)client_conn->socket);
+            goto client_cleanup;
+        }
+
         // Use wait_for_socket_read from mcp_tcp_socket_utils.c
         int wait_result = wait_for_socket_read(client_conn->socket, wait_ms, &client_conn->should_stop);
         //log_message(LOG_LEVEL_DEBUG, "Wait result for socket %d: %d", (int)client_conn->socket, wait_result);
 
-        if (wait_result == -2) { // Stop signal
-             log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
+        // Check stop signal *immediately* after wait returns
+        if (client_conn->should_stop) {
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Stop signal detected immediately after wait.", (int)client_conn->socket);
+             goto client_cleanup;
+        }
+
+        if (wait_result == -2) { // Stop signal (redundant check, but safe)
+             log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal (wait_result == -2).", (int)client_conn->socket);
              goto client_cleanup;
         } else if (wait_result == -1) { // Socket error
-             if (!client_conn->should_stop) {
+             if (!client_conn->should_stop) { // Avoid logging error if we are stopping anyway
                  char err_buf[128];
 #ifdef _WIN32
                  strerror_s(err_buf, sizeof(err_buf), sock_errno);
@@ -72,10 +101,12 @@ void* tcp_client_handler_thread_func(void* arg) {
                  }
 #endif
              }
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to socket error (wait).", (int)client_conn->socket);
              goto client_cleanup;
         } else if (wait_result == 0) { // Timeout from select/poll
              if (tcp_data->idle_timeout_ms > 0 && time(NULL) >= deadline) {
                  log_message(LOG_LEVEL_INFO, "Idle timeout exceeded for socket %d. Closing connection.", (int)client_conn->socket);
+                 log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to idle timeout.", (int)client_conn->socket);
                  goto client_cleanup;
              }
              // If no idle timeout configured, or deadline not reached, just loop again
@@ -93,14 +124,26 @@ void* tcp_client_handler_thread_func(void* arg) {
             log_message(LOG_LEVEL_ERROR, "Socket is invalid before read attempt!");
             goto client_cleanup;
         }
+
+        // Re-check state and socket validity before reading
+        if (client_conn->state != CLIENT_STATE_ACTIVE || client_conn->socket == INVALID_SOCKET_VAL) {
+            log_message(LOG_LEVEL_DEBUG, "Handler %d: Detected non-active state or invalid socket before recv.", (int)client_conn->socket);
+            goto client_cleanup;
+        }
         
         // Use recv_exact from mcp_tcp_socket_utils.c
         read_result = recv_exact(client_conn->socket, length_buf, 4, &client_conn->should_stop);
         log_message(LOG_LEVEL_DEBUG, "recv_exact (len=4) returned: %d, sock_errno: %d", 
                    read_result, sock_errno);
+        
+        // Check stop signal *immediately* after recv returns
+        if (client_conn->should_stop) {
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Stop signal detected immediately after recv (length).", (int)client_conn->socket);
+             goto client_cleanup;
+        }
 
         if (read_result == -1) { // Socket error
-             if (!client_conn->should_stop) {
+             if (!client_conn->should_stop) { // Avoid logging error if we are stopping anyway
                  int error_code = sock_errno; // Get error code immediately
                  log_message(LOG_LEVEL_ERROR, "recv_exact (len=4) failed with error code: %d", error_code);
                 char err_buf[128];
@@ -115,6 +158,7 @@ void* tcp_client_handler_thread_func(void* arg) {
                 }
 #endif
              }
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to socket error (recv length).", (int)client_conn->socket);
              goto client_cleanup;
         } else if (read_result == -3) { // Connection closed
 #ifdef _WIN32
@@ -122,9 +166,11 @@ void* tcp_client_handler_thread_func(void* arg) {
 #else
              log_message(LOG_LEVEL_INFO, "Client disconnected socket %d while reading length", client_conn->socket);
 #endif
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to client disconnect (recv length).", (int)client_conn->socket);
              goto client_cleanup;
         } else if (read_result == -2) { // Stop signal
              log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to stop signal (recv length).", (int)client_conn->socket);
              goto client_cleanup;
         } else if (read_result != 0) { // Should be 0 on success from recv_exact
              log_message(LOG_LEVEL_ERROR, "recv_exact (length) returned unexpected code %d for socket %d", read_result, (int)client_conn->socket);
@@ -146,6 +192,7 @@ void* tcp_client_handler_thread_func(void* arg) {
         // --- 4. Sanity Check Length ---
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
              log_message(LOG_LEVEL_ERROR, "Invalid message length received: %u (0x%X) on socket %d", message_length_host, message_length_host, (int)client_conn->socket);
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to invalid message length.", (int)client_conn->socket);
              goto client_cleanup; // Invalid length, close connection
         }
         log_message(LOG_LEVEL_DEBUG, "Validated message length: %u", message_length_host);
@@ -171,13 +218,33 @@ void* tcp_client_handler_thread_func(void* arg) {
 
         if (message_buf == NULL) {
              log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer for message size %u on socket %d", message_length_host, (int)client_conn->socket);
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to buffer allocation failure.", (int)client_conn->socket);
              goto client_cleanup; // Allocation failure
         }
 
 
         // --- 6. Read the Message Body ---
+        // Re-check state and socket validity before reading body
+        if (client_conn->state != CLIENT_STATE_ACTIVE || client_conn->socket == INVALID_SOCKET_VAL) {
+            log_message(LOG_LEVEL_DEBUG, "Handler %d: Detected non-active state or invalid socket before recv body.", (int)client_conn->socket);
+            // Need to free message_buf before exiting
+            if (message_buf != NULL) { // Check if buffer was allocated before freeing
+               if (buffer_malloced) free(message_buf); else mcp_buffer_pool_release(tcp_data->buffer_pool, message_buf);
+            }
+            message_buf = NULL;
+            goto client_cleanup;
+        }
         // Use recv_exact from mcp_tcp_socket_utils.c
         read_result = recv_exact(client_conn->socket, message_buf, message_length_host, &client_conn->should_stop);
+
+        // Check stop signal *immediately* after recv returns
+        if (client_conn->should_stop) {
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Stop signal detected immediately after recv (body).", (int)client_conn->socket);
+             // Need to free message_buf before exiting
+             if (buffer_malloced) free(message_buf); else mcp_buffer_pool_release(tcp_data->buffer_pool, message_buf);
+             message_buf = NULL;
+             goto client_cleanup;
+        }
 
          if (read_result == -1) { // Socket error
              if (!client_conn->should_stop) {
@@ -193,6 +260,7 @@ void* tcp_client_handler_thread_func(void* arg) {
                 }
 #endif
              }
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to socket error (recv body).", (int)client_conn->socket);
              goto client_cleanup;
          } else if (read_result == -3) { // Connection closed
 #ifdef _WIN32
@@ -200,9 +268,11 @@ void* tcp_client_handler_thread_func(void* arg) {
 #else
              log_message(LOG_LEVEL_INFO, "Client disconnected socket %d while reading body", client_conn->socket);
 #endif
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to client disconnect (recv body).", (int)client_conn->socket);
              goto client_cleanup;
          } else if (read_result == -2) { // Stop signal
              log_message(LOG_LEVEL_DEBUG, "Client handler for socket %d interrupted by stop signal.", (int)client_conn->socket);
+             log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to stop signal (recv body).", (int)client_conn->socket);
              goto client_cleanup;
          } else if (read_result != 0) { // Should be 0 on success
              log_message(LOG_LEVEL_ERROR, "Incomplete message body received (%d/%u bytes) for socket %d", read_result, message_length_host, (int)client_conn->socket);
@@ -264,9 +334,28 @@ void* tcp_client_handler_thread_func(void* arg) {
                     memcpy(send_buffer, &net_len, sizeof(net_len));
                     memcpy(send_buffer + sizeof(net_len), response_str, response_len);
 
+                    // Re-check state and socket validity before sending
+                    if (client_conn->state != CLIENT_STATE_ACTIVE || client_conn->socket == INVALID_SOCKET_VAL) {
+                        log_message(LOG_LEVEL_DEBUG, "Handler %d: Detected non-active state or invalid socket before send.", (int)client_conn->socket);
+                        free(send_buffer);
+                        // Need to free response_str before exiting
+                        free(response_str);
+                        response_str = NULL;
+                        goto client_cleanup;
+                    }
+
                     // Use send_exact from mcp_tcp_socket_utils.c
                     int send_result = send_exact(client_conn->socket, send_buffer, total_send_len, &client_conn->should_stop);
                     free(send_buffer); // Free combined buffer regardless of result
+
+                    // Check stop signal *immediately* after send returns
+                    if (client_conn->should_stop) {
+                         log_message(LOG_LEVEL_DEBUG, "Handler %d: Stop signal detected immediately after send.", (int)client_conn->socket);
+                         // Need to free response_str before exiting
+                         free(response_str);
+                         response_str = NULL;
+                         goto client_cleanup;
+                    }
 
                     if (send_result == -1) { // Socket error
                         if (!client_conn->should_stop) {
@@ -283,12 +372,15 @@ void* tcp_client_handler_thread_func(void* arg) {
 #endif
                         }
                         free(response_str); // Free original response string on error
+                        log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to socket error (send).", (int)client_conn->socket);
                         goto client_cleanup;
                     } else if (send_result == -2) { // Stop signal
                          free(response_str); // Free original response string on stop
+                         log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to stop signal (send).", (int)client_conn->socket);
                          goto client_cleanup;
                     } else if (send_result == -3) { // Connection closed
                          log_message(LOG_LEVEL_INFO, "Client disconnected socket %d during send", (int)client_conn->socket);
+                         log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to client disconnect (send).", (int)client_conn->socket);
                          free(response_str); // Free original response string on disconnect
                          goto client_cleanup;
                     }
@@ -297,6 +389,7 @@ void* tcp_client_handler_thread_func(void* arg) {
                 } else {
                     log_message(LOG_LEVEL_ERROR, "Failed to allocate send buffer for response on socket %d", (int)client_conn->socket);
                     free(response_str); // Free original response string on alloc failure
+                    log_message(LOG_LEVEL_DEBUG, "Handler %d: Exiting due to send buffer allocation failure.", (int)client_conn->socket);
                     goto client_cleanup;
                 }
             } else if (response_len > MAX_MCP_MESSAGE_SIZE) {
@@ -315,6 +408,7 @@ void* tcp_client_handler_thread_func(void* arg) {
 
 client_cleanup:
     // --- Cleanup on Exit ---
+    log_message(LOG_LEVEL_DEBUG, "Handler %d: Entering cleanup.", (int)client_conn->socket);
     // Free or release buffer if loop exited unexpectedly
     if (message_buf != NULL) {
         if (buffer_malloced) free(message_buf);
@@ -331,19 +425,20 @@ client_cleanup:
     pthread_mutex_lock(&tcp_data->client_mutex);
 #endif
 
-    // Only clean up if slot is still active
-    if (client_conn->active) {
+    // Only clean up if slot state indicates it might still be considered active/initializing by the acceptor
+    // Check state under lock
+    if (client_conn->state != CLIENT_STATE_INACTIVE) {
         // Save socket to close, avoiding invalid socket operations after lock release
         sock_to_close = client_conn->socket;
-        
+
         // Mark as invalid socket to prevent other threads from using it
         client_conn->socket = INVALID_SOCKET_VAL;
-        
-        // Mark slot as inactive
-        client_conn->active = false;
-        
+
+        // Mark slot as INACTIVE
+        client_conn->state = CLIENT_STATE_INACTIVE;
+
 #ifdef _WIN32
-        // Handle Windows thread handle
+        // Handle Windows thread handle (CloseHandle should be safe even if NULL)
         if (client_conn->thread_handle) {
             CloseHandle(client_conn->thread_handle);
             client_conn->thread_handle = NULL;
@@ -352,8 +447,11 @@ client_cleanup:
         client_conn->thread_handle = 0;
 #endif
 
-        // Log that client_conn has been cleaned up
-        log_message(LOG_LEVEL_DEBUG, "Client connection slot marked as inactive");
+        // Log that client_conn slot is now inactive
+        log_message(LOG_LEVEL_DEBUG, "Client connection slot marked as INACTIVE");
+    } else {
+        // Log if cleanup was skipped because state was already inactive
+        log_message(LOG_LEVEL_DEBUG, "Handler %d: Cleanup skipped, state already INACTIVE.", (int)client_conn->socket); // Socket might be invalid here, use cautiously
     }
 
 #ifdef _WIN32

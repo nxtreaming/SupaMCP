@@ -765,6 +765,18 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
         return NULL;
     }
 
+    // --- Special Handling for ID 0 (Initial Ping/Pong) ---
+    if (id == 0) {
+        // This is likely the response to the initial ping sent by the receive thread.
+        // Ignore it, as it's not tied to a user request.
+        log_message(LOG_LEVEL_DEBUG, "Received response for initial ping (ID: 0), ignoring.");
+        free(resp_error_message); // Free parsed fields even if ignored
+        free(resp_result);
+        return NULL; // Don't process further
+    }
+    // --- End Special Handling ---
+
+
     // Find the pending request and signal it
 #ifdef _WIN32
     EnterCriticalSection(&client->pending_requests_mutex);
@@ -800,11 +812,11 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
             free(resp_result);
         }
     } else {
-        // Response received for an unknown/unexpected ID
-        fprintf(stderr, "Received response with unexpected ID: %llu\n", (unsigned long long)id);
+        // Response received for an unknown/unexpected ID (and ID is not 0)
+        log_message(LOG_LEVEL_WARN, "Received response with unexpected ID: %llu", (unsigned long long)id);
         free(resp_error_message);
         free(resp_result);
-        *error_code = MCP_ERROR_INVALID_REQUEST; // Or some other error?
+        *error_code = MCP_ERROR_INVALID_REQUEST; // Set error for the callback itself
     }
 
 #ifdef _WIN32

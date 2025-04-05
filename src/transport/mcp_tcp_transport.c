@@ -220,7 +220,8 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
     pthread_mutex_lock(&data->client_mutex);
 #endif
     for (int i = 0; i < MAX_TCP_CLIENTS; ++i) {
-        if (data->clients[i].active) {
+        // Check if the slot is not INACTIVE (i.e., it's INITIALIZING or ACTIVE)
+        if (data->clients[i].state != CLIENT_STATE_INACTIVE) {
             data->clients[i].should_stop = true; // Signal handler thread to stop
             // Shutdown might be cleaner than just close_socket to unblock recv
 #ifdef _WIN32
@@ -244,7 +245,7 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
 #else
             // Threads were detached, cannot join. Assume they exit on socket close/error/stop signal.
 #endif
-        } // end if(data->clients[i].active)
+        } // end if(data->clients[i].state != CLIENT_STATE_INACTIVE)
     } // end for loop
 
     // Clean up mutex and stop pipe
@@ -325,11 +326,11 @@ mcp_transport_t* mcp_transport_tcp_create(
      tcp_data->running = false;
      tcp_data->buffer_pool = NULL; // Initialize pool pointer
      
-     // Explicitly initialize all client slots with INVALID_SOCKET_VAL
-     // calloc only zero-initializes, but INVALID_SOCKET_VAL is not 0 on Windows
+     // Explicitly initialize all client slots
      for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
-         tcp_data->clients[i].active = false;  // Redundant with calloc, but explicit
+         tcp_data->clients[i].state = CLIENT_STATE_INACTIVE; // Initialize state
          tcp_data->clients[i].socket = INVALID_SOCKET_VAL;
+         // Other fields are zeroed by calloc
      }
      
  #ifndef _WIN32

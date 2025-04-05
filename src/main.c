@@ -500,7 +500,9 @@ int main(int argc, char** argv) {
     } else if (strcmp(config.transport_type, "tcp") == 0) {
         log_message(LOG_LEVEL_INFO, "Using TCP transport on %s:%d", config.host, config.port);
         // Pass idle timeout (e.g., 60000ms = 1 minute, 0 to disable)
-        uint32_t idle_timeout = 60000; // TODO: Make this configurable via command line args
+        // TODO: confgure this from command line or config file
+        uint32_t idle_timeout = 0; // Disabled server-side idle timeout
+        log_message(LOG_LEVEL_INFO, "Server-side idle timeout disabled.");
         transport = mcp_transport_tcp_create(config.host, config.port, idle_timeout);
     } else {
         log_message(LOG_LEVEL_ERROR, "Unknown transport type: %s", config.transport_type);

@@ -59,11 +59,18 @@
 // Forward declare transport struct
 typedef struct mcp_transport mcp_transport_t;
 
+// Enum for client connection state
+typedef enum {
+    CLIENT_STATE_INACTIVE,     // Slot is free
+    CLIENT_STATE_INITIALIZING, // Slot assigned, thread being created
+    CLIENT_STATE_ACTIVE        // Handler thread running
+} client_state_t;
+
 // Structure to hold info about a connected client
 typedef struct {
     socket_t socket;
     struct sockaddr_in address; // Assuming IPv4
-    bool active;
+    client_state_t state;       // Current state of the connection slot
     time_t last_activity_time;
     thread_handle_t thread_handle;
     mcp_transport_t* transport; // Pointer back to parent transport
