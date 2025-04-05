@@ -266,7 +266,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
                     for(size_t i = 0; i < content_count; ++i) {
                         if (content_items[i]) {
                             mcp_content_item_free(content_items[i]);
-                            free(content_items[i]);
                         }
                     }
                     free(content_items);
@@ -324,7 +323,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
         if (content_items) {
             for (size_t i = 0; i < content_count; i++) {
                 mcp_content_item_free(content_items[i]);
-                free(content_items[i]);
             }
             free(content_items);
         }
@@ -356,7 +354,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     if (content_items) {
         for (size_t i = 0; i < content_count; i++) {
              mcp_content_item_free(content_items[i]); // Free item contents
-             free(content_items[i]); // Free the item struct pointer
         }
         free(content_items); // Free the array itself
     }
@@ -621,7 +618,6 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
             for(size_t i = 0; i < content_count; ++i) {
                 if (content_items[i]) {
                     mcp_content_item_free(content_items[i]);
-                    free(content_items[i]);
                 }
             }
             free(content_items);
@@ -646,7 +642,6 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
          if (content_items) {
              for (size_t i = 0; i < content_count; i++) {
                  mcp_content_item_free(content_items[i]);
-                 free(content_items[i]);
              }
              free(content_items);
          }
@@ -688,7 +683,6 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     if (content_items) {
         for (size_t i = 0; i < content_count; i++) {
             mcp_content_item_free(content_items[i]); // Free item contents
-            free(content_items[i]); // Free the item struct pointer
         }
         free(content_items); // Free the array itself
     }

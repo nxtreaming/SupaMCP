@@ -106,7 +106,6 @@ static mcp_error_code_t echo_tool_handler(
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
         mcp_content_item_free(item); // Frees data if allocated
-        free(item);
         free(*content);
         *content = NULL;
         goto cleanup;
@@ -135,7 +134,6 @@ cleanup:
              // Attempt cleanup anyway
              if ((*content)[0]) {
                  mcp_content_item_free((*content)[0]);
-                 free((*content)[0]);
              }
              free(*content);
              *content = NULL;

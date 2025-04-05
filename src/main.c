@@ -142,7 +142,6 @@ cleanup:
     if (err_code != MCP_ERROR_NONE) {
         if (item) {
             mcp_content_item_free(item); // Frees mime_type and data if allocated
-            free(item);
         }
         if (*content) {
             free(*content);
@@ -268,7 +267,6 @@ cleanup:
     if (err_code != MCP_ERROR_NONE) {
         if (item) {
             mcp_content_item_free(item);
-            free(item);
         }
         if (*content) {
             free(*content);
