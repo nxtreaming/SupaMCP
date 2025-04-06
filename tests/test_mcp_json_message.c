@@ -1,8 +1,9 @@
 #include "unity.h"
-#include "mcp_json.h"         // Include base JSON header first
-#include "mcp_json_rpc.h"     // For formatting functions if needed by helpers
-#include "mcp_json_message.h" // Include header with create/parse/stringify message functions
-#include "mcp_arena.h"        // For arena cleanup
+#include "mcp_json.h"
+#include "mcp_json_rpc.h"
+#include "mcp_json_message.h"
+#include "mcp_arena.h"
+#include "mcp_thread_local.h"
 #include <stdlib.h>
 #include <string.h>
 

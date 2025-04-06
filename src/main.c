@@ -485,7 +485,7 @@ int main(int argc, char** argv) {
 
     // Initialize thread-local storage (arena) for the main thread BEFORE using it (e.g., in JSON parsing)
     // Using 1MB as the initial size. Adjust if needed.
-    if (mcp_init_thread_arena(1024 * 1024) != 0) {
+    if (mcp_arena_init_current_thread(1024 * 1024) != 0) {
         mcp_log_error("Failed to initialize thread-local arena for main thread.");
         mcp_server_destroy(g_server); g_server = NULL;
         return 1;

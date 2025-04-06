@@ -69,37 +69,6 @@ void mcp_arena_reset(mcp_arena_t* arena);
  */
 void mcp_arena_destroy(mcp_arena_t* arena);
 
-/**
- * @brief Initialize the thread-local arena with the given initial size.
- * 
- * @param initial_size The initial size in bytes for the arena's buffer
- * @return 0 on success, -1 on failure
- */
-int mcp_init_thread_arena(size_t initial_size);
-
-/**
- * @brief Get the current thread's arena.
- * 
- * @return Pointer to the thread-local arena, or NULL if not initialized
- */
-mcp_arena_t* mcp_arena_get_current(void);
-
-/**
- * @brief Reset the current thread's arena.
- */
-void mcp_arena_reset_current_thread(void);
-
-/**
- * @brief Destroy the current thread's arena.
- */
-void mcp_arena_destroy_current_thread(void);
-
-/**
- * @brief Get the thread-local arena (backward compatibility alias for mcp_arena_get_current)
- * @return Pointer to the thread-local arena, or NULL if not initialized
- */
-#define mcp_get_thread_arena mcp_arena_get_current
-
 #ifdef __cplusplus
 }
 #endif

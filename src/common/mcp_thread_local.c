@@ -17,7 +17,7 @@ static void cleanup_arena(void* arena);
 static void make_key(void);
 #endif
 
-int mcp_init_thread_arena(size_t initial_size) {
+int mcp_arena_init_current_thread(size_t initial_size) {
 #ifdef _WIN32
     if (arena_tls_index == TLS_OUT_OF_INDEXES) {
         arena_tls_index = TlsAlloc();
@@ -55,7 +55,7 @@ int mcp_init_thread_arena(size_t initial_size) {
     return 0;
 }
 
-mcp_arena_t* mcp_get_thread_arena(void) {
+mcp_arena_t* mcp_arena_get_current(void) {
 #ifdef _WIN32
     if (arena_tls_index == TLS_OUT_OF_INDEXES) {
         return NULL;
@@ -67,14 +67,14 @@ mcp_arena_t* mcp_get_thread_arena(void) {
 }
 
 void mcp_arena_reset_current_thread(void) {
-    mcp_arena_t* arena = mcp_get_thread_arena();
+    mcp_arena_t* arena = mcp_arena_get_current();
     if (arena) {
         mcp_arena_reset(arena);
     }
 }
 
 void mcp_arena_destroy_current_thread(void) {
-    mcp_arena_t* arena = mcp_get_thread_arena();
+    mcp_arena_t* arena = mcp_arena_get_current();
     if (arena) {
         cleanup_arena(arena);
 #ifdef _WIN32
@@ -83,10 +83,6 @@ void mcp_arena_destroy_current_thread(void) {
         pthread_setspecific(arena_key, NULL);
 #endif
     }
-}
-
-void mcp_cleanup_thread_arena(void) {
-    mcp_arena_destroy_current_thread();  // Alias for backward compatibility
 }
 
 static void cleanup_arena(void* arena) {

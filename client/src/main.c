@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
 
     // Initialize thread-local storage (arena) for the main thread
     // Using 1MB as the initial size. Adjust if needed.
-    if (mcp_init_thread_arena(1024 * 1024) != 0) {
+    if (mcp_arena_init_current_thread(1024 * 1024) != 0) {
         fprintf(stderr, "Failed to initialize thread-local arena for main thread.\n");
         mcp_log_close(); // Close log before exiting
         return 1;
@@ -201,7 +201,7 @@ int main(int argc, char** argv) {
     printf("Exiting client...\n");
     mcp_client_destroy(client); // This will also stop and destroy the transport
 
-    mcp_cleanup_thread_arena(); // Clean up thread-local arena
+    mcp_arena_destroy_current_thread(); // Clean up thread-local arena
     mcp_log_close(); // Close log file if open
 
     return 0;

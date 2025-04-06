@@ -30,7 +30,7 @@ DWORD WINAPI tcp_client_receive_thread_func(LPVOID arg) {
 void* tcp_client_receive_thread_func(void* arg) {
 #endif
     // --- Initialize Thread-Local Arena for this receiver thread ---
-    if (mcp_init_thread_arena(1024 * 1024) != 0) { // Using 1MB default
+    if (mcp_arena_init_current_thread(1024 * 1024) != 0) { // Using 1MB default
         mcp_log_error("Failed to initialize thread-local arena for client receiver thread. Exiting.");
 #ifdef _WIN32
         return 1; // Indicate error
@@ -309,7 +309,7 @@ receive_loop:
     }
 
     // --- Cleanup Thread-Local Arena ---
-    mcp_cleanup_thread_arena();
+    mcp_arena_destroy_current_thread();
     mcp_log_debug("Thread-local arena cleaned up for client receiver thread.");
 
 #ifdef _WIN32

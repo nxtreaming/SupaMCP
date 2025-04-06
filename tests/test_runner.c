@@ -26,7 +26,7 @@ void run_mcp_tcp_client_transport_tests(void); // Add tcp client transport tests
 // setUp and tearDown functions are optional, run before/after each test
 void setUp(void) {
     // Reset the thread-local arena before each test
-    mcp_arena_t* arena = mcp_get_thread_arena();
+    mcp_arena_t* arena = mcp_arena_get_current();
     if (arena) {
         mcp_arena_reset(arena);
     }
@@ -39,7 +39,7 @@ void tearDown(void) {
 // Main test runner
 int main(void) {
     // Initialize thread-local arena for tests
-    if (mcp_init_thread_arena(TEST_ARENA_SIZE) != 0) {
+    if (mcp_arena_init_current_thread(TEST_ARENA_SIZE) != 0) {
         printf("Failed to initialize thread-local arena\n");
         return -1;
     }
@@ -69,7 +69,7 @@ int main(void) {
     int result = UNITY_END(); // IMPORTANT: Call this to finalize tests
 
     // Clean up thread-local arena
-    mcp_cleanup_thread_arena();
+    mcp_arena_destroy_current_thread();
 
     return result;
 }

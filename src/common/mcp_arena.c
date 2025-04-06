@@ -1,4 +1,5 @@
 #include "internal/arena_internal.h"
+#include "mcp_thread_local.h"
 #include <stdlib.h>
 
 
@@ -51,7 +52,7 @@ void* mcp_arena_alloc(mcp_arena_t* arena, size_t size) {
         arena = mcp_arena_get_current();
         if (!arena) {
             // Initialize thread-local arena if not exists
-    if (mcp_init_thread_arena(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
                 return NULL;
             }
             arena = mcp_arena_get_current();

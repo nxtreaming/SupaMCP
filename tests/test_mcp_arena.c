@@ -1,5 +1,6 @@
 #include "unity.h"
 #include "mcp_arena.h"
+#include "mcp_thread_local.h"
 #include "common/internal/arena_internal.h"
 #include <string.h>
 
@@ -21,7 +22,7 @@ void test_arena_init_destroy(void) {
 // Test small allocation using the thread-local arena
 void test_arena_small_alloc(void) {
     // Initialize thread-local arena
-    TEST_ASSERT_EQUAL_INT(0, mcp_init_thread_arena(MCP_ARENA_DEFAULT_SIZE));
+    TEST_ASSERT_EQUAL_INT(0, mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE));
     mcp_arena_t* arena = mcp_arena_get_current();
     TEST_ASSERT_NOT_NULL(arena);
 
@@ -54,7 +55,7 @@ void test_arena_new_block_alloc(void) {
     // This test assumes the default block size is large enough for the first alloc,
     // but not large enough for both. This might need adjustment if default changes.
 
-    TEST_ASSERT_EQUAL_INT(0, mcp_init_thread_arena(MCP_ARENA_DEFAULT_SIZE));
+    TEST_ASSERT_EQUAL_INT(0, mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE));
     mcp_arena_t* arena = mcp_arena_get_current();
     TEST_ASSERT_NOT_NULL(arena);
 
@@ -85,7 +86,7 @@ void test_arena_large_alloc(void) {
     // Arena is created implicitly on first alloc
 
     size_t large_size = MCP_ARENA_DEFAULT_SIZE * 2;
-    TEST_ASSERT_EQUAL_INT(0, mcp_init_thread_arena(MCP_ARENA_DEFAULT_SIZE));
+    TEST_ASSERT_EQUAL_INT(0, mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE));
     mcp_arena_t* arena = mcp_arena_get_current();
     TEST_ASSERT_NOT_NULL(arena);
 
@@ -104,7 +105,7 @@ void test_arena_large_alloc(void) {
 // Test thread-local arena reset functionality
 void test_arena_reset_current(void) {
     // Arena is created implicitly on first alloc
-    TEST_ASSERT_EQUAL_INT(0, mcp_init_thread_arena(MCP_ARENA_DEFAULT_SIZE));
+    TEST_ASSERT_EQUAL_INT(0, mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE));
     mcp_arena_t* arena = mcp_arena_get_current();
     TEST_ASSERT_NOT_NULL(arena);
 

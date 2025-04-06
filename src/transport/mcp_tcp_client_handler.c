@@ -16,7 +16,7 @@ void* tcp_client_handler_thread_func(void* arg) {
 
     // --- Initialize Thread-Local Arena for this handler thread ---
     // Use a reasonable default size, e.g., 1MB. Adjust if needed.
-    if (mcp_init_thread_arena(1024 * 1024) != 0) {
+    if (mcp_arena_init_current_thread(1024 * 1024) != 0) {
         mcp_log_error("Failed to initialize thread-local arena for client handler thread. Exiting.");
 #ifdef _WIN32
         return 1; // Indicate error
@@ -485,7 +485,7 @@ client_cleanup:
     }
 
     // --- Cleanup Thread-Local Arena ---
-    mcp_cleanup_thread_arena();
+    mcp_arena_destroy_current_thread();
     mcp_log_debug("Thread-local arena cleaned up for client handler thread.");
 
 

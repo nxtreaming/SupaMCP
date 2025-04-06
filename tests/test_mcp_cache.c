@@ -297,7 +297,7 @@ void test_cache_zero_capacity(void) {
     int put_result = mcp_cache_put(cache, "key1", content_to_put, 1, 0);
     // Depending on implementation, put might return 0 but not store, or -1.
     // Let's assume it doesn't store.
-    // TEST_ASSERT_EQUAL_INT(0, put_result); // Or -1 if it signals failure
+    TEST_ASSERT_EQUAL_INT(0, put_result); // Or -1 if it signals failure
 
     // Get should always miss
     mcp_content_item_t** retrieved_content = NULL;

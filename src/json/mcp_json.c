@@ -15,7 +15,7 @@
  */
 mcp_json_t* mcp_json_alloc_node(void) {
     // Always allocate node from the thread-local arena
-mcp_arena_t* arena = mcp_get_thread_arena(); // Use correct function name
+    mcp_arena_t* arena = mcp_arena_get_current(); // Use correct function name
     if (!arena) {
         // Cannot log here easily if logging itself depends on arena/init
         // fprintf(stderr, "FATAL: Thread-local arena not initialized in mcp_json_alloc_node\n");
