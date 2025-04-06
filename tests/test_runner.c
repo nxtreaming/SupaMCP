@@ -1,4 +1,7 @@
 #include "unity.h"
+#include "mcp_thread_local.h"
+
+#define TEST_ARENA_SIZE (1024 * 1024) // 1MB arena for tests
 
 // Forward declarations for test suite runners
 void run_mcp_arena_tests(void);
@@ -14,15 +17,25 @@ void run_test_mcp_server_handlers(void); // Added declaration
 
 // setUp and tearDown functions are optional, run before/after each test
 void setUp(void) {
-    // e.g., initialize resources needed for tests
+    // Reset the thread-local arena before each test
+    mcp_arena_t* arena = mcp_get_thread_arena();
+    if (arena) {
+        mcp_arena_reset(arena);
+    }
 }
 
 void tearDown(void) {
-    // e.g., clean up resources allocated in setUp
+    // Nothing to clean up - arena is reset in setUp
 }
 
 // Main test runner
 int main(void) {
+    // Initialize thread-local arena for tests
+    if (mcp_init_thread_arena(TEST_ARENA_SIZE) != 0) {
+        printf("Failed to initialize thread-local arena\n");
+        return -1;
+    }
+
     UNITY_BEGIN(); // IMPORTANT: Call this before any tests
 
     // Run test suites
@@ -37,7 +50,61 @@ int main(void) {
     run_test_mcp_server_handlers(); // Call the server handler test suite
     // Add calls to other test suite runners here later
 
-    return UNITY_END(); // IMPORTANT: Call this to finalize tests
+    int result = UNITY_END(); // IMPORTANT: Call this to finalize tests
+
+    // Clean up thread-local arena
+    mcp_cleanup_thread_arena();
+
+    return result;
+}
+
+// --- Server Handlers Test Suite ---
+// Forward declarations for server handler tests
+extern void test_handle_ping_request_success(void);
+extern void test_handle_list_resources_empty(void);
+extern void test_handle_list_resources_with_data(void);
+extern void test_handle_list_resources_restricted(void);
+extern void test_handle_read_resource_success(void);
+extern void test_handle_read_resource_invalid_uri(void);
+extern void test_handle_read_resource_permission_denied(void);
+extern void test_handle_list_tools_empty(void);
+extern void test_handle_list_tools_with_data(void);
+extern void test_handle_call_tool_success(void);
+extern void test_handle_call_tool_permission_denied(void);
+extern void test_handle_call_tool_invalid_params(void);
+extern void test_handle_call_tool_invalid_json(void);
+extern void test_handle_call_tool_not_found(void);
+extern void test_handle_invalid_method(void);
+extern void test_handle_read_resource_invalid_json(void);
+extern void test_handle_read_resource_missing_fields(void);
+extern void test_server_init(void);
+extern void test_server_init_invalid_config(void);
+extern void test_server_capabilities(void);
+extern void test_server_config_validation(void);
+
+// Runner function for server handler tests
+void run_test_mcp_server_handlers(void) {
+    RUN_TEST(test_handle_ping_request_success);
+    RUN_TEST(test_handle_list_resources_empty);
+    RUN_TEST(test_handle_list_resources_with_data);
+    RUN_TEST(test_handle_list_resources_restricted);
+    RUN_TEST(test_handle_read_resource_success);
+    RUN_TEST(test_handle_read_resource_invalid_uri);
+    RUN_TEST(test_handle_read_resource_permission_denied);
+    RUN_TEST(test_handle_list_tools_empty);
+    RUN_TEST(test_handle_list_tools_with_data);
+    RUN_TEST(test_handle_call_tool_success);
+    RUN_TEST(test_handle_call_tool_permission_denied);
+    RUN_TEST(test_handle_call_tool_invalid_params);
+    RUN_TEST(test_handle_call_tool_invalid_json);
+    RUN_TEST(test_handle_call_tool_not_found);
+    RUN_TEST(test_handle_invalid_method);
+    RUN_TEST(test_handle_read_resource_invalid_json);
+    RUN_TEST(test_handle_read_resource_missing_fields);
+    RUN_TEST(test_server_init);
+    RUN_TEST(test_server_init_invalid_config);
+    RUN_TEST(test_server_capabilities);
+    RUN_TEST(test_server_config_validation);
 }
 
 // --- Buffer Pool Test Suite ---
@@ -63,19 +130,4 @@ void run_mcp_buffer_pool_tests(void) {
     RUN_TEST(test_mcp_buffer_pool_release_null_pool);
     RUN_TEST(test_mcp_buffer_pool_get_size);
     RUN_TEST(test_mcp_buffer_pool_get_size_null);
-}
-
-// --- Server Handlers Test Suite ---
-// Forward declarations for server handler tests
-extern void test_handle_ping_request_success(void);
-extern void test_handle_list_resources_empty(void);
-extern void test_handle_list_resources_with_data(void);
-// Add declarations for other handler tests here
-
-// Runner function for server handler tests
-void run_test_mcp_server_handlers(void) {
-    RUN_TEST(test_handle_ping_request_success);
-    RUN_TEST(test_handle_list_resources_empty);
-    RUN_TEST(test_handle_list_resources_with_data);
-    // Add RUN_TEST calls for other handler tests here
 }

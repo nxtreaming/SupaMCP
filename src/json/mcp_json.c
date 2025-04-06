@@ -15,7 +15,12 @@
  */
 mcp_json_t* mcp_json_alloc_node(void) {
     // Always allocate node from the thread-local arena
-    return (mcp_json_t*)mcp_arena_alloc(sizeof(mcp_json_t));
+    mcp_arena_t* arena = mcp_arena_get_current();
+    if (!arena) {
+        log_message(LOG_LEVEL_ERROR, "Thread-local arena not initialized");
+        return NULL;
+    }
+    return (mcp_json_t*)mcp_arena_alloc(arena, sizeof(mcp_json_t));
 }
 
 // --- Public JSON API Implementation ---

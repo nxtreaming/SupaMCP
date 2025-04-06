@@ -40,6 +40,7 @@ set(COMMON_SOURCES
     src/common/mcp_types.c
     src/common/mcp_arena.c
     src/common/mcp_log.c
+    src/common/mcp_thread_local.c
     src/server/mcp_buffer_pool.c
     src/server/mcp_thread_pool.c
     src/server/mcp_cache_optimized.c
@@ -75,6 +76,7 @@ set(COMMON_HEADERS
     include/mcp_types.h
     include/mcp_arena.h
     include/mcp_log.h
+    include/mcp_thread_local.h
     include/mcp_thread_pool.h
     include/mcp_cache.h
     include/mcp_rate_limiter.h
@@ -118,6 +120,7 @@ target_include_directories(mcp_common PUBLIC
 # Add module source directories as private include paths so internal headers can be found
 target_include_directories(mcp_common PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/common/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/json
     ${CMAKE_CURRENT_SOURCE_DIR}/src/transport
     ${CMAKE_CURRENT_SOURCE_DIR}/src/server

@@ -1,6 +1,7 @@
 #include "internal/server_internal.h"
 #include "gateway_routing.h"
-#include "mcp_auth.h" // Include the auth header
+#include "mcp_auth.h"
+#include "mcp_arena.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +28,7 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
 
     // Initialize arena for this message processing cycle
     mcp_arena_t arena;
-    mcp_arena_init(&arena, 0); // Use default block size
+    mcp_arena_init(&arena, MCP_ARENA_DEFAULT_SIZE);
 
     // Ensure data is NULL-terminated for safe handling
     PROFILE_START("handle_message"); // Profile overall message handling

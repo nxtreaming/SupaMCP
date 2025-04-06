@@ -102,4 +102,10 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
 char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message);
 char* create_success_response(uint64_t id, char* result_str); // Takes ownership of result_str
 
+// Internal server functions
+const mcp_resource_t* mcp_server_find_resource(mcp_server_t* server, const char* uri);
+const mcp_tool_t* mcp_server_find_tool(mcp_server_t* server, const char* name);
+int mcp_server_remove_resource(mcp_server_t* server, const char* uri);
+int mcp_server_remove_tool(mcp_server_t* server, const char* name);
+
 #endif // MCP_SERVER_INTERNAL_H

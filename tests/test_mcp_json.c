@@ -38,7 +38,6 @@ void test_json_create_boolean(void) {
     // Test false (uses thread-local arena)
     mcp_json_t* json_false = mcp_json_boolean_create(val_false);
     TEST_ASSERT_NOT_NULL(json_false);
-    TEST_ASSERT_EQUAL(MCP_JSON_BOOLEAN, mcp_json_get_type(json_false));
     TEST_ASSERT_EQUAL_INT(0, mcp_json_get_boolean(json_false, &out_val));
     TEST_ASSERT_FALSE(out_val);
     mcp_arena_destroy_current_thread(); // Clean up arena

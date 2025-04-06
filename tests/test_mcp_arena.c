@@ -1,5 +1,6 @@
 #include "unity.h"
 #include "mcp_arena.h"
+#include "common/internal/arena_internal.h"
 #include <string.h>
 
 // Define a test group runner function (called by the main runner)
@@ -12,23 +13,26 @@ void test_arena_init_destroy(void) {
     mcp_arena_t arena;
     mcp_arena_init(&arena, 0); // Use default block size
     TEST_ASSERT_NULL(arena.current_block); // Should start empty
-    TEST_ASSERT_EQUAL(MCP_ARENA_DEFAULT_BLOCK_SIZE, arena.default_block_size);
+    TEST_ASSERT_EQUAL(MCP_ARENA_DEFAULT_SIZE, arena.default_block_size);
     mcp_arena_destroy(&arena);
     TEST_ASSERT_NULL(arena.current_block); // Should be empty after destroy
 }
 
 // Test small allocation using the thread-local arena
 void test_arena_small_alloc(void) {
-    // Arena is created implicitly on first alloc
+    // Initialize thread-local arena
+    TEST_ASSERT_EQUAL_INT(0, mcp_init_thread_arena(MCP_ARENA_DEFAULT_SIZE));
+    mcp_arena_t* arena = mcp_arena_get_current();
+    TEST_ASSERT_NOT_NULL(arena);
 
-    void* ptr1 = mcp_arena_alloc(10);
+    void* ptr1 = mcp_arena_alloc(NULL, 10); // Use thread-local arena
     TEST_ASSERT_NOT_NULL(ptr1);
     mcp_arena_t* arena_ptr = mcp_arena_get_current();
     TEST_ASSERT_NOT_NULL(arena_ptr);
     TEST_ASSERT_NOT_NULL(arena_ptr->current_block);
     TEST_ASSERT_EQUAL(MCP_ARENA_ALIGN_UP(10), arena_ptr->current_block->used);
 
-    void* ptr2 = mcp_arena_alloc(20);
+    void* ptr2 = mcp_arena_alloc(arena, 20);
     TEST_ASSERT_NOT_NULL(ptr2);
     // Re-get arena pointer in case it changed (shouldn't here)
     arena_ptr = mcp_arena_get_current();
@@ -50,16 +54,20 @@ void test_arena_new_block_alloc(void) {
     // This test assumes the default block size is large enough for the first alloc,
     // but not large enough for both. This might need adjustment if default changes.
 
-    void* ptr1 = mcp_arena_alloc(MCP_ARENA_DEFAULT_BLOCK_SIZE - 20); // Allocate most of the default block
+    TEST_ASSERT_EQUAL_INT(0, mcp_init_thread_arena(MCP_ARENA_DEFAULT_SIZE));
+    mcp_arena_t* arena = mcp_arena_get_current();
+    TEST_ASSERT_NOT_NULL(arena);
+
+    void* ptr1 = mcp_arena_alloc(NULL, MCP_ARENA_DEFAULT_SIZE - 20); // Allocate most of the default block
     TEST_ASSERT_NOT_NULL(ptr1);
     mcp_arena_t* arena_ptr = mcp_arena_get_current();
     TEST_ASSERT_NOT_NULL(arena_ptr);
     mcp_arena_block_t* block1 = arena_ptr->current_block;
     TEST_ASSERT_NOT_NULL(block1);
-    TEST_ASSERT_EQUAL(MCP_ARENA_ALIGN_UP(MCP_ARENA_DEFAULT_BLOCK_SIZE - 20), block1->used);
+    TEST_ASSERT_EQUAL(MCP_ARENA_ALIGN_UP(MCP_ARENA_DEFAULT_SIZE - 20), block1->used);
 
     // This allocation should force a new block
-    void* ptr2 = mcp_arena_alloc(40);
+    void* ptr2 = mcp_arena_alloc(arena, 40);
     TEST_ASSERT_NOT_NULL(ptr2);
     arena_ptr = mcp_arena_get_current(); // Re-get arena pointer
     TEST_ASSERT_NOT_NULL(arena_ptr);
@@ -76,8 +84,12 @@ void test_arena_new_block_alloc(void) {
 void test_arena_large_alloc(void) {
     // Arena is created implicitly on first alloc
 
-    size_t large_size = MCP_ARENA_DEFAULT_BLOCK_SIZE * 2;
-    void* ptr = mcp_arena_alloc(large_size);
+    size_t large_size = MCP_ARENA_DEFAULT_SIZE * 2;
+    TEST_ASSERT_EQUAL_INT(0, mcp_init_thread_arena(MCP_ARENA_DEFAULT_SIZE));
+    mcp_arena_t* arena = mcp_arena_get_current();
+    TEST_ASSERT_NOT_NULL(arena);
+
+    void* ptr = mcp_arena_alloc(NULL, large_size);
     TEST_ASSERT_NOT_NULL(ptr);
     mcp_arena_t* arena_ptr = mcp_arena_get_current();
     TEST_ASSERT_NOT_NULL(arena_ptr);
@@ -92,7 +104,11 @@ void test_arena_large_alloc(void) {
 // Test thread-local arena reset functionality
 void test_arena_reset_current(void) {
     // Arena is created implicitly on first alloc
-    void* ptr1 = mcp_arena_alloc(50);
+    TEST_ASSERT_EQUAL_INT(0, mcp_init_thread_arena(MCP_ARENA_DEFAULT_SIZE));
+    mcp_arena_t* arena = mcp_arena_get_current();
+    TEST_ASSERT_NOT_NULL(arena);
+
+    void* ptr1 = mcp_arena_alloc(NULL, 50);
     TEST_ASSERT_NOT_NULL(ptr1);
     mcp_arena_t* arena_ptr = mcp_arena_get_current();
     TEST_ASSERT_NOT_NULL(arena_ptr);
@@ -107,7 +123,7 @@ void test_arena_reset_current(void) {
     TEST_ASSERT_EQUAL(0, arena_ptr->current_block->used); // Usage should be reset
 
     // Allocate again after reset
-    void* ptr2 = mcp_arena_alloc(30);
+    void* ptr2 = mcp_arena_alloc(arena, 30);
     TEST_ASSERT_NOT_NULL(ptr2);
     arena_ptr = mcp_arena_get_current(); // Re-get arena pointer
     TEST_ASSERT_NOT_NULL(arena_ptr);

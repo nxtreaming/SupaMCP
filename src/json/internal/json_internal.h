@@ -3,6 +3,7 @@
 
 #include "mcp_json.h"
 #include "mcp_arena.h"
+#include "mcp_thread_local.h"
 #include "mcp_profiler.h"
 #include "mcp_log.h"
 #include "mcp_types.h"
