@@ -134,9 +134,10 @@ target_include_directories(mcp_common PRIVATE
 # Create server executable
 add_executable(mcp_server ${SERVER_SOURCES} ${SERVER_HEADERS})
 target_link_libraries(mcp_server PRIVATE mcp_common)
-# Server needs access to its own headers in include/
+# Server needs access to its own headers in include/ and internal server headers
 target_include_directories(mcp_server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/server
 )
 
 # Create client executable

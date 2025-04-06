@@ -72,6 +72,7 @@ struct mcp_server {
     // Gateway Backends (Loaded from config)
     mcp_backend_info_t* backends;       /**< Array of configured backend servers. */
     size_t backend_count;               /**< Number of configured backend servers. */
+    bool is_gateway_mode;               /**< Flag indicating if gateway mode is enabled. */
 };
 
 // --- Internal Function Prototypes ---

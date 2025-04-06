@@ -62,8 +62,9 @@ mcp_server_t* mcp_server_create(
     server->thread_pool = NULL;
     server->resource_cache = NULL;
     server->rate_limiter = NULL;
-    server->backends = NULL; // Initialize gateway fields
-    server->backend_count = 0; // Initialize gateway fields
+    server->backends = NULL;
+    server->backend_count = 0;
+    server->is_gateway_mode = false;
 
     // Check for allocation failures during config copy
     if ((config->name && !server->config.name) ||

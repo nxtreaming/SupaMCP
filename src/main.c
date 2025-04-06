@@ -31,6 +31,7 @@
 #include "gateway.h"
 #include "mcp_thread_local.h"
 #include "mcp_connection_pool.h"
+#include "internal/server_internal.h"
 
 
 // Global server instance for signal handling
@@ -47,6 +48,7 @@ typedef struct {
     mcp_log_level_t log_level;
     bool daemon;
     const char* api_key;
+    bool gateway_mode;
 } server_config_t;
 
 // Forward declarations
@@ -371,6 +373,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
     config->log_level = MCP_LOG_LEVEL_INFO;
     config->daemon = false;
     config->api_key = NULL;
+    config->gateway_mode = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tcp") == 0) {
@@ -399,6 +402,8 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
 #endif
         } else if (strcmp(argv[i], "--api-key") == 0 && i + 1 < argc) {
             config->api_key = argv[++i];
+        } else if (strcmp(argv[i], "--gateway") == 0) {
+            config->gateway_mode = true;
         } else if (strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("Options:\n");
@@ -409,6 +414,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             printf("  --log-file FILE     Log to file\n");
             printf("  --log-level LEVEL   Set log level (error, warn, info, debug)\n");
             printf("  --api-key KEY       Require API key for authentication\n");
+            printf("  --gateway           Enable MCP Gateway mode (requires gateway_config.json)\n");
             printf("  --daemon            Run as daemon (Unix-like systems only)\n");
             printf("  --help              Show this help message\n");
             exit(0);
@@ -485,54 +491,63 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Load gateway configuration
-    // TODO: Make config path configurable? Using absolute path for testing.
-    const char* gateway_config_path = "d:/workspace/SupaMCPServer/gateway_config.json";
-    mcp_error_code_t load_err = load_gateway_config(gateway_config_path, &g_backends, &g_backend_count);
-    if (load_err != MCP_ERROR_NONE && load_err != MCP_ERROR_INVALID_REQUEST /* Allow file not found */) {
-        mcp_log_error("Failed to load gateway config '%s' (Error %d). Exiting.", gateway_config_path, load_err);
-        // Note: No need to explicitly call mcp_thread_local_destroy here,
-        // as the cleanup function registered with atexit should handle it if necessary,
-        // or it might be implicitly cleaned up on process exit.
-        // If explicit cleanup is needed, it should be added to the cleanup() function.
-        mcp_server_destroy(g_server); g_server = NULL;
-        return 1;
-    } else if (load_err == MCP_ERROR_NONE) {
-         mcp_log_info("Loaded %zu backend(s) from gateway config '%s'.", g_backend_count, gateway_config_path);
-    } else {
-         mcp_log_info("Gateway config file '%s' not found or empty. Running without gateway backends.", gateway_config_path);
-    }
+    // --- Gateway Mode Setup ---
+    g_server->is_gateway_mode = config.gateway_mode; // Set flag on server instance
+    if (config.gateway_mode) {
+        mcp_log_info("Gateway mode enabled. Loading backend configuration...");
+        // Load gateway configuration
+        const char* gateway_config_path = "d:/workspace/SupaMCPServer/gateway_config.json"; // TODO: Make configurable?
+        mcp_error_code_t load_err = load_gateway_config(gateway_config_path, &g_backends, &g_backend_count);
 
-    // Initialize connection pools for loaded TCP backends
-    if (g_backends != NULL) {
-        mcp_log_info("Initializing backend connection pools...");
-        for (size_t i = 0; i < g_backend_count; ++i) {
-            mcp_backend_info_t* backend = &g_backends[i];
-            backend->pool = NULL; // Initialize pool pointer
+        if (load_err != MCP_ERROR_NONE && load_err != MCP_ERROR_INVALID_REQUEST /* Allow file not found */) {
+            mcp_log_error("Failed to load gateway config '%s' (Error %d). Exiting.", gateway_config_path, load_err);
+            mcp_server_destroy(g_server); g_server = NULL;
+            return 1;
+        } else if (load_err == MCP_ERROR_NONE) {
+            mcp_log_info("Loaded %zu backend(s) from gateway config '%s'.", g_backend_count, gateway_config_path);
 
-            if (strncmp(backend->address, "tcp://", 6) == 0) {
-                char host_buf[256];
-                int port = 0;
-                if (parse_tcp_address(backend->address, host_buf, sizeof(host_buf), &port)) {
-                    // TODO: Make pool parameters configurable? Using defaults for now.
-                    size_t min_conn = 1;
-                    size_t max_conn = 4;
-                    int idle_timeout = 60000; // 60 seconds
-                    int connect_timeout = 5000; // 5 seconds
-                    mcp_log_info("Creating connection pool for backend '%s' (%s:%d)...", backend->name, host_buf, port);
-                    backend->pool = mcp_connection_pool_create(host_buf, port, min_conn, max_conn, idle_timeout, connect_timeout);
-                    if (backend->pool == NULL) {
-                        mcp_log_error("Failed to create connection pool for backend '%s'. Gateway routing for this backend will fail.", backend->name);
-                        // Continue without a pool for this backend
+            // Assign loaded backends to the server instance
+            g_server->backends = g_backends;
+            g_server->backend_count = g_backend_count;
+
+            // Initialize connection pools for loaded TCP backends
+            mcp_log_info("Initializing backend connection pools...");
+            for (size_t i = 0; i < g_backend_count; ++i) {
+                mcp_backend_info_t* backend = &g_backends[i];
+                backend->pool = NULL; // Initialize pool pointer
+
+                if (strncmp(backend->address, "tcp://", 6) == 0) {
+                    char host_buf[256];
+                    int port = 0;
+                    if (parse_tcp_address(backend->address, host_buf, sizeof(host_buf), &port)) {
+                        // TODO: Make pool parameters configurable? Using defaults for now.
+                        size_t min_conn = 1;
+                        size_t max_conn = 4;
+                        int idle_timeout = 60000; // 60 seconds
+                        int connect_timeout = 5000; // 5 seconds
+                        mcp_log_info("Creating connection pool for backend '%s' (%s:%d)...", backend->name, host_buf, port);
+                        backend->pool = mcp_connection_pool_create(host_buf, port, min_conn, max_conn, idle_timeout, connect_timeout);
+                        if (backend->pool == NULL) {
+                            mcp_log_error("Failed to create connection pool for backend '%s'. Gateway routing for this backend will fail.", backend->name);
+                        }
+                    } else {
+                        mcp_log_error("Failed to parse TCP address '%s' for backend '%s'.", backend->address, backend->name);
                     }
                 } else {
-                    mcp_log_error("Failed to parse TCP address '%s' for backend '%s'.", backend->address, backend->name);
+                    mcp_log_warn("Backend '%s' address '%s' is not TCP. Connection pool not created.", backend->name, backend->address);
                 }
-            } else {
-                mcp_log_warn("Backend '%s' address '%s' is not TCP. Connection pool not created.", backend->name, backend->address);
             }
+        } else {
+            mcp_log_info("Gateway config file '%s' not found or empty. Running gateway without backends.", gateway_config_path);
+            g_server->backends = NULL;
+            g_server->backend_count = 0;
         }
+    } else {
+        mcp_log_info("Gateway mode disabled.");
+        g_server->backends = NULL;
+        g_server->backend_count = 0;
     }
+    // --- End Gateway Mode Setup ---
 
 
     // Set local handlers (these might be used if no backend matches a request)
