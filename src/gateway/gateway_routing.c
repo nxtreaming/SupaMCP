@@ -33,12 +33,12 @@ const mcp_backend_info_t* find_backend_for_request(
             for (size_t j = 0; j < backend->routing.resource_prefix_count; j++) {
                 const char* prefix = backend->routing.resource_prefixes[j];
                 if (prefix && strncmp(uri_str, prefix, strlen(prefix)) == 0) {
-                    log_message(LOG_LEVEL_DEBUG, "Routing resource '%s' to backend '%s' via prefix '%s'", uri_str, backend->name, prefix);
+                    mcp_log_debug("Routing resource '%s' to backend '%s' via prefix '%s'", uri_str, backend->name, prefix);
                     return backend; // Found match
                 }
             }
         }
-        log_message(LOG_LEVEL_DEBUG, "No backend route found for resource '%s'", uri_str);
+        mcp_log_debug("No backend route found for resource '%s'", uri_str);
         return NULL; // No match found
     }
 
@@ -62,12 +62,12 @@ const mcp_backend_info_t* find_backend_for_request(
             for (size_t j = 0; j < backend->routing.tool_name_count; j++) {
                 const char* tool_name = backend->routing.tool_names[j];
                 if (tool_name && strcmp(name_str, tool_name) == 0) {
-                     log_message(LOG_LEVEL_DEBUG, "Routing tool '%s' to backend '%s'", name_str, backend->name);
+                     mcp_log_debug("Routing tool '%s' to backend '%s'", name_str, backend->name);
                     return backend; // Found match
                 }
             }
         }
-         log_message(LOG_LEVEL_DEBUG, "No backend route found for tool '%s'", name_str);
+         mcp_log_debug("No backend route found for tool '%s'", name_str);
         return NULL; // No match found
     }
 

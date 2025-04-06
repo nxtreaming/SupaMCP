@@ -1,4 +1,6 @@
 #include "internal/server_internal.h"
+#include "mcp_json.h"
+#include "mcp_json_message.h"
 #include <stdlib.h>
 
 // --- Internal Response Helper Functions ---

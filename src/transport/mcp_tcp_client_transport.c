@@ -44,7 +44,7 @@ static int tcp_client_transport_start(
 #ifdef _WIN32
     data->receive_thread = CreateThread(NULL, 0, tcp_client_receive_thread_func, transport, 0, NULL);
     if (data->receive_thread == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to create client receive thread (Error: %lu).", GetLastError());
+        mcp_log_error("Failed to create client receive thread (Error: %lu).", GetLastError());
         close_socket(data->sock);
         data->sock = INVALID_SOCKET_VAL;
         data->connected = false;
@@ -56,9 +56,9 @@ static int tcp_client_transport_start(
      if (pthread_create(&data->receive_thread, NULL, tcp_client_receive_thread_func, transport) != 0) {
         char err_buf[128];
          if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-            log_message(LOG_LEVEL_ERROR, "Failed to create client receive thread: %s", err_buf);
+            mcp_log_error("Failed to create client receive thread: %s", err_buf);
          } else {
-             log_message(LOG_LEVEL_ERROR, "Failed to create client receive thread: %d (strerror_r failed)", errno);
+             mcp_log_error("Failed to create client receive thread: %d (strerror_r failed)", errno);
          }
         close_socket(data->sock);
         data->sock = INVALID_SOCKET_VAL;
@@ -69,7 +69,7 @@ static int tcp_client_transport_start(
     }
 #endif
 
-    log_message(LOG_LEVEL_INFO, "TCP Client Transport started for %s:%d", data->host, data->port);
+    mcp_log_info("TCP Client Transport started for %s:%d", data->host, data->port);
     return 0;
 }
 
@@ -79,7 +79,7 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
 
     if (!data->running) return 0;
 
-    log_message(LOG_LEVEL_INFO, "Stopping TCP Client Transport...");
+    mcp_log_info("Stopping TCP Client Transport...");
     data->running = false; // Signal thread to stop
 
     // Close the socket to interrupt recv()
@@ -107,9 +107,9 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
         data->receive_thread = 0;
     }
 #endif
-    log_message(LOG_LEVEL_DEBUG, "Client receive thread stopped.");
+    mcp_log_debug("Client receive thread stopped.");
 
-    log_message(LOG_LEVEL_INFO, "TCP Client Transport stopped.");
+    mcp_log_info("TCP Client Transport stopped.");
 
     // Cleanup Winsock on Windows
     cleanup_winsock_client(); // Use helper from socket utils
@@ -126,12 +126,12 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* pay
 
     // Check connection status, if disconnected but still running, try to reconnect
     if (!data->running) {
-        log_message(LOG_LEVEL_ERROR, "Cannot send: TCP client transport not running");
+        mcp_log_error("Cannot send: TCP client transport not running");
         return -1;
     }
     
     if (!data->connected) {
-        log_message(LOG_LEVEL_WARN, "Connection lost, attempting to reconnect to %s:%d...", 
+        mcp_log_warn("Connection lost, attempting to reconnect to %s:%d...", 
                    data->host, data->port);
                    
         // If socket is still valid, try to close it
@@ -142,7 +142,7 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* pay
         
         // Attempt to reconnect
         if (connect_to_server(data) == 0) {
-            log_message(LOG_LEVEL_INFO, "Successfully reconnected to %s:%d", data->host, data->port);
+            mcp_log_info("Successfully reconnected to %s:%d", data->host, data->port);
             
             // Restart the receive thread
             // Set reconnection flag so receive thread doesn't send ping
@@ -152,7 +152,7 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* pay
 #ifdef _WIN32
             data->receive_thread = CreateThread(NULL, 0, tcp_client_receive_thread_func, transport, 0, NULL);
             if (data->receive_thread == NULL) {
-                log_message(LOG_LEVEL_ERROR, "Failed to restart client receive thread (Error: %lu).", GetLastError());
+                mcp_log_error("Failed to restart client receive thread (Error: %lu).", GetLastError());
                 close_socket(data->sock);
                 data->sock = INVALID_SOCKET_VAL;
                 data->connected = false;
@@ -162,9 +162,9 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* pay
             if (pthread_create(&data->receive_thread, NULL, tcp_client_receive_thread_func, transport) != 0) {
                 char err_buf[128];
                 if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-                    log_message(LOG_LEVEL_ERROR, "Failed to restart client receive thread: %s", err_buf);
+                    mcp_log_error("Failed to restart client receive thread: %s", err_buf);
                 } else {
-                    log_message(LOG_LEVEL_ERROR, "Failed to restart client receive thread: %d (strerror_r failed)", errno);
+                    mcp_log_error("Failed to restart client receive thread: %d (strerror_r failed)", errno);
                 }
                 close_socket(data->sock);
                 data->sock = INVALID_SOCKET_VAL;
@@ -172,17 +172,17 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* pay
                 return -1;
             }
 #endif
-            log_message(LOG_LEVEL_INFO, "Receive thread restarted for reconnected socket");
+            mcp_log_info("Receive thread restarted for reconnected socket");
             
         } else {
-            log_message(LOG_LEVEL_ERROR, "Reconnection failed to %s:%d", data->host, data->port);
+            mcp_log_error("Reconnection failed to %s:%d", data->host, data->port);
             return -1;
         }
     }
 
     // Check payload size limit
     if (payload_size > MAX_MCP_MESSAGE_SIZE) {
-        log_message(LOG_LEVEL_ERROR, "Cannot send: Payload size (%zu) exceeds limit (%d).", payload_size, MAX_MCP_MESSAGE_SIZE);
+        mcp_log_error("Cannot send: Payload size (%zu) exceeds limit (%d).", payload_size, MAX_MCP_MESSAGE_SIZE);
         return -1;
     }
 
@@ -191,7 +191,7 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* pay
     int send_status = send_exact_client(data->sock, (const char*)payload_data, payload_size, &data->running);
 
     if (send_status != 0) {
-        log_message(LOG_LEVEL_ERROR, "send_exact_client failed (status: %d)", send_status);
+        mcp_log_error("send_exact_client failed (status: %d)", send_status);
         // Assume connection is broken if send failed
         data->connected = false;
         // Consider stopping the transport or signaling error? For now, just return error.
@@ -222,8 +222,8 @@ static void tcp_client_transport_destroy(mcp_transport_t* transport) {
 
 // --- Public Creation Function ---
 
-mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port) {
-    if (host == NULL) return NULL;
+mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port) { // Correct function name to match header
+    if (host == NULL || port == 0) return NULL; // Add port validation
 
     mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
     if (transport == NULL) return NULL;
@@ -252,7 +252,7 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
      // Create the buffer pool
      tcp_data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
      if (tcp_data->buffer_pool == NULL) {
-         log_message(LOG_LEVEL_ERROR, "Failed to create buffer pool for TCP client transport.");
+         mcp_log_error("Failed to create buffer pool for TCP client transport.");
          free(tcp_data->host);
          free(tcp_data);
          free(transport);

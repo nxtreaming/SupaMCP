@@ -87,6 +87,57 @@ void test_hashtable_string_operations(void) {
     mcp_hashtable_destroy(table);
 }
 
+// Test hash collisions
+// Custom hash function that always returns the same value
+static unsigned long collision_hash(const void* key) { // Match mcp_hash_func_t return type
+    (void)key; // Suppress unused
+    return 1UL; // Force collision, use UL suffix for unsigned long
+}
+
+void test_hashtable_collisions(void) {
+    mcp_hashtable_t* table = mcp_hashtable_create(
+        4, // Small capacity to increase collision chance
+        0.75f,
+        collision_hash, // Use collision hash function
+        mcp_hashtable_string_compare, // Still need correct compare
+        mcp_hashtable_string_dup,
+        mcp_hashtable_string_free,
+        free
+    );
+
+    char* value1 = strdup("Value 1");
+    char* value2 = strdup("Value 2");
+    char* value3 = strdup("Value 3");
+
+    // Insert keys that will collide
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_put(table, "key1", value1));
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_put(table, "key_collides_1", value2));
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_put(table, "key_collides_2", value3));
+
+    TEST_ASSERT_EQUAL(3, mcp_hashtable_size(table));
+
+    // Verify retrieval despite collisions
+    void* result;
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_get(table, "key1", &result));
+    TEST_ASSERT_EQUAL_STRING("Value 1", (char*)result);
+
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_get(table, "key_collides_1", &result));
+    TEST_ASSERT_EQUAL_STRING("Value 2", (char*)result);
+
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_get(table, "key_collides_2", &result));
+    TEST_ASSERT_EQUAL_STRING("Value 3", (char*)result);
+
+    // Test removal with collisions
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_remove(table, "key_collides_1"));
+    TEST_ASSERT_EQUAL(2, mcp_hashtable_size(table));
+    TEST_ASSERT_FALSE(mcp_hashtable_contains(table, "key_collides_1"));
+    TEST_ASSERT_TRUE(mcp_hashtable_contains(table, "key1")); // Ensure others remain
+    TEST_ASSERT_TRUE(mcp_hashtable_contains(table, "key_collides_2"));
+
+    mcp_hashtable_destroy(table);
+}
+
+
 // Test integer key operations
 void test_hashtable_int_operations(void) {
     mcp_hashtable_t* table = mcp_hashtable_create(
@@ -138,12 +189,12 @@ void test_hashtable_resize(void) {
     const char* keys[] = {
         "key1", "key2", "key3", "key4", "key5", "key6", "key7", "key8"
     };
-    const char* values[] = {
-        "value1", "value2", "value3", "value4", "value5", "value6", "value7", "value8"
-    };
+    // const char* values[] = { ... }; // Remove unused array
 
     for (int i = 0; i < 8; i++) {
-        TEST_ASSERT_EQUAL(0, mcp_hashtable_put(table, keys[i], (void*)values[i]));
+        // Cast int to uintptr_t first to avoid C4312 warning on 64-bit
+        // This cast is generally safe for storing integer values as pointers in tests.
+        TEST_ASSERT_EQUAL(0, mcp_hashtable_put(table, keys[i], (void*)(uintptr_t)i));
     }
 
     TEST_ASSERT_EQUAL(8, mcp_hashtable_size(table));
@@ -152,7 +203,8 @@ void test_hashtable_resize(void) {
     void* result;
     for (int i = 0; i < 8; i++) {
         TEST_ASSERT_EQUAL(0, mcp_hashtable_get(table, keys[i], &result));
-        TEST_ASSERT_EQUAL_STRING(values[i], (char*)result);
+        // Cast result back to uintptr_t then to int for comparison
+        TEST_ASSERT_EQUAL_INT(i, (int)(uintptr_t)result);
     }
 
     mcp_hashtable_destroy(table);
@@ -187,6 +239,48 @@ void test_hashtable_foreach(void) {
     mcp_hashtable_foreach(table, count_callback, &counter);
 
     TEST_ASSERT_EQUAL(3, counter);
+
+    mcp_hashtable_destroy(table);
+}
+
+// Test NULL value operations
+void test_hashtable_null_value(void) {
+    mcp_hashtable_t* table = mcp_hashtable_create(
+        16,
+        0.75f,
+        mcp_hashtable_string_hash,
+        mcp_hashtable_string_compare,
+        mcp_hashtable_string_dup,
+        mcp_hashtable_string_free,
+        NULL // No value free function needed for NULL
+    );
+
+    // Put NULL value
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_put(table, "key_null", NULL));
+    TEST_ASSERT_EQUAL(1, mcp_hashtable_size(table));
+    TEST_ASSERT_TRUE(mcp_hashtable_contains(table, "key_null"));
+
+    // Get NULL value
+    void* result = (void*)0xDEADBEEF; // Sentinel value
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_get(table, "key_null", &result));
+    TEST_ASSERT_NULL(result);
+
+    // Update with non-NULL value
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_put(table, "key_null", "not_null"));
+    TEST_ASSERT_EQUAL(1, mcp_hashtable_size(table));
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_get(table, "key_null", &result));
+    TEST_ASSERT_EQUAL_STRING("not_null", (char*)result);
+
+    // Update back to NULL value
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_put(table, "key_null", NULL));
+    TEST_ASSERT_EQUAL(1, mcp_hashtable_size(table));
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_get(table, "key_null", &result));
+    TEST_ASSERT_NULL(result);
+
+    // Remove key with NULL value
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_remove(table, "key_null"));
+    TEST_ASSERT_EQUAL(0, mcp_hashtable_size(table));
+    TEST_ASSERT_FALSE(mcp_hashtable_contains(table, "key_null"));
 
     mcp_hashtable_destroy(table);
 }
@@ -230,8 +324,10 @@ void test_hashtable_edge_cases(void) {
 void run_mcp_hashtable_tests(void) {
     RUN_TEST(test_hashtable_create_destroy);
     RUN_TEST(test_hashtable_string_operations);
+    RUN_TEST(test_hashtable_collisions); // Add collision test
     RUN_TEST(test_hashtable_int_operations);
     RUN_TEST(test_hashtable_resize);
     RUN_TEST(test_hashtable_foreach);
+    RUN_TEST(test_hashtable_null_value); // Add NULL value test
     RUN_TEST(test_hashtable_edge_cases);
 }

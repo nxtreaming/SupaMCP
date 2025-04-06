@@ -28,7 +28,7 @@ static mcp_error_code_t echo_tool_handler(
 {
     (void)server; (void)user_data; (void)name; // Unused
 
-    log_message(LOG_LEVEL_INFO, "Echo tool called.");
+    mcp_log_info("Echo tool called.");
 
     // Initialize output parameters
     *is_error = false;
@@ -41,7 +41,7 @@ static mcp_error_code_t echo_tool_handler(
 
     // Use mcp_json library to parse params
     if (params == NULL || mcp_json_get_type(params) != MCP_JSON_OBJECT) {
-        log_message(LOG_LEVEL_WARN, "Echo tool: Invalid or missing params object.");
+        mcp_log_warn("Echo tool: Invalid or missing params object.");
         *is_error = true;
         *error_message = mcp_strdup("Missing or invalid parameters object.");
         err_code = MCP_ERROR_INVALID_PARAMS;
@@ -50,7 +50,7 @@ static mcp_error_code_t echo_tool_handler(
 
     mcp_json_t* text_node = mcp_json_object_get_property(params, "text");
     if (text_node == NULL || mcp_json_get_type(text_node) != MCP_JSON_STRING || mcp_json_get_string(text_node, &extracted_text) != 0 || extracted_text == NULL) {
-        log_message(LOG_LEVEL_WARN, "Echo tool: Missing or invalid 'text' string parameter.");
+        mcp_log_warn("Echo tool: Missing or invalid 'text' string parameter.");
         *is_error = true;
         *error_message = mcp_strdup("Missing or invalid 'text' string parameter.");
         err_code = MCP_ERROR_INVALID_PARAMS;
@@ -60,7 +60,7 @@ static mcp_error_code_t echo_tool_handler(
     // Duplicate the extracted text as we need to transfer ownership
     echo_text_copy = mcp_strdup(extracted_text);
     if (!echo_text_copy) {
-        log_message(LOG_LEVEL_ERROR, "Echo tool: Failed to duplicate echo text.");
+        mcp_log_error("Echo tool: Failed to duplicate echo text.");
         *is_error = true;
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
@@ -72,7 +72,7 @@ static mcp_error_code_t echo_tool_handler(
     // 1. Allocate the array of pointers (size 1)
     *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
     if (!*content) {
-        log_message(LOG_LEVEL_ERROR, "Echo tool: Failed to allocate content array.");
+        mcp_log_error("Echo tool: Failed to allocate content array.");
         *is_error = true;
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
@@ -83,7 +83,7 @@ static mcp_error_code_t echo_tool_handler(
     // 2. Allocate the content item struct
     mcp_content_item_t* item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
     if (!item) {
-        log_message(LOG_LEVEL_ERROR, "Echo tool: Failed to allocate content item struct.");
+        mcp_log_error("Echo tool: Failed to allocate content item struct.");
         *is_error = true;
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
@@ -101,7 +101,7 @@ static mcp_error_code_t echo_tool_handler(
     echo_text_copy = NULL; // Avoid double free in cleanup
 
     if (!item->mime_type) {
-        log_message(LOG_LEVEL_ERROR, "Echo tool: Failed to allocate mime type string.");
+        mcp_log_error("Echo tool: Failed to allocate mime type string.");
         *is_error = true;
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
@@ -130,7 +130,7 @@ cleanup:
     if (err_code != MCP_ERROR_NONE) {
         // Content should have been freed during error handling above
         if (*content) {
-             log_message(LOG_LEVEL_ERROR, "Echo tool: Content array not freed on error path!");
+             mcp_log_error("Echo tool: Content array not freed on error path!");
              // Attempt cleanup anyway
              if ((*content)[0]) {
                  mcp_content_item_free((*content)[0]);
@@ -145,16 +145,16 @@ cleanup:
 }
 
 static void echo_cleanup(void) {
-    log_message(LOG_LEVEL_INFO, "Cleaning up echo server...");
+    mcp_log_info("Cleaning up echo server...");
     if (g_echo_server != NULL) {
         mcp_server_destroy(g_echo_server);
         g_echo_server = NULL;
     }
-    close_logging();
+    mcp_log_close(); // Use renamed function
 }
 
 static void echo_signal_handler(int sig) {
-    log_message(LOG_LEVEL_INFO, "Echo server received signal %d, shutting down...", sig);
+    mcp_log_info("Echo server received signal %d, shutting down...", sig);
     if (g_echo_server) {
          mcp_server_stop(g_echo_server);
     }
@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
     (void)argc; (void)argv; // Basic example, no command line args yet
 
     // Initialize logging (log to stdout for example)
-    init_logging(NULL, LOG_LEVEL_INFO);
+    mcp_log_init(NULL, MCP_LOG_LEVEL_INFO); // Use new init and enum
 
     // Setup cleanup and signal handling
     atexit(echo_cleanup);
@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
     signal(SIGHUP, echo_signal_handler);
 #endif
 
-    log_message(LOG_LEVEL_INFO, "Starting Echo MCP server...");
+    mcp_log_info("Starting Echo MCP server...");
 
     // Server Configuration
     mcp_server_config_t server_config = {
@@ -199,20 +199,20 @@ int main(int argc, char** argv) {
     // Create Server
     g_echo_server = mcp_server_create(&server_config, &capabilities);
     if (g_echo_server == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to create echo server");
+        mcp_log_error("Failed to create echo server");
         return 1;
     }
 
     // Create and add the "echo" tool
     mcp_tool_t* echo_tool = mcp_tool_create("echo", "Echoes back the provided text parameter.");
     if (!echo_tool || mcp_tool_add_param(echo_tool, "text", "string", "The text to echo", true) != 0) {
-         log_message(LOG_LEVEL_ERROR, "Failed to create or add param to echo tool");
+         mcp_log_error("Failed to create or add param to echo tool");
          mcp_tool_free(echo_tool);
          mcp_server_destroy(g_echo_server);
          return 1;
     }
     if (mcp_server_add_tool(g_echo_server, echo_tool) != 0) {
-        log_message(LOG_LEVEL_ERROR, "Failed to add echo tool to server");
+        mcp_log_error("Failed to add echo tool to server");
         mcp_tool_free(echo_tool);
         mcp_server_destroy(g_echo_server);
         return 1;
@@ -221,7 +221,7 @@ int main(int argc, char** argv) {
 
     // Set the tool handler
     if (mcp_server_set_tool_handler(g_echo_server, echo_tool_handler, NULL) != 0) {
-        log_message(LOG_LEVEL_ERROR, "Failed to set tool handler");
+        mcp_log_error("Failed to set tool handler");
         mcp_server_destroy(g_echo_server);
         return 1;
     }
@@ -244,21 +244,21 @@ int main(int argc, char** argv) {
     );
 
     if (transport == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to create TCP transport");
+        mcp_log_error("Failed to create TCP transport");
         mcp_server_destroy(g_echo_server);
         return 1;
     }
 
     // Start the server
-    log_message(LOG_LEVEL_INFO, "Starting server on %s:%u...", host, port);
+    mcp_log_info("Starting server on %s:%u...", host, port);
     if (mcp_server_start(g_echo_server, transport) != 0) {
-        log_message(LOG_LEVEL_ERROR, "Failed to start server");
+        mcp_log_error("Failed to start server");
         mcp_transport_destroy(transport); // Destroy transport if start fails
         mcp_server_destroy(g_echo_server);
         return 1;
     }
 
-    log_message(LOG_LEVEL_INFO, "Echo server running. Press Ctrl+C to stop.");
+    mcp_log_info("Echo server running. Press Ctrl+C to stop.");
 
     // Keep running until signaled
     while (g_echo_server != NULL) {
@@ -269,6 +269,6 @@ int main(int argc, char** argv) {
 #endif
     }
 
-    log_message(LOG_LEVEL_INFO, "Echo server shut down gracefully.");
+    mcp_log_info("Echo server shut down gracefully.");
     return 0;
 }

@@ -46,7 +46,7 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
     if (!context_out || !server) return -1; // Added server check
     *context_out = NULL; // Ensure output is NULL on failure
 
-    log_message(LOG_LEVEL_DEBUG, "mcp_auth_verify called. Type: %d", auth_type);
+    mcp_log_debug("mcp_auth_verify called. Type: %d", auth_type);
 
     // --- No Authentication ---
     if (auth_type == MCP_AUTH_NONE && server->config.api_key == NULL) {
@@ -77,7 +77,7 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
             return -1;
         }
         *context_out = context;
-        log_message(LOG_LEVEL_DEBUG, "Authenticated as 'anonymous' (MCP_AUTH_NONE allowed).");
+        mcp_log_debug("Authenticated as 'anonymous' (MCP_AUTH_NONE allowed).");
         return 0; // Success for AUTH_NONE when no server key is set
     }
 
@@ -85,14 +85,14 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
     if (auth_type == MCP_AUTH_API_KEY) {
         // Check if server has an API key configured
         if (server->config.api_key == NULL || strlen(server->config.api_key) == 0) {
-            log_message(LOG_LEVEL_WARN, "API Key authentication requested, but no API key configured on server.");
+            mcp_log_warn("API Key authentication requested, but no API key configured on server.");
             return -1; // Fail if key requested but none set on server
         }
         // Check if provided credentials match the configured key
         if (credentials && strcmp(credentials, server->config.api_key) == 0) {
             // API Key matches, create context with full permissions for now
             mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
-            if (!context) { log_message(LOG_LEVEL_ERROR, "Failed to allocate auth context."); return -1; }
+            if (!context) { mcp_log_error("Failed to allocate auth context."); return -1; }
             context->type = MCP_AUTH_API_KEY;
             context->identifier = mcp_strdup("authenticated_client"); // Generic identifier
             context->expiry = 0; // Non-expiring
@@ -115,17 +115,17 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
             }
 
             *context_out = context;
-            log_message(LOG_LEVEL_DEBUG, "Successfully authenticated client '%s' via configured API Key.", context->identifier);
+            mcp_log_debug("Successfully authenticated client '%s' via configured API Key.", context->identifier);
             return 0; // Success
         } else {
-            log_message(LOG_LEVEL_WARN, "API Key authentication failed: Provided key does not match configured key.");
+            mcp_log_warn("API Key authentication failed: Provided key does not match configured key.");
             return -1; // Key mismatch
         }
     }
 
     // --- Other Auth Types (Not Implemented) ---
     // Fail other authentication types or if conditions not met
-    log_message(LOG_LEVEL_WARN, "Authentication failed: Type %d not supported, credentials invalid, or server config mismatch.", auth_type);
+    mcp_log_warn("Authentication failed: Type %d not supported, credentials invalid, or server config mismatch.", auth_type);
     return -1;
 }
 
@@ -139,20 +139,20 @@ bool mcp_auth_check_resource_access(const mcp_auth_context_t* context, const cha
 
     // Check expiry if applicable
     if (context->expiry != 0 && time(NULL) > context->expiry) {
-        log_message(LOG_LEVEL_WARN, "Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
+        mcp_log_warn("Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
         return false; // Context expired
     }
 
     // Check against allowed patterns using simple wildcard matching
     for (size_t i = 0; i < context->allowed_resources_count; ++i) {
         if (context->allowed_resources[i] && simple_wildcard_match(context->allowed_resources[i], resource_uri)) {
-            log_message(LOG_LEVEL_DEBUG, "Access granted for '%s' to resource '%s' (match: %s)",
+            mcp_log_debug("Access granted for '%s' to resource '%s' (match: %s)",
                     context->identifier ? context->identifier : "unknown", resource_uri, context->allowed_resources[i]);
             return true; // Found a matching allowed pattern
         }
     }
 
-    log_message(LOG_LEVEL_INFO, "Access denied for '%s' to resource '%s'. No matching rule found.",
+    mcp_log_info("Access denied for '%s' to resource '%s'. No matching rule found.",
             context->identifier ? context->identifier : "unknown", resource_uri);
     return false; // No matching pattern found
 }
@@ -167,20 +167,20 @@ bool mcp_auth_check_tool_access(const mcp_auth_context_t* context, const char* t
 
     // Check expiry if applicable
     if (context->expiry != 0 && time(NULL) > context->expiry) {
-         log_message(LOG_LEVEL_WARN, "Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
+         mcp_log_warn("Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
         return false; // Context expired
     }
 
     // Check against allowed patterns using simple wildcard matching
     for (size_t i = 0; i < context->allowed_tools_count; ++i) {
         if (context->allowed_tools[i] && simple_wildcard_match(context->allowed_tools[i], tool_name)) {
-             log_message(LOG_LEVEL_DEBUG, "Access granted for '%s' to tool '%s' (match: %s)",
+             mcp_log_debug("Access granted for '%s' to tool '%s' (match: %s)",
                     context->identifier ? context->identifier : "unknown", tool_name, context->allowed_tools[i]);
             return true; // Found a matching allowed pattern
         }
     }
 
-     log_message(LOG_LEVEL_INFO, "Access denied for '%s' to tool '%s'. No matching rule found.",
+     mcp_log_info("Access denied for '%s' to tool '%s'. No matching rule found.",
             context->identifier ? context->identifier : "unknown", tool_name);
     return false; // No matching pattern found
 }

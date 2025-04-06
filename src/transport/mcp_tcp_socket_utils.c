@@ -148,7 +148,7 @@ int wait_for_socket_read(
         int error_code = sock_errno;
         char err_buf[128];
         strerror_s(err_buf, sizeof(err_buf), error_code);
-        log_message(LOG_LEVEL_ERROR, "select failed for socket %d: %d (%s)", 
+        mcp_log_error("select failed for socket %d: %d (%s)", 
                    (int)sock, error_code, err_buf);
         
         // Non-fatal errors, continue waiting instead of immediately disconnecting

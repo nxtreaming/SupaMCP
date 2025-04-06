@@ -285,7 +285,7 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
             if (new_capacity == 0) new_capacity = 16; // Handle initial zero capacity
             char** new_keys = (char**)realloc(data->keys_to_remove, new_capacity * sizeof(char*));
             if (!new_keys) {
-                log_message(LOG_LEVEL_ERROR, "Failed to realloc keys_to_remove in prune_expired");
+                mcp_log_error("Failed to realloc keys_to_remove in prune_expired");
                 return; // Allocation failed, skip this key
             }
             data->keys_to_remove = new_keys;
@@ -295,7 +295,7 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
         // Duplicate the key string for removal later
         data->keys_to_remove[*(data->keys_count)] = mcp_strdup(uri);
         if (!data->keys_to_remove[*(data->keys_count)]) {
-             log_message(LOG_LEVEL_ERROR, "Failed to duplicate key string in prune_expired");
+             mcp_log_error("Failed to duplicate key string in prune_expired");
              return; // Allocation failed, skip this key
         }
         (*(data->keys_count))++;
@@ -318,7 +318,7 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
 
     keys_to_remove = (char**)malloc(keys_capacity * sizeof(char*));
     if (!keys_to_remove) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate initial keys_to_remove in prune_expired");
+        mcp_log_error("Failed to allocate initial keys_to_remove in prune_expired");
         mutex_unlock(&cache->lock);
         return 0;
     }

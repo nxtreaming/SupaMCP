@@ -16,9 +16,9 @@ int main(int argc, char** argv) {
     }
 
     // Initialize logging (optional, logs to stderr by default)
-    init_logging(NULL, LOG_LEVEL_INFO);
+    mcp_log_init(NULL, MCP_LOG_LEVEL_INFO); // Use new init and enum
 
-    log_message(LOG_LEVEL_INFO, "Creating MCP client...");
+    mcp_log_info("Creating MCP client...");
 
     // Client Configuration
     mcp_client_config_t client_config = {
@@ -37,19 +37,19 @@ int main(int argc, char** argv) {
     );
 
     if (transport == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to create TCP client transport");
+        mcp_log_error("Failed to create TCP client transport");
         return 1;
     }
 
     // Create Client (takes ownership of transport)
     mcp_client_t* client = mcp_client_create(&client_config, transport);
     if (client == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to create MCP client");
+        mcp_log_error("Failed to create MCP client");
         // Transport is destroyed by mcp_client_create on failure if it was passed in
         return 1;
     }
 
-    log_message(LOG_LEVEL_INFO, "Client created. Calling 'echo' tool...");
+    mcp_log_info("Client created. Calling 'echo' tool...");
 
     // Prepare arguments for the echo tool
     // Needs to be a valid JSON object string: {"text": "..."}
@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
     size_t arg_len_estimate = strlen(text_to_echo) + 15;
     char* echo_args = (char*)malloc(arg_len_estimate);
     if (!echo_args) {
-         log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for echo arguments");
+         mcp_log_error("Failed to allocate memory for echo arguments");
          mcp_client_destroy(client);
          return 1;
     }
@@ -76,27 +76,27 @@ int main(int argc, char** argv) {
 
     // Process result
     if (call_status != 0) {
-        log_message(LOG_LEVEL_ERROR, "Failed to call tool 'echo'. Status: %d", call_status);
+        mcp_log_error("Failed to call tool 'echo'. Status: %d", call_status);
     } else if (is_error) {
-        log_message(LOG_LEVEL_ERROR, "Tool 'echo' returned an error.");
+        mcp_log_error("Tool 'echo' returned an error.");
         // Print error content if available
         if (result_count > 0 && result_content && result_content[0] && result_content[0]->type == MCP_CONTENT_TYPE_TEXT) {
-             log_message(LOG_LEVEL_ERROR, "Error details: %s", (const char*)result_content[0]->data);
+             mcp_log_error("Error details: %s", (const char*)result_content[0]->data);
         }
     } else if (result_count > 0 && result_content && result_content[0] && result_content[0]->type == MCP_CONTENT_TYPE_TEXT) {
-        log_message(LOG_LEVEL_INFO, "Server echoed: %s", (const char*)result_content[0]->data);
+        mcp_log_info("Server echoed: %s", (const char*)result_content[0]->data);
     } else {
-        log_message(LOG_LEVEL_WARN, "Tool 'echo' returned unexpected content format.");
+        mcp_log_warn("Tool 'echo' returned unexpected content format.");
     }
 
     // Free the result content array and its items
     mcp_free_content(result_content, result_count);
 
     // Cleanup
-    log_message(LOG_LEVEL_INFO, "Destroying client...");
+    mcp_log_info("Destroying client...");
     mcp_client_destroy(client);
-    log_message(LOG_LEVEL_INFO, "Client finished.");
-    close_logging();
+    mcp_log_info("Client finished.");
+    mcp_log_close(); // Use renamed function
 
     return (call_status == 0 && !is_error) ? 0 : 1;
 }

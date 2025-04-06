@@ -482,7 +482,7 @@ static int mcp_client_send_request(
     send_buffer[total_len] = '\0'; // Add null terminator (in extra allocated space)
 
     // DEBUG: Log before sending
-    log_message(LOG_LEVEL_DEBUG, "Sending request ID %llu, method '%s', total_len=%zu, prefix=0x%08X (%02X %02X %02X %02X), json_start='%.10s...'",
+    mcp_log_debug("Sending request ID %llu, method '%s', total_len=%zu, prefix=0x%08X (%02X %02X %02X %02X), json_start='%.10s...'",
                 (unsigned long long)client->next_id, // Note: ID used here is before incrementing for pending_req
                 method,
                 total_len,
@@ -492,7 +492,7 @@ static int mcp_client_send_request(
 
     // Send the combined buffer
     int send_status = mcp_transport_send(client->transport, send_buffer, total_len);
-    log_message(LOG_LEVEL_DEBUG, "mcp_transport_send returned: %d", send_status);
+    mcp_log_debug("mcp_transport_send returned: %d", send_status);
 
 
     // Clean up buffers
@@ -769,7 +769,7 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
     if (id == 0) {
         // This is likely the response to the initial ping sent by the receive thread.
         // Ignore it, as it's not tied to a user request.
-        log_message(LOG_LEVEL_DEBUG, "Received response for initial ping (ID: 0), ignoring.");
+        mcp_log_debug("Received response for initial ping (ID: 0), ignoring.");
         free(resp_error_message); // Free parsed fields even if ignored
         free(resp_result);
         return NULL; // Don't process further
@@ -813,7 +813,7 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
         }
     } else {
         // Response received for an unknown/unexpected ID (and ID is not 0)
-        log_message(LOG_LEVEL_WARN, "Received response with unexpected ID: %llu", (unsigned long long)id);
+        mcp_log_warn("Received response with unexpected ID: %llu", (unsigned long long)id);
         free(resp_error_message);
         free(resp_result);
         *error_code = MCP_ERROR_INVALID_REQUEST; // Set error for the callback itself

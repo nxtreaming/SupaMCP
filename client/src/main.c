@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
     const char* host = "127.0.0.1";
     uint16_t port = 8080;
 
-    init_logging(NULL, LOG_LEVEL_DEBUG);
+    mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG); // Use new init and enum
 
     // Basic argument parsing
     if (argc > 1) {

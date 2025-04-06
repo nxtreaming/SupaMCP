@@ -15,9 +15,11 @@
  */
 mcp_json_t* mcp_json_alloc_node(void) {
     // Always allocate node from the thread-local arena
-    mcp_arena_t* arena = mcp_arena_get_current();
+mcp_arena_t* arena = mcp_get_thread_arena(); // Use correct function name
     if (!arena) {
-        log_message(LOG_LEVEL_ERROR, "Thread-local arena not initialized");
+        // Cannot log here easily if logging itself depends on arena/init
+        // fprintf(stderr, "FATAL: Thread-local arena not initialized in mcp_json_alloc_node\n");
+        // Consider a dedicated low-level error reporting mechanism if this is critical path
         return NULL;
     }
     return (mcp_json_t*)mcp_arena_alloc(arena, sizeof(mcp_json_t));
@@ -27,9 +29,10 @@ mcp_json_t* mcp_json_alloc_node(void) {
 
 mcp_json_t* mcp_json_null_create(void) {
     // Allocate the node structure itself using thread-local arena
-    mcp_json_t* json = mcp_json_alloc_node();
+mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON null node from arena.");
+        // Arena allocation failed, likely OOM or uninitialized arena
+        // Logging might not be safe/possible here.
         return NULL;
     }
     json->type = MCP_JSON_NULL;
@@ -37,9 +40,9 @@ mcp_json_t* mcp_json_null_create(void) {
 }
 
 mcp_json_t* mcp_json_boolean_create(bool value) {
-    mcp_json_t* json = mcp_json_alloc_node();
+mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON boolean node from arena.");
+        // Arena allocation failed
         return NULL;
     }
     json->type = MCP_JSON_BOOLEAN;
@@ -48,9 +51,9 @@ mcp_json_t* mcp_json_boolean_create(bool value) {
 }
 
 mcp_json_t* mcp_json_number_create(double value) {
-    mcp_json_t* json = mcp_json_alloc_node();
+mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON number node from arena.");
+        // Arena allocation failed
         return NULL;
     }
     json->type = MCP_JSON_NUMBER;
@@ -64,17 +67,17 @@ mcp_json_t* mcp_json_string_create(const char* value) {
         return NULL; // Cannot create string from NULL
     }
     // Allocate the node structure using thread-local arena
-    mcp_json_t* json = mcp_json_alloc_node();
+mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON string node from arena.");
+        // Arena allocation failed
         return NULL;
     }
     json->type = MCP_JSON_STRING;
     // Duplicate the input string using our helper
-    json->string_value = mcp_strdup(value);
+json->string_value = mcp_strdup(value);
     if (json->string_value == NULL) {
-        // mcp_strdup failed. Node is arena allocated, will be cleaned up by arena reset/destroy.
-        log_message(LOG_LEVEL_ERROR, "mcp_strdup failed for JSON string value.");
+        mcp_log_error("mcp_strdup failed for JSON string value.");
+        // Node is arena allocated, will be cleaned up by arena reset/destroy.
         // No need to free(json) as it's from the arena.
         return NULL;
     }
@@ -84,9 +87,9 @@ mcp_json_t* mcp_json_string_create(const char* value) {
 // NOTE: Array backing storage (the array of pointers `items`) *always* uses malloc/realloc.
 mcp_json_t* mcp_json_array_create(void) {
     // Allocate the node structure using thread-local arena
-    mcp_json_t* json = mcp_json_alloc_node();
+mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON array node from arena.");
+        // Arena allocation failed
         return NULL;
     }
     json->type = MCP_JSON_ARRAY;
@@ -99,16 +102,16 @@ mcp_json_t* mcp_json_array_create(void) {
 // NOTE: Object hash table structures (buckets, entries, keys) *always* use malloc/realloc/mcp_strdup.
 mcp_json_t* mcp_json_object_create(void) {
     // Allocate the node structure using thread-local arena
-    mcp_json_t* json = mcp_json_alloc_node();
+mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate JSON object node from arena.");
+        // Arena allocation failed
         return NULL;
     }
     json->type = MCP_JSON_OBJECT;
     // Initialize the internal hash table (which uses malloc for its parts)
-    if (mcp_json_object_table_init(&json->object, MCP_JSON_HASH_TABLE_INITIAL_CAPACITY) != 0) {
+if (mcp_json_object_table_init(&json->object, MCP_JSON_HASH_TABLE_INITIAL_CAPACITY) != 0) {
+        mcp_log_error("Failed to initialize JSON object hash table.");
         // Table init failed. Node is arena allocated, will be cleaned up by arena reset/destroy.
-        log_message(LOG_LEVEL_ERROR, "Failed to initialize JSON object hash table.");
         // No need to free(json) as it's from the arena.
         return NULL; // Return error
     }
@@ -319,7 +322,7 @@ int mcp_json_validate_schema(const char* json_str, const char* schema_str) {
     // A real implementation requires integrating an external library.
     (void)json_str;   // Mark as unused
     (void)schema_str; // Mark as unused
-    log_message(LOG_LEVEL_WARN, "mcp_json_validate_schema: Function not implemented (requires external JSON schema library). Assuming valid.");
+    mcp_log_warn("mcp_json_validate_schema: Function not implemented (requires external JSON schema library). Assuming valid.");
     // Example steps if using a library 'libjsonschema':
     // 1. schema = libjsonschema_parse(schema_str); if (!schema) return -1;
     // 2. json_doc = libjsonschema_parse_json(json_str); if (!json_doc) { libjsonschema_free(schema); return -1; }
@@ -341,5 +344,5 @@ void mcp_json_set_limits(int max_depth, size_t max_size) {
     // A more robust parser library (like cJSON with hooks, or others) might support these.
     (void)max_depth; // Mark as unused - depth is currently hardcoded
     (void)max_size;  // Mark as unused - size limit not implemented
-    log_message(LOG_LEVEL_WARN, "mcp_json_set_limits: Function partially implemented. Max depth is hardcoded (%d), max size limit is not supported by current parser.", MCP_JSON_MAX_PARSE_DEPTH);
+    mcp_log_warn("mcp_json_set_limits: Function partially implemented. Max depth is hardcoded (%d), max size limit is not supported by current parser.", MCP_JSON_MAX_PARSE_DEPTH);
 }

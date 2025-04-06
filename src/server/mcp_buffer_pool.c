@@ -42,7 +42,7 @@ mcp_buffer_pool_t* mcp_buffer_pool_create(size_t buffer_size, size_t num_buffers
     // Allocate the main pool structure
     mcp_buffer_pool_t* pool = (mcp_buffer_pool_t*)malloc(sizeof(mcp_buffer_pool_t));
     if (pool == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer pool structure.");
+        mcp_log_error("Failed to allocate buffer pool structure.");
         return NULL;
     }
 
@@ -54,7 +54,7 @@ mcp_buffer_pool_t* mcp_buffer_pool_create(size_t buffer_size, size_t num_buffers
     InitializeCriticalSection(&pool->mutex);
 #else
     if (pthread_mutex_init(&pool->mutex, NULL) != 0) {
-        log_message(LOG_LEVEL_ERROR, "Failed to initialize buffer pool mutex.");
+        mcp_log_error("Failed to initialize buffer pool mutex.");
         free(pool);
         return NULL;
     }
@@ -66,7 +66,7 @@ mcp_buffer_pool_t* mcp_buffer_pool_create(size_t buffer_size, size_t num_buffers
         size_t block_size = sizeof(mcp_buffer_node_t) + buffer_size;
         mcp_buffer_node_t* node = (mcp_buffer_node_t*)malloc(block_size);
         if (node == NULL) {
-            log_message(LOG_LEVEL_ERROR, "Failed to allocate buffer block %zu/%zu for pool.", i + 1, num_buffers);
+            mcp_log_error("Failed to allocate buffer block %zu/%zu for pool.", i + 1, num_buffers);
             mcp_buffer_pool_destroy(pool); // Clean up partially created pool
             return NULL;
         }
@@ -76,7 +76,7 @@ mcp_buffer_pool_t* mcp_buffer_pool_create(size_t buffer_size, size_t num_buffers
         pool->free_list = node;
     }
 
-    log_message(LOG_LEVEL_DEBUG, "Buffer pool created with %zu buffers of size %zu.", num_buffers, buffer_size);
+    mcp_log_debug("Buffer pool created with %zu buffers of size %zu.", num_buffers, buffer_size);
     return pool;
 }
 
@@ -114,7 +114,7 @@ void mcp_buffer_pool_destroy(mcp_buffer_pool_t* pool) {
 
     // Free the pool structure itself
     free(pool);
-    log_message(LOG_LEVEL_DEBUG, "Buffer pool destroyed.");
+    mcp_log_debug("Buffer pool destroyed.");
 }
 
 void* mcp_buffer_pool_acquire(mcp_buffer_pool_t* pool) {
@@ -142,7 +142,7 @@ void* mcp_buffer_pool_acquire(mcp_buffer_pool_t* pool) {
         // DO NOT free the node structure - it's part of the block being returned implicitly
     } else {
         // Pool is empty, log a warning or handle as needed
-        log_message(LOG_LEVEL_WARN, "Buffer pool empty, cannot acquire buffer.");
+        mcp_log_warn("Buffer pool empty, cannot acquire buffer.");
         // Returning NULL indicates failure to acquire
     }
 

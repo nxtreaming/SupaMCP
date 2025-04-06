@@ -40,7 +40,7 @@ typedef struct {
     const char* host;
     uint16_t port;
     const char* log_file;
-    log_level_t log_level;
+    mcp_log_level_t log_level;
     bool daemon;
     const char* api_key;
 } server_config_t;
@@ -61,7 +61,7 @@ static mcp_error_code_t example_resource_handler(
 {
     (void)server; (void)user_data;
 
-    log_message(LOG_LEVEL_INFO, "Resource requested: %s", uri);
+    mcp_log_info("Resource requested: %s", uri);
 
     // Initialize output params
     *content = NULL;
@@ -73,7 +73,7 @@ static mcp_error_code_t example_resource_handler(
     mcp_error_code_t err_code = MCP_ERROR_NONE;
 
     if (strncmp(uri, "example://", 10) != 0) {
-        log_message(LOG_LEVEL_WARN, "Invalid resource URI prefix: %s", uri);
+        mcp_log_warn("Invalid resource URI prefix: %s", uri);
         *error_message = mcp_strdup("Resource not found (invalid prefix).");
         err_code = MCP_ERROR_RESOURCE_NOT_FOUND;
         goto cleanup;
@@ -86,14 +86,14 @@ static mcp_error_code_t example_resource_handler(
     } else if (strcmp(resource_name, "info") == 0) {
         data_copy = mcp_strdup("This is an example MCP server.");
     } else {
-        log_message(LOG_LEVEL_WARN, "Unknown resource name: %s", resource_name);
+        mcp_log_warn("Unknown resource name: %s", resource_name);
         *error_message = mcp_strdup("Resource not found.");
         err_code = MCP_ERROR_RESOURCE_NOT_FOUND;
         goto cleanup;
     }
 
     if (!data_copy) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate data for resource: %s", resource_name);
+        mcp_log_error("Failed to allocate data for resource: %s", resource_name);
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
         goto cleanup;
@@ -102,7 +102,7 @@ static mcp_error_code_t example_resource_handler(
     // Allocate the array of pointers (size 1)
     *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
     if (!*content) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate content array for resource: %s", resource_name);
+        mcp_log_error("Failed to allocate content array for resource: %s", resource_name);
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
         goto cleanup;
@@ -112,7 +112,7 @@ static mcp_error_code_t example_resource_handler(
     // Allocate the content item struct
     item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
     if (!item) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate content item struct for resource: %s", resource_name);
+        mcp_log_error("Failed to allocate content item struct for resource: %s", resource_name);
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
         goto cleanup;
@@ -126,7 +126,7 @@ static mcp_error_code_t example_resource_handler(
     data_copy = NULL; // Avoid double free
 
     if (!item->mime_type) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate mime type for resource: %s", resource_name);
+        mcp_log_error("Failed to allocate mime type for resource: %s", resource_name);
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
         goto cleanup;
@@ -169,7 +169,7 @@ static mcp_error_code_t example_tool_handler(
 {
     (void)server; (void)user_data;
 
-    log_message(LOG_LEVEL_INFO, "Tool called: %s", name);
+    mcp_log_info("Tool called: %s", name);
 
     // Initialize output params
     *content = NULL;
@@ -183,7 +183,7 @@ static mcp_error_code_t example_tool_handler(
 
     // Extract "text" parameter using mcp_json
     if (params == NULL || mcp_json_get_type(params) != MCP_JSON_OBJECT) {
-        log_message(LOG_LEVEL_WARN, "Tool '%s': Invalid or missing params object.", name);
+        mcp_log_warn("Tool '%s': Invalid or missing params object.", name);
         *is_error = true;
         *error_message = mcp_strdup("Missing or invalid parameters object.");
         err_code = MCP_ERROR_INVALID_PARAMS;
@@ -191,7 +191,7 @@ static mcp_error_code_t example_tool_handler(
     }
     mcp_json_t* text_node = mcp_json_object_get_property(params, "text");
     if (text_node == NULL || mcp_json_get_type(text_node) != MCP_JSON_STRING || mcp_json_get_string(text_node, &input_text) != 0 || input_text == NULL) {
-        log_message(LOG_LEVEL_WARN, "Tool '%s': Missing or invalid 'text' string parameter.", name);
+        mcp_log_warn("Tool '%s': Missing or invalid 'text' string parameter.", name);
         *is_error = true;
         *error_message = mcp_strdup("Missing or invalid 'text' string parameter.");
         err_code = MCP_ERROR_INVALID_PARAMS;
@@ -209,7 +209,7 @@ static mcp_error_code_t example_tool_handler(
             result_data[len] = '\0';
         }
     } else {
-        log_message(LOG_LEVEL_WARN, "Unknown tool name: %s", name);
+        mcp_log_warn("Unknown tool name: %s", name);
         *is_error = true;
         *error_message = mcp_strdup("Tool not found.");
         err_code = MCP_ERROR_TOOL_NOT_FOUND; // More specific error
@@ -217,7 +217,7 @@ static mcp_error_code_t example_tool_handler(
     }
 
     if (!result_data) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate result data for tool: %s", name);
+        mcp_log_error("Failed to allocate result data for tool: %s", name);
         *is_error = true; // Indicate tool execution failed internally
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
@@ -227,7 +227,7 @@ static mcp_error_code_t example_tool_handler(
     // --- Create the response content ---
     *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
     if (!*content) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate content array for tool: %s", name);
+        mcp_log_error("Failed to allocate content array for tool: %s", name);
         *is_error = true;
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
@@ -237,7 +237,7 @@ static mcp_error_code_t example_tool_handler(
 
     item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
     if (!item) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate content item struct for tool: %s", name);
+        mcp_log_error("Failed to allocate content item struct for tool: %s", name);
         *is_error = true;
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
@@ -251,7 +251,7 @@ static mcp_error_code_t example_tool_handler(
     result_data = NULL; // Avoid double free
 
     if (!item->mime_type) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate mime type for tool: %s", name);
+        mcp_log_error("Failed to allocate mime type for tool: %s", name);
         *is_error = true;
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
         err_code = MCP_ERROR_INTERNAL_ERROR;
@@ -287,7 +287,7 @@ cleanup:
  * Clean up resources
  */
 static void cleanup(void) {
-    log_message(LOG_LEVEL_INFO, "Cleaning up resources");
+    mcp_log_info("Cleaning up resources");
 #ifdef MCP_ENABLE_PROFILING
     mcp_profile_report(stdout); // Print profile report on exit if enabled
 #endif
@@ -301,14 +301,14 @@ static void cleanup(void) {
         mcp_server_destroy(g_server);
         g_server = NULL;
     }
-    close_logging(); // Close log file
+    mcp_log_close();
 }
 
 /**
  * Signal handler
  */
 static void signal_handler(int sig) {
-    log_message(LOG_LEVEL_INFO, "Received signal %d, initiating shutdown...", sig);
+    mcp_log_info("Received signal %d, initiating shutdown...", sig);
     // Setting g_server to NULL might be used by the main loop to exit,
     // but atexit(cleanup) is the primary cleanup mechanism.
     // A more robust approach might use a dedicated shutdown flag.
@@ -350,7 +350,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
     config->host = "127.0.0.1";
     config->port = 8080;
     config->log_file = NULL;
-    config->log_level = LOG_LEVEL_INFO;
+    config->log_level = MCP_LOG_LEVEL_INFO;
     config->daemon = false;
     config->api_key = NULL;
 
@@ -367,10 +367,11 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             config->log_file = argv[++i];
         } else if (strcmp(argv[i], "--log-level") == 0 && i + 1 < argc) {
             i++;
-            if (strcmp(argv[i], "error") == 0) config->log_level = LOG_LEVEL_ERROR;
-            else if (strcmp(argv[i], "warn") == 0) config->log_level = LOG_LEVEL_WARN;
-            else if (strcmp(argv[i], "info") == 0) config->log_level = LOG_LEVEL_INFO;
-            else if (strcmp(argv[i], "debug") == 0) config->log_level = LOG_LEVEL_DEBUG;
+            if (strcmp(argv[i], "error") == 0) config->log_level = MCP_LOG_LEVEL_ERROR;
+            else if (strcmp(argv[i], "warn") == 0) config->log_level = MCP_LOG_LEVEL_WARN;
+            else if (strcmp(argv[i], "info") == 0) config->log_level = MCP_LOG_LEVEL_INFO;
+            else if (strcmp(argv[i], "debug") == 0) config->log_level = MCP_LOG_LEVEL_DEBUG;
+            else if (strcmp(argv[i], "trace") == 0) config->log_level = MCP_LOG_LEVEL_TRACE; // Add trace
             else { fprintf(stderr, "Invalid log level: %s\n", argv[i]); return -1; }
         } else if (strcmp(argv[i], "--daemon") == 0) {
 #ifndef _WIN32
@@ -414,21 +415,21 @@ int main(int argc, char** argv) {
     if (parse_arguments(argc, argv, &config) != 0) return 1;
 
     // Use new shared logging functions
-    if (init_logging(config.log_file, config.log_level) != 0) {
+    if (mcp_log_init(config.log_file, config.log_level) != 0) { // Use renamed function
         // Error already printed to stderr by init_logging
         return 1;
     }
-    log_message(LOG_LEVEL_INFO, "Logging system initialized.");
+    mcp_log_info("Logging system initialized.");
 
 #ifndef _WIN32
     if (config.daemon) {
-        log_message(LOG_LEVEL_INFO, "Daemonizing process...");
+        mcp_log_info("Daemonizing process...");
         if (daemonize() != 0) {
-            log_message(LOG_LEVEL_ERROR, "Failed to daemonize");
-            close_logging();
+            mcp_log_error("Failed to daemonize");
+            mcp_log_close(); // Use renamed function
             return 1;
         }
-         log_message(LOG_LEVEL_INFO, "Daemonization complete."); // This won't be seen on console
+         mcp_log_info("Daemonization complete."); // This won't be seen on console
     }
 #endif
 
@@ -439,7 +440,7 @@ int main(int argc, char** argv) {
     signal(SIGHUP, signal_handler);
 #endif
 
-    log_message(LOG_LEVEL_INFO, "Starting MCP server...");
+    mcp_log_info("Starting MCP server...");
 
     mcp_server_config_t server_config = {
         .name = "example-mcp-server",
@@ -454,7 +455,7 @@ int main(int argc, char** argv) {
 
     g_server = mcp_server_create(&server_config, &capabilities);
     if (g_server == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to create server");
+        mcp_log_error("Failed to create server");
         return 1;
     }
 
@@ -463,20 +464,20 @@ int main(int argc, char** argv) {
     const char* gateway_config_path = "d:/workspace/SupaMCPServer/gateway_config.json";
     mcp_error_code_t load_err = load_gateway_config(gateway_config_path, &g_backends, &g_backend_count);
     if (load_err != MCP_ERROR_NONE && load_err != MCP_ERROR_INVALID_REQUEST /* Allow file not found */) {
-        log_message(LOG_LEVEL_ERROR, "Failed to load gateway config '%s' (Error %d). Exiting.", gateway_config_path, load_err);
+        mcp_log_error("Failed to load gateway config '%s' (Error %d). Exiting.", gateway_config_path, load_err);
         mcp_server_destroy(g_server); g_server = NULL;
         return 1;
     } else if (load_err == MCP_ERROR_NONE) {
-         log_message(LOG_LEVEL_INFO, "Loaded %zu backend(s) from gateway config '%s'.", g_backend_count, gateway_config_path);
+         mcp_log_info("Loaded %zu backend(s) from gateway config '%s'.", g_backend_count, gateway_config_path);
     } else {
-         log_message(LOG_LEVEL_INFO, "Gateway config file '%s' not found or empty. Running without gateway backends.", gateway_config_path);
+         mcp_log_info("Gateway config file '%s' not found or empty. Running without gateway backends.", gateway_config_path);
     }
 
 
     // Set local handlers (these might be used if no backend matches a request)
     if (mcp_server_set_resource_handler(g_server, example_resource_handler, NULL) != 0 ||
         mcp_server_set_tool_handler(g_server, example_tool_handler, NULL) != 0) {
-        log_message(LOG_LEVEL_ERROR, "Failed to set local handlers");
+        mcp_log_error("Failed to set local handlers");
         mcp_server_destroy(g_server); // cleanup will call destroy again, but it's safe
         g_server = NULL;
         return 1;
@@ -493,42 +494,42 @@ int main(int argc, char** argv) {
     if (t1) mcp_server_add_resource_template(g_server, t1); mcp_resource_template_free(t1);
     if (tool1) { mcp_tool_add_param(tool1, "text", "string", "Text to echo", true); mcp_server_add_tool(g_server, tool1); mcp_tool_free(tool1); }
     if (tool2) { mcp_tool_add_param(tool2, "text", "string", "Text to reverse", true); mcp_server_add_tool(g_server, tool2); mcp_tool_free(tool2); }
-    log_message(LOG_LEVEL_INFO, "Added example resources and tools.");
+    mcp_log_info("Added example resources and tools.");
 
 
     // Create transport based on config
     mcp_transport_t* transport = NULL;
     if (strcmp(config.transport_type, "stdio") == 0) {
-        log_message(LOG_LEVEL_INFO, "Using stdio transport");
+        mcp_log_info("Using stdio transport");
         transport = mcp_transport_stdio_create();
     } else if (strcmp(config.transport_type, "tcp") == 0) {
-        log_message(LOG_LEVEL_INFO, "Using TCP transport on %s:%d", config.host, config.port);
+        mcp_log_info("Using TCP transport on %s:%d", config.host, config.port);
         // Pass idle timeout (e.g., 60000ms = 1 minute, 0 to disable)
         // TODO: confgure this from command line or config file
         uint32_t idle_timeout = 0; // Disabled server-side idle timeout
-        log_message(LOG_LEVEL_INFO, "Server-side idle timeout disabled.");
+        mcp_log_info("Server-side idle timeout disabled.");
         transport = mcp_transport_tcp_create(config.host, config.port, idle_timeout);
     } else {
-        log_message(LOG_LEVEL_ERROR, "Unknown transport type: %s", config.transport_type);
+        mcp_log_error("Unknown transport type: %s", config.transport_type);
         mcp_server_destroy(g_server); g_server = NULL;
         return 1;
     }
 
     if (transport == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to create transport");
+        mcp_log_error("Failed to create transport");
         mcp_server_destroy(g_server); g_server = NULL;
         return 1;
     }
 
     // Start the server (transport handle is now owned by server)
     if (mcp_server_start(g_server, transport) != 0) {
-        log_message(LOG_LEVEL_ERROR, "Failed to start server");
+        mcp_log_error("Failed to start server");
         // Don't destroy transport here, server destroy should handle it
         mcp_server_destroy(g_server); g_server = NULL;
         return 1;
     }
 
-    log_message(LOG_LEVEL_INFO, "Server started successfully. Waiting for connections or input...");
+    mcp_log_info("Server started successfully. Waiting for connections or input...");
 
     // Main loop (simple wait for signal)
     while (g_server != NULL) {
@@ -539,7 +540,7 @@ int main(int argc, char** argv) {
 #endif
     }
 
-    log_message(LOG_LEVEL_INFO, "Main loop exiting.");
+    mcp_log_info("Main loop exiting.");
     // Cleanup is handled by atexit
 
     return 0;

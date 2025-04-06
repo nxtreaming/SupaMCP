@@ -44,12 +44,16 @@ typedef pthread_mutex_t mcp_log_mutex_t;
 
 /** @internal File pointer for the optional log file. NULL if file logging is disabled. */
 static FILE* g_log_file = NULL;
-/** @internal Current maximum log level. Messages above this level are ignored. */
-static log_level_t g_log_level = LOG_LEVEL_INFO; // Default level
+/** @internal Current minimum log level. Messages below this level are ignored. */
+static mcp_log_level_t g_log_level = MCP_LOG_LEVEL_INFO; // Default level
 /** @internal String representations of log levels for output. */
-static const char* g_log_level_names[] = {"ERROR", "WARN", "INFO", "DEBUG"};
+static const char* g_log_level_names[] = {"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
 /** @internal Current log output format. */
 static mcp_log_format_t g_log_format = MCP_LOG_FORMAT_TEXT; // Default format
+/** @internal Flag to disable all output. */
+static bool g_log_quiet = false;
+/** @internal Flag to enable/disable colored output. */
+static bool g_log_use_color = false; // Default to no color
 /** @internal Mutex for thread safety. */
 static mcp_log_mutex_t g_log_mutex;
 /** @internal Flag indicating if the mutex has been initialized. */
@@ -100,10 +104,11 @@ static void escape_json_string(const char* input, char* output, size_t output_si
 
 // --- Public API Implementation ---
 
-void log_message(log_level_t level, const char* format, ...) {
-    // 1. Check if the message level is high enough to be logged
-    if (level > g_log_level) {
-        return; // Ignore message if its level is higher than the configured level
+// Core logging function
+void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* format, ...) {
+    // 1. Check if logging is quiet or level is too low
+    if (g_log_quiet || level < g_log_level) {
+        return;
     }
 
     // 2. Get current time and format it as a timestamp string
@@ -164,30 +169,59 @@ void log_message(log_level_t level, const char* format, ...) {
 
     // 4. Lock mutex before accessing shared resources
     LOCK_LOG_MUTEX(&g_log_mutex);
-    
+
     // 5. Output the formatted message based on g_log_format
-    // Note: we no longer output to stderr twice, this was causing duplicate logs
+    // Extract filename from path
+    const char *filename = strrchr(file, PATH_SEPARATOR[0]);
+    filename = (filename != NULL) ? filename + 1 : file;
+
+    // Color codes (ANSI escape codes) - only used if g_log_use_color is true
+    const char* color_start = "";
+    const char* color_end = "\x1b[0m"; // Reset color
+    if (g_log_use_color) {
+        switch (level) {
+            case MCP_LOG_LEVEL_TRACE: color_start = "\x1b[90m"; break; // Gray
+            case MCP_LOG_LEVEL_DEBUG: color_start = "\x1b[36m"; break; // Cyan
+            case MCP_LOG_LEVEL_INFO:  color_start = "\x1b[32m"; break; // Green
+            case MCP_LOG_LEVEL_WARN:  color_start = "\x1b[33m"; break; // Yellow
+            case MCP_LOG_LEVEL_ERROR: color_start = "\x1b[31m"; break; // Red
+            case MCP_LOG_LEVEL_FATAL: color_start = "\x1b[35m"; break; // Magenta
+        }
+    } else {
+        color_end = ""; // No need to reset if no color was started
+    }
+
 
     if (g_log_format == MCP_LOG_FORMAT_JSON) {
         char escaped_message[sizeof(message) * 2]; // Estimate escaped size
+        char escaped_file[256]; // Assume max file length
         escape_json_string(message, escaped_message, sizeof(escaped_message));
+        escape_json_string(filename, escaped_file, sizeof(escaped_file));
+
+        const char* json_fmt = "{\"timestamp\":\"%s\", \"level\":\"%s\", \"file\":\"%s\", \"line\":%d, \"message\":\"%s\"}\n";
 
         if (g_log_file != NULL) {
-             fprintf(g_log_file, "{\"timestamp\":\"%s\", \"level\":\"%s\", \"message\":\"%s\"}\n",
-                     timestamp, g_log_level_names[level], escaped_message);
+             fprintf(g_log_file, json_fmt,
+                     timestamp, g_log_level_names[level], escaped_file, line, escaped_message);
              fflush(g_log_file);
         }
          // Outputting to stderr might still interleave output from different threads,
          // but the access to g_log_file and g_log_format is protected.
-         fprintf(stderr, "{\"timestamp\":\"%s\", \"level\":\"%s\", \"message\":\"%s\"}\n",
-                 timestamp, g_log_level_names[level], escaped_message);
+         fprintf(stderr, json_fmt,
+                 timestamp, g_log_level_names[level], escaped_file, line, escaped_message);
 
     } else { // Default to TEXT format
+        const char* text_fmt = "%s[%s] [%s:%d] [%s] %s%s\n";
         if (g_log_file != NULL) {
-            fprintf(g_log_file, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
+            fprintf(g_log_file, text_fmt,
+                    "", // No color for file
+                    timestamp, filename, line, g_log_level_names[level], message, "");
             fflush(g_log_file); // Ensure immediate write to file
         }
-         fprintf(stderr, "[%s] [%s] %s\n", timestamp, g_log_level_names[level], message);
+         fprintf(stderr, text_fmt,
+                 color_start, // Start color
+                 timestamp, filename, line, g_log_level_names[level], message,
+                 color_end); // End color
     }
 
     UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock after accessing shared resources
@@ -301,11 +335,11 @@ static int create_log_directory(const char* log_file_path) {
     return result;
 }
 
-int init_logging(const char* log_file_path, log_level_t level) {
+int mcp_log_init(const char* log_file_path, mcp_log_level_t level) {
     // 1. Validate and set the global log level
-    if (level < LOG_LEVEL_ERROR || level > LOG_LEVEL_DEBUG) {
+    if (level < MCP_LOG_LEVEL_TRACE || level > MCP_LOG_LEVEL_FATAL) {
         fprintf(stderr, "[WARN] Invalid log level specified (%d), defaulting to INFO.\n", level);
-        level = LOG_LEVEL_INFO;
+        level = MCP_LOG_LEVEL_INFO;
     }
     g_log_level = level;
 
@@ -325,7 +359,7 @@ int init_logging(const char* log_file_path, log_level_t level) {
     }
 
     // 2. Close any previously opened log file (needs lock)
-    close_logging(); // close_logging now handles locking internally
+    mcp_log_close(); // Use the renamed function
 
     // 3. If a log file path is provided, attempt to open it (needs lock)
     LOCK_LOG_MUTEX(&g_log_mutex);
@@ -362,17 +396,17 @@ int init_logging(const char* log_file_path, log_level_t level) {
         }
         UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock after successful open or if no file path
         // Log successful file opening (will go to stderr and the file itself)
-        log_message(LOG_LEVEL_INFO, "Logging initialized to file: %s (Level: %s)", log_file_path, g_log_level_names[g_log_level]);
+        mcp_log_info("Logging initialized to file: %s (Level: %s)", log_file_path, g_log_level_names[g_log_level]);
     } else {
          UNLOCK_LOG_MUTEX(&g_log_mutex); // Unlock if no file path
          // Log that file logging is disabled (will go to stderr only)
-         log_message(LOG_LEVEL_INFO, "File logging disabled. Logging to stderr only. (Level: %s)", g_log_level_names[g_log_level]);
+         mcp_log_info("File logging disabled. Logging to stderr only. (Level: %s)", g_log_level_names[g_log_level]);
     }
 
     return 0; // Success
 }
 
-void close_logging(void) {
+void mcp_log_close(void) {
     if (!g_log_mutex_initialized) return; // Nothing to close or destroy if not initialized
 
     LOCK_LOG_MUTEX(&g_log_mutex);
@@ -381,7 +415,7 @@ void close_logging(void) {
         // Log the closing event (will go to stderr and the file)
         // Temporarily unlock to allow log_message to lock
         UNLOCK_LOG_MUTEX(&g_log_mutex);
-        log_message(LOG_LEVEL_INFO, "Closing log file.");
+        mcp_log_info("Closing log file.");
         LOCK_LOG_MUTEX(&g_log_mutex); // Re-lock
 
         fclose(g_log_file);
@@ -409,24 +443,46 @@ void mcp_log_set_format(mcp_log_format_t format) {
         g_log_format = format;
         UNLOCK_LOG_MUTEX(&g_log_mutex);
 
-        log_message(LOG_LEVEL_INFO, "Log format set to %s.",
+        mcp_log_info("Log format set to %s.",
                     (format == MCP_LOG_FORMAT_JSON) ? "JSON" : "TEXT");
     } else {
-        log_message(LOG_LEVEL_WARN, "Attempted to set invalid log format (%d).", format);
+        mcp_log_warn("Attempted to set invalid log format (%d).", format);
     }
+}
+
+void mcp_log_set_level(mcp_log_level_t level) {
+     if (level >= MCP_LOG_LEVEL_TRACE && level <= MCP_LOG_LEVEL_FATAL) {
+        LOCK_LOG_MUTEX(&g_log_mutex);
+        g_log_level = level;
+        UNLOCK_LOG_MUTEX(&g_log_mutex);
+    } else {
+         mcp_log_warn("Attempted to set invalid log level (%d).", level);
+    }
+}
+
+void mcp_log_set_quiet(bool quiet) {
+    LOCK_LOG_MUTEX(&g_log_mutex);
+    g_log_quiet = quiet;
+    UNLOCK_LOG_MUTEX(&g_log_mutex);
+}
+
+void mcp_log_set_color(bool use_color) {
+    LOCK_LOG_MUTEX(&g_log_mutex);
+    g_log_use_color = use_color;
+    UNLOCK_LOG_MUTEX(&g_log_mutex);
 }
 
 /**
  * @brief Records a structured log message with additional context.
  */
 void mcp_log_structured(
-    log_level_t level,
+    mcp_log_level_t level,
     const char* component,
     const char* event,
     const char* format, ...)
 {
-     // 1. Check if the message level is high enough to be logged
-    if (level > g_log_level) {
+     // 1. Check if logging is quiet or level is too low
+    if (g_log_quiet || level < g_log_level) {
         return;
     }
 

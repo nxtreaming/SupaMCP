@@ -117,7 +117,7 @@ static char* parse_string(const char** json) {
 
 static mcp_json_t* parse_object(const char** json, int depth) {
     if (depth > MCP_JSON_MAX_PARSE_DEPTH) {
-        log_message(LOG_LEVEL_ERROR, "JSON parsing depth exceeded limit (%d).", MCP_JSON_MAX_PARSE_DEPTH);
+        mcp_log_error("JSON parsing depth exceeded limit (%d).", MCP_JSON_MAX_PARSE_DEPTH);
         return NULL; // Depth limit exceeded
     }
     if (**json != '{') {
@@ -143,7 +143,7 @@ static mcp_json_t* parse_object(const char** json, int depth) {
         }
         skip_whitespace(json);
         if (**json != ':') {
-            log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected ':' after object key '%s'.", name);
+            mcp_log_error("JSON parse error: Expected ':' after object key '%s'.", name);
             free(name);
             return NULL; // Expected colon
         }
@@ -151,13 +151,13 @@ static mcp_json_t* parse_object(const char** json, int depth) {
         skip_whitespace(json);
         mcp_json_t* value = parse_value(json, depth + 1);
         if (value == NULL) {
-            log_message(LOG_LEVEL_ERROR, "JSON parse error: Failed to parse value for object key '%s'.", name);
+            mcp_log_error("JSON parse error: Failed to parse value for object key '%s'.", name);
             free(name);
             return NULL; // Invalid value
         }
         // Set property - uses malloc for entry/name, value is from thread-local arena
         if (mcp_json_object_table_set(&object->object, name, value) != 0) { // Pass table directly
-            log_message(LOG_LEVEL_ERROR, "JSON parse error: Failed to set property '%s'.", name);
+            mcp_log_error("JSON parse error: Failed to set property '%s'.", name);
             free(name);
             // Don't destroy value (it's in arena), don't destroy object
             return NULL; // Set property failed
@@ -169,7 +169,7 @@ static mcp_json_t* parse_object(const char** json, int depth) {
             return object;
         }
         if (**json != ',') {
-            log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected ',' or '}' after object property.");
+            mcp_log_error("JSON parse error: Expected ',' or '}' after object property.");
             return NULL; // Expected comma or closing brace
         }
         (*json)++; // Skip ','
@@ -178,7 +178,7 @@ static mcp_json_t* parse_object(const char** json, int depth) {
 
 static mcp_json_t* parse_array(const char** json, int depth) {
      if (depth > MCP_JSON_MAX_PARSE_DEPTH) {
-        log_message(LOG_LEVEL_ERROR, "JSON parsing depth exceeded limit (%d).", MCP_JSON_MAX_PARSE_DEPTH);
+        mcp_log_error("JSON parsing depth exceeded limit (%d).", MCP_JSON_MAX_PARSE_DEPTH);
         return NULL; // Depth limit exceeded
     }
     if (**json != '[') {
@@ -199,13 +199,13 @@ static mcp_json_t* parse_array(const char** json, int depth) {
         skip_whitespace(json);
         mcp_json_t* value = parse_value(json, depth + 1);
         if (value == NULL) {
-            log_message(LOG_LEVEL_ERROR, "JSON parse error: Failed to parse value in array.");
+            mcp_log_error("JSON parse error: Failed to parse value in array.");
             // Don't destroy array, let caller handle via arena
             return NULL; // Invalid value in array
         }
         // Add item uses realloc for backing store, not arena
         if (mcp_json_array_add_item(array, value) != 0) {
-            log_message(LOG_LEVEL_ERROR, "JSON parse error: Failed to add item to array.");
+            mcp_log_error("JSON parse error: Failed to add item to array.");
             // Don't destroy value (it's in arena)
             return NULL; // Add item failed
         }
@@ -215,7 +215,7 @@ static mcp_json_t* parse_array(const char** json, int depth) {
             return array;
         }
         if (**json != ',') {
-            log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected ',' or ']' after array element.");
+            mcp_log_error("JSON parse error: Expected ',' or ']' after array element.");
             return NULL; // Expected comma or closing bracket
         }
         (*json)++; // Skip ','
@@ -241,7 +241,7 @@ static mcp_json_t* parse_number(const char** json) {
     char* end;
     double value = strtod(start, &end);
     if (end != *json) {
-        log_message(LOG_LEVEL_ERROR, "JSON parse error: Invalid number format near '%s'.", start);
+        mcp_log_error("JSON parse error: Invalid number format near '%s'.", start);
         return NULL; // Invalid number format
     }
     return mcp_json_number_create(value); // Uses thread-local arena
@@ -263,32 +263,32 @@ mcp_json_t* parse_value(const char** json, int depth) {
         case 'n':
             if (strncmp(*json, "null", 4) == 0) {
                 *json += 4;
-                return mcp_json_null_create(); // Uses thread-local arena
-            }
-             log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected 'null'.");
-            return NULL;
-        case 't':
+                 return mcp_json_null_create(); // Uses thread-local arena
+             }
+              mcp_log_error("JSON parse error: Expected 'null'.");
+             return NULL;
+         case 't':
             if (strncmp(*json, "true", 4) == 0) {
                 *json += 4;
-                return mcp_json_boolean_create(true); // Uses thread-local arena
-            }
-             log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected 'true'.");
-            return NULL;
-        case 'f':
+                 return mcp_json_boolean_create(true); // Uses thread-local arena
+             }
+              mcp_log_error("JSON parse error: Expected 'true'.");
+             return NULL;
+         case 'f':
             if (strncmp(*json, "false", 5) == 0) {
                 *json += 5;
-                return mcp_json_boolean_create(false); // Uses thread-local arena
-            }
-             log_message(LOG_LEVEL_ERROR, "JSON parse error: Expected 'false'.");
-            return NULL;
-        case '-':
+                 return mcp_json_boolean_create(false); // Uses thread-local arena
+             }
+              mcp_log_error("JSON parse error: Expected 'false'.");
+             return NULL;
+         case '-':
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
-            return parse_number(json);
-        default:
-             log_message(LOG_LEVEL_ERROR, "JSON parse error: Unexpected character '%c'.", **json);
-            return NULL; // Invalid character
-    }
+             return parse_number(json);
+         default:
+              mcp_log_error("JSON parse error: Unexpected character '%c'.", **json);
+             return NULL; // Invalid character
+     }
 }
 
 // Public API function for parsing
@@ -299,17 +299,17 @@ mcp_json_t* mcp_json_parse(const char* json) {
     const char* current = json; // Use a temporary pointer
     skip_whitespace(&current);
     mcp_json_t* result = parse_value(&current, 0); // Start parsing at depth 0
-    if (result == NULL) {
-        // Parsing failed, thread-local arena contains partially allocated nodes.
-        // Caller should reset/destroy the thread-local arena if appropriate.
-        log_message(LOG_LEVEL_ERROR, "JSON parsing failed.");
-        return NULL;
-    }
-    skip_whitespace(&current);
-    if (*current != '\0') {
-        log_message(LOG_LEVEL_ERROR, "JSON parse error: Trailing characters found after valid JSON: '%s'", current);
-        // Trailing characters after valid JSON
-        // Don't destroy result (it's in thread-local arena), let caller handle arena.
+     if (result == NULL) {
+         // Parsing failed, thread-local arena contains partially allocated nodes.
+         // Caller should reset/destroy the thread-local arena if appropriate.
+         mcp_log_error("JSON parsing failed.");
+         return NULL;
+     }
+     skip_whitespace(&current);
+     if (*current != '\0') {
+         mcp_log_error("JSON parse error: Trailing characters found after valid JSON: '%s'", current);
+         // Trailing characters after valid JSON
+         // Don't destroy result (it's in thread-local arena), let caller handle arena.
         return NULL;
     }
     return result;

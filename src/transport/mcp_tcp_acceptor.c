@@ -18,7 +18,7 @@ void* tcp_accept_thread_func(void* arg) {
     socket_t client_socket = INVALID_SOCKET_VAL; // Initialize to invalid
     char client_ip_str[INET6_ADDRSTRLEN]; // Use INET6 for future-proofing
 
-    log_message(LOG_LEVEL_INFO, "Accept thread started, listening on %s:%d", data->host, data->port);
+    mcp_log_info("Accept thread started, listening on %s:%d", data->host, data->port);
 
 #ifdef _WIN32
     // Windows: Use select with a timeout to allow checking data->running periodically
@@ -46,18 +46,18 @@ void* tcp_accept_thread_func(void* arg) {
                  // Check for specific errors
                  if (error_code == WSAENOTSOCK || error_code == WSAEINVAL) {
                      // Listening socket is likely closed or invalid, stop the accept loop
-                     log_message(LOG_LEVEL_ERROR, "select failed in accept thread: Listening socket invalid (Error: %d). Stopping accept thread.", error_code);
+                     mcp_log_error("select failed in accept thread: Listening socket invalid (Error: %d). Stopping accept thread.", error_code);
                      data->running = false; // Signal loop termination
                      break;
                  } else if (error_code != WSAEINTR) { // Ignore interrupt, log others
                      char err_buf[128];
                      strerror_s(err_buf, sizeof(err_buf), error_code);
-                     log_message(LOG_LEVEL_ERROR, "select failed in accept thread: %d (%s)", error_code, err_buf);
+                     mcp_log_error("select failed in accept thread: %d (%s)", error_code, err_buf);
                      // Consider adding a small delay here to prevent tight error loops
                      Sleep(100);
                  } else {
                      // WSAEINTR likely means we are stopping
-                     log_message(LOG_LEVEL_DEBUG, "Select interrupted (WSAEINTR) in accept thread, likely stopping.");
+                     mcp_log_debug("Select interrupted (WSAEINTR) in accept thread, likely stopping.");
                      // No need to break here, the outer loop condition data->running will handle it
                  }
              } else {
@@ -75,7 +75,7 @@ void* tcp_accept_thread_func(void* arg) {
                  if (data->running) {
                      char err_buf[128];
                      strerror_s(err_buf, sizeof(err_buf), sock_errno);
-                     log_message(LOG_LEVEL_ERROR, "accept failed: %d (%s)", sock_errno, err_buf);
+                     mcp_log_error("accept failed: %d (%s)", sock_errno, err_buf);
                  }
                  continue;
             }
@@ -84,10 +84,10 @@ void* tcp_accept_thread_func(void* arg) {
             if (InetNtop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) != NULL) {
                  client_ip = client_ip_str;
             } else {
-                 log_message(LOG_LEVEL_WARN, "InetNtop failed: %d", sock_errno);
+                 mcp_log_warn("InetNtop failed: %d", sock_errno);
                  client_ip = "?.?.?.?";
             }
-            log_message(LOG_LEVEL_INFO, "Accepted connection from %s:%d on socket %p",
+            mcp_log_info("Accepted connection from %s:%d on socket %p",
                    client_ip, ntohs(client_addr.sin_port), (void*)client_socket);
 
             // --- Start Handle Connection Logic (Windows) ---
@@ -119,7 +119,7 @@ void* tcp_accept_thread_func(void* arg) {
                     // Slot found and marked INITIALIZING, now create the handler thread (outside the mutex)
                     client_conn_ptr->thread_handle = CreateThread(NULL, 0, tcp_client_handler_thread_func, client_conn_ptr, 0, NULL);
                     if (client_conn_ptr->thread_handle == NULL) {
-                        log_message(LOG_LEVEL_ERROR, "Failed to create handler thread for client %d.", client_index);
+                        mcp_log_error("Failed to create handler thread for client %d.", client_index);
                         close_socket(client_conn_ptr->socket); // Close the socket if thread creation failed
                         // Re-acquire lock to revert state
                         EnterCriticalSection(&data->client_mutex);
@@ -144,7 +144,7 @@ void* tcp_accept_thread_func(void* arg) {
                     } else {
                         reject_client_ip = "?.?.?.?";
                     }
-                    log_message(LOG_LEVEL_WARN, "Max clients (%d) reached, rejecting connection from %s:%d",
+                    mcp_log_warn("Max clients (%d) reached, rejecting connection from %s:%d",
                             MAX_TCP_CLIENTS, reject_client_ip, ntohs(client_addr.sin_port));
                     close_socket(client_socket);
                 }
@@ -166,13 +166,13 @@ void* tcp_accept_thread_func(void* arg) {
         if (!data->running) break; // Check flag again after poll
 
         if (activity < 0 && errno != EINTR) {
-            log_message(LOG_LEVEL_ERROR, "poll error in accept thread: %s", strerror(errno));
+            mcp_log_error("poll error in accept thread: %s", strerror(errno));
             continue;
         }
 
         // Check if stop pipe has data
         if (fds[1].revents & POLLIN) {
-            log_message(LOG_LEVEL_DEBUG, "Stop signal received in accept thread.");
+            mcp_log_debug("Stop signal received in accept thread.");
             char buf[16];
             while (read(data->stop_pipe[0], buf, sizeof(buf)) > 0); // Drain pipe
             break; // Exit loop
@@ -186,9 +186,9 @@ void* tcp_accept_thread_func(void* arg) {
                  if (data->running) {
                      char err_buf[128];
                      if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-                        log_message(LOG_LEVEL_ERROR, "accept failed: %d (%s)", sock_errno, err_buf);
+                        mcp_log_error("accept failed: %d (%s)", sock_errno, err_buf);
                      } else {
-                        log_message(LOG_LEVEL_ERROR, "accept failed: %d (strerror_r failed)", sock_errno);
+                        mcp_log_error("accept failed: %d (strerror_r failed)", sock_errno);
                      }
                  }
                  continue;
@@ -200,13 +200,13 @@ void* tcp_accept_thread_func(void* arg) {
             } else {
                  char err_buf[128];
                  if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-                     log_message(LOG_LEVEL_WARN, "inet_ntop failed: %d (%s)", sock_errno, err_buf);
+                     mcp_log_warn("inet_ntop failed: %d (%s)", sock_errno, err_buf);
                  } else {
-                     log_message(LOG_LEVEL_WARN, "inet_ntop failed: %d (strerror_r failed)", sock_errno);
+                     mcp_log_warn("inet_ntop failed: %d (strerror_r failed)", sock_errno);
                  }
                 client_ip = "?.?.?.?";
             }
-            log_message(LOG_LEVEL_INFO, "Accepted connection from %s:%d on socket %d",
+            mcp_log_info("Accepted connection from %s:%d on socket %d",
                    client_ip, ntohs(client_addr.sin_port), client_socket);
 
             // --- Start Handle Connection Logic (POSIX) ---
@@ -237,7 +237,7 @@ void* tcp_accept_thread_func(void* arg) {
                 if (client_index != -1 && client_conn_ptr != NULL) {
                     // Slot found and marked INITIALIZING, now create the handler thread (outside the mutex)
                     if (pthread_create(&client_conn_ptr->thread_handle, NULL, tcp_client_handler_thread_func, client_conn_ptr) != 0) {
-                        log_message(LOG_LEVEL_ERROR, "Failed to create handler thread: %s", strerror(errno));
+                        mcp_log_error("Failed to create handler thread: %s", strerror(errno));
                         close_socket(client_conn_ptr->socket); // Close the socket if thread creation failed
                         // Re-acquire lock to revert state
                         pthread_mutex_lock(&data->client_mutex);
@@ -264,7 +264,7 @@ void* tcp_accept_thread_func(void* arg) {
                     } else {
                         reject_client_ip = "?.?.?.?";
                     }
-                    log_message(LOG_LEVEL_WARN, "Max clients (%d) reached, rejecting connection from %s:%d",
+                    mcp_log_warn("Max clients (%d) reached, rejecting connection from %s:%d",
                             MAX_TCP_CLIENTS, reject_client_ip, ntohs(client_addr.sin_port));
                     close_socket(client_socket);
                 }
@@ -274,7 +274,7 @@ void* tcp_accept_thread_func(void* arg) {
 #endif // Platform-specific accept loop end
     } // End of while(data->running) loop
 
-    log_message(LOG_LEVEL_INFO, "Accept thread exiting.");
+    mcp_log_info("Accept thread exiting.");
 #ifdef _WIN32
     return 0;
 #else

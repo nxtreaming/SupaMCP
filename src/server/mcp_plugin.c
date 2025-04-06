@@ -52,21 +52,21 @@ static char* mcp_strdup(const char* s) {
  */
 mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
     if (!path) {
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Plugin path is NULL.");
+        mcp_log_error("mcp_plugin_load: Plugin path is NULL.");
         return NULL;
     }
 
-    log_message(LOG_LEVEL_INFO, "Attempting to load plugin from: %s", path);
+    mcp_log_info("Attempting to load plugin from: %s", path);
 
     mcp_plugin_t* plugin = (mcp_plugin_t*)calloc(1, sizeof(mcp_plugin_t));
     if (!plugin) {
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Failed to allocate plugin structure for %s.", path);
+        mcp_log_error("mcp_plugin_load: Failed to allocate plugin structure for %s.", path);
         return NULL;
     }
 
     plugin->path = mcp_strdup(path); // Store path copy
     if (!plugin->path) {
-         log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Failed to duplicate plugin path string for %s.", path);
+         mcp_log_error("mcp_plugin_load: Failed to duplicate plugin path string for %s.", path);
          free(plugin);
          return NULL;
     }
@@ -80,7 +80,7 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
         LPSTR messageBuffer = NULL;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                        NULL, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Failed to load library '%s'. Error %lu: %s",
+        mcp_log_error("mcp_plugin_load: Failed to load library '%s'. Error %lu: %s",
                 path, error_code, messageBuffer ? messageBuffer : "Unknown error");
         LocalFree(messageBuffer); // Free the error message buffer
         free(plugin->path);
@@ -91,7 +91,7 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
     mcp_plugin_get_descriptor_func_t get_descriptor_func =
         (mcp_plugin_get_descriptor_func_t)GetProcAddress(plugin->library_handle, MCP_PLUGIN_DESCRIPTOR_FUNC_NAME);
     if (!get_descriptor_func) {
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Failed to find symbol '%s' in plugin '%s'. Error %lu",
+        mcp_log_error("mcp_plugin_load: Failed to find symbol '%s' in plugin '%s'. Error %lu",
                 MCP_PLUGIN_DESCRIPTOR_FUNC_NAME, path, GetLastError());
         FreeLibrary(plugin->library_handle);
         free(plugin->path);
@@ -104,7 +104,7 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
     // RTLD_GLOBAL: Symbols are available. Use LOCAL unless plugins need to share symbols.
     plugin->library_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!plugin->library_handle) {
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Failed to load library '%s'. Error: %s", path, dlerror());
+        mcp_log_error("mcp_plugin_load: Failed to load library '%s'. Error: %s", path, dlerror());
         free(plugin->path);
         free(plugin);
         return NULL;
@@ -117,7 +117,7 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
     *(void**)(&get_descriptor_func) = dlsym(plugin->library_handle, MCP_PLUGIN_DESCRIPTOR_FUNC_NAME);
     const char* dlsym_error = dlerror();
     if (dlsym_error != NULL || !get_descriptor_func) {
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Failed to find symbol '%s' in plugin '%s'. Error: %s",
+        mcp_log_error("mcp_plugin_load: Failed to find symbol '%s' in plugin '%s'. Error: %s",
                 MCP_PLUGIN_DESCRIPTOR_FUNC_NAME, path, dlsym_error ? dlsym_error : "Symbol not found");
         dlclose(plugin->library_handle);
         free(plugin->path);
@@ -130,9 +130,9 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
     // Call the function to get the descriptor
     plugin->descriptor = get_descriptor_func();
     if (!plugin->descriptor) {
-         log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Plugin '%s' returned a NULL descriptor.", path);
+         mcp_log_error("mcp_plugin_load: Plugin '%s' returned a NULL descriptor.", path);
          #ifdef _WIN32
-             FreeLibrary(plugin->library_handle);
+              FreeLibrary(plugin->library_handle);
          #else
              dlclose(plugin->library_handle);
          #endif
@@ -143,9 +143,9 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
 
     // Validate essential descriptor fields
     if (!plugin->descriptor->name || !plugin->descriptor->version || !plugin->descriptor->initialize || !plugin->descriptor->finalize) {
-         log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Plugin '%s' descriptor is missing required fields (name, version, initialize, finalize).", path);
+         mcp_log_error("mcp_plugin_load: Plugin '%s' descriptor is missing required fields (name, version, initialize, finalize).", path);
          #ifdef _WIN32
-             FreeLibrary(plugin->library_handle);
+              FreeLibrary(plugin->library_handle);
          #else
              dlclose(plugin->library_handle);
          #endif
@@ -154,22 +154,22 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
          return NULL;
     }
 
-    log_message(LOG_LEVEL_INFO, "Plugin '%s' version '%s' descriptor loaded.", plugin->descriptor->name, plugin->descriptor->version);
+    mcp_log_info("Plugin '%s' version '%s' descriptor loaded.", plugin->descriptor->name, plugin->descriptor->version);
 
     // Call the plugin's initialize function
     if (plugin->descriptor->initialize(server_context) != 0) {
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_load: Plugin '%s' initialization failed.", plugin->descriptor->name);
+        mcp_log_error("mcp_plugin_load: Plugin '%s' initialization failed.", plugin->descriptor->name);
         #ifdef _WIN32
-            FreeLibrary(plugin->library_handle);
+             FreeLibrary(plugin->library_handle);
         #else
             dlclose(plugin->library_handle);
         #endif
         free(plugin->path);
         free(plugin);
-        return NULL;
+         return NULL;
     }
 
-    log_message(LOG_LEVEL_INFO, "Plugin '%s' initialized successfully.", plugin->descriptor->name);
+    mcp_log_info("Plugin '%s' initialized successfully.", plugin->descriptor->name);
     return plugin;
 }
 
@@ -178,17 +178,17 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
  */
 int mcp_plugin_unload(mcp_plugin_t* plugin) {
     if (!plugin || !plugin->descriptor || !plugin->library_handle) {
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_unload: Invalid plugin handle provided.");
+        mcp_log_error("mcp_plugin_unload: Invalid plugin handle provided.");
         return -1;
     }
 
-    log_message(LOG_LEVEL_INFO, "Unloading plugin '%s' from %s", plugin->descriptor->name, plugin->path);
+    mcp_log_info("Unloading plugin '%s' from %s", plugin->descriptor->name, plugin->path);
 
     // Call the plugin's finalize function
     int finalize_status = plugin->descriptor->finalize();
     if (finalize_status != 0) {
         // Log warning but proceed with unloading anyway
-        log_message(LOG_LEVEL_WARN, "Plugin '%s' finalize function returned non-zero status (%d).",
+        mcp_log_warn("Plugin '%s' finalize function returned non-zero status (%d).",
                 plugin->descriptor->name, finalize_status);
     }
 
@@ -197,14 +197,14 @@ int mcp_plugin_unload(mcp_plugin_t* plugin) {
 #ifdef _WIN32
     if (!FreeLibrary(plugin->library_handle)) {
         // Log error
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_unload: FreeLibrary failed for plugin '%s'. Error %lu",
+        mcp_log_error("mcp_plugin_unload: FreeLibrary failed for plugin '%s'. Error %lu",
                 plugin->descriptor->name, GetLastError());
         unload_status = -1; // Indicate failure
     }
 #else // Linux/macOS
     if (dlclose(plugin->library_handle) != 0) {
         // Log error
-        log_message(LOG_LEVEL_ERROR, "mcp_plugin_unload: dlclose failed for plugin '%s'. Error: %s",
+        mcp_log_error("mcp_plugin_unload: dlclose failed for plugin '%s'. Error: %s",
                 plugin->descriptor->name, dlerror());
         unload_status = -1; // Indicate failure
     }
@@ -216,7 +216,7 @@ int mcp_plugin_unload(mcp_plugin_t* plugin) {
     free(plugin);
 
     if (unload_status == 0) {
-         log_message(LOG_LEVEL_INFO, "Plugin unloaded successfully.");
+         mcp_log_info("Plugin unloaded successfully.");
     }
 
     // Return finalize status if unload was ok, otherwise return unload error status

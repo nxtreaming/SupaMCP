@@ -22,7 +22,7 @@ char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_re
     }
     *error_code = MCP_ERROR_NONE;
 
-    log_message(LOG_LEVEL_DEBUG, "Received ping request (ID: %llu)", (unsigned long long)request->id);
+    mcp_log_debug("Received ping request (ID: %llu)", (unsigned long long)request->id);
 
     // Create simple response with pong message
     mcp_json_t* result_obj = mcp_json_object_create(); // Use TLS arena
@@ -43,6 +43,6 @@ char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_re
     }
 
     char* response = create_success_response(request->id, result_str);
-    log_message(LOG_LEVEL_DEBUG, "Sending pong response to ID %llu", (unsigned long long)request->id);
+    mcp_log_debug("Sending pong response to ID %llu", (unsigned long long)request->id);
     return response;
 }

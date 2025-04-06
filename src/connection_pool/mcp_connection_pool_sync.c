@@ -21,11 +21,11 @@ int init_sync_primitives(mcp_connection_pool_t* pool) {
         return 0; // No error code defined for these in basic usage
     #else
         if (pthread_mutex_init(&pool->mutex, NULL) != 0) {
-            log_message(LOG_LEVEL_ERROR, "pthread_mutex_init failed: %s", strerror(errno));
+            mcp_log_error("pthread_mutex_init failed: %s", strerror(errno));
             return -1;
         }
         if (pthread_cond_init(&pool->cond_var, NULL) != 0) {
-            log_message(LOG_LEVEL_ERROR, "pthread_cond_init failed: %s", strerror(errno));
+            mcp_log_error("pthread_cond_init failed: %s", strerror(errno));
             pthread_mutex_destroy(&pool->mutex); // Clean up mutex
             return -1;
         }
@@ -42,10 +42,10 @@ void destroy_sync_primitives(mcp_connection_pool_t* pool) {
         int mutex_ret = pthread_mutex_destroy(&pool->mutex);
         int cond_ret = pthread_cond_destroy(&pool->cond_var);
         if (mutex_ret != 0) {
-             log_message(LOG_LEVEL_WARN, "pthread_mutex_destroy failed: %s", strerror(mutex_ret));
+             mcp_log_warn("pthread_mutex_destroy failed: %s", strerror(mutex_ret));
         }
         if (cond_ret != 0) {
-             log_message(LOG_LEVEL_WARN, "pthread_cond_destroy failed: %s", strerror(cond_ret));
+             mcp_log_warn("pthread_cond_destroy failed: %s", strerror(cond_ret));
         }
     #endif
 }
@@ -96,7 +96,7 @@ int pool_wait(mcp_connection_pool_t* pool, int timeout_ms) {
         if (GetLastError() == ERROR_TIMEOUT) {
             return 1; // Timeout
         } else {
-             log_message(LOG_LEVEL_ERROR, "SleepConditionVariableCS failed: %lu", GetLastError());
+             mcp_log_error("SleepConditionVariableCS failed: %lu", GetLastError());
             return -1; // Error
         }
     }
@@ -121,7 +121,7 @@ int pool_wait(mcp_connection_pool_t* pool, int timeout_ms) {
     if (rc == ETIMEDOUT) {
         return 1; // Timeout
     } else if (rc != 0) {
-        log_message(LOG_LEVEL_ERROR, "pthread_cond_timedwait/wait failed: %s", strerror(rc));
+        mcp_log_error("pthread_cond_timedwait/wait failed: %s", strerror(rc));
         return -1; // Error
     }
     return 0; // Signaled (or spurious wakeup)

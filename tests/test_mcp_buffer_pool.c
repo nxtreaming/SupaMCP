@@ -119,6 +119,34 @@ void test_mcp_buffer_pool_get_size_null(void) {
     TEST_ASSERT_EQUAL_size_t(0, mcp_buffer_pool_get_buffer_size(NULL));
 }
 
+// Test case: Release a buffer not belonging to the pool
+void test_mcp_buffer_pool_release_foreign_buffer(void) {
+    mcp_buffer_pool_t* pool = mcp_buffer_pool_create(TEST_BUFFER_SIZE, TEST_NUM_BUFFERS);
+    TEST_ASSERT_NOT_NULL(pool);
+
+    // Allocate memory outside the pool
+    void* foreign_buffer = malloc(TEST_BUFFER_SIZE);
+    TEST_ASSERT_NOT_NULL(foreign_buffer);
+
+    // Try to release the foreign buffer to the pool (should be ignored or logged)
+    mcp_buffer_pool_release(pool, foreign_buffer);
+
+    // Verify that the pool state is unchanged (can still acquire all buffers)
+    void* buffers[TEST_NUM_BUFFERS];
+    for (size_t i = 0; i < TEST_NUM_BUFFERS; ++i) {
+        buffers[i] = mcp_buffer_pool_acquire(pool);
+        TEST_ASSERT_NOT_NULL_MESSAGE(buffers[i], "Failed to acquire buffer after releasing foreign buffer");
+    }
+
+    // Clean up
+    free(foreign_buffer);
+    for (size_t i = 0; i < TEST_NUM_BUFFERS; ++i) {
+        mcp_buffer_pool_release(pool, buffers[i]);
+    }
+    mcp_buffer_pool_destroy(pool);
+}
+
+
 // Note: Thread safety tests are complex and omitted here.
 // They would typically involve creating multiple threads that
 // concurrently acquire and release buffers, checking for race conditions

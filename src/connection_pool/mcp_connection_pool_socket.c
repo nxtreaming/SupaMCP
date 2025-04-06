@@ -38,7 +38,7 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
     hints.ai_socktype = SOCK_STREAM;
 
     if ((rv = getaddrinfo(host, port_str, &hints, &servinfo)) != 0) {
-        log_message(LOG_LEVEL_ERROR, "getaddrinfo failed for %s:%s : %s", host, port_str, gai_strerror(rv));
+        mcp_log_error("getaddrinfo failed for %s:%s : %s", host, port_str, gai_strerror(rv));
         return INVALID_SOCKET_HANDLE;
     }
 
@@ -46,9 +46,9 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
     for(p = servinfo; p != NULL; p = p->ai_next) {
         if ((sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == INVALID_SOCKET_HANDLE) {
             #ifdef _WIN32
-                log_message(LOG_LEVEL_WARN, "socket() failed: %d", WSAGetLastError());
+                mcp_log_warn("socket() failed: %d", WSAGetLastError());
             #else
-                log_message(LOG_LEVEL_WARN, "socket() failed: %s", strerror(errno));
+                mcp_log_warn("socket() failed: %s", strerror(errno));
             #endif
             continue;
         }
@@ -57,7 +57,7 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 #ifdef _WIN32
         u_long mode = 1; // 1 to enable non-blocking socket
         if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR_HANDLE) {
-            log_message(LOG_LEVEL_ERROR, "ioctlsocket(FIONBIO) failed: %d", WSAGetLastError());
+            mcp_log_error("ioctlsocket(FIONBIO) failed: %d", WSAGetLastError());
             closesocket(sock);
             sock = INVALID_SOCKET_HANDLE;
             continue;
@@ -65,13 +65,13 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 #else
         int flags = fcntl(sock, F_GETFL, 0);
         if (flags == -1) {
-             log_message(LOG_LEVEL_ERROR, "fcntl(F_GETFL) failed: %s", strerror(errno));
+             mcp_log_error("fcntl(F_GETFL) failed: %s", strerror(errno));
              close(sock);
              sock = INVALID_SOCKET_HANDLE;
              continue;
         }
         if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) == -1) {
-            log_message(LOG_LEVEL_ERROR, "fcntl(F_SETFL, O_NONBLOCK) failed: %s", strerror(errno));
+            mcp_log_error("fcntl(F_SETFL, O_NONBLOCK) failed: %s", strerror(errno));
             close(sock);
             sock = INVALID_SOCKET_HANDLE;
             continue;
@@ -87,7 +87,7 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
             // WSAEINPROGRESS is not typically returned on Windows for non-blocking connect,
             // WSAEWOULDBLOCK indicates the operation is in progress.
             if (err != WSAEWOULDBLOCK) {
-                log_message(LOG_LEVEL_WARN, "connect() failed immediately: %d", err);
+                mcp_log_warn("connect() failed immediately: %d", err);
                 closesocket(sock);
                 sock = INVALID_SOCKET_HANDLE;
                 continue;
@@ -100,7 +100,7 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
         if (rv == -1) {
             err = errno;
             if (err != EINPROGRESS) {
-                log_message(LOG_LEVEL_WARN, "connect() failed immediately: %s", strerror(err));
+                mcp_log_warn("connect() failed immediately: %s", strerror(err));
                 close(sock);
                 sock = INVALID_SOCKET_HANDLE;
                 continue;
@@ -134,12 +134,12 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 
                 if (rv <= 0) { // Timeout (rv==0) or error (rv<0)
                     if (rv == 0) {
-                         log_message(LOG_LEVEL_WARN, "connect() timed out after %d ms.", connect_timeout_ms);
+                         mcp_log_warn("connect() timed out after %d ms.", connect_timeout_ms);
                     } else {
                          #ifdef _WIN32
-                            log_message(LOG_LEVEL_ERROR, "select() failed during connect: %d", WSAGetLastError());
+                            mcp_log_error("select() failed during connect: %d", WSAGetLastError());
                          #else
-                            log_message(LOG_LEVEL_ERROR, "poll() failed during connect: %s", strerror(errno));
+                            mcp_log_error("poll() failed during connect: %s", strerror(errno));
                          #endif
                     }
                     close_connection(sock);
@@ -154,9 +154,9 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
             socklen_t optlen = sizeof(optval);
             if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&optval, &optlen) == SOCKET_ERROR_HANDLE) {
                  #ifdef _WIN32
-                    log_message(LOG_LEVEL_ERROR, "getsockopt(SO_ERROR) failed: %d", WSAGetLastError());
+                    mcp_log_error("getsockopt(SO_ERROR) failed: %d", WSAGetLastError());
                  #else
-                    log_message(LOG_LEVEL_ERROR, "getsockopt(SO_ERROR) failed: %s", strerror(errno));
+                    mcp_log_error("getsockopt(SO_ERROR) failed: %s", strerror(errno));
                  #endif
                  close_connection(sock);
                  sock = INVALID_SOCKET_HANDLE;
@@ -165,9 +165,9 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 
             if (optval != 0) { // Connect failed
                 #ifdef _WIN32
-                    log_message(LOG_LEVEL_WARN, "connect() failed after wait: SO_ERROR=%d (WSA: %d)", optval, optval); // Use optval as error code
+                    mcp_log_warn("connect() failed after wait: SO_ERROR=%d (WSA: %d)", optval, optval); // Use optval as error code
                 #else
-                     log_message(LOG_LEVEL_WARN, "connect() failed after wait: %s", strerror(optval)); // Use optval as errno
+                     mcp_log_warn("connect() failed after wait: %s", strerror(optval)); // Use optval as errno
                 #endif
                 close_connection(sock);
                 sock = INVALID_SOCKET_HANDLE;
@@ -176,7 +176,7 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
             // Connection successful!
         } else {
              // This case should not be reached if connect returned other errors handled above
-             log_message(LOG_LEVEL_ERROR, "Unexpected state after connect() call (rv=%d, err=%d)", rv, err);
+             mcp_log_error("Unexpected state after connect() call (rv=%d, err=%d)", rv, err);
              close_connection(sock);
              sock = INVALID_SOCKET_HANDLE;
              continue;
@@ -193,9 +193,9 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
     freeaddrinfo(servinfo); // All done with this structure
 
     if (sock == INVALID_SOCKET_HANDLE) {
-        log_message(LOG_LEVEL_ERROR, "Failed to connect to %s:%d after trying all addresses.", host, port);
+        mcp_log_error("Failed to connect to %s:%d after trying all addresses.", host, port);
     } else {
-         log_message(LOG_LEVEL_DEBUG, "Successfully connected socket %d to %s:%d.", (int)sock, host, port);
+         mcp_log_debug("Successfully connected socket %d to %s:%d.", (int)sock, host, port);
     }
 
     return sock;

@@ -31,12 +31,12 @@ static int tcp_transport_start(
         char err_buf[128];
 #ifdef _WIN32
         strerror_s(err_buf, sizeof(err_buf), sock_errno);
-        log_message(LOG_LEVEL_ERROR, "socket creation failed: %d (%s)", sock_errno, err_buf);
+        mcp_log_error("socket creation failed: %d (%s)", sock_errno, err_buf);
 #else
          if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-            log_message(LOG_LEVEL_ERROR, "socket creation failed: %d (%s)", sock_errno, err_buf);
+            mcp_log_error("socket creation failed: %d (%s)", sock_errno, err_buf);
          } else {
-             log_message(LOG_LEVEL_ERROR, "socket creation failed: %d (strerror_r failed)", sock_errno);
+             mcp_log_error("socket creation failed: %d (strerror_r failed)", sock_errno);
          }
 #endif
         return -1;
@@ -52,7 +52,7 @@ static int tcp_transport_start(
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(data->port);
     if (inet_pton(AF_INET, data->host, &server_addr.sin_addr) <= 0) {
-         log_message(LOG_LEVEL_ERROR, "Invalid address/ Address not supported: %s", data->host);
+         mcp_log_error("Invalid address/ Address not supported: %s", data->host);
          close_socket(data->listen_socket);
          return -1;
     }
@@ -61,12 +61,12 @@ static int tcp_transport_start(
         char err_buf[128];
 #ifdef _WIN32
         strerror_s(err_buf, sizeof(err_buf), sock_errno);
-        log_message(LOG_LEVEL_ERROR, "bind failed on %s:%d: %d (%s)", data->host, data->port, sock_errno, err_buf);
+        mcp_log_error("bind failed on %s:%d: %d (%s)", data->host, data->port, sock_errno, err_buf);
 #else
          if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-             log_message(LOG_LEVEL_ERROR, "bind failed on %s:%d: %d (%s)", data->host, data->port, sock_errno, err_buf);
+             mcp_log_error("bind failed on %s:%d: %d (%s)", data->host, data->port, sock_errno, err_buf);
          } else {
-             log_message(LOG_LEVEL_ERROR, "bind failed on %s:%d: %d (strerror_r failed)", data->host, data->port, sock_errno);
+             mcp_log_error("bind failed on %s:%d: %d (strerror_r failed)", data->host, data->port, sock_errno);
          }
 #endif
         close_socket(data->listen_socket);
@@ -78,12 +78,12 @@ static int tcp_transport_start(
         char err_buf[128];
 #ifdef _WIN32
         strerror_s(err_buf, sizeof(err_buf), sock_errno);
-        log_message(LOG_LEVEL_ERROR, "listen failed: %d (%s)", sock_errno, err_buf);
+        mcp_log_error("listen failed: %d (%s)", sock_errno, err_buf);
 #else
          if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-            log_message(LOG_LEVEL_ERROR, "listen failed: %d (%s)", sock_errno, err_buf);
+            mcp_log_error("listen failed: %d (%s)", sock_errno, err_buf);
          } else {
-             log_message(LOG_LEVEL_ERROR, "listen failed: %d (strerror_r failed)", sock_errno);
+             mcp_log_error("listen failed: %d (strerror_r failed)", sock_errno);
          }
 #endif
         close_socket(data->listen_socket);
@@ -100,9 +100,9 @@ static int tcp_transport_start(
     if (pthread_mutex_init(&data->client_mutex, NULL) != 0) {
         char err_buf[128];
         if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-             log_message(LOG_LEVEL_ERROR, "Mutex init failed: %s", err_buf);
+             mcp_log_error("Mutex init failed: %s", err_buf);
         } else {
-             log_message(LOG_LEVEL_ERROR, "Mutex init failed: %d (strerror_r failed)", errno);
+             mcp_log_error("Mutex init failed: %d (strerror_r failed)", errno);
         }
         close_socket(data->listen_socket);
         data->running = false;
@@ -112,7 +112,7 @@ static int tcp_transport_start(
     data->stop_pipe[0] = -1; // Initialize FDs
     data->stop_pipe[1] = -1;
     if (pipe(data->stop_pipe) != 0) {
-        log_message(LOG_LEVEL_ERROR, "Stop pipe creation failed: %s", strerror(errno));
+        mcp_log_error("Stop pipe creation failed: %s", strerror(errno));
         close_socket(data->listen_socket);
         pthread_mutex_destroy(&data->client_mutex);
         data->running = false;
@@ -121,7 +121,7 @@ static int tcp_transport_start(
     // Set read end to non-blocking
     int flags = fcntl(data->stop_pipe[0], F_GETFL, 0);
     if (flags == -1 || fcntl(data->stop_pipe[0], F_SETFL, flags | O_NONBLOCK) == -1) {
-         log_message(LOG_LEVEL_ERROR, "Failed to set stop pipe read end non-blocking: %s", strerror(errno));
+         mcp_log_error("Failed to set stop pipe read end non-blocking: %s", strerror(errno));
          close_stop_pipe(data);
          close_socket(data->listen_socket);
          pthread_mutex_destroy(&data->client_mutex);
@@ -134,7 +134,7 @@ static int tcp_transport_start(
 #ifdef _WIN32
     data->accept_thread = CreateThread(NULL, 0, tcp_accept_thread_func, transport, 0, NULL);
     if (data->accept_thread == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Failed to create accept thread (Error: %lu).", GetLastError());
+        mcp_log_error("Failed to create accept thread (Error: %lu).", GetLastError());
         close_socket(data->listen_socket);
         DeleteCriticalSection(&data->client_mutex); // Clean up mutex
         data->running = false;
@@ -144,9 +144,9 @@ static int tcp_transport_start(
      if (pthread_create(&data->accept_thread, NULL, tcp_accept_thread_func, transport) != 0) {
         char err_buf[128];
          if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-            log_message(LOG_LEVEL_ERROR, "Failed to create accept thread: %s", err_buf);
+            mcp_log_error("Failed to create accept thread: %s", err_buf);
          } else {
-             log_message(LOG_LEVEL_ERROR, "Failed to create accept thread: %d (strerror_r failed)", errno);
+             mcp_log_error("Failed to create accept thread: %d (strerror_r failed)", errno);
          }
         close_socket(data->listen_socket);
         pthread_mutex_destroy(&data->client_mutex);
@@ -156,7 +156,7 @@ static int tcp_transport_start(
     }
 #endif
 
-    log_message(LOG_LEVEL_INFO, "TCP Transport started listening on %s:%d", data->host, data->port);
+    mcp_log_info("TCP Transport started listening on %s:%d", data->host, data->port);
     return 0;
 }
 
@@ -166,7 +166,7 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
 
     if (!data->running) return 0;
 
-    log_message(LOG_LEVEL_INFO, "Stopping TCP Transport...");
+    mcp_log_info("Stopping TCP Transport...");
     data->running = false;
 
     // Signal and close the listening socket/pipe to interrupt accept/select
@@ -183,7 +183,7 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
         char dummy = 's';
         ssize_t written = write(data->stop_pipe[1], &dummy, 1);
         if (written <= 0) {
-             log_message(LOG_LEVEL_WARN, "Failed to write to stop pipe during stop: %s", strerror(errno));
+             mcp_log_warn("Failed to write to stop pipe during stop: %s", strerror(errno));
         }
         // No need to close write end immediately, close_stop_pipe handles it
     }
@@ -211,7 +211,7 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
         data->accept_thread = 0;
     }
 #endif
-    log_message(LOG_LEVEL_DEBUG, "Accept thread stopped.");
+    mcp_log_debug("Accept thread stopped.");
 
     // Signal handler threads to stop and close connections
 #ifdef _WIN32
@@ -258,7 +258,7 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
     close_stop_pipe(data); // Close pipe FDs
 #endif
 
-    log_message(LOG_LEVEL_INFO, "TCP Transport stopped.");
+    mcp_log_info("TCP Transport stopped.");
 
     // Cleanup Winsock on Windows
     cleanup_winsock(); // Use helper
@@ -269,7 +269,7 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
 // Server transport send function - handles message sending to client sockets
 static int tcp_transport_send(mcp_transport_t* transport, const void* data, size_t size) {
     if (transport == NULL || transport->transport_data == NULL || data == NULL || size == 0) {
-        log_message(LOG_LEVEL_ERROR, "Invalid parameters in tcp_transport_send");
+        mcp_log_error("Invalid parameters in tcp_transport_send");
         return -1;
     }
     
@@ -277,7 +277,7 @@ static int tcp_transport_send(mcp_transport_t* transport, const void* data, size
     // The actual sending is handled by the client handler thread using send_exact function
     // This function just exists to provide a non-NULL send function to avoid NULL pointer issues
     
-    log_message(LOG_LEVEL_DEBUG, "Server transport send function called with %zu bytes", size);
+    mcp_log_debug("Server transport send function called with %zu bytes", size);
     return 0; // Return success - actual sending is handled by client handler thread
 }
 
@@ -341,7 +341,7 @@ mcp_transport_t* mcp_transport_tcp_create(
      // Create the buffer pool
      tcp_data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
      if (tcp_data->buffer_pool == NULL) {
-         log_message(LOG_LEVEL_ERROR, "Failed to create buffer pool for TCP transport.");
+         mcp_log_error("Failed to create buffer pool for TCP transport.");
          free(tcp_data->host);
          free(tcp_data);
          free(transport);

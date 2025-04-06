@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(SupaMCPServer VERSION 1.0.0 LANGUAGES C)
 
-# Set C standard
-set(CMAKE_C_STANDARD 99)
+# Set C standard (C11 required for stdatomic.h)
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Add compiler flags
@@ -54,6 +54,8 @@ set(COMMON_SOURCES
     src/server/mcp_server_task.c
     src/server/mcp_server_response.c
     src/server/mcp_server_ping.c
+    src/server/mcp_server_resource.c
+    src/server/mcp_server_tool.c
     src/server/mcp_auth.c
     src/connection_pool/mcp_connection_pool.c
     src/connection_pool/mcp_connection_pool_socket.c

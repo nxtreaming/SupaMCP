@@ -2,6 +2,8 @@
 #include "gateway_routing.h"
 #include "mcp_auth.h"
 #include "mcp_arena.h"
+#include "mcp_json.h"
+#include "mcp_json_message.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +38,7 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     // Create a new buffer, ensuring it's always NULL-terminated
     char* safe_json_str = (char*)malloc(size + 1);
     if (!safe_json_str) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for JSON message");
+        mcp_log_error("Failed to allocate memory for JSON message");
         if (error_code) *error_code = MCP_ERROR_INTERNAL_ERROR;
         return NULL;
     }
@@ -50,7 +52,7 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     if (size > 0 && ((const char*)data)[size-1] == '\0') {
         // If original message already ends with NULL terminator, adjust actual size but don't change buffer
         actual_size--;
-        log_message(LOG_LEVEL_DEBUG, "Message already ends with NULL terminator, actual content size is %zu", actual_size);
+        mcp_log_debug("Message already ends with NULL terminator, actual content size is %zu", actual_size);
     }
     
     const char* json_str = safe_json_str;
@@ -79,7 +81,7 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
         strcat(debug_buffer, "...");
     }
     strcat(debug_buffer, "'");
-    log_message(LOG_LEVEL_DEBUG, "%s", debug_buffer);
+    mcp_log_debug("%s", debug_buffer);
 #endif
 
     // Parse the message using the thread-local arena implicitly
@@ -123,7 +125,7 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     // If API key is required, notifications without it would fail here.
 
     if (mcp_auth_verify(server, required_auth_type, credentials, &auth_context) != 0) {
-        log_message(LOG_LEVEL_WARN, "Authentication failed for incoming message.");
+        mcp_log_warn("Authentication failed for incoming message.");
         *error_code = MCP_ERROR_INVALID_REQUEST; // Use a generic auth failure code for JSON-RPC
         char* error_response = create_error_response(request_id_for_auth_error, *error_code, "Authentication failed");
         // Cleanup before returning error
@@ -133,7 +135,7 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
         PROFILE_END("handle_message");
         return error_response;
     }
-    log_message(LOG_LEVEL_DEBUG, "Authentication successful (Identifier: %s)", auth_context ? auth_context->identifier : "N/A");
+    mcp_log_debug("Authentication successful (Identifier: %s)", auth_context ? auth_context->identifier : "N/A");
     // --- End Authentication Check ---
 
 
@@ -198,7 +200,7 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
 
     if (target_backend) {
         // Found a backend to route to.
-        log_message(LOG_LEVEL_INFO, "Request for method '%s' routed to backend '%s'. Forwarding...", request->method, target_backend->name);
+        mcp_log_info("Request for method '%s' routed to backend '%s'. Forwarding...", request->method, target_backend->name);
 
         // TODO: Implement actual forwarding logic here (Step 2.3+)
         // This involves:
@@ -213,7 +215,7 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
     }
 
     // --- Local Handling (No backend route found) ---
-    log_message(LOG_LEVEL_DEBUG, "No backend route found for method '%s'. Handling locally.", request->method);
+    mcp_log_debug("No backend route found for method '%s'. Handling locally.", request->method);
 
     // Handle the request locally based on its method
     // Note: Pass auth_context down to specific handlers

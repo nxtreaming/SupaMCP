@@ -49,7 +49,7 @@ void process_message_task(void* arg) {
     // Verify if message has null terminator
     bool has_terminator = (size > 0 && ((const char*)data)[size-1] == '\0');
     if (!has_terminator) {
-        log_message(LOG_LEVEL_WARN, "Task data missing terminator, this may cause JSON parsing errors");
+        mcp_log_warn("Task data missing terminator, this may cause JSON parsing errors");
     }
     
     // Call handle_message from mcp_server_dispatch.c (declared in internal header)
@@ -61,7 +61,7 @@ void process_message_task(void* arg) {
         free(response_json);
     } else if (error_code != MCP_ERROR_NONE) {
         // Log processing error
-        log_message(LOG_LEVEL_ERROR, "Error processing message (code: %d), no response generated.", error_code);
+        mcp_log_error("Error processing message (code: %d), no response generated.", error_code);
     }
 
     // Clean up task data
@@ -103,7 +103,7 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
                       server->config.max_message_size : DEFAULT_MAX_MESSAGE_SIZE;
     
     if (size > max_size) {
-        log_message(LOG_LEVEL_ERROR, "Received message size (%zu) exceeds limit (%zu)", size, max_size);
+        mcp_log_error("Received message size (%zu) exceeds limit (%zu)", size, max_size);
         *error_code = MCP_ERROR_INVALID_REQUEST;
         return NULL;
     }
@@ -125,12 +125,12 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
         if (message_copy) {
             memcpy(message_copy, data, size);
             ((char*)message_copy)[size] = '\0';
-            log_message(LOG_LEVEL_DEBUG, "Added NULL terminator to message data");
+            mcp_log_debug("Added NULL terminator to message data");
         }
     }
     
     if (!message_copy) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for message copy");
+        mcp_log_error("Failed to allocate memory for message copy");
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         PROFILE_END("transport_message_callback");
         return NULL;
@@ -150,7 +150,7 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
         return response_json; // Caller is responsible for freeing
     } else if (handler_error_code != MCP_ERROR_NONE) {
         // Message processing failed but no error response was generated
-        log_message(LOG_LEVEL_ERROR, "Failed to process message (error code: %d), no response generated", handler_error_code);
+        mcp_log_error("Failed to process message (error code: %d), no response generated", handler_error_code);
     }
     
     PROFILE_END("transport_message_callback");

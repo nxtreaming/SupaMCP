@@ -183,17 +183,17 @@ static void* client_thread_func(void* arg) {
 // --- Main Benchmark Function ---
 int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result_t* result) {
     if (!config || !result) {
-        log_message(LOG_LEVEL_ERROR, "mcp_run_benchmark received NULL arguments.");
+        mcp_log_error("mcp_run_benchmark received NULL arguments.");
         return -1;
     }
     if (config->client_count == 0 || config->requests_per_client == 0) {
-         log_message(LOG_LEVEL_ERROR, "mcp_run_benchmark: client_count and requests_per_client must be > 0.");
+         mcp_log_error("mcp_run_benchmark: client_count and requests_per_client must be > 0.");
         return -1;
     }
 
-    log_message(LOG_LEVEL_INFO, "Starting benchmark: %s", config->name);
-    log_message(LOG_LEVEL_INFO, "  Clients: %zu, Requests/Client: %zu", config->client_count, config->requests_per_client);
-    log_message(LOG_LEVEL_INFO, "  Server: %s:%d", config->server_host, config->server_port);
+    mcp_log_info("Starting benchmark: %s", config->name);
+    mcp_log_info("  Clients: %zu, Requests/Client: %zu", config->client_count, config->requests_per_client);
+    mcp_log_info("  Server: %s:%d", config->server_host, config->server_port);
 
     memset(result, 0, sizeof(mcp_benchmark_result_t));
     result->min_latency_ms = (double)INT_MAX; // Initialize min to max possible value
@@ -202,7 +202,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
     // Allocate space for all potential latencies (only successful ones will be stored contiguously later)
     double* all_latencies = (double*)malloc(total_requests_to_run * sizeof(double));
     if (!all_latencies) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for latency results.");
+        mcp_log_error("Failed to allocate memory for latency results.");
         return -1;
     }
 
@@ -217,7 +217,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
     client_thread_args_t* thread_args = (client_thread_args_t*)malloc(config->client_count * sizeof(client_thread_args_t));
 
     if (!threads || !thread_args) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for threads or arguments.");
+        mcp_log_error("Failed to allocate memory for threads or arguments.");
         free(all_latencies);
         free(threads); // threads might be NULL here, free(NULL) is safe
         free(thread_args); // thread_args might be NULL here
@@ -241,7 +241,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
         thread_args[i].timeout_count = (size_t*)calloc(1, sizeof(size_t));
 
         if (!thread_args[i].success_count || !thread_args[i].failure_count || !thread_args[i].timeout_count) {
-             log_message(LOG_LEVEL_ERROR, "Failed to allocate memory for thread counters.");
+             mcp_log_error("Failed to allocate memory for thread counters.");
              // TODO: Proper cleanup of already created threads/args
              free(all_latencies); free(threads); free(thread_args); // Basic cleanup
              return -1;
@@ -250,7 +250,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
 #ifdef _WIN32
         threads[i] = (HANDLE)_beginthreadex(NULL, 0, client_thread_func, &thread_args[i], 0, NULL);
         if (threads[i] == 0) {
-            log_message(LOG_LEVEL_ERROR, "Failed to create client thread %zu: %d", i, errno); // errno might not be set correctly by _beginthreadex
+            mcp_log_error("Failed to create client thread %zu: %d", i, errno); // errno might not be set correctly by _beginthreadex
             // TODO: Proper cleanup
              free(all_latencies); free(threads); free(thread_args); // Basic cleanup
             return -1;
@@ -258,7 +258,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
 #else
         int rc = pthread_create(&threads[i], NULL, client_thread_func, &thread_args[i]);
         if (rc) {
-            log_message(LOG_LEVEL_ERROR, "Failed to create client thread %zu: %s", i, strerror(rc));
+            mcp_log_error("Failed to create client thread %zu: %s", i, strerror(rc));
              // TODO: Proper cleanup
              free(all_latencies); free(threads); free(thread_args); // Basic cleanup
             return -1;
@@ -294,7 +294,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
                     all_latencies[current_latency_write_idx++] = latency;
                  } else {
                      // Should not happen if allocation was correct
-                     log_message(LOG_LEVEL_WARN, "Latency array overflow during aggregation.");
+                     mcp_log_warn("Latency array overflow during aggregation.");
                  }
             }
         }
@@ -322,7 +322,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
         // Calculate Percentiles (requires sorting successful latencies)
         // We have already compacted successful latencies into the start of all_latencies
         if (current_latency_write_idx != result->successful_requests) {
-             log_message(LOG_LEVEL_WARN, "Mismatch between successful requests (%zu) and compacted latencies (%zu). Percentiles might be inaccurate.",
+             mcp_log_warn("Mismatch between successful requests (%zu) and compacted latencies (%zu). Percentiles might be inaccurate.",
                      result->successful_requests, current_latency_write_idx);
              // Use the smaller count to avoid reading uninitialized memory
              size_t count_for_sort = (current_latency_write_idx < result->successful_requests) ? current_latency_write_idx : result->successful_requests;
@@ -365,7 +365,7 @@ int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result
         result->requests_per_second = 0;
     }
 
-    log_message(LOG_LEVEL_INFO, "Benchmark '%s' finished.", config->name);
+    mcp_log_info("Benchmark '%s' finished.", config->name);
 
     // --- Cleanup ---
     free(all_latencies);

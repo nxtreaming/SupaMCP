@@ -66,13 +66,13 @@ static mcp_error_code_t parse_string_array(mcp_json_t* json_array, char*** out_a
         mcp_json_t* item = mcp_json_array_get_item(json_array, (int)i);
         const char* str_val = NULL;
         if (!item || mcp_json_get_type(item) != MCP_JSON_STRING || mcp_json_get_string(item, &str_val) != 0 || !str_val) {
-            log_message(LOG_LEVEL_ERROR, "Gateway config: Expected string in array at index %zu", i);
+            mcp_log_error("Gateway config: Expected string in array at index %zu", i);
             free_string_array(result_array, i); // Free partially allocated array
             return MCP_ERROR_PARSE_ERROR;
         }
         result_array[(int)i] = mcp_strdup(str_val);
         if (!result_array[(int)i]) {
-            log_message(LOG_LEVEL_ERROR, "Gateway config: Failed to duplicate string '%s'", str_val);
+            mcp_log_error("Gateway config: Failed to duplicate string '%s'", str_val);
             free_string_array(result_array, i); // Free partially allocated array
             return MCP_ERROR_INTERNAL_ERROR;
         }
@@ -106,7 +106,7 @@ mcp_error_code_t load_gateway_config(
     // 1. Read file content
     FILE* fp = fopen(config_path, "rb"); // Use "rb" for cross-platform consistency
     if (!fp) {
-        log_message(LOG_LEVEL_ERROR, "Failed to open gateway config file: %s", config_path);
+        mcp_log_error("Failed to open gateway config file: %s", config_path);
         return MCP_ERROR_INVALID_REQUEST; // Treat file not found/readable as invalid request context
     }
 
@@ -115,14 +115,14 @@ mcp_error_code_t load_gateway_config(
     fseek(fp, 0, SEEK_SET);
 
     if (file_size <= 0) {
-        log_message(LOG_LEVEL_WARN, "Gateway config file is empty or invalid size: %s", config_path);
+        mcp_log_warn("Gateway config file is empty or invalid size: %s", config_path);
         fclose(fp);
         return MCP_ERROR_NONE; // Empty config is not an error, just results in 0 backends
     }
 
     file_content = (char*)malloc(file_size + 1);
     if (!file_content) {
-        log_message(LOG_LEVEL_ERROR, "Failed to allocate memory to read gateway config file: %s", config_path);
+        mcp_log_error("Failed to allocate memory to read gateway config file: %s", config_path);
         fclose(fp);
         return MCP_ERROR_INTERNAL_ERROR;
     }
@@ -131,7 +131,7 @@ mcp_error_code_t load_gateway_config(
     fclose(fp);
 
     if (bytes_read != (size_t)file_size) {
-        log_message(LOG_LEVEL_ERROR, "Failed to read entire gateway config file: %s", config_path);
+        mcp_log_error("Failed to read entire gateway config file: %s", config_path);
         free(file_content);
         return MCP_ERROR_INTERNAL_ERROR;
     }
@@ -146,12 +146,12 @@ mcp_error_code_t load_gateway_config(
     file_content = NULL;
 
     if (!root_json) {
-        log_message(LOG_LEVEL_ERROR, "Failed to parse gateway config JSON: %s", config_path);
+        mcp_log_error("Failed to parse gateway config JSON: %s", config_path);
         return MCP_ERROR_PARSE_ERROR;
     }
 
     if (mcp_json_get_type(root_json) != MCP_JSON_ARRAY) {
-        log_message(LOG_LEVEL_ERROR, "Gateway config: Root element must be an array: %s", config_path);
+        mcp_log_error("Gateway config: Root element must be an array: %s", config_path);
         // mcp_json_destroy(root_json); // Assuming arena cleanup handles this
         return MCP_ERROR_PARSE_ERROR;
     }
@@ -159,7 +159,7 @@ mcp_error_code_t load_gateway_config(
     // 3. Iterate and parse each backend object
     size_t num_backends_in_json = mcp_json_array_get_size(root_json);
     if (num_backends_in_json == 0) {
-        log_message(LOG_LEVEL_INFO, "Gateway config file contains an empty array. No backends loaded.");
+        mcp_log_info("Gateway config file contains an empty array. No backends loaded.");
         // mcp_json_destroy(root_json);
         return MCP_ERROR_NONE; // Valid empty config
     }
@@ -168,7 +168,7 @@ mcp_error_code_t load_gateway_config(
     backend_capacity = num_backends_in_json;
     temp_list = (mcp_backend_info_t*)malloc(backend_capacity * sizeof(mcp_backend_info_t));
     if (!temp_list) {
-        log_message(LOG_LEVEL_ERROR, "Gateway config: Failed to allocate temporary backend list.");
+        mcp_log_error("Gateway config: Failed to allocate temporary backend list.");
         // mcp_json_destroy(root_json);
         return MCP_ERROR_INTERNAL_ERROR;
     }
@@ -177,7 +177,7 @@ mcp_error_code_t load_gateway_config(
     for (size_t i = 0; i < num_backends_in_json; i++) {
         mcp_json_t* backend_obj = mcp_json_array_get_item(root_json, (int)i);
         if (!backend_obj || mcp_json_get_type(backend_obj) != MCP_JSON_OBJECT) {
-            log_message(LOG_LEVEL_ERROR, "Gateway config: Array element at index %zu is not an object.", i);
+            mcp_log_error("Gateway config: Array element at index %zu is not an object.", i);
             err = MCP_ERROR_PARSE_ERROR;
             goto cleanup_error;
         }
@@ -193,15 +193,15 @@ mcp_error_code_t load_gateway_config(
         const char* address_str = NULL;
 
         if (!name_node || mcp_json_get_type(name_node) != MCP_JSON_STRING || mcp_json_get_string(name_node, &name_str) != 0 || !name_str) {
-            log_message(LOG_LEVEL_ERROR, "Gateway config: Backend at index %zu missing or invalid 'name' string.", i);
+            mcp_log_error("Gateway config: Backend at index %zu missing or invalid 'name' string.", i);
             err = MCP_ERROR_PARSE_ERROR; goto cleanup_error;
         }
         if (!address_node || mcp_json_get_type(address_node) != MCP_JSON_STRING || mcp_json_get_string(address_node, &address_str) != 0 || !address_str) {
-            log_message(LOG_LEVEL_ERROR, "Gateway config: Backend '%s' missing or invalid 'address' string.", name_str ? name_str : "?");
+            mcp_log_error("Gateway config: Backend '%s' missing or invalid 'address' string.", name_str ? name_str : "?");
             err = MCP_ERROR_PARSE_ERROR; goto cleanup_error;
         }
         if (!routing_node || mcp_json_get_type(routing_node) != MCP_JSON_OBJECT) {
-            log_message(LOG_LEVEL_ERROR, "Gateway config: Backend '%s' missing or invalid 'routing' object.", name_str);
+            mcp_log_error("Gateway config: Backend '%s' missing or invalid 'routing' object.", name_str);
             err = MCP_ERROR_PARSE_ERROR; goto cleanup_error;
         }
 
@@ -209,7 +209,7 @@ mcp_error_code_t load_gateway_config(
         current_backend->name = mcp_strdup(name_str);
         current_backend->address = mcp_strdup(address_str);
         if (!current_backend->name || !current_backend->address) {
-            log_message(LOG_LEVEL_ERROR, "Gateway config: Failed to duplicate name/address for backend '%s'.", name_str);
+            mcp_log_error("Gateway config: Failed to duplicate name/address for backend '%s'.", name_str);
             err = MCP_ERROR_INTERNAL_ERROR; goto cleanup_error;
         }
 
@@ -219,12 +219,12 @@ mcp_error_code_t load_gateway_config(
 
         err = parse_string_array(prefixes_node, &current_backend->routing.resource_prefixes, &current_backend->routing.resource_prefix_count);
         if (err != MCP_ERROR_NONE) {
-             log_message(LOG_LEVEL_ERROR, "Gateway config: Failed to parse 'resource_prefixes' for backend '%s'.", name_str);
+             mcp_log_error("Gateway config: Failed to parse 'resource_prefixes' for backend '%s'.", name_str);
              goto cleanup_error;
         }
         err = parse_string_array(tools_node, &current_backend->routing.tool_names, &current_backend->routing.tool_name_count);
         if (err != MCP_ERROR_NONE) {
-             log_message(LOG_LEVEL_ERROR, "Gateway config: Failed to parse 'tool_names' for backend '%s'.", name_str);
+             mcp_log_error("Gateway config: Failed to parse 'tool_names' for backend '%s'.", name_str);
              goto cleanup_error;
         }
 
@@ -246,7 +246,7 @@ mcp_error_code_t load_gateway_config(
             backend_capacity *= 2;
             mcp_backend_info_t* new_list = (mcp_backend_info_t*)realloc(temp_list, backend_capacity * sizeof(mcp_backend_info_t));
             if (!new_list) {
-                log_message(LOG_LEVEL_ERROR, "Gateway config: Failed to realloc temporary backend list.");
+                mcp_log_error("Gateway config: Failed to realloc temporary backend list.");
                 err = MCP_ERROR_INTERNAL_ERROR; goto cleanup_error;
             }
             temp_list = new_list;

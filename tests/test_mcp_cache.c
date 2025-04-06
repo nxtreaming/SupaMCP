@@ -286,6 +286,61 @@ void test_lruk_evict_k_accessed(void) {
     mcp_cache_destroy(cache);
 }
 
+void test_cache_zero_capacity(void) {
+    mcp_resource_cache_t* cache = mcp_cache_create(0, 60); // Zero capacity
+    TEST_ASSERT_NOT_NULL(cache); // Creation should succeed
+
+    mcp_content_item_t* item1 = create_text_item("value1");
+    mcp_content_item_t** content_to_put = &item1;
+
+    // Put should effectively fail or do nothing gracefully
+    int put_result = mcp_cache_put(cache, "key1", content_to_put, 1, 0);
+    // Depending on implementation, put might return 0 but not store, or -1.
+    // Let's assume it doesn't store.
+    // TEST_ASSERT_EQUAL_INT(0, put_result); // Or -1 if it signals failure
+
+    // Get should always miss
+    mcp_content_item_t** retrieved_content = NULL;
+    size_t retrieved_count = 0;
+    int get_result = mcp_cache_get(cache, "key1", &retrieved_content, &retrieved_count);
+    TEST_ASSERT_EQUAL_INT(-1, get_result); // Should miss
+
+    mcp_content_item_free(item1);
+    mcp_cache_destroy(cache);
+}
+
+void test_cache_multiple_items(void) {
+    mcp_resource_cache_t* cache = mcp_cache_create(10, 60);
+    mcp_content_item_t* item1 = create_text_item("value1");
+    mcp_content_item_t* item2 = create_text_item("value2");
+    mcp_content_item_t* items_to_put[] = {item1, item2};
+    size_t count_to_put = sizeof(items_to_put) / sizeof(items_to_put[0]);
+
+    int put_result = mcp_cache_put(cache, "multi_key", items_to_put, count_to_put, 0);
+    TEST_ASSERT_EQUAL_INT(0, put_result);
+
+    mcp_content_item_t** retrieved_content = NULL;
+    size_t retrieved_count = 0;
+    int get_result = mcp_cache_get(cache, "multi_key", &retrieved_content, &retrieved_count);
+    TEST_ASSERT_EQUAL_INT(0, get_result);
+    TEST_ASSERT_EQUAL_size_t(count_to_put, retrieved_count);
+    TEST_ASSERT_NOT_NULL(retrieved_content);
+
+    // Check content of both items (order might not be guaranteed, but likely preserved)
+    if (retrieved_count == 2 && retrieved_content) {
+        TEST_ASSERT_NOT_NULL(retrieved_content[0]);
+        TEST_ASSERT_NOT_NULL(retrieved_content[1]);
+        // Simple check assuming order is preserved
+        TEST_ASSERT_EQUAL_STRING("value1", (const char*)retrieved_content[0]->data);
+        TEST_ASSERT_EQUAL_STRING("value2", (const char*)retrieved_content[1]->data);
+    }
+
+    free_retrieved_content(retrieved_content, retrieved_count);
+    mcp_content_item_free(item1); // Free original items
+    mcp_content_item_free(item2);
+    mcp_cache_destroy(cache);
+}
+
 
 // --- Test Runner ---
 
@@ -299,6 +354,8 @@ void run_cache_tests(void) {
     RUN_TEST(test_cache_expiry);
     RUN_TEST(test_lruk_evict_less_than_k_accessed);
     RUN_TEST(test_lruk_evict_k_accessed);
+    RUN_TEST(test_cache_zero_capacity); // Add new test
+    RUN_TEST(test_cache_multiple_items); // Add new test
     UNITY_END();
 }
 

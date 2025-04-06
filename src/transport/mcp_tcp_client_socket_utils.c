@@ -58,20 +58,20 @@ int connect_to_server(mcp_tcp_client_transport_data_t* data) {
     hints.ai_socktype = SOCK_STREAM;
 
     if ((rv = getaddrinfo(data->host, port_str, &hints, &servinfo)) != 0) {
-        log_message(LOG_LEVEL_ERROR, "getaddrinfo failed: %s", gai_strerror(rv));
+        mcp_log_error("getaddrinfo failed: %s", gai_strerror(rv));
         return -1;
     }
 
     // Loop through all the results and connect to the first we can
     for(p = servinfo; p != NULL; p = p->ai_next) {
         if ((data->sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == INVALID_SOCKET_VAL) {
-            log_message(LOG_LEVEL_WARN, "Client socket creation failed: %d", sock_errno);
+            mcp_log_warn("Client socket creation failed: %d", sock_errno);
             continue;
         }
 
         // Blocking connect for client transport simplicity
         if (connect(data->sock, p->ai_addr, (int)p->ai_addrlen) == SOCKET_ERROR_VAL) {
-            log_message(LOG_LEVEL_WARN, "Client connect failed: %d", sock_errno);
+            mcp_log_warn("Client connect failed: %d", sock_errno);
             close_socket(data->sock);
             data->sock = INVALID_SOCKET_VAL;
             continue;
@@ -83,11 +83,11 @@ int connect_to_server(mcp_tcp_client_transport_data_t* data) {
     freeaddrinfo(servinfo); // All done with this structure
 
     if (p == NULL) {
-        log_message(LOG_LEVEL_ERROR, "Client failed to connect to %s:%u", data->host, data->port);
+        mcp_log_error("Client failed to connect to %s:%u", data->host, data->port);
         return -1;
     }
 
-    log_message(LOG_LEVEL_INFO, "Client connected to %s:%u on socket %d", data->host, data->port, (int)data->sock);
+    mcp_log_info("Client connected to %s:%u on socket %d", data->host, data->port, (int)data->sock);
     data->connected = true;
     return 0;
  }
