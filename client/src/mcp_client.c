@@ -147,14 +147,8 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
             client_transport_error_callback
         ) != 0)
     {
-        // Cleanup if start fails
-        free(client->pending_requests_table);
-#ifdef _WIN32
-        DeleteCriticalSection(&client->pending_requests_mutex);
-#else
-        pthread_mutex_destroy(&client->pending_requests_mutex);
-#endif
-        mcp_client_destroy(client); // Will destroy transport
+        // Mutex/CS will be destroyed by the mcp_client_destroy call below
+        mcp_client_destroy(client); // Will destroy transport and mutex/CS
         return NULL;
     }
 

@@ -72,7 +72,8 @@ int main(int argc, char** argv) {
     mcp_client_t* client = mcp_client_create(&client_config, transport);
     if (client == NULL) {
         fprintf(stderr, "Failed to create client\n");
-        mcp_transport_destroy(transport); // Use generic destroy
+        //NOTE: transport has been destroyed in mcp_client_create()
+        //mcp_transport_destroy(transport); // Use generic destroy
         return 1;
     }
 

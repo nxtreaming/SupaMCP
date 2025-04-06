@@ -34,6 +34,7 @@ static int tcp_client_transport_start(
 
     // Attempt to connect using helper from socket utils
     if (connect_to_server(data) != 0) {
+        mcp_log_error("Failed to connect to server %s:%d", data->host, data->port);
         cleanup_winsock_client(); // Cleanup winsock if connect failed
         return -1; // Connection failed
     }
