@@ -245,7 +245,7 @@ static int add_pending_request_entry(mcp_client_t* client, uint64_t id, pending_
     float load_factor = (float)(client->pending_requests_count + 1) / client->pending_requests_capacity;
     if (load_factor >= HASH_TABLE_MAX_LOAD_FACTOR) {
         if (resize_pending_requests_table(client) != 0) {
-            fprintf(stderr, "Failed to resize hash table for request %llu.\n", (unsigned long long)id);
+            mcp_log_error("Failed to resize hash table for request %llu.\n", (unsigned long long)id);
             return -1; // Resize failed
         }
         // After resize, capacity has changed, need to recalculate hash/index
@@ -255,12 +255,12 @@ static int add_pending_request_entry(mcp_client_t* client, uint64_t id, pending_
     pending_request_entry_t* entry = find_pending_request_entry(client, id, true);
 
     if (entry == NULL) {
-         fprintf(stderr, "Hash table full or failed to find slot for insert (ID: %llu)\n", (unsigned long long)id);
+         mcp_log_error("Hash table full or failed to find slot for insert (ID: %llu)\n", (unsigned long long)id);
          return -1; // Should not happen if resizing is implemented or table not full
     }
 
     if (entry->id == id) {
-         fprintf(stderr, "Error: Duplicate request ID found in hash table: %llu\n", (unsigned long long)id);
+         mcp_log_error("Error: Duplicate request ID found in hash table: %llu\n", (unsigned long long)id);
          // This indicates a logic error (ID reuse before completion) or hash collision issue not handled
          return -1;
     }
@@ -294,7 +294,7 @@ static int resize_pending_requests_table(mcp_client_t* client) {
     size_t new_capacity = client->pending_requests_capacity * 2;
     // Ensure capacity doesn't wrap around or become excessively large
     if (new_capacity <= client->pending_requests_capacity) {
-        fprintf(stderr, "Hash table resize failed: new capacity overflow or too large.\n");
+        mcp_log_error("Hash table resize failed: new capacity overflow or too large.\n");
         return -1;
     }
 
@@ -302,7 +302,7 @@ static int resize_pending_requests_table(mcp_client_t* client) {
         new_capacity, sizeof(pending_request_entry_t));
 
     if (new_table == NULL) {
-        fprintf(stderr, "Hash table resize failed: calloc returned NULL for new capacity %zu.\n", new_capacity);
+        mcp_log_error("Hash table resize failed: calloc returned NULL for new capacity %zu.\n", new_capacity);
         return -1; // Allocation failed
     }
 
@@ -337,7 +337,7 @@ static int resize_pending_requests_table(mcp_client_t* client) {
             // This should not happen if the load factor is managed correctly (<1.0)
             // and the new capacity is larger.
             if (index == original_index) {
-                fprintf(stderr, "Hash table resize failed: Could not find empty slot during rehash for ID %llu.\n", (unsigned long long)old_entry->id);
+                mcp_log_error ("Hash table resize failed: Could not find empty slot during rehash for ID %llu.\n", (unsigned long long)old_entry->id);
                 free(new_table); // Clean up the partially filled new table
                 return -1; // Indicate critical failure
             }
@@ -346,7 +346,7 @@ static int resize_pending_requests_table(mcp_client_t* client) {
 
     // Sanity check: ensure all original items were rehashed
     if (rehashed_count != client->pending_requests_count) {
-         fprintf(stderr, "Hash table resize warning: Rehashed count (%zu) does not match original count (%zu).\n", rehashed_count, client->pending_requests_count);
+         mcp_log_error("Hash table resize warning: Rehashed count (%zu) does not match original count (%zu).\n", rehashed_count, client->pending_requests_count);
          // This might indicate an issue with tracking pending_requests_count or the rehashing logic.
          // Proceeding, but this warrants investigation.
     }
@@ -357,7 +357,7 @@ static int resize_pending_requests_table(mcp_client_t* client) {
     client->pending_requests_table = new_table;
     client->pending_requests_capacity = new_capacity;
 
-    fprintf(stdout, "Resized pending requests hash table to capacity %zu\n", new_capacity); // Optional: Log resize event
+    mcp_log_info("Resized pending requests hash table to capacity %zu\n", new_capacity); // Optional: Log resize event
     return 0; // Success
 }
 
@@ -374,7 +374,7 @@ static void client_transport_error_callback(void* user_data, int transport_error
     mcp_client_t* client = (mcp_client_t*)user_data;
     if (client == NULL) return;
 
-    fprintf(stderr, "Transport error detected (code: %d). Notifying waiting requests.\n", transport_error_code);
+    mcp_log_info("Transport error detected (code: %d). Notifying waiting requests.\n", transport_error_code);
 
     // Lock the mutex to safely access the pending requests table
 #ifdef _WIN32
@@ -540,7 +540,7 @@ static int mcp_client_send_request(
         // Destroy the CV we initialized if add failed
         pthread_cond_destroy(&pending_req.cv);
 #endif
-        fprintf(stderr, "Failed to add request %llu to hash table.\n", (unsigned long long)pending_req.id);
+        mcp_log_error("Failed to add request %llu to hash table.\n", (unsigned long long)pending_req.id);
         return -1; // Failed to add to hash table
     }
 #ifdef _WIN32
@@ -597,7 +597,7 @@ static int mcp_client_send_request(
              wait_status = -1; // Error already set
         } else {
              // This case should ideally not happen if send succeeded. Log it.
-             fprintf(stderr, "Request %llu not found in table after send.\n", (unsigned long long)pending_req.id);
+             mcp_log_error("Request %llu not found in table after send.\n", (unsigned long long)pending_req.id);
              wait_status = -1;
         }
     }
@@ -646,7 +646,7 @@ static int mcp_client_send_request(
         if (*error_code != MCP_ERROR_NONE) {
              wait_status = -1; // Error already set
         } else {
-             fprintf(stderr, "Request %llu not found in table after send.\n", (unsigned long long)pending_req.id);
+             mcp_log_error("Request %llu not found in table after send.\n", (unsigned long long)pending_req.id);
              wait_status = -1;
         }
     }
@@ -660,14 +660,14 @@ static int mcp_client_send_request(
 
     // 5. Return status based on wait result
     if (wait_status == -2) { // Timeout case
-        fprintf(stderr, "Request %llu timed out.\n", (unsigned long long)pending_req.id);
+        mcp_log_error("Request %llu timed out.\n", (unsigned long long)pending_req.id);
         *error_code = MCP_ERROR_TRANSPORT_ERROR; // Use a generic transport error for timeout
         // Allocate error message using our helper
         *error_message = mcp_strdup("Request timed out");
         // If mcp_strdup fails, error_message will be NULL, which is acceptable
         return -1; // Return error for timeout
     } else if (wait_status != 0) { // Other wait error or error signaled by callback
-         fprintf(stderr, "Error waiting for response for request %llu.\n", (unsigned long long)pending_req.id);
+         mcp_log_error("Error waiting for response for request %llu.\n", (unsigned long long)pending_req.id);
          // error_code and error_message should have been set by the callback
          // (client_receive_callback or client_transport_error_callback) if status is ERROR.
          // Check if an error message was actually allocated by the callback.
@@ -753,7 +753,7 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
 
     // Parse the response
     if (mcp_json_parse_response(response_json, &id, &resp_error_code, &resp_error_message, &resp_result) != 0) {
-        fprintf(stderr, "Client failed to parse response JSON: %s\n", response_json);
+        mcp_log_error("Client failed to parse response JSON: %s\n", response_json);
         *error_code = MCP_ERROR_PARSE_ERROR;
         // Cannot signal specific request on parse error, maybe log?
         return NULL;
@@ -801,7 +801,7 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
             // Note: We don't remove the entry here. The waiting thread will remove it after waking up.
         } else {
             // Request already timed out or errored, discard response
-            fprintf(stderr, "Received response for already completed/timed out request %llu\n", (unsigned long long)id);
+            mcp_log_error("Received response for already completed/timed out request %llu\n", (unsigned long long)id);
             free(resp_error_message);
             free(resp_result);
         }
@@ -1024,4 +1024,3 @@ int mcp_client_call_tool(
     return 0;
 }
 
-// Free functions moved to mcp_types.c
