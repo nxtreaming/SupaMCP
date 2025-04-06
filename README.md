@@ -7,6 +7,7 @@ A cross-platform implementation of the Model Context Protocol (MCP) server in C.
 - Cross-platform support (Windows, macOS, Linux)
 - Multiple transport options (stdio, TCP)
 - Resource and tool support
+- **MCP Gateway Mode:** Can act as a gateway to route requests to downstream MCP servers.
 - Extensible architecture
 - WebSocket transport placeholder (not implemented yet)
 
@@ -25,10 +26,12 @@ The project is organized into three main components:
    - JSON-RPC message formatting and parsing
    - Transport layer (stdio, TCP, with WebSocket placeholders for future implementation)
    - Common data types and utilities
+   - Connection Pooling
 
 2. **Server (mcp_server)**: Implements the MCP server functionality.
-   - Resource handling
-   - Tool handling
+   - Resource handling (local)
+   - Tool handling (local)
+   - **Gateway Routing:** Routes requests to configured backends based on resource prefixes or tool names.
    - Server configuration and management
 
 3. **Client (mcp_client)**: Implements the MCP client functionality.
@@ -145,8 +148,35 @@ mcp_server --help
 | `--port PORT` | Port to bind to | 8080 |
 | `--log-file FILE` | Log to file | - |
 | `--log-level LEVEL` | Set log level (error, warn, info, debug) | info |
+| `--api-key KEY` | Require API key for authentication | - |
 | `--daemon` | Run as daemon (Unix-like systems only) | - |
+| `--gateway` | Enable MCP Gateway mode (requires `gateway_config.json`) | - |
 | `--help` | Show help message | - |
+
+### Gateway Mode
+
+When run with the `--gateway` flag, the server acts as an MCP Gateway. It loads backend server configurations from `gateway_config.json` (located in the same directory as the executable).
+
+The `gateway_config.json` file should be a JSON array of backend objects, each with the following structure:
+
+```json
+[
+  {
+    "name": "unique_backend_name",
+    "address": "tcp://host:port", // Currently only tcp:// supported for backends
+    "routing": {
+      "resource_prefixes": ["prefix1://", "prefix2://"], // Optional: URIs starting with these are routed
+      "tool_names": ["tool1", "tool2"]                 // Optional: These tools are routed
+    },
+    "timeout_ms": 5000 // Optional: Request timeout for this backend (milliseconds)
+  }
+  // ... more backends
+]
+```
+
+- Requests for `read_resource` matching a `resource_prefix` will be forwarded.
+- Requests for `call_tool` matching a `tool_name` will be forwarded.
+- All other requests (or requests not matching any routing rule) will be handled locally by the gateway server itself (using its own example resources/tools or registered handlers).
 
 ### Client Usage
 

@@ -121,8 +121,39 @@ To create your own MCP server:
     // ... wait loop ...
 
     mcp_server_destroy(server); // Stops and cleans up server resources
-    mcp_transport_destroy(transport); // Clean up transport separately
+    // Transport is destroyed by mcp_server_destroy if started
     ```
+
+## Gateway Mode
+
+The server can optionally run in Gateway mode by passing the `--gateway` command-line flag.
+
+When in Gateway mode:
+1.  The server attempts to load backend configurations from `gateway_config.json` located in the current working directory.
+2.  It creates connection pools for configured TCP backends.
+3.  Incoming `read_resource` and `call_tool` requests are checked against the routing rules defined in the configuration.
+4.  If a matching rule is found for a TCP backend with a valid connection pool, the request is forwarded to that backend, and the backend's response is relayed to the original client.
+5.  If no routing rule matches, or if the server is not run with `--gateway`, the request is handled by the server's local resource/tool handlers (if registered).
+
+**Configuration (`gateway_config.json`):**
+
+The file should contain a JSON array of backend objects:
+
+```json
+[
+  {
+    "name": "unique_backend_name",
+    "address": "tcp://host:port", // Only tcp:// currently supported
+    "routing": {
+      "resource_prefixes": ["prefix1://", ...], // Optional
+      "tool_names": ["tool1", ...]              // Optional
+    },
+    "timeout_ms": 5000 // Optional (milliseconds)
+  }
+]
+```
+
+**Note:** Currently, only TCP backends are fully supported for forwarding. Stdio backends defined in the config will not have connection pools created.
 
 ## Integrating the Client
 
