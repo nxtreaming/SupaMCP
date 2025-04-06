@@ -150,109 +150,13 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
         const mcp_backend_info_t* target_backend = find_backend_for_request(request, server->backends, server->backend_count);
 
         if (target_backend) {
-            // Found a backend to route to.
-            mcp_log_info("Request for method '%s' routed to backend '%s'. Attempting to forward...", request->method, target_backend->name);
-
-            // Check if the pool was initialized successfully
-            if (target_backend->pool == NULL) {
-                mcp_log_error("Cannot forward request: Connection pool for backend '%s' is not available.", target_backend->name);
-                *error_code = MCP_ERROR_INTERNAL_ERROR;
-                return create_error_response(request->id, *error_code, "Backend connection pool unavailable.");
-            }
-
-            // 1. Get a connection from the pool
-            // Use backend-specific timeout if available, otherwise a default (e.g., 5000ms)
-            int get_timeout_ms = target_backend->timeout_ms > 0 ? (int)target_backend->timeout_ms : 5000;
-            SOCKET backend_socket = mcp_connection_pool_get(target_backend->pool, get_timeout_ms);
-
-            if (backend_socket == INVALID_SOCKET) {
-                mcp_log_error("Failed to get connection from pool for backend '%s'.", target_backend->name);
-                *error_code = MCP_ERROR_INTERNAL_ERROR; // Or maybe a specific gateway/timeout error?
-                return create_error_response(request->id, *error_code, "Failed to connect to backend service.");
-            }
-
-            mcp_log_debug("Obtained connection socket %d for backend '%s'.", (int)backend_socket, target_backend->name);
-
-            char* backend_request_json = NULL;
-            char* backend_response_json = NULL;
-            size_t backend_response_len = 0;
-            int forward_status = 0; // 0 = success, < 0 = error
-            bool connection_is_valid = true; // Assume valid initially
-
-            // 2. Construct request payload
-            // We need to re-stringify the params part of the original request.
-            // The original request->params might be a parsed mcp_json_t* or a raw string.
-            // For simplicity, let's assume it's a raw string for now (as parsed by mcp_json_parse_message).
-            // If it were a parsed object, we'd need mcp_json_stringify.
-            // NOTE: This assumes the backend expects the exact same params format.
-            //       A more robust gateway might transform params.
-            const char* params_str = (request->params != NULL) ? (const char*)request->params : "{}";
-            // Use the correct function name: mcp_json_create_request
-            backend_request_json = mcp_json_create_request(request->method, params_str, request->id);
-            if (!backend_request_json) {
-                mcp_log_error("Failed to create request JSON for backend '%s'.", target_backend->name);
-                forward_status = -1;
-                *error_code = MCP_ERROR_INTERNAL_ERROR;
-                goto forward_cleanup; // Skip send/recv
-            }
-
-            // 3. Send request to backend
-            int send_timeout_ms = target_backend->timeout_ms > 0 ? (int)target_backend->timeout_ms : 5000;
-            int send_status = gateway_send_message(backend_socket, backend_request_json, send_timeout_ms);
-            free(backend_request_json); // Free the formatted request string
-            backend_request_json = NULL;
-
-            if (send_status != 0) {
-                mcp_log_error("Failed to send request to backend '%s' (status: %d).", target_backend->name, send_status);
-                forward_status = -1;
-                *error_code = MCP_ERROR_TRANSPORT_ERROR;
-                connection_is_valid = false; // Connection likely broken
-                goto forward_cleanup; // Skip recv
-            }
-
-            // 4. Receive response from backend
-            int recv_timeout_ms = target_backend->timeout_ms > 0 ? (int)target_backend->timeout_ms : 5000;
-            // Use MAX_MCP_MESSAGE_SIZE from mcp_types.h
-            int recv_status = gateway_receive_message(backend_socket, &backend_response_json, &backend_response_len, MAX_MCP_MESSAGE_SIZE, recv_timeout_ms);
-
-            if (recv_status != 0) {
-                mcp_log_error("Failed to receive response from backend '%s' (status: %d).", target_backend->name, recv_status);
-                forward_status = -1;
-                *error_code = (recv_status == -2) ? MCP_ERROR_TRANSPORT_ERROR /*Timeout*/ : MCP_ERROR_TRANSPORT_ERROR;
-                connection_is_valid = (recv_status != -3); // Connection is invalid unless it was just closed cleanly (-3)
-                // backend_response_json is already NULL or freed by gateway_receive_message on error
-                goto forward_cleanup;
-            }
-
-            // 5. Success: We have the response from the backend.
-            // We simply return this raw response string. The caller (handle_message -> transport)
-            // will send it back to the original client.
-            // Ownership of backend_response_json is transferred to the caller.
-            forward_status = 0;
-            *error_code = MCP_ERROR_NONE;
-
-        forward_cleanup:
-            // Release the connection back to the pool
-            mcp_log_debug("Releasing connection socket %d for backend '%s' (valid: %s).",
-                          (int)backend_socket, target_backend->name, connection_is_valid ? "true" : "false");
-            mcp_connection_pool_release(target_backend->pool, backend_socket, connection_is_valid);
-
-            // Return result or error response
-            if (forward_status == 0) {
-                // Success: Return the raw JSON response received from the backend.
-                // The caller (transport layer) is responsible for sending this string
-                // and eventually freeing it.
-                return backend_response_json;
-            } else {
-                // Error occurred during forwarding
-                free(backend_response_json); // Free if allocated before error
-                // Create an error response for the original client
-                const char* error_msg = (*error_code == MCP_ERROR_TRANSPORT_ERROR) ? "Backend connection or timeout error" : "Gateway internal forwarding error";
-                return create_error_response(request->id, *error_code, error_msg);
-            }
+            // Found a backend to route to. Call the extracted forwarding function.
+            // The gateway_forward_request function now handles pool interaction, send/recv,
+            // and returns either the backend's response or an error response, already malloc'd.
+            // It also sets the error_code appropriately.
+            return gateway_forward_request(target_backend, request, error_code);
         }
-        // If target_backend is NULL after find_backend_for_request in gateway mode,
-        // fall through to local handling.
+        // If target_backend is NULL, fall through to local handling.
     }
     // --- End Gateway Routing Check ---
 
