@@ -27,6 +27,7 @@
 #include "mcp_profiler.h"
 #include "mcp_json.h"
 #include "gateway.h"
+#include "mcp_thread_local.h"
 
 
 // Global server instance for signal handling
@@ -459,12 +460,24 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Initialize thread-local storage (arena) for the main thread BEFORE using it (e.g., in JSON parsing)
+    // Using 1MB as the initial size. Adjust if needed.
+    if (mcp_init_thread_arena(1024 * 1024) != 0) {
+        mcp_log_error("Failed to initialize thread-local arena for main thread.");
+        mcp_server_destroy(g_server); g_server = NULL;
+        return 1;
+    }
+
     // Load gateway configuration
     // TODO: Make config path configurable? Using absolute path for testing.
     const char* gateway_config_path = "d:/workspace/SupaMCPServer/gateway_config.json";
     mcp_error_code_t load_err = load_gateway_config(gateway_config_path, &g_backends, &g_backend_count);
     if (load_err != MCP_ERROR_NONE && load_err != MCP_ERROR_INVALID_REQUEST /* Allow file not found */) {
         mcp_log_error("Failed to load gateway config '%s' (Error %d). Exiting.", gateway_config_path, load_err);
+        // Note: No need to explicitly call mcp_thread_local_destroy here,
+        // as the cleanup function registered with atexit should handle it if necessary,
+        // or it might be implicitly cleaned up on process exit.
+        // If explicit cleanup is needed, it should be added to the cleanup() function.
         mcp_server_destroy(g_server); g_server = NULL;
         return 1;
     } else if (load_err == MCP_ERROR_NONE) {

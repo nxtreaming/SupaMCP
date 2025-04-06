@@ -10,7 +10,8 @@
 #include "mcp_client.h"
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_client_transport.h"
-#include  "mcp_log.h"
+#include "mcp_log.h"
+#include "mcp_thread_local.h"
 
 int main(int argc, char** argv) {
     // Default transport
@@ -19,6 +20,14 @@ int main(int argc, char** argv) {
     uint16_t port = 8080;
 
     mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG); // Use new init and enum
+
+    // Initialize thread-local storage (arena) for the main thread
+    // Using 1MB as the initial size. Adjust if needed.
+    if (mcp_init_thread_arena(1024 * 1024) != 0) {
+        fprintf(stderr, "Failed to initialize thread-local arena for main thread.\n");
+        mcp_log_close(); // Close log before exiting
+        return 1;
+    }
 
     // Basic argument parsing
     if (argc > 1) {
@@ -191,6 +200,9 @@ int main(int argc, char** argv) {
 
     printf("Exiting client...\n");
     mcp_client_destroy(client); // This will also stop and destroy the transport
+
+    mcp_cleanup_thread_arena(); // Clean up thread-local arena
+    mcp_log_close(); // Close log file if open
 
     return 0;
 }
