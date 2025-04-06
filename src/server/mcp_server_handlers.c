@@ -1,5 +1,5 @@
 #include "internal/server_internal.h"
-#include "mcp_auth.h" // Include auth header for context and checks
+#include "mcp_auth.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -214,6 +214,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     mcp_json_t* uri_json = mcp_json_object_get_property(params_json, "uri");
     const char* uri = NULL;
     if (uri_json == NULL || mcp_json_get_type(uri_json) != MCP_JSON_STRING || mcp_json_get_string(uri_json, &uri) != 0 || uri == NULL) {
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INVALID_PARAMS;
         char* response = create_error_response(request->id, *error_code, "Missing or invalid 'uri' parameter");
         PROFILE_END("handle_read_resource");
@@ -222,7 +223,8 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 
     // --- Permission Check ---
     if (!mcp_auth_check_resource_access(auth_context, uri)) {
-        *error_code = MCP_ERROR_FORBIDDEN; // Use a specific permission error
+        mcp_json_destroy(params_json);
+        *error_code = MCP_ERROR_FORBIDDEN;
         char* response = create_error_response(request->id, *error_code, "Access denied to resource");
         PROFILE_END("handle_read_resource");
         return response;
@@ -270,6 +272,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
                     free(content_items);
                     content_items = NULL;
                 }
+                mcp_json_destroy(params_json);
                 *error_code = handler_status;
                 const char* msg = handler_error_message ? handler_error_message : "Resource handler failed or resource not found";
                 char* response = create_error_response(request->id, *error_code, msg);
@@ -279,6 +282,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
             }
 
             if (content_items == NULL || content_count == 0) {
+                 mcp_json_destroy(params_json);
                  free(handler_error_message);
                  *error_code = MCP_ERROR_INTERNAL_ERROR;
                  char* response = create_error_response(request->id, *error_code, "Resource handler returned success but no content");
@@ -287,6 +291,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
             }
             fetched_from_handler = true;
         } else {
+             mcp_json_destroy(params_json);
              *error_code = MCP_ERROR_INTERNAL_ERROR;
              char* response = create_error_response(request->id, *error_code, "Resource handler not configured");
              PROFILE_END("handle_read_resource");
@@ -310,6 +315,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
             for (size_t i = 0; i < content_count; i++) mcp_content_item_free(content_items[i]);
             free(content_items);
         }
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to create contents array");
         PROFILE_END("handle_read_resource");
@@ -340,6 +346,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 
     if (json_build_error) {
         mcp_json_destroy(contents_json);
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to build content item JSON");
         PROFILE_END("handle_read_resource");
@@ -350,6 +357,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     if (!result_obj || mcp_json_object_set_property(result_obj, "contents", contents_json) != 0) {
         mcp_json_destroy(contents_json);
         mcp_json_destroy(result_obj);
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to create result object");
         PROFILE_END("handle_read_resource");
@@ -359,12 +367,14 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     char* result_str = mcp_json_stringify(result_obj);
     mcp_json_destroy(result_obj);
     if (!result_str) {
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to stringify result");
         PROFILE_END("handle_read_resource");
         return response;
     }
 
+    mcp_json_destroy(params_json);
     char* response = create_success_response(request->id, result_str);
     PROFILE_END("handle_read_resource");
     return response;
@@ -545,6 +555,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     mcp_json_t* name_json = mcp_json_object_get_property(params_json, "name");
     const char* name = NULL;
     if (name_json == NULL || mcp_json_get_type(name_json) != MCP_JSON_STRING || mcp_json_get_string(name_json, &name) != 0 || name == NULL) {
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INVALID_PARAMS;
         char* response = create_error_response(request->id, *error_code, "Missing or invalid 'name' parameter");
         PROFILE_END("handle_call_tool");
@@ -553,6 +564,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
 
     // --- Permission Check ---
     if (!mcp_auth_check_tool_access(auth_context, name)) {
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_FORBIDDEN; // Use a specific permission error
         char* response = create_error_response(request->id, *error_code, "Access denied to tool");
         PROFILE_END("handle_call_tool");
@@ -599,6 +611,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
             free(content_items);
             content_items = NULL;
         }
+        mcp_json_destroy(params_json);
         *error_code = handler_status;
         const char* msg = handler_error_message ? handler_error_message : "Tool handler failed or tool not found";
         char* response = create_error_response(request->id, *error_code, msg);
@@ -615,6 +628,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
              free(content_items);
          }
          free(handler_error_message);
+         mcp_json_destroy(params_json);
          *error_code = MCP_ERROR_INTERNAL_ERROR;
          char* response = create_error_response(request->id, *error_code, "Failed to create content array");
          PROFILE_END("handle_call_tool");
@@ -656,6 +670,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
 
      if (json_build_error) {
         mcp_json_destroy(content_json);
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to build content item JSON");
         PROFILE_END("handle_call_tool");
@@ -669,6 +684,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     {
         mcp_json_destroy(content_json);
         mcp_json_destroy(result_obj);
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to create result object");
         PROFILE_END("handle_call_tool");
@@ -678,14 +694,15 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     char* result_str = mcp_json_stringify(result_obj);
     mcp_json_destroy(result_obj);
     if (!result_str) {
+        mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to stringify result");
         PROFILE_END("handle_call_tool");
         return response;
     }
 
+    mcp_json_destroy(params_json);
     char* response = create_success_response(request->id, result_str);
     PROFILE_END("handle_call_tool");
     return response;
 }
-
