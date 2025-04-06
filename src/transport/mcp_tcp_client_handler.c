@@ -4,6 +4,7 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include "mcp_thread_local.h"
 
 // Thread function to handle a single client connection
 #ifdef _WIN32
@@ -12,6 +13,19 @@ DWORD WINAPI tcp_client_handler_thread_func(LPVOID arg) {
 void* tcp_client_handler_thread_func(void* arg) {
 #endif
     tcp_client_connection_t* client_conn = (tcp_client_connection_t*)arg;
+
+    // --- Initialize Thread-Local Arena for this handler thread ---
+    // Use a reasonable default size, e.g., 1MB. Adjust if needed.
+    if (mcp_init_thread_arena(1024 * 1024) != 0) {
+        mcp_log_error("Failed to initialize thread-local arena for client handler thread. Exiting.");
+#ifdef _WIN32
+        return 1; // Indicate error
+#else
+        return NULL; // Indicate error
+#endif
+    }
+    mcp_log_debug("Thread-local arena initialized for client handler thread.");
+
 
     // --- Initial Sanity Check ---
     // Check if the handler was started with invalid arguments or an already invalid socket
@@ -469,6 +483,10 @@ client_cleanup:
 #endif
         close_socket(sock_to_close);
     }
+
+    // --- Cleanup Thread-Local Arena ---
+    mcp_cleanup_thread_arena();
+    mcp_log_debug("Thread-local arena cleaned up for client handler thread.");
 
 
 #ifdef _WIN32

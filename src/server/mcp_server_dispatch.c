@@ -32,65 +32,18 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     mcp_arena_t arena;
     mcp_arena_init(&arena, MCP_ARENA_DEFAULT_SIZE);
 
-    // Ensure data is NULL-terminated for safe handling
+    // Data received from transport_message_callback is guaranteed to be NULL-terminated.
     PROFILE_START("handle_message"); // Profile overall message handling
-    
-    // Create a new buffer, ensuring it's always NULL-terminated
-    char* safe_json_str = (char*)malloc(size + 1);
-    if (!safe_json_str) {
-        mcp_log_error("Failed to allocate memory for JSON message");
-        if (error_code) *error_code = MCP_ERROR_INTERNAL_ERROR;
-        return NULL;
-    }
-    
-    // Copy the original data
-    memcpy(safe_json_str, data, size);
-    safe_json_str[size] = '\0'; // Ensure terminator exists
-    
-    // Check if a terminator already exists (avoid double terminators)
-    size_t actual_size = size;
-    if (size > 0 && ((const char*)data)[size-1] == '\0') {
-        // If original message already ends with NULL terminator, adjust actual size but don't change buffer
-        actual_size--;
-        mcp_log_debug("Message already ends with NULL terminator, actual content size is %zu", actual_size);
-    }
-    
-    const char* json_str = safe_json_str;
-#if 0
-    // Detailed debug logging, showing original received content
-    char debug_buffer[128] = {0};
-    size_t display_len = actual_size > 100 ? 100 : actual_size; // Limit log length
-    snprintf(debug_buffer, 128, "Received data (%zu bytes): '", actual_size);
-    
-    for (size_t i = 0; i < display_len; i++) {
-        if (i < sizeof(debug_buffer) - strlen(debug_buffer) - 10) { // Leave margin to prevent buffer overflow
-            char ch = ((const char*)data)[i];
-            if (ch >= 32 && ch < 127) { // Printable characters
-                snprintf(debug_buffer + strlen(debug_buffer), 
-                         sizeof(debug_buffer) - strlen(debug_buffer), 
-                         "%c", ch);
-            } else { // Non-printable characters shown in hexadecimal
-                snprintf(debug_buffer + strlen(debug_buffer), 
-                         sizeof(debug_buffer) - strlen(debug_buffer), 
-                         "\\x%02X", (unsigned char)ch);
-            }
-        }
-    }
-    
-    if (size > display_len) {
-        strcat(debug_buffer, "...");
-    }
-    strcat(debug_buffer, "'");
-    mcp_log_debug("%s", debug_buffer);
-#endif
+
+    const char* json_str = (const char*)data; // Cast directly, it's null-terminated
 
     // Parse the message using the thread-local arena implicitly
     mcp_message_t message;
+    // Pass the null-terminated string directly to the parser
     int parse_result = mcp_json_parse_message(json_str, &message);
 
-    // No need to free json_str, it points to the buffer managed by the caller
-
     if (parse_result != 0) {
+        mcp_log_error("JSON parsing failed within handle_message (parser error code: %d)", parse_result);
         mcp_arena_destroy(&arena); // Clean up arena on parse error
         *error_code = MCP_ERROR_PARSE_ERROR;
         // TODO: Generate and return a JSON-RPC Parse Error response string?
@@ -130,7 +83,6 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
         char* error_response = create_error_response(request_id_for_auth_error, *error_code, "Authentication failed");
         // Cleanup before returning error
         mcp_message_release_contents(&message);
-        free(safe_json_str);
         mcp_arena_destroy(&arena);
         PROFILE_END("handle_message");
         return error_response;
@@ -163,9 +115,6 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     // Free the authentication context if it was created
     mcp_auth_context_free(auth_context);
 
-    // Free the temporary buffer allocated for safe handling
-    free(safe_json_str); // Free the safe JSON string we allocated earlier
-    
     // Clean up the arena used for this message cycle.
     mcp_arena_destroy(&arena);
     PROFILE_END("handle_message");

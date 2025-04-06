@@ -90,21 +90,23 @@ static char* parse_string(const char** json) {
         if (*p == '\\') {
             p++; // Skip backslash
             switch (*p) {
-                case '"':  *q++ = '"'; break;
-                case '\\': *q++ = '\\'; break;
-                case '/':  *q++ = '/'; break;
-                case 'b':  *q++ = '\b'; break;
-                case 'f':  *q++ = '\f'; break;
-                case 'n':  *q++ = '\n'; break;
-                case 'r':  *q++ = '\r'; break;
-                case 't':  *q++ = '\t'; break;
+                case '"':  *q++ = '"'; p++; break;
+                case '\\': *q++ = '\\'; p++; break;
+                case '/':  *q++ = '/'; p++; break;
+                case 'b':  *q++ = '\b'; p++; break;
+                case 'f':  *q++ = '\f'; p++; break;
+                case 'n':  *q++ = '\n'; p++; break;
+                case 'r':  *q++ = '\r'; p++; break;
+                case 't':  *q++ = '\t'; p++; break;
                 case 'u': // Unicode escape - basic parser puts '?'
-                    p += 4; // Skip 4 hex digits
+                    p++;    // Advance past 'u'
+                    p += 4; // Advance past XXXX
                     *q++ = '?'; // Placeholder
+                    // No extra p++ needed here
                     break;
                 // No default needed due to first pass validation
             }
-            p++;
+            // Removed the p++ that was here, advancement is handled in cases now
         } else {
             *q++ = *p++;
         }

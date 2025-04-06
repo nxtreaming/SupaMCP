@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include "mcp_thread_local.h"
 
 // Platform-specific includes needed for socket operations
 #ifdef _WIN32
@@ -28,6 +29,17 @@ DWORD WINAPI tcp_client_receive_thread_func(LPVOID arg) {
 #else
 void* tcp_client_receive_thread_func(void* arg) {
 #endif
+    // --- Initialize Thread-Local Arena for this receiver thread ---
+    if (mcp_init_thread_arena(1024 * 1024) != 0) { // Using 1MB default
+        mcp_log_error("Failed to initialize thread-local arena for client receiver thread. Exiting.");
+#ifdef _WIN32
+        return 1; // Indicate error
+#else
+        return NULL; // Indicate error
+#endif
+    }
+    mcp_log_debug("Thread-local arena initialized for client receiver thread.");
+
     mcp_transport_t* transport = (mcp_transport_t*)arg;
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
     char length_buf[4];
@@ -295,6 +307,10 @@ receive_loop:
             mcp_buffer_pool_release(data->buffer_pool, message_buf);
         }
     }
+
+    // --- Cleanup Thread-Local Arena ---
+    mcp_cleanup_thread_arena();
+    mcp_log_debug("Thread-local arena cleaned up for client receiver thread.");
 
 #ifdef _WIN32
     return 0;
