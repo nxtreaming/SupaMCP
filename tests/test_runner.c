@@ -12,7 +12,7 @@ void run_mcp_client_async_tests(void);
 void run_mcp_hashtable_tests(void);
 void run_cache_tests(void);
 void run_mcp_transport_factory_tests(void);
-void run_test_mcp_server_handlers(void); // Added declaration
+void run_test_mcp_server_handlers(void);
 void run_mcp_log_tests(void);
 void run_mcp_rate_limiter_tests(void);
 void run_mcp_types_tests(void);
@@ -20,7 +20,7 @@ void run_mcp_json_message_tests(void);
 void run_mcp_thread_pool_tests(void);
 void run_mcp_plugin_tests(void);
 void run_mcp_stdio_transport_tests(void);
-void run_mcp_tcp_client_transport_tests(void); // Add tcp client transport tests declaration
+void run_mcp_tcp_client_transport_tests(void);
 // Add declarations for other test suite runners here later
 
 // setUp and tearDown functions are optional, run before/after each test
@@ -55,7 +55,7 @@ int main(void) {
     run_mcp_hashtable_tests();
     run_cache_tests();
     run_mcp_transport_factory_tests();
-    run_test_mcp_server_handlers(); // Call the server handler test suite
+    run_test_mcp_server_handlers();
     run_mcp_log_tests();
     run_mcp_rate_limiter_tests();
     run_mcp_types_tests();
@@ -63,7 +63,7 @@ int main(void) {
     run_mcp_thread_pool_tests();
     run_mcp_plugin_tests();
     run_mcp_stdio_transport_tests();
-    run_mcp_tcp_client_transport_tests(); // Call tcp client transport tests
+    run_mcp_tcp_client_transport_tests();
     // Add calls to other test suite runners here later
 
     int result = UNITY_END(); // IMPORTANT: Call this to finalize tests

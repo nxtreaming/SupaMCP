@@ -1,6 +1,6 @@
 #include "unity.h"
 #include "mcp_tcp_client_transport.h"
-#include "mcp_transport.h" // For base transport functions
+#include "mcp_transport.h"
 #include <stdlib.h>
 
 // --- Test Cases ---

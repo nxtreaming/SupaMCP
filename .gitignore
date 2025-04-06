@@ -54,6 +54,7 @@ DartConfiguration.tcl
 # OS specific files
 .DS_Store
 Thumbs.db
+m.md
 o1.md
 t1.md
 optimization_tasks.md

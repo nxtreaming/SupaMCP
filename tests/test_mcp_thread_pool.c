@@ -1,6 +1,5 @@
 #include "unity.h"
 #include "mcp_thread_pool.h"
-// #include <stdatomic.h> // Remove C11 atomics
 #include <stdbool.h>
 
 #ifdef _WIN32

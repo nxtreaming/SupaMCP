@@ -3,13 +3,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <stdbool.h> // Include for true/false
+#include <stdbool.h>
 
 #ifdef _WIN32
-#include <io.h>      // For _dup, _dup2, _fileno, _close
-#include <fcntl.h>   // For _O_WRONLY, _O_CREAT, _O_TRUNC
-#include <sys/stat.h> // For _S_IREAD, _S_IWRITE
-#include <share.h>   // For _SH_DENYNO
+#include <io.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <share.h>
 #endif
 
 // --- Test Setup ---

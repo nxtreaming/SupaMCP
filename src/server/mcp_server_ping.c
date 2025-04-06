@@ -1,5 +1,5 @@
 #include "internal/server_internal.h"
-#include "mcp_auth.h" // Include auth header for context type
+#include "mcp_auth.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>

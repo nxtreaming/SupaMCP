@@ -4,7 +4,7 @@
 #include <mcp_json.h>
 #include "mcp_client.h"
 #include <mcp_transport.h>
-#include <mcp_log.h> // Include log header for LOG_LEVEL_DEBUG
+#include <mcp_log.h>
 
 #ifdef _WIN32
 #include <winsock2.h>

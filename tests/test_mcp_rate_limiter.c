@@ -2,7 +2,7 @@
 #include "mcp_rate_limiter.h"
 #include <time.h>
 #include <stdbool.h>
-#include <stdio.h> // For sprintf
+#include <stdio.h>
 
 #ifdef _WIN32
 #include <windows.h>
