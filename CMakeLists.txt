@@ -65,6 +65,7 @@ set(COMMON_SOURCES
     src/gateway/gateway_config.c
     src/gateway/gateway_routing.c
     src/gateway/gateway_pool.c
+    src/gateway/gateway_socket_utils.c
 )
 
 # Common library header files

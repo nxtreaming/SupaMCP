@@ -11,7 +11,9 @@
 #include <time.h>
 #include <errno.h>
 
+// On Windows, include winsock2.h before windows.h to avoid redefinition errors
 #ifdef _WIN32
+#include <winsock2.h>
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -28,6 +30,7 @@
 #include "mcp_json.h"
 #include "gateway.h"
 #include "mcp_thread_local.h"
+#include "mcp_connection_pool.h"
 
 
 // Global server instance for signal handling
@@ -48,6 +51,7 @@ typedef struct {
 
 // Forward declarations
 static void cleanup(void);
+static bool parse_tcp_address(const char* address, char* host_buf, size_t host_buf_size, int* port);
 
 // --- Logging functions moved to mcp_log.c ---
 
@@ -292,7 +296,20 @@ static void cleanup(void) {
 #ifdef MCP_ENABLE_PROFILING
     mcp_profile_report(stdout); // Print profile report on exit if enabled
 #endif
-    // Free gateway backend list first
+
+    // Destroy connection pools before freeing the backend list
+    if (g_backends != NULL) {
+        mcp_log_info("Destroying backend connection pools...");
+        for (size_t i = 0; i < g_backend_count; ++i) {
+            if (g_backends[i].pool != NULL) {
+                mcp_connection_pool_destroy(g_backends[i].pool);
+                g_backends[i].pool = NULL; // Avoid double free
+            }
+        }
+    }
+
+    // Free gateway backend list (frees internal strings, then the list itself)
+    mcp_log_info("Freeing gateway backend list...");
     mcp_free_backend_list(g_backends, g_backend_count);
     g_backends = NULL;
     g_backend_count = 0;
@@ -486,6 +503,37 @@ int main(int argc, char** argv) {
          mcp_log_info("Gateway config file '%s' not found or empty. Running without gateway backends.", gateway_config_path);
     }
 
+    // Initialize connection pools for loaded TCP backends
+    if (g_backends != NULL) {
+        mcp_log_info("Initializing backend connection pools...");
+        for (size_t i = 0; i < g_backend_count; ++i) {
+            mcp_backend_info_t* backend = &g_backends[i];
+            backend->pool = NULL; // Initialize pool pointer
+
+            if (strncmp(backend->address, "tcp://", 6) == 0) {
+                char host_buf[256];
+                int port = 0;
+                if (parse_tcp_address(backend->address, host_buf, sizeof(host_buf), &port)) {
+                    // TODO: Make pool parameters configurable? Using defaults for now.
+                    size_t min_conn = 1;
+                    size_t max_conn = 4;
+                    int idle_timeout = 60000; // 60 seconds
+                    int connect_timeout = 5000; // 5 seconds
+                    mcp_log_info("Creating connection pool for backend '%s' (%s:%d)...", backend->name, host_buf, port);
+                    backend->pool = mcp_connection_pool_create(host_buf, port, min_conn, max_conn, idle_timeout, connect_timeout);
+                    if (backend->pool == NULL) {
+                        mcp_log_error("Failed to create connection pool for backend '%s'. Gateway routing for this backend will fail.", backend->name);
+                        // Continue without a pool for this backend
+                    }
+                } else {
+                    mcp_log_error("Failed to parse TCP address '%s' for backend '%s'.", backend->address, backend->name);
+                }
+            } else {
+                mcp_log_warn("Backend '%s' address '%s' is not TCP. Connection pool not created.", backend->name, backend->address);
+            }
+        }
+    }
+
 
     // Set local handlers (these might be used if no backend matches a request)
     if (mcp_server_set_resource_handler(g_server, example_resource_handler, NULL) != 0 ||
@@ -557,4 +605,53 @@ int main(int argc, char** argv) {
     // Cleanup is handled by atexit
 
     return 0;
+}
+
+
+/**
+ * @internal
+ * @brief Parses a "tcp://host:port" string.
+ * @param address The input address string.
+ * @param host_buf Buffer to store the extracted host.
+ * @param host_buf_size Size of the host buffer.
+ * @param port Pointer to store the extracted port number.
+ * @return true on success, false on parsing failure.
+ */
+static bool parse_tcp_address(const char* address, char* host_buf, size_t host_buf_size, int* port) {
+    if (!address || !host_buf || host_buf_size == 0 || !port) {
+        return false;
+    }
+
+    if (strncmp(address, "tcp://", 6) != 0) {
+        return false; // Not a TCP address
+    }
+
+    const char* host_start = address + 6;
+    const char* port_sep = strrchr(host_start, ':'); // Find the last colon
+
+    if (!port_sep || port_sep == host_start) {
+        return false; // No port separator or empty host
+    }
+
+    size_t host_len = port_sep - host_start;
+    if (host_len >= host_buf_size) {
+        return false; // Host buffer too small
+    }
+
+    // Copy host
+    memcpy(host_buf, host_start, host_len);
+    host_buf[host_len] = '\0';
+
+    // Parse port
+    const char* port_start = port_sep + 1;
+    char* end_ptr = NULL;
+    long parsed_port = strtol(port_start, &end_ptr, 10);
+
+    // Check if parsing consumed the whole port string and if port is valid
+    if (*end_ptr != '\0' || parsed_port <= 0 || parsed_port > 65535) {
+        return false; // Invalid port number
+    }
+
+    *port = (int)parsed_port;
+    return true;
 }

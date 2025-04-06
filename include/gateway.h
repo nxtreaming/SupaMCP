@@ -2,6 +2,7 @@
 #define MCP_GATEWAY_H
 
 #include "mcp_types.h"
+#include "mcp_connection_pool.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -31,6 +32,7 @@ typedef struct {
     uint32_t timeout_ms;            /**< Optional request timeout in milliseconds (0 for default). */
     // TODO: Add credentials field (e.g., api_key) later
     // void* credentials;
+    mcp_connection_pool_t* pool;    /**< Connection pool handle for this backend (managed externally). */
 } mcp_backend_info_t;
 
 /**

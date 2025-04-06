@@ -21,6 +21,12 @@ extern "C" {
 #define MCP_PROTOCOL_VERSION "0.1.0"
 
 /**
+ * @brief Default maximum size for an MCP message (e.g., 1MB).
+ * Used to prevent excessive memory allocation when receiving messages.
+ */
+#define MAX_MCP_MESSAGE_SIZE (1024 * 1024)
+
+/**
  * @brief Error codes for MCP operations, aligned with JSON-RPC 2.0 error codes where applicable.
  */
 typedef enum {
