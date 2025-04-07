@@ -22,21 +22,14 @@ bool reconnection_in_progress = false;
  * Reads messages using length-prefix framing, calls the message callback for processing,
  * and calls the error callback if fatal transport errors occur.
  * @param arg Pointer to the mcp_transport_t handle.
- * @return 0 on Windows, NULL on POSIX.
+ * @return NULL on exit.
  */
-#ifdef _WIN32
-DWORD WINAPI tcp_client_receive_thread_func(LPVOID arg) {
-#else
+// Use the abstracted signature: void* func(void* arg)
 void* tcp_client_receive_thread_func(void* arg) {
-#endif
     // --- Initialize Thread-Local Arena for this receiver thread ---
     if (mcp_arena_init_current_thread(1024 * 1024) != 0) { // Using 1MB default
         mcp_log_error("Failed to initialize thread-local arena for client receiver thread. Exiting.");
-#ifdef _WIN32
-        return 1; // Indicate error
-#else
-        return NULL; // Indicate error
-#endif
+        return NULL; // Indicate error (void* return)
     }
     mcp_log_debug("Thread-local arena initialized for client receiver thread.");
 
@@ -70,7 +63,8 @@ void* tcp_client_receive_thread_func(void* arg) {
     // Ensure connection is established
     if (!data->connected) {
         mcp_log_error("Cannot send ping, socket not connected");
-        return 0;
+        mcp_arena_destroy_current_thread(); // Clean up arena before exiting
+        return NULL;
     }
     
     // 1. Define standard ping message
@@ -89,7 +83,8 @@ void* tcp_client_receive_thread_func(void* arg) {
     
     if (!send_buffer) {
         mcp_log_error("Failed to allocate buffer for ping message");
-        return 0;
+        mcp_arena_destroy_current_thread(); // Clean up arena before exiting
+        return NULL;
     }
     
     // 5. Fill the buffer with length prefix and message content (including terminator)
@@ -113,13 +108,16 @@ void* tcp_client_receive_thread_func(void* arg) {
         
         if (send_status != 0) {
             mcp_log_error("Failed to send ping message (status: %d)", send_status);
-            return 0;
+            mcp_arena_destroy_current_thread(); // Clean up arena before exiting
+            return NULL;
         }
         
         mcp_log_info("Ping message sent successfully");
     } else {
         free(send_buffer); // Free buffer
         mcp_log_error("Cannot send ping, connection already closed");
+        mcp_arena_destroy_current_thread(); // Clean up arena before exiting
+        return NULL;
     }
 
 receive_loop:
@@ -312,9 +310,5 @@ receive_loop:
     mcp_arena_destroy_current_thread();
     mcp_log_debug("Thread-local arena cleaned up for client receiver thread.");
 
-#ifdef _WIN32
-    return 0;
-#else
-    return NULL;
-#endif
+    return NULL; // Return NULL for void* compatibility
 }

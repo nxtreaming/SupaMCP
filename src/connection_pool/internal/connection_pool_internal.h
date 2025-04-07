@@ -5,6 +5,7 @@
 #include "mcp_log.h"
 #include "mcp_profiler.h"
 #include "mcp_types.h"
+#include "mcp_sync.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -12,14 +13,11 @@
 #include <stdbool.h>
 #include <time.h>
 
-// Platform-specific includes for sockets and threads
+// Platform-specific includes for sockets
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <windows.h>
 #pragma comment(lib, "ws2_32.lib")
-typedef CRITICAL_SECTION pool_mutex_t;
-typedef CONDITION_VARIABLE pool_cond_t;
 typedef SOCKET socket_handle_t;
 #define INVALID_SOCKET_HANDLE INVALID_SOCKET
 #define SOCKET_ERROR_HANDLE SOCKET_ERROR
@@ -27,14 +25,11 @@ typedef SOCKET socket_handle_t;
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <unistd.h> // For close()
-#include <pthread.h>
+#include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/time.h>
-typedef pthread_mutex_t pool_mutex_t;
-typedef pthread_cond_t pool_cond_t;
 typedef int socket_handle_t;
 #define INVALID_SOCKET_HANDLE (-1)
 #define SOCKET_ERROR_HANDLE (-1)
@@ -64,8 +59,8 @@ struct mcp_connection_pool {
     int idle_timeout_ms;                // Idle connection timeout
     int connect_timeout_ms;             // Timeout for establishing connections
 
-    pool_mutex_t mutex;                 // Mutex for thread safety (using alias)
-    pool_cond_t cond_var;               // Condition variable for waiting clients (using alias)
+    mcp_mutex_t* mutex;                 // Mutex for thread safety (using abstracted type)
+    mcp_cond_t* cond_var;               // Condition variable for waiting clients (using abstracted type)
 
     mcp_pooled_connection_t* idle_list; // Linked list of idle connections
     size_t idle_count;                  // Number of idle connections
@@ -75,7 +70,7 @@ struct mcp_connection_pool {
     bool shutting_down;                 // Flag indicating pool destruction is in progress
 
     // Optional: Thread for managing idle timeouts/min connections
-    // pthread_t maintenance_thread;
+    // mcp_thread_t maintenance_thread; // Use abstracted type if implemented
 };
 
 // --- Internal Function Prototypes ---
@@ -95,9 +90,5 @@ int pool_wait(mcp_connection_pool_t* pool, int timeout_ms);
 
 // From mcp_connection_pool_utils.c
 long long get_current_time_ms();
-#ifndef _WIN32
-void calculate_deadline(int timeout_ms, struct timespec* deadline);
-#endif
-// char* mcp_strdup(const char* s); // Declare only if not provided by mcp_types.h
 
 #endif // MCP_CONNECTION_POOL_INTERNAL_H

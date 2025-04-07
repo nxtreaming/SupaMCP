@@ -4,13 +4,7 @@
 #include <string.h>
 #include <errno.h>
 
-// Platform-specific includes (minimal needed here)
-#ifdef _WIN32
-// Included via internal header
-#else
-#include <pthread.h>
-#include <unistd.h>
-#endif
+// Platform-specific includes are no longer needed here
 
 // --- Static Transport Interface Functions ---
 
@@ -41,11 +35,9 @@ static int tcp_client_transport_start(
 
     data->running = true;
 
-    // Start receive thread using function from receiver module
-#ifdef _WIN32
-    data->receive_thread = CreateThread(NULL, 0, tcp_client_receive_thread_func, transport, 0, NULL);
-    if (data->receive_thread == NULL) {
-        mcp_log_error("Failed to create client receive thread (Error: %lu).", GetLastError());
+    // Start receive thread using abstraction
+    if (mcp_thread_create(&data->receive_thread, tcp_client_receive_thread_func, transport) != 0) {
+        mcp_log_error("Failed to create client receive thread.");
         close_socket(data->sock);
         data->sock = INVALID_SOCKET_VAL;
         data->connected = false;
@@ -53,22 +45,6 @@ static int tcp_client_transport_start(
         cleanup_winsock_client(); // Cleanup winsock
         return -1;
     }
-#else
-     if (pthread_create(&data->receive_thread, NULL, tcp_client_receive_thread_func, transport) != 0) {
-        char err_buf[128];
-         if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-            mcp_log_error("Failed to create client receive thread: %s", err_buf);
-         } else {
-             mcp_log_error("Failed to create client receive thread: %d (strerror_r failed)", errno);
-         }
-        close_socket(data->sock);
-        data->sock = INVALID_SOCKET_VAL;
-        data->connected = false;
-        data->running = false;
-        // No winsock cleanup needed for POSIX here
-        return -1;
-    }
-#endif
 
     mcp_log_info("TCP Client Transport started for %s:%d", data->host, data->port);
     return 0;
@@ -95,19 +71,11 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
     }
     data->connected = false;
 
-    // Wait for the receive thread to finish
-#ifdef _WIN32
-    if (data->receive_thread) {
-        WaitForSingleObject(data->receive_thread, 2000); // Wait 2 seconds
-        CloseHandle(data->receive_thread);
-        data->receive_thread = NULL;
+    // Wait for the receive thread to finish using abstraction
+    if (data->receive_thread) { // Check if thread handle is valid
+        mcp_thread_join(data->receive_thread, NULL);
+        data->receive_thread = 0; // Reset handle after join
     }
-#else
-    if (data->receive_thread) {
-        pthread_join(data->receive_thread, NULL);
-        data->receive_thread = 0;
-    }
-#endif
     mcp_log_debug("Client receive thread stopped.");
 
     mcp_log_info("TCP Client Transport stopped.");
@@ -150,29 +118,14 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* pay
             extern bool reconnection_in_progress;
             reconnection_in_progress = true;
             
-#ifdef _WIN32
-            data->receive_thread = CreateThread(NULL, 0, tcp_client_receive_thread_func, transport, 0, NULL);
-            if (data->receive_thread == NULL) {
-                mcp_log_error("Failed to restart client receive thread (Error: %lu).", GetLastError());
+            // Use abstracted thread creation
+            if (mcp_thread_create(&data->receive_thread, tcp_client_receive_thread_func, transport) != 0) {
+                mcp_log_error("Failed to restart client receive thread.");
                 close_socket(data->sock);
                 data->sock = INVALID_SOCKET_VAL;
                 data->connected = false;
                 return -1;
             }
-#else
-            if (pthread_create(&data->receive_thread, NULL, tcp_client_receive_thread_func, transport) != 0) {
-                char err_buf[128];
-                if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-                    mcp_log_error("Failed to restart client receive thread: %s", err_buf);
-                } else {
-                    mcp_log_error("Failed to restart client receive thread: %d (strerror_r failed)", errno);
-                }
-                close_socket(data->sock);
-                data->sock = INVALID_SOCKET_VAL;
-                data->connected = false;
-                return -1;
-            }
-#endif
             mcp_log_info("Receive thread restarted for reconnected socket");
             
         } else {
@@ -249,6 +202,7 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
      tcp_data->connected = false;
      tcp_data->transport_handle = transport; // Link back
      tcp_data->buffer_pool = NULL; // Initialize pool pointer
+     tcp_data->receive_thread = 0; // Initialize thread handle
 
      // Create the buffer pool
      tcp_data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);

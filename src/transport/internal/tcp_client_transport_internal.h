@@ -6,6 +6,7 @@
 #include "mcp_log.h"
 #include "mcp_types.h"
 #include "mcp_buffer_pool.h"
+#include "mcp_sync.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +22,6 @@ extern bool reconnection_in_progress;
 #   include <ws2tcpip.h>
 #   pragma comment(lib, "Ws2_32.lib")
     typedef SOCKET socket_t;
-    typedef HANDLE thread_handle_t;
     #define INVALID_SOCKET_VAL INVALID_SOCKET
     #define SOCKET_ERROR_VAL   SOCKET_ERROR
     #define close_socket closesocket
@@ -32,11 +32,9 @@ extern bool reconnection_in_progress;
 #   include <netinet/in.h>
 #   include <arpa/inet.h>
 #   include <unistd.h>
-#   include <pthread.h>
 #   include <fcntl.h>
-#   include <netdb.h> // For getaddrinfo
+#   include <netdb.h>
     typedef int socket_t;
-    typedef pthread_t thread_handle_t;
     #define INVALID_SOCKET_VAL (-1)
     #define SOCKET_ERROR_VAL   (-1)
     #define close_socket close
@@ -62,7 +60,7 @@ typedef struct {
     bool running;
     bool connected; // Track connection state
     mcp_transport_t* transport_handle; // Pointer back to the main handle (contains callbacks)
-    thread_handle_t receive_thread;
+    mcp_thread_t receive_thread; // Use abstracted thread type
     mcp_buffer_pool_t* buffer_pool; // Buffer pool for message buffers
 } mcp_tcp_client_transport_data_t;
 
@@ -76,10 +74,7 @@ int send_exact_client(socket_t sock, const char* buf, size_t len, bool* running_
 int recv_exact_client(socket_t sock, char* buf, size_t len, bool* running_flag);
 
 // From mcp_tcp_client_receiver.c
-#ifdef _WIN32
-DWORD WINAPI tcp_client_receive_thread_func(LPVOID arg);
-#else
+// Use the abstracted thread function signature
 void* tcp_client_receive_thread_func(void* arg);
-#endif
 
 #endif // MCP_TCP_CLIENT_TRANSPORT_INTERNAL_H

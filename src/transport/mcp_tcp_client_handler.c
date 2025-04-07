@@ -7,22 +7,15 @@
 #include "mcp_thread_local.h"
 
 // Thread function to handle a single client connection
-#ifdef _WIN32
-DWORD WINAPI tcp_client_handler_thread_func(LPVOID arg) {
-#else
+// Use the abstracted signature: void* func(void* arg)
 void* tcp_client_handler_thread_func(void* arg) {
-#endif
     tcp_client_connection_t* client_conn = (tcp_client_connection_t*)arg;
 
     // --- Initialize Thread-Local Arena for this handler thread ---
     // Use a reasonable default size, e.g., 1MB. Adjust if needed.
     if (mcp_arena_init_current_thread(1024 * 1024) != 0) {
         mcp_log_error("Failed to initialize thread-local arena for client handler thread. Exiting.");
-#ifdef _WIN32
-        return 1; // Indicate error
-#else
-        return NULL; // Indicate error
-#endif
+        return NULL; // Indicate error (void* return)
     }
     mcp_log_debug("Thread-local arena initialized for client handler thread.");
 
@@ -34,11 +27,8 @@ void* tcp_client_handler_thread_func(void* arg) {
                     client_conn ? (void*)client_conn->socket : NULL);
         // Cannot reliably clean up if client_conn is NULL.
         // If socket is invalid, the acceptor or another thread likely already handled cleanup.
-#ifdef _WIN32
-        return 1; // Indicate error
-#else
-        return NULL; // Indicate error
-#endif
+        mcp_arena_destroy_current_thread(); // Clean up arena before exiting
+        return NULL; // Indicate error (void* return)
     }
     // --- End Initial Sanity Check ---
 
@@ -72,12 +62,8 @@ void* tcp_client_handler_thread_func(void* arg) {
         // --- 1. Wait for Data or Timeout ---
         uint32_t wait_ms = tcp_data->idle_timeout_ms; // Start with full timeout for select/poll
         if (wait_ms == 0) wait_ms = 30000; // If idle timeout is not set, use 30 seconds as default
-        
-        //log_message(LOG_LEVEL_DEBUG, "Waiting for data on socket %d (hex: %p), timeout: %u ms...", 
-        //           (int)client_conn->socket, (void*)client_conn->socket, wait_ms);
 
         if (client_conn->socket == INVALID_SOCKET_VAL) {
-            // Socket is invalid, exit the handler thread immediately
             mcp_log_debug("Exiting handler thread for invalid socket");
             goto client_cleanup;
         }
@@ -90,7 +76,6 @@ void* tcp_client_handler_thread_func(void* arg) {
 
         // Use wait_for_socket_read from mcp_tcp_socket_utils.c
         int wait_result = wait_for_socket_read(client_conn->socket, wait_ms, &client_conn->should_stop);
-        //log_message(LOG_LEVEL_DEBUG, "Wait result for socket %d: %d", (int)client_conn->socket, wait_result);
 
         // Check stop signal *immediately* after wait returns
         if (client_conn->should_stop) {
@@ -433,11 +418,7 @@ client_cleanup:
     socket_t sock_to_close = INVALID_SOCKET_VAL;
     
     // Acquire mutex to update client_conn state
-#ifdef _WIN32
-    EnterCriticalSection(&tcp_data->client_mutex);
-#else
-    pthread_mutex_lock(&tcp_data->client_mutex);
-#endif
+    mcp_mutex_lock(tcp_data->client_mutex);
 
     // Only clean up if slot state indicates it might still be considered active/initializing by the acceptor
     // Check state under lock
@@ -451,15 +432,8 @@ client_cleanup:
         // Mark slot as INACTIVE
         client_conn->state = CLIENT_STATE_INACTIVE;
 
-#ifdef _WIN32
-        // Handle Windows thread handle (CloseHandle should be safe even if NULL)
-        if (client_conn->thread_handle) {
-            CloseHandle(client_conn->thread_handle);
-            client_conn->thread_handle = NULL;
-        }
-#else
+        // Reset thread handle (no need to close/destroy here, as it's managed by mcp_thread_create/join)
         client_conn->thread_handle = 0;
-#endif
 
         // Log that client_conn slot is now inactive
         mcp_log_debug("Client connection slot marked as INACTIVE");
@@ -468,11 +442,7 @@ client_cleanup:
         mcp_log_debug("Handler %d: Cleanup skipped, state already INACTIVE.", (int)client_conn->socket); // Socket might be invalid here, use cautiously
     }
 
-#ifdef _WIN32
-    LeaveCriticalSection(&tcp_data->client_mutex);
-#else
-    pthread_mutex_unlock(&tcp_data->client_mutex);
-#endif
+    mcp_mutex_unlock(tcp_data->client_mutex);
 
     // Close socket (outside of mutex)
     if (sock_to_close != INVALID_SOCKET_VAL) {
@@ -489,9 +459,5 @@ client_cleanup:
     mcp_log_debug("Thread-local arena cleaned up for client handler thread.");
 
 
-#ifdef _WIN32
-    return 0;
-#else
-    return NULL;
-#endif
+    return NULL; // Return NULL for void* compatibility
 }

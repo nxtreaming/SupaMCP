@@ -92,29 +92,23 @@ static int tcp_transport_start(
 
     data->running = true;
 
-    // Initialize mutex/critical section and stop pipe
-#ifdef _WIN32
-    InitializeCriticalSection(&data->client_mutex);
-    // No pipe needed for Windows
-#else
-    if (pthread_mutex_init(&data->client_mutex, NULL) != 0) {
-        char err_buf[128];
-        if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-             mcp_log_error("Mutex init failed: %s", err_buf);
-        } else {
-             mcp_log_error("Mutex init failed: %d (strerror_r failed)", errno);
-        }
+    // Initialize mutex using abstraction
+    data->client_mutex = mcp_mutex_create();
+    if (data->client_mutex == NULL) {
+        mcp_log_error("Mutex creation failed.");
         close_socket(data->listen_socket);
         data->running = false;
         return -1;
     }
-    // Create stop pipe
+
+#ifndef _WIN32
+    // Create stop pipe (POSIX only)
     data->stop_pipe[0] = -1; // Initialize FDs
     data->stop_pipe[1] = -1;
     if (pipe(data->stop_pipe) != 0) {
         mcp_log_error("Stop pipe creation failed: %s", strerror(errno));
         close_socket(data->listen_socket);
-        pthread_mutex_destroy(&data->client_mutex);
+        mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
         data->running = false;
         return -1;
     }
@@ -124,37 +118,23 @@ static int tcp_transport_start(
          mcp_log_error("Failed to set stop pipe read end non-blocking: %s", strerror(errno));
          close_stop_pipe(data);
          close_socket(data->listen_socket);
-         pthread_mutex_destroy(&data->client_mutex);
+         mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
          data->running = false;
          return -1;
     }
 #endif
 
-    // Start accept thread (using function from mcp_tcp_acceptor.c)
-#ifdef _WIN32
-    data->accept_thread = CreateThread(NULL, 0, tcp_accept_thread_func, transport, 0, NULL);
-    if (data->accept_thread == NULL) {
-        mcp_log_error("Failed to create accept thread (Error: %lu).", GetLastError());
+    // Start accept thread using abstraction
+    if (mcp_thread_create(&data->accept_thread, tcp_accept_thread_func, transport) != 0) {
+        mcp_log_error("Failed to create accept thread.");
         close_socket(data->listen_socket);
-        DeleteCriticalSection(&data->client_mutex); // Clean up mutex
-        data->running = false;
-        return -1;
-    }
-#else
-     if (pthread_create(&data->accept_thread, NULL, tcp_accept_thread_func, transport) != 0) {
-        char err_buf[128];
-         if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-            mcp_log_error("Failed to create accept thread: %s", err_buf);
-         } else {
-             mcp_log_error("Failed to create accept thread: %d (strerror_r failed)", errno);
-         }
-        close_socket(data->listen_socket);
-        pthread_mutex_destroy(&data->client_mutex);
+        mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
+#ifndef _WIN32
         close_stop_pipe(data); // Clean up pipe on failure
+#endif
         data->running = false;
         return -1;
     }
-#endif
 
     mcp_log_info("TCP Transport started listening on %s:%d", data->host, data->port);
     return 0;
@@ -196,29 +176,15 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
 #endif
 
 
-    // Wait for the accept thread to finish
-#ifdef _WIN32
-    if (data->accept_thread) {
-        // Consider a timeout?
-        WaitForSingleObject(data->accept_thread, 2000); // Wait 2 seconds
-        CloseHandle(data->accept_thread);
-        data->accept_thread = NULL;
+    // Wait for the accept thread to finish using abstraction
+    if (data->accept_thread) { // Check if thread handle is valid
+        mcp_thread_join(data->accept_thread, NULL);
+        data->accept_thread = 0; // Reset handle after join
     }
-#else
-    if (data->accept_thread) {
-        // Join the accept thread
-        pthread_join(data->accept_thread, NULL);
-        data->accept_thread = 0;
-    }
-#endif
     mcp_log_debug("Accept thread stopped.");
 
     // Signal handler threads to stop and close connections
-#ifdef _WIN32
-    EnterCriticalSection(&data->client_mutex);
-#else
-    pthread_mutex_lock(&data->client_mutex);
-#endif
+    mcp_mutex_lock(data->client_mutex);
     for (int i = 0; i < MAX_TCP_CLIENTS; ++i) {
         // Check if the slot is not INACTIVE (i.e., it's INITIALIZING or ACTIVE)
         if (data->clients[i].state != CLIENT_STATE_INACTIVE) {
@@ -232,29 +198,22 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
             // Note: Closing the socket here might be redundant if shutdown works,
             // but it ensures the resource is released. The handler thread will
             // also call close_socket upon exiting its loop.
-            // close_socket(data->clients[i].socket); // Let handler thread close it
 
-#ifdef _WIN32
-            // Wait for handler threads?
-            if (data->clients[i].thread_handle) {
-                 WaitForSingleObject(data->clients[i].thread_handle, 1000); // Wait 1 sec
-                 // Don't close handle here, handler thread should do it on exit
-                 // CloseHandle(data->clients[i].thread_handle);
-                 // data->clients[i].thread_handle = NULL;
-            }
-#else
-            // Threads were detached, cannot join. Assume they exit on socket close/error/stop signal.
-#endif
+            // Wait for handler threads? mcp_thread_join requires the handle.
+            // If threads are detached (common for handlers), joining isn't possible.
+            // Assuming handler threads exit cleanly upon socket error/close or should_stop flag.
+            // if (data->clients[i].thread_handle) {
+            //     mcp_thread_join(data->clients[i].thread_handle, NULL);
+            //     data->clients[i].thread_handle = 0; // Reset handle
+            // }
         } // end if(data->clients[i].state != CLIENT_STATE_INACTIVE)
     } // end for loop
+    mcp_mutex_unlock(data->client_mutex);
 
     // Clean up mutex and stop pipe
-#ifdef _WIN32
-    LeaveCriticalSection(&data->client_mutex);
-    DeleteCriticalSection(&data->client_mutex);
-#else
-    pthread_mutex_unlock(&data->client_mutex);
-    pthread_mutex_destroy(&data->client_mutex);
+    mcp_mutex_destroy(data->client_mutex);
+    data->client_mutex = NULL;
+#ifndef _WIN32
     close_stop_pipe(data); // Close pipe FDs
 #endif
 
@@ -285,7 +244,7 @@ static void tcp_transport_destroy(mcp_transport_t* transport) {
      if (transport == NULL || transport->transport_data == NULL) return;
      mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)transport->transport_data;
 
-     tcp_transport_stop(transport); // Ensure everything is stopped and cleaned
+     tcp_transport_stop(transport); // Ensure everything is stopped and cleaned (including mutex)
 
      free(data->host);
      // Destroy the buffer pool
@@ -325,11 +284,14 @@ mcp_transport_t* mcp_transport_tcp_create(
      tcp_data->listen_socket = INVALID_SOCKET_VAL; // Use defined constant
      tcp_data->running = false;
      tcp_data->buffer_pool = NULL; // Initialize pool pointer
-     
+     tcp_data->client_mutex = NULL; // Initialize mutex pointer
+     tcp_data->accept_thread = 0;   // Initialize thread handle
+
      // Explicitly initialize all client slots
      for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
          tcp_data->clients[i].state = CLIENT_STATE_INACTIVE; // Initialize state
          tcp_data->clients[i].socket = INVALID_SOCKET_VAL;
+         tcp_data->clients[i].thread_handle = 0; // Initialize thread handle
          // Other fields are zeroed by calloc
      }
      

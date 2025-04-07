@@ -5,11 +5,8 @@
 #include <errno.h>
 
 // Thread function to accept incoming connections
-#ifdef _WIN32
-DWORD WINAPI tcp_accept_thread_func(LPVOID arg) {
-#else
+// Use the abstracted signature: void* func(void* arg)
 void* tcp_accept_thread_func(void* arg) {
-#endif
     mcp_transport_t* transport = (mcp_transport_t*)arg;
     mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)transport->transport_data;
     struct sockaddr_in client_addr;
@@ -30,7 +27,7 @@ void* tcp_accept_thread_func(void* arg) {
         if (data->listen_socket != INVALID_SOCKET_VAL) {
             FD_SET(data->listen_socket, &read_fds);
         } else {
-            Sleep(100); // Avoid busy-waiting if socket is closed
+            mcp_sleep_ms(100); // Avoid busy-waiting if socket is closed
             continue;
         }
         tv.tv_sec = 1; // Check every second
@@ -53,16 +50,12 @@ void* tcp_accept_thread_func(void* arg) {
                      char err_buf[128];
                      strerror_s(err_buf, sizeof(err_buf), error_code);
                      mcp_log_error("select failed in accept thread: %d (%s)", error_code, err_buf);
-                     // Consider adding a small delay here to prevent tight error loops
-                     Sleep(100);
+                     mcp_sleep_ms(100); // Consider adding a small delay here to prevent tight error loops
                  } else {
-                     // WSAEINTR likely means we are stopping
                      mcp_log_debug("Select interrupted (WSAEINTR) in accept thread, likely stopping.");
-                     // No need to break here, the outer loop condition data->running will handle it
                  }
              } else {
-                 // Not running, break loop
-                 break;
+                 break; // Not running, break loop
              }
              continue; // Continue loop unless explicitly broken
         }
@@ -96,7 +89,7 @@ void* tcp_accept_thread_func(void* arg) {
                 tcp_client_connection_t* client_conn_ptr = NULL; // Pointer to the slot found
 
                 // 1. Find an available slot and mark it as initializing *atomically* under mutex protection
-                EnterCriticalSection(&data->client_mutex);
+                mcp_mutex_lock(data->client_mutex);
                 for (int i = 0; i < MAX_TCP_CLIENTS; ++i) {
                     if (data->clients[i].state == CLIENT_STATE_INACTIVE) { // Find INACTIVE slot
                         client_index = i;
@@ -108,33 +101,32 @@ void* tcp_accept_thread_func(void* arg) {
                         client_conn_ptr->transport = transport;
                         client_conn_ptr->should_stop = false;
                         client_conn_ptr->last_activity_time = time(NULL);
-                        client_conn_ptr->thread_handle = NULL;
+                        client_conn_ptr->thread_handle = 0; // Initialize thread handle
                         break; // Found a slot
                     }
                 }
-                LeaveCriticalSection(&data->client_mutex);
+                mcp_mutex_unlock(data->client_mutex);
 
                 // 2. Process based on whether a slot was found
                 if (client_index != -1 && client_conn_ptr != NULL) {
                     // Slot found and marked INITIALIZING, now create the handler thread (outside the mutex)
-                    client_conn_ptr->thread_handle = CreateThread(NULL, 0, tcp_client_handler_thread_func, client_conn_ptr, 0, NULL);
-                    if (client_conn_ptr->thread_handle == NULL) {
+                    if (mcp_thread_create(&client_conn_ptr->thread_handle, tcp_client_handler_thread_func, client_conn_ptr) != 0) {
                         mcp_log_error("Failed to create handler thread for client %d.", client_index);
                         close_socket(client_conn_ptr->socket); // Close the socket if thread creation failed
                         // Re-acquire lock to revert state
-                        EnterCriticalSection(&data->client_mutex);
+                        mcp_mutex_lock(data->client_mutex);
                         client_conn_ptr->socket = INVALID_SOCKET_VAL;
                         client_conn_ptr->state = CLIENT_STATE_INACTIVE; // Revert state
-                        LeaveCriticalSection(&data->client_mutex);
+                        client_conn_ptr->thread_handle = 0; // Reset handle
+                        mcp_mutex_unlock(data->client_mutex);
                     } else {
                         // Thread created successfully, update state (can be done in handler too)
-                        // For simplicity here, we assume creation means active for acceptor's view
-                        // Re-acquire lock to update state
-                        EnterCriticalSection(&data->client_mutex);
+                        mcp_mutex_lock(data->client_mutex);
                         if (client_conn_ptr->state == CLIENT_STATE_INITIALIZING) { // Check if state is still initializing
                            client_conn_ptr->state = CLIENT_STATE_ACTIVE;
                         }
-                        LeaveCriticalSection(&data->client_mutex);
+                        mcp_mutex_unlock(data->client_mutex);
+                        // Note: Windows threads don't need explicit detach
                     }
                 } else {
                     // No free slot available - reject the connection
@@ -152,6 +144,7 @@ void* tcp_accept_thread_func(void* arg) {
             // --- End Handle Connection Logic (Windows) ---
         }
         // If activity == 0, it was a timeout, loop continues to check data->running
+    } // End while(data->running) loop
 
 #else // POSIX
     struct pollfd fds[2];
@@ -183,31 +176,34 @@ void* tcp_accept_thread_func(void* arg) {
             client_socket = accept(data->listen_socket, (struct sockaddr*)&client_addr, &client_addr_len);
 
             if (client_socket == INVALID_SOCKET_VAL) {
-                 if (data->running) {
-                     char err_buf[128];
-                     if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
+                if (data->running) {
+                    char err_buf[128];
+                    if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
                         mcp_log_error("accept failed: %d (%s)", sock_errno, err_buf);
-                     } else {
+                    }
+                    else {
                         mcp_log_error("accept failed: %d (strerror_r failed)", sock_errno);
-                     }
-                 }
-                 continue;
+                    }
+                }
+                continue;
             }
             // --- Common connection handling logic (POSIX) ---
             const char* client_ip = NULL;
             if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) != NULL) {
                 client_ip = client_ip_str;
-            } else {
-                 char err_buf[128];
-                 if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-                     mcp_log_warn("inet_ntop failed: %d (%s)", sock_errno, err_buf);
-                 } else {
-                     mcp_log_warn("inet_ntop failed: %d (strerror_r failed)", sock_errno);
-                 }
+            }
+            else {
+                char err_buf[128];
+                if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
+                    mcp_log_warn("inet_ntop failed: %d (%s)", sock_errno, err_buf);
+                }
+                else {
+                    mcp_log_warn("inet_ntop failed: %d (strerror_r failed)", sock_errno);
+                }
                 client_ip = "?.?.?.?";
             }
             mcp_log_info("Accepted connection from %s:%d on socket %d",
-                   client_ip, ntohs(client_addr.sin_port), client_socket);
+                client_ip, ntohs(client_addr.sin_port), client_socket);
 
             // --- Start Handle Connection Logic (POSIX) ---
             { // Use a block scope for handle_connection logic
@@ -215,7 +211,7 @@ void* tcp_accept_thread_func(void* arg) {
                 tcp_client_connection_t* client_conn_ptr = NULL; // Pointer to the slot found
 
                 // 1. Find an available slot and mark it as initializing *atomically* under mutex protection
-                pthread_mutex_lock(&data->client_mutex);
+                mcp_mutex_lock(data->client_mutex);
                 for (int i = 0; i < MAX_TCP_CLIENTS; ++i) {
                     if (data->clients[i].state == CLIENT_STATE_INACTIVE) { // Find INACTIVE slot
                         client_index = i;
@@ -227,57 +223,55 @@ void* tcp_accept_thread_func(void* arg) {
                         client_conn_ptr->transport = transport;
                         client_conn_ptr->should_stop = false;
                         client_conn_ptr->last_activity_time = time(NULL);
-                        client_conn_ptr->thread_handle = 0;
+                        client_conn_ptr->thread_handle = 0; // Initialize thread handle
                         break; // Found a slot
                     }
                 }
-                pthread_mutex_unlock(&data->client_mutex);
+                mcp_mutex_unlock(data->client_mutex);
 
                 // 2. Process based on whether a slot was found
                 if (client_index != -1 && client_conn_ptr != NULL) {
                     // Slot found and marked INITIALIZING, now create the handler thread (outside the mutex)
-                    if (pthread_create(&client_conn_ptr->thread_handle, NULL, tcp_client_handler_thread_func, client_conn_ptr) != 0) {
+                    if (mcp_thread_create(&client_conn_ptr->thread_handle, tcp_client_handler_thread_func, client_conn_ptr) != 0) {
                         mcp_log_error("Failed to create handler thread: %s", strerror(errno));
                         close_socket(client_conn_ptr->socket); // Close the socket if thread creation failed
                         // Re-acquire lock to revert state
-                        pthread_mutex_lock(&data->client_mutex);
+                        mcp_mutex_lock(data->client_mutex);
                         client_conn_ptr->socket = INVALID_SOCKET_VAL;
                         client_conn_ptr->state = CLIENT_STATE_INACTIVE; // Revert state
-                        pthread_mutex_unlock(&data->client_mutex);
-                    } else {
-                        // Thread created successfully, update state (can be done in handler too)
-                        // Re-acquire lock to update state
-                        pthread_mutex_lock(&data->client_mutex);
-                         if (client_conn_ptr->state == CLIENT_STATE_INITIALIZING) { // Check if state is still initializing
-                            client_conn_ptr->state = CLIENT_STATE_ACTIVE;
-                         }
-                        pthread_mutex_unlock(&data->client_mutex);
-                        pthread_detach(client_conn_ptr->thread_handle); // Detach thread as we don't join it
-                    } else {
-                        pthread_detach(client_conn_ptr->thread_handle);
+                        client_conn_ptr->thread_handle = 0; // Reset handle
+                        mcp_mutex_unlock(data->client_mutex);
                     }
-                } else {
+                    else {
+                        // Thread created successfully, update state (can be done in handler too)
+                        mcp_mutex_lock(data->client_mutex);
+                        if (client_conn_ptr->state == CLIENT_STATE_INITIALIZING) { // Check if state is still initializing
+                            client_conn_ptr->state = CLIENT_STATE_ACTIVE;
+                        }
+                        mcp_mutex_unlock(data->client_mutex);
+                        // Detach thread as we don't join it in tcp_transport_stop for POSIX
+                        // pthread_detach(client_conn_ptr->thread_handle); // Keep commented if join is preferred
+                    }
+                    // ** Corrected: Moved else block for reject connection here **
+                }
+                else {
                     // No free slot available - reject the connection
                     const char* reject_client_ip = NULL;
                     if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str)) != NULL) {
                         reject_client_ip = client_ip_str;
-                    } else {
+                    }
+                    else {
                         reject_client_ip = "?.?.?.?";
                     }
                     mcp_log_warn("Max clients (%d) reached, rejecting connection from %s:%d",
-                            MAX_TCP_CLIENTS, reject_client_ip, ntohs(client_addr.sin_port));
+                        MAX_TCP_CLIENTS, reject_client_ip, ntohs(client_addr.sin_port));
                     close_socket(client_socket);
                 }
             } // End Handle Connection Logic (POSIX)
-            // --- End Handle Connection Logic (POSIX) ---
-        }
-#endif // Platform-specific accept loop end
+        } // End if(fds[0].revents & POLLIN)
     } // End of while(data->running) loop
+#endif // Platform-specific accept loop end
 
     mcp_log_info("Accept thread exiting.");
-#ifdef _WIN32
-    return 0;
-#else
-    return NULL;
-#endif
+    return NULL; // Return NULL for void* compatibility
 }

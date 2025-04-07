@@ -6,6 +6,7 @@
 #include "mcp_log.h"
 #include "mcp_types.h"
 #include "mcp_buffer_pool.h"
+#include "mcp_sync.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,8 +22,6 @@
 #   pragma comment(lib, "Ws2_32.lib")
     typedef SOCKET socket_t;
     typedef int socklen_t;
-    typedef HANDLE thread_handle_t;
-    typedef CRITICAL_SECTION mutex_t;
     #define INVALID_SOCKET_VAL INVALID_SOCKET
     #define SOCKET_ERROR_VAL   SOCKET_ERROR
     #define close_socket closesocket
@@ -33,14 +32,11 @@
 #   include <netinet/in.h>
 #   include <arpa/inet.h>
 #   include <unistd.h>
-#   include <pthread.h>
 #   include <fcntl.h>
 #   include <sys/select.h>
 #   include <poll.h>
 #   include <errno.h>
     typedef int socket_t;
-    typedef pthread_t thread_handle_t;
-    typedef pthread_mutex_t mutex_t;
     #define INVALID_SOCKET_VAL (-1)
     #define SOCKET_ERROR_VAL   (-1)
     #define close_socket close
@@ -72,7 +68,7 @@ typedef struct {
     struct sockaddr_in address; // Assuming IPv4
     client_state_t state;       // Current state of the connection slot
     time_t last_activity_time;
-    thread_handle_t thread_handle;
+    mcp_thread_t thread_handle; // Use abstracted thread type
     mcp_transport_t* transport; // Pointer back to parent transport
     bool should_stop;           // Flag to signal this specific handler thread
 } tcp_client_connection_t;
@@ -85,8 +81,8 @@ typedef struct {
     socket_t listen_socket;
     bool running;
     tcp_client_connection_t clients[MAX_TCP_CLIENTS];
-    thread_handle_t accept_thread;
-    mutex_t client_mutex;
+    mcp_thread_t accept_thread; // Use abstracted thread type
+    mcp_mutex_t* client_mutex;  // Use abstracted mutex type (pointer)
 #ifndef _WIN32
     int stop_pipe[2]; // Pipe used to signal accept thread on POSIX
 #endif
@@ -107,23 +103,12 @@ void close_stop_pipe(mcp_tcp_transport_data_t* data);
 #endif
 
 // From mcp_tcp_client_handler.c
-#ifdef _WIN32
-DWORD WINAPI tcp_client_handler_thread_func(LPVOID arg);
-#else
+// Declare as function prototypes with the signature defined by mcp_thread_func_t
 void* tcp_client_handler_thread_func(void* arg);
-#endif
 
 // From mcp_tcp_acceptor.c
-#ifdef _WIN32
-DWORD WINAPI tcp_accept_thread_func(LPVOID arg);
-#else
+// Declare as function prototypes with the signature defined by mcp_thread_func_t
 void* tcp_accept_thread_func(void* arg);
-#endif
-
-// From mcp_tcp_transport.c (These remain static but need prototypes if called internally, though likely not)
-// static int tcp_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback, void* user_data, mcp_transport_error_callback_t error_callback);
-// static int tcp_transport_stop(mcp_transport_t* transport);
-// static void tcp_transport_destroy(mcp_transport_t* transport);
 
 
 #endif // MCP_TCP_TRANSPORT_INTERNAL_H
