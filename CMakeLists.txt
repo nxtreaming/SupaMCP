@@ -41,6 +41,7 @@ set(COMMON_SOURCES
     src/common/mcp_arena.c
     src/common/mcp_log.c
     src/common/mcp_thread_local.c
+    src/common/mcp_sync.c
     src/server/mcp_buffer_pool.c
     src/server/mcp_thread_pool.c
     src/server/mcp_cache_optimized.c

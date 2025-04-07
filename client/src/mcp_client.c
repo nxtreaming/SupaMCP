@@ -5,7 +5,11 @@
 #include "mcp_client.h"
 #include <mcp_transport.h>
 #include <mcp_log.h>
+#include "mcp_sync.h"
+#include "mcp_types.h"
 
+// Platform specific includes are no longer needed here for sync primitives,
+// but keep them for socket types if used elsewhere in the file.
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -15,9 +19,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <pthread.h>
 #include <time.h>
 #endif
+
 
 // Initial capacity for pending requests hash table (must be power of 2)
 #define INITIAL_PENDING_REQUESTS_CAPACITY 16
@@ -40,11 +44,7 @@ typedef struct {
     char** result_ptr;             // Pointer to the result pointer in the caller's stack
     mcp_error_code_t* error_code_ptr; // Pointer to the error code in the caller's stack
     char** error_message_ptr;      // Pointer to the error message pointer in the caller's stack
-#ifdef _WIN32
-    CONDITION_VARIABLE cv;
-#else
-    pthread_cond_t cv;
-#endif
+    mcp_cond_t* cv;                 // Use the abstracted condition variable type (pointer)
 } pending_request_t;
 
 // Structure for hash table entry
@@ -63,11 +63,7 @@ struct mcp_client {
     uint64_t next_id;               // Counter for request IDs
 
     // State for asynchronous response handling
-#ifdef _WIN32
-    CRITICAL_SECTION pending_requests_mutex;
-#else
-    pthread_mutex_t pending_requests_mutex;
-#endif
+    mcp_mutex_t* pending_requests_mutex; // Use the abstracted mutex type (pointer)
     pending_request_entry_t* pending_requests_table; // Hash table
     size_t pending_requests_capacity; // Current capacity (size) of the hash table
     size_t pending_requests_count;    // Number of active entries in the hash table
@@ -96,8 +92,6 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
 
     mcp_client_t* client = (mcp_client_t*)malloc(sizeof(mcp_client_t));
     if (client == NULL) {
-        // If client allocation fails, should we destroy the passed transport?
-        // The API doc says client takes ownership, so yes.
         mcp_transport_destroy(transport);
         return NULL;
     }
@@ -107,35 +101,29 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
     client->transport = transport;
     client->next_id = 1;
 
-    // Initialize synchronization primitives and pending requests map
-#ifdef _WIN32
-    InitializeCriticalSection(&client->pending_requests_mutex);
-#else
-    if (pthread_mutex_init(&client->pending_requests_mutex, NULL) != 0) {
+    // Initialize synchronization primitives using the abstraction layer
+    client->pending_requests_mutex = mcp_mutex_create();
+    if (client->pending_requests_mutex == NULL) {
+        mcp_log_error("Failed to create pending requests mutex.");
         mcp_transport_destroy(transport);
         free(client);
         return NULL;
     }
-#endif
 
     // Initialize hash table
     client->pending_requests_capacity = INITIAL_PENDING_REQUESTS_CAPACITY;
     client->pending_requests_count = 0;
-    // Use calloc to zero-initialize the table (marks all slots as empty with id=0)
     client->pending_requests_table = (pending_request_entry_t*)calloc(client->pending_requests_capacity, sizeof(pending_request_entry_t));
     if (client->pending_requests_table == NULL) {
-#ifdef _WIN32
-        DeleteCriticalSection(&client->pending_requests_mutex);
-#else
-        pthread_mutex_destroy(&client->pending_requests_mutex);
-#endif
+        mcp_mutex_destroy(client->pending_requests_mutex); // Use abstracted destroy
         mcp_transport_destroy(transport);
         free(client);
         return NULL;
     }
-    // Initialize status for all allocated entries (calloc already sets id to 0)
+    // Initialize status and CV pointers for all allocated entries
     for (size_t i = 0; i < client->pending_requests_capacity; ++i) {
          client->pending_requests_table[i].request.status = PENDING_REQUEST_INVALID;
+         client->pending_requests_table[i].request.cv = NULL; // Initialize CV pointer
     }
 
 
@@ -147,7 +135,6 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
             client_transport_error_callback
         ) != 0)
     {
-        // Mutex/CS will be destroyed by the mcp_client_destroy call below
         mcp_client_destroy(client); // Will destroy transport and mutex/CS
         return NULL;
     }
@@ -171,26 +158,19 @@ void mcp_client_destroy(mcp_client_t* client) {
     }
 
     // Clean up synchronization primitives and pending requests map
-#ifdef _WIN32
-    DeleteCriticalSection(&client->pending_requests_mutex);
-#else
-    pthread_mutex_destroy(&client->pending_requests_mutex);
-#endif
+    mcp_mutex_destroy(client->pending_requests_mutex);
+    client->pending_requests_mutex = NULL; // Avoid double free
 
     // Free any remaining pending requests (and their condition variables) in the hash table
-    for (size_t i = 0; i < client->pending_requests_capacity; ++i) {
-        if (client->pending_requests_table[i].id != 0 && client->pending_requests_table[i].request.status != PENDING_REQUEST_INVALID) {
-#ifdef _WIN32
-            // No explicit destruction needed for CONDITION_VARIABLE? Check docs.
-#else
-            pthread_cond_destroy(&client->pending_requests_table[i].request.cv);
-#endif
-            // Free any potentially allocated result/error strings if request timed out or errored?
-            // The current logic assigns these pointers back to the caller's stack variables,
-            // so the caller is responsible. We only need to destroy the CV here.
+    if (client->pending_requests_table != NULL) {
+        for (size_t i = 0; i < client->pending_requests_capacity; ++i) {
+            if (client->pending_requests_table[i].id != 0 && client->pending_requests_table[i].request.status != PENDING_REQUEST_INVALID) {
+                // Destroy the condition variable using the abstraction
+                mcp_cond_destroy(client->pending_requests_table[i].request.cv);
+            }
         }
+        free(client->pending_requests_table);
     }
-    free(client->pending_requests_table);
 
     free(client);
 }
@@ -268,7 +248,7 @@ static int add_pending_request_entry(mcp_client_t* client, uint64_t id, pending_
 
     // Found an empty or deleted slot
     entry->id = id;
-    entry->request = *request; // Copy the request data
+    entry->request = *request; // Copy the request data (including the created CV pointer)
     client->pending_requests_count++;
     return 0;
 }
@@ -278,9 +258,8 @@ static int remove_pending_request_entry(mcp_client_t* client, uint64_t id) {
     pending_request_entry_t* entry = find_pending_request_entry(client, id, false);
     if (entry != NULL && entry->request.status != PENDING_REQUEST_INVALID) {
         // Destroy CV before marking as invalid
-#ifndef _WIN32
-        pthread_cond_destroy(&entry->request.cv);
-#endif
+        mcp_cond_destroy(entry->request.cv);
+        entry->request.cv = NULL; // Avoid dangling pointer
         entry->request.status = PENDING_REQUEST_INVALID;
         // entry->id = 0; // Keep ID for tombstone/probing, or set to a special deleted marker if needed
         client->pending_requests_count--;
@@ -309,7 +288,7 @@ static int resize_pending_requests_table(mcp_client_t* client) {
     // Initialize all entries in the new table (calloc zeros memory, so id is 0)
     for (size_t i = 0; i < new_capacity; ++i) {
         new_table[i].request.status = PENDING_REQUEST_INVALID;
-        // new_table[i].id = 0; // Already done by calloc
+        new_table[i].request.cv = NULL; // Initialize CV pointer
     }
 
     // Rehash all existing valid entries from the old table
@@ -377,11 +356,7 @@ static void client_transport_error_callback(void* user_data, int transport_error
     mcp_log_info("Transport error detected (code: %d). Notifying waiting requests.\n", transport_error_code);
 
     // Lock the mutex to safely access the pending requests table
-#ifdef _WIN32
-    EnterCriticalSection(&client->pending_requests_mutex);
-#else
-    pthread_mutex_lock(&client->pending_requests_mutex);
-#endif
+    mcp_mutex_lock(client->pending_requests_mutex);
 
     // Iterate through the hash table
     for (size_t i = 0; i < client->pending_requests_capacity; ++i) {
@@ -401,21 +376,15 @@ static void client_transport_error_callback(void* user_data, int transport_error
             entry->request.status = PENDING_REQUEST_ERROR;
 
             // Signal the condition variable to wake up the waiting thread
-#ifdef _WIN32
-            WakeConditionVariable(&entry->request.cv);
-#else
-            pthread_cond_signal(&entry->request.cv);
-#endif
+            if (entry->request.cv) {
+                mcp_cond_signal(entry->request.cv);
+            }
             // Note: The waiting thread is responsible for removing the entry from the table
         }
     }
 
     // Unlock the mutex
-#ifdef _WIN32
-    LeaveCriticalSection(&client->pending_requests_mutex);
-#else
-    pthread_mutex_unlock(&client->pending_requests_mutex);
-#endif
+    mcp_mutex_unlock(client->pending_requests_mutex);
 }
 
 
@@ -497,16 +466,6 @@ static int mcp_client_send_request(
         return -1; // Send failed
     }
 
-    // Receive response
-    // This is currently blocking and synchronous. A real client might use a
-    // separate receive thread or asynchronous I/O, started via mcp_transport_start,
-    // which would use a callback to handle responses and match them to requests.
-    // For this simple example, we assume a synchronous request-response model
-    // and that the transport layer doesn't have its own receive loop running.
-    // We also lack timeout handling here based on client->config.request_timeout_ms.
-    // char* response_json = NULL; // Unused variable from old sync logic
-    // size_t response_size = 0; // Unused variable from old sync logic
-
     // --- Asynchronous Receive Logic ---
     // 1. Prepare pending request structure
     pending_request_t pending_req;
@@ -515,80 +474,59 @@ static int mcp_client_send_request(
     pending_req.result_ptr = result;
     pending_req.error_code_ptr = error_code;
     pending_req.error_message_ptr = error_message;
-#ifdef _WIN32
-    InitializeConditionVariable(&pending_req.cv);
-#else
-    if (pthread_cond_init(&pending_req.cv, NULL) != 0) {
-        return -1; // Failed to init condition variable
+    pending_req.cv = mcp_cond_create();
+    if (pending_req.cv == NULL) {
+        mcp_log_error("Failed to create condition variable for request %llu.", (unsigned long long)pending_req.id);
+        // Note: request_json and send_buffer are already freed
+        return -1;
     }
-#endif
 
     // 2. Add to pending requests map (protected by mutex)
-#ifdef _WIN32
-    EnterCriticalSection(&client->pending_requests_mutex);
-#else
-    pthread_mutex_lock(&client->pending_requests_mutex);
-#endif
+    mcp_mutex_lock(client->pending_requests_mutex);
     // Add the request to the hash table
     int add_status = add_pending_request_entry(client, pending_req.id, &pending_req);
     if (add_status != 0) {
-#ifdef _WIN32
-        LeaveCriticalSection(&client->pending_requests_mutex);
-        // No explicit CV destruction needed on Windows
-#else
-        pthread_mutex_unlock(&client->pending_requests_mutex);
+        mcp_mutex_unlock(client->pending_requests_mutex);
         // Destroy the CV we initialized if add failed
-        pthread_cond_destroy(&pending_req.cv);
-#endif
+        mcp_cond_destroy(pending_req.cv);
         mcp_log_error("Failed to add request %llu to hash table.\n", (unsigned long long)pending_req.id);
         return -1; // Failed to add to hash table
     }
-#ifdef _WIN32
-    LeaveCriticalSection(&client->pending_requests_mutex);
-#else
-    pthread_mutex_unlock(&client->pending_requests_mutex);
-#endif
+    mcp_mutex_unlock(client->pending_requests_mutex);
 
     // 3. Send the request (already done above)
     if (send_status != 0) {
     // If send failed, remove the pending request we just added from the hash table
-#ifdef _WIN32
-        EnterCriticalSection(&client->pending_requests_mutex);
-#else
-        pthread_mutex_lock(&client->pending_requests_mutex);
-#endif
+        mcp_mutex_lock(client->pending_requests_mutex);
         remove_pending_request_entry(client, pending_req.id); // CV is destroyed inside remove
-#ifdef _WIN32
-        LeaveCriticalSection(&client->pending_requests_mutex);
-#else
-        pthread_mutex_unlock(&client->pending_requests_mutex);
-#endif
+        mcp_mutex_unlock(client->pending_requests_mutex);
         return -1; // Send failed
     }
 
 
     // 4. Wait for response or timeout
     int wait_status = 0;
-#ifdef _WIN32
-    EnterCriticalSection(&client->pending_requests_mutex);
+    mcp_mutex_lock(client->pending_requests_mutex);
     // Find the entry in the hash table by ID
     pending_request_entry_t* req_entry_wrapper = find_pending_request_entry(client, pending_req.id, false);
 
     if (req_entry_wrapper && req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
-         if (!SleepConditionVariableCS(&req_entry_wrapper->request.cv, &client->pending_requests_mutex, client->config.request_timeout_ms > 0 ? client->config.request_timeout_ms : INFINITE)) {
-             if (GetLastError() == ERROR_TIMEOUT) {
-                 wait_status = -2; // Timeout
-                 req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
-             } else {
-                 wait_status = -1; // Wait error
-             }
-         } else {
-             // Signaled successfully
+        if (client->config.request_timeout_ms > 0) {
+            wait_status = mcp_cond_timedwait(req_entry_wrapper->request.cv, client->pending_requests_mutex, client->config.request_timeout_ms);
+        } else {
+            wait_status = mcp_cond_wait(req_entry_wrapper->request.cv, client->pending_requests_mutex);
+        }
+
+        // Check status after wait (could have changed due to timeout or error)
+        if (wait_status == 0) { // Signaled successfully
              wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
-         }
+        } else if (wait_status == -2) { // Timeout
+             req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
+        }
+        // else: wait_status is -1 (error)
     } else if (req_entry_wrapper) {
-        // Status changed before we could wait (e.g., error during callback processing)
-        wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
+         // Status changed before we could wait
+         wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
     } else {
         // Request not found - could happen if callback processed it very quickly
         // before we acquired the lock, or if send failed and it was removed.
@@ -596,7 +534,6 @@ static int mcp_client_send_request(
         if (*error_code != MCP_ERROR_NONE) {
              wait_status = -1; // Error already set
         } else {
-             // This case should ideally not happen if send succeeded. Log it.
              mcp_log_error("Request %llu not found in table after send.\n", (unsigned long long)pending_req.id);
              wait_status = -1;
         }
@@ -606,81 +543,23 @@ static int mcp_client_send_request(
     if (req_entry_wrapper) {
         remove_pending_request_entry(client, pending_req.id); // CV destroyed inside remove
     }
-    LeaveCriticalSection(&client->pending_requests_mutex);
+    mcp_mutex_unlock(client->pending_requests_mutex);
 
-#else // Pthreads
-    struct timespec ts;
-    if (client->config.request_timeout_ms > 0) {
-        clock_gettime(CLOCK_REALTIME, &ts);
-        uint64_t nsec = ts.tv_nsec + (client->config.request_timeout_ms % 1000) * 1000000;
-        ts.tv_sec += (client->config.request_timeout_ms / 1000) + (nsec / 1000000000);
-        ts.tv_nsec = nsec % 1000000000;
-    }
-
-    pthread_mutex_lock(&client->pending_requests_mutex);
-    // Find the entry in the hash table by ID
-    pending_request_entry_t* req_entry_wrapper = find_pending_request_entry(client, pending_req.id, false);
-
-    int pthread_wait_ret = 0;
-    if (req_entry_wrapper && req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
-        if (client->config.request_timeout_ms > 0) {
-            pthread_wait_ret = pthread_cond_timedwait(&req_entry_wrapper->request.cv, &client->pending_requests_mutex, &ts);
-        } else {
-            pthread_wait_ret = pthread_cond_wait(&req_entry_wrapper->request.cv, &client->pending_requests_mutex);
-        }
-
-        if (pthread_wait_ret == ETIMEDOUT) {
-            wait_status = -2; // Timeout
-            req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
-        } else if (pthread_wait_ret != 0) {
-            wait_status = -1; // Wait error
-        } else {
-            // Signaled successfully
-             wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
-        }
-    } else if (req_entry_wrapper) {
-         // Status changed before we could wait
-         wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
-    } else {
-        // Request not found - see Windows comments
-        if (*error_code != MCP_ERROR_NONE) {
-             wait_status = -1; // Error already set
-        } else {
-             mcp_log_error("Request %llu not found in table after send.\n", (unsigned long long)pending_req.id);
-             wait_status = -1;
-        }
-    }
-
-    // Remove entry from hash table after waiting/timeout/error
-    if (req_entry_wrapper) {
-        remove_pending_request_entry(client, pending_req.id); // CV destroyed inside remove
-    }
-    pthread_mutex_unlock(&client->pending_requests_mutex);
-#endif
 
     // 5. Return status based on wait result
     if (wait_status == -2) { // Timeout case
         mcp_log_error("Request %llu timed out.\n", (unsigned long long)pending_req.id);
         *error_code = MCP_ERROR_TRANSPORT_ERROR; // Use a generic transport error for timeout
-        // Allocate error message using our helper
         *error_message = mcp_strdup("Request timed out");
-        // If mcp_strdup fails, error_message will be NULL, which is acceptable
         return -1; // Return error for timeout
     } else if (wait_status != 0) { // Other wait error or error signaled by callback
          mcp_log_error("Error waiting for response for request %llu.\n", (unsigned long long)pending_req.id);
-         // error_code and error_message should have been set by the callback
-         // (client_receive_callback or client_transport_error_callback) if status is ERROR.
-         // Check if an error message was actually allocated by the callback.
          if (*error_code != MCP_ERROR_NONE && *error_message == NULL) {
-             // If an error code is set but no message, provide a generic one.
              *error_message = mcp_strdup("Unknown internal error occurred");
          } else if (*error_code == MCP_ERROR_NONE) {
-             // This case should ideally not happen if wait_status != 0,
-             // but handle it defensively.
              *error_code = MCP_ERROR_INTERNAL_ERROR;
              *error_message = mcp_strdup("Internal error waiting for response");
          }
-         // If mcp_strdup failed above, error_message will be NULL.
          return -1; // Return error
     }
 
@@ -772,11 +651,7 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
 
 
     // Find the pending request and signal it
-#ifdef _WIN32
-    EnterCriticalSection(&client->pending_requests_mutex);
-#else
-    pthread_mutex_lock(&client->pending_requests_mutex);
-#endif
+    mcp_mutex_lock(client->pending_requests_mutex);
 
     // Find the pending request entry in the hash table
     pending_request_entry_t* req_entry_wrapper = find_pending_request_entry(client, id, false);
@@ -793,11 +668,9 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
             req_entry_wrapper->request.status = (resp_error_code == MCP_ERROR_NONE) ? PENDING_REQUEST_COMPLETED : PENDING_REQUEST_ERROR;
 
             // Signal the waiting thread
-#ifdef _WIN32
-            WakeConditionVariable(&req_entry_wrapper->request.cv);
-#else
-            pthread_cond_signal(&req_entry_wrapper->request.cv);
-#endif
+            if (req_entry_wrapper->request.cv) {
+                mcp_cond_signal(req_entry_wrapper->request.cv);
+            }
             // Note: We don't remove the entry here. The waiting thread will remove it after waking up.
         } else {
             // Request already timed out or errored, discard response
@@ -813,11 +686,7 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
         *error_code = MCP_ERROR_INVALID_REQUEST; // Set error for the callback itself
     }
 
-#ifdef _WIN32
-    LeaveCriticalSection(&client->pending_requests_mutex);
-#else
-    pthread_mutex_unlock(&client->pending_requests_mutex);
-#endif
+    mcp_mutex_unlock(client->pending_requests_mutex);
 
     return NULL; // Client callback never sends a response back
 }
@@ -1023,4 +892,3 @@ int mcp_client_call_tool(
     free(error_message);
     return 0;
 }
-
