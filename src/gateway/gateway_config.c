@@ -7,6 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef _WIN32
+#include <regex.h>
+#endif
+
 // Helper function to free string arrays
 static void free_string_array(char** arr, size_t count) {
     if (!arr) return;
@@ -15,6 +19,17 @@ static void free_string_array(char** arr, size_t count) {
     }
     free(arr);
 }
+
+#ifndef _WIN32
+// Helper function to free compiled regex objects (POSIX only)
+static void free_compiled_regexes(regex_t* regex_arr, size_t count) {
+    if (!regex_arr) return;
+    for (size_t i = 0; i < count; i++) {
+        regfree(&regex_arr[i]); // Free each compiled regex
+    }
+    free(regex_arr);
+}
+#endif
 
 // Implementation of mcp_backend_info_free
 void mcp_backend_info_free(mcp_backend_info_t* backend_info) {
@@ -26,6 +41,12 @@ void mcp_backend_info_free(mcp_backend_info_t* backend_info) {
     // Free routing arrays
     free_string_array(backend_info->routing.resource_prefixes, backend_info->routing.resource_prefix_count);
     free_string_array(backend_info->routing.tool_names, backend_info->routing.tool_name_count);
+
+#ifndef _WIN32
+    // Free regex related arrays (POSIX only)
+    free_string_array(backend_info->routing.resource_regex_patterns, backend_info->routing.resource_regex_count);
+    free_compiled_regexes(backend_info->routing.compiled_resource_regexes, backend_info->routing.resource_regex_count);
+#endif
 
     // Note: Does not free the struct itself if part of an array
     // Reset memory to avoid dangling pointers if misused
@@ -70,8 +91,8 @@ static mcp_error_code_t parse_string_array(mcp_json_t* json_array, char*** out_a
             free_string_array(result_array, i); // Free partially allocated array
             return MCP_ERROR_PARSE_ERROR;
         }
-        result_array[(int)i] = mcp_strdup(str_val);
-        if (!result_array[(int)i]) {
+        result_array[i] = mcp_strdup(str_val);
+        if (!result_array[i]) {
             mcp_log_error("Gateway config: Failed to duplicate string '%s'", str_val);
             free_string_array(result_array, i); // Free partially allocated array
             return MCP_ERROR_INTERNAL_ERROR;
@@ -82,6 +103,75 @@ static mcp_error_code_t parse_string_array(mcp_json_t* json_array, char*** out_a
     *out_count = count;
     return MCP_ERROR_NONE;
 }
+
+#ifndef _WIN32
+// Helper to parse and compile regex patterns (POSIX only)
+static mcp_error_code_t parse_and_compile_regex_array(
+    mcp_json_t* json_array,
+    char*** out_patterns,
+    regex_t** out_compiled_regexes,
+    size_t* out_count)
+{
+    *out_patterns = NULL;
+    *out_compiled_regexes = NULL;
+    *out_count = 0;
+
+    if (!json_array || mcp_json_get_type(json_array) != MCP_JSON_ARRAY) {
+        return MCP_ERROR_NONE; // Missing array is not an error
+    }
+
+    size_t count = mcp_json_array_get_size(json_array);
+    if (count == 0) {
+        return MCP_ERROR_NONE;
+    }
+
+    char** patterns = (char**)malloc(count * sizeof(char*));
+    regex_t* compiled = (regex_t*)malloc(count * sizeof(regex_t));
+    if (!patterns || !compiled) {
+        free(patterns);
+        free(compiled);
+        return MCP_ERROR_INTERNAL_ERROR;
+    }
+    memset(patterns, 0, count * sizeof(char*));
+    // No need to memset compiled regex_t array
+
+    for (size_t i = 0; i < count; i++) {
+        mcp_json_t* item = mcp_json_array_get_item(json_array, (int)i);
+        const char* pattern_str = NULL;
+        if (!item || mcp_json_get_type(item) != MCP_JSON_STRING || mcp_json_get_string(item, &pattern_str) != 0 || !pattern_str) {
+            mcp_log_error("Gateway config: Expected regex pattern string at index %zu", i);
+            free_string_array(patterns, i);
+            free_compiled_regexes(compiled, i); // Free already compiled ones
+            return MCP_ERROR_PARSE_ERROR;
+        }
+
+        patterns[i] = mcp_strdup(pattern_str);
+        if (!patterns[i]) {
+            mcp_log_error("Gateway config: Failed to duplicate regex pattern '%s'", pattern_str);
+            free_string_array(patterns, i);
+            free_compiled_regexes(compiled, i);
+            return MCP_ERROR_INTERNAL_ERROR;
+        }
+
+        // Compile the regex (using POSIX Extended Regex syntax)
+        int reg_err = regcomp(&compiled[i], pattern_str, REG_EXTENDED | REG_NOSUB); // REG_NOSUB for efficiency if only matching
+        if (reg_err != 0) {
+            char err_buf[256];
+            regerror(reg_err, &compiled[i], err_buf, sizeof(err_buf));
+            mcp_log_error("Gateway config: Failed to compile regex '%s': %s", pattern_str, err_buf);
+            free(patterns[i]); // Free the duplicated pattern string
+            free_string_array(patterns, i); // Free previous patterns
+            free_compiled_regexes(compiled, i); // Free previous compiled regexes
+            return MCP_ERROR_PARSE_ERROR;
+        }
+    }
+
+    *out_patterns = patterns;
+    *out_compiled_regexes = compiled;
+    *out_count = count;
+    return MCP_ERROR_NONE;
+}
+#endif // !_WIN32
 
 
 // Implementation of load_gateway_config
@@ -138,9 +228,6 @@ mcp_error_code_t load_gateway_config(
     file_content[file_size] = '\0'; // Null-terminate
 
     // 2. Parse JSON
-    // Note: mcp_json_parse uses its own internal allocation (often arena-based)
-    // We don't need to free root_json directly if using an arena that gets reset,
-    // but we DO need to duplicate strings we want to keep.
     root_json = mcp_json_parse(file_content);
     free(file_content); // Free the raw file content buffer
     file_content = NULL;
@@ -164,7 +251,7 @@ mcp_error_code_t load_gateway_config(
         return MCP_ERROR_NONE; // Valid empty config
     }
 
-    // Allocate temporary list (will realloc if needed, but start with reasonable guess)
+    // Allocate temporary list
     backend_capacity = num_backends_in_json;
     temp_list = (mcp_backend_info_t*)malloc(backend_capacity * sizeof(mcp_backend_info_t));
     if (!temp_list) {
@@ -216,6 +303,7 @@ mcp_error_code_t load_gateway_config(
         // --- Parse routing object ---
         mcp_json_t* prefixes_node = mcp_json_object_get_property(routing_node, "resource_prefixes");
         mcp_json_t* tools_node = mcp_json_object_get_property(routing_node, "tool_names");
+        mcp_json_t* regexes_node = mcp_json_object_get_property(routing_node, "resource_regexes"); // New field
 
         err = parse_string_array(prefixes_node, &current_backend->routing.resource_prefixes, &current_backend->routing.resource_prefix_count);
         if (err != MCP_ERROR_NONE) {
@@ -227,6 +315,28 @@ mcp_error_code_t load_gateway_config(
              mcp_log_error("Gateway config: Failed to parse 'tool_names' for backend '%s'.", name_str);
              goto cleanup_error;
         }
+
+#ifndef _WIN32
+        // Parse and compile regexes (POSIX only)
+        err = parse_and_compile_regex_array(regexes_node,
+                                            &current_backend->routing.resource_regex_patterns,
+                                            &current_backend->routing.compiled_resource_regexes,
+                                            &current_backend->routing.resource_regex_count);
+        if (err != MCP_ERROR_NONE) {
+             mcp_log_error("Gateway config: Failed to parse or compile 'resource_regexes' for backend '%s'.", name_str);
+             goto cleanup_error;
+        }
+#else
+        // On Windows, ignore the regexes node but log if present
+        if (regexes_node && mcp_json_get_type(regexes_node) == MCP_JSON_ARRAY) {
+            mcp_log_warn("Gateway config: 'resource_regexes' found for backend '%s' but regex routing is not supported on Windows. Ignoring.", name_str);
+        }
+        // Explicitly initialize Windows dummy fields to NULL/0
+        current_backend->routing.resource_regex_patterns_dummy = NULL;
+        current_backend->routing.compiled_resource_regexes_dummy = NULL;
+        current_backend->routing.resource_regex_count_dummy = 0;
+#endif
+
 
         // --- Parse optional fields ---
         mcp_json_t* timeout_node = mcp_json_object_get_property(backend_obj, "timeout_ms");
@@ -241,18 +351,7 @@ mcp_error_code_t load_gateway_config(
 
         backend_count++; // Successfully parsed one backend
 
-        // Realloc temp_list if needed (though unlikely with initial capacity)
-        if (backend_count >= backend_capacity) {
-            backend_capacity *= 2;
-            mcp_backend_info_t* new_list = (mcp_backend_info_t*)realloc(temp_list, backend_capacity * sizeof(mcp_backend_info_t));
-            if (!new_list) {
-                mcp_log_error("Gateway config: Failed to realloc temporary backend list.");
-                err = MCP_ERROR_INTERNAL_ERROR; goto cleanup_error;
-            }
-            temp_list = new_list;
-            // Zero initialize the newly allocated part
-            memset(temp_list + backend_count, 0, (backend_capacity - backend_count) * sizeof(mcp_backend_info_t));
-        }
+        // Realloc not needed as we allocated exact size initially
     }
 
     // 4. Success - Assign results
