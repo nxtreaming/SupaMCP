@@ -41,7 +41,7 @@ set(COMMON_SOURCES
     src/common/mcp_arena.c
     src/common/mcp_log.c
     src/common/mcp_thread_local.c
-    src/common/mcp_sync.c
+    src/common/mcp_sync.c # Added sync implementation
     src/server/mcp_buffer_pool.c
     src/server/mcp_thread_pool.c
     src/server/mcp_cache_optimized.c
@@ -69,97 +69,62 @@ set(COMMON_SOURCES
     src/gateway/gateway_socket_utils.c
 )
 
-# Common library header files
-set(COMMON_HEADERS
-    include/mcp_json.h
-    include/mcp_json_rpc.h
-    include/mcp_transport.h
-    include/mcp_transport_factory.h
-    include/mcp_stdio_transport.h
-    include/mcp_tcp_transport.h
-    include/mcp_types.h
-    include/mcp_arena.h
-    include/mcp_log.h
-    include/mcp_thread_local.h
-    include/mcp_thread_pool.h
-    include/mcp_cache.h
-    include/mcp_rate_limiter.h
-    include/mcp_profiler.h
-    include/mcp_hashtable.h
-    client/include/mcp_client.h
-    include/mcp_server.h
-    include/mcp_auth.h
-    include/mcp_connection_pool.h
-    include/mcp_plugin.h
-)
-
-# Server-specific source files (Now only contains the server's main entry point)
-set(SERVER_SOURCES
-    src/main.c
-)
-
-# Server-specific header files (Redundant if added to COMMON_HEADERS, but harmless)
-set(SERVER_HEADERS
-    include/mcp_server.h
-)
-
-# Client-specific source files (Now only contains the client's main entry point)
-set(CLIENT_SOURCES
-    client/src/main.c
-)
-
-# Client-specific header files (Redundant if added to COMMON_HEADERS, but harmless)
-set(CLIENT_HEADERS
-    client/include/mcp_client.h
-)
-
 # Create common library
 add_library(mcp_common STATIC)
 target_sources(mcp_common PRIVATE ${COMMON_SOURCES})
 # Make the public headers available to consumers
 target_include_directories(mcp_common PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/client/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include       # Public API headers
+    ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Make client headers public too
 )
 # Add module source directories as private include paths so internal headers can be found
 target_include_directories(mcp_common PRIVATE
+    # ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Now public
     ${CMAKE_CURRENT_SOURCE_DIR}/src/common
     ${CMAKE_CURRENT_SOURCE_DIR}/src/common/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/json/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/transport
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/transport/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/server
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/server/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/connection_pool
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/connection_pool/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gateway
 )
 
-# Create server executable
-add_executable(mcp_server ${SERVER_SOURCES} ${SERVER_HEADERS})
-target_link_libraries(mcp_server PRIVATE mcp_common)
-# Server needs access to its own headers in include/ and internal server headers
-target_include_directories(mcp_server PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/server
+# Server-specific source files
+set(SERVER_SOURCES
+    src/main.c
 )
 
-# Create client executable
-# Note: This might need adjustment if client also needs thread pool, but for now it links mcp_common
-add_executable(mcp_client ${CLIENT_SOURCES} ${CLIENT_HEADERS})
-target_link_libraries(mcp_client PRIVATE mcp_common)
-# Client needs access to its own headers in client/include/
-target_include_directories(mcp_client PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/client/include
+# Client-specific source files
+set(CLIENT_SOURCES
+    client/src/main.c
 )
+
+# Create server executable
+add_executable(mcp_server ${SERVER_SOURCES})
+target_link_libraries(mcp_server PRIVATE mcp_common)
+# Server include directories are inherited from mcp_common PUBLIC
+
+# Create client executable
+add_executable(mcp_client ${CLIENT_SOURCES})
+target_link_libraries(mcp_client PRIVATE mcp_common)
+# Client include directories are inherited from mcp_common PUBLIC
 
 # Link platform-specific libraries
 if(WIN32)
-    target_link_libraries(mcp_common ws2_32)
+    target_link_libraries(mcp_common INTERFACE ws2_32) # Use INTERFACE so consumers link it too
 else()
     # Link pthreads and dl (for dynamic loading) on non-Windows
-    target_link_libraries(mcp_common ${CMAKE_THREAD_LIBS_INIT} dl)
+    target_link_libraries(mcp_common INTERFACE Threads::Threads dl) # Use modern Threads target and INTERFACE
 endif()
 
 # Install
 install(TARGETS mcp_server mcp_client DESTINATION bin)
+install(DIRECTORY include/ DESTINATION include) # Install public headers
+install(DIRECTORY client/include/ DESTINATION include) # Install public client headers
 
 # --- Testing Setup ---
 enable_testing()
@@ -189,19 +154,11 @@ set(BENCHMARK_HEADERS
 # Create benchmark executable
 add_executable(mcp_benchmark_cli ${BENCHMARK_SOURCES} ${BENCHMARK_HEADERS})
 target_link_libraries(mcp_benchmark_cli PRIVATE mcp_common)
-# Benchmark needs access to its own headers and common headers
+# Benchmark needs access to its own headers
 target_include_directories(mcp_benchmark_cli PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/benchmark
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Needed if benchmark uses mcp_client directly
 )
-# Link platform-specific libraries (needed if benchmark uses threads/sockets directly,
-# otherwise inherited from mcp_common)
-# if(WIN32)
-#     target_link_libraries(mcp_benchmark_cli ws2_32)
-# else()
-#     target_link_libraries(mcp_benchmark_cli ${CMAKE_THREAD_LIBS_INIT})
-# endif()
+# Common/Client headers are inherited via mcp_common PUBLIC include directories
 
 # Optionally install the benchmark tool
 # install(TARGETS mcp_benchmark_cli DESTINATION bin)

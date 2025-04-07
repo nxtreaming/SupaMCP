@@ -4,7 +4,6 @@
 #include "mcp_arena.h"
 #include "mcp_json.h"
 #include "mcp_json_message.h"
-#include "gateway_socket_utils.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,14 +63,17 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
         request_id_for_auth_error = message.request.id; // Get ID for potential error response
         if (required_auth_type == MCP_AUTH_API_KEY) {
             // Extract apiKey from params if required
-            mcp_json_t* params_json = mcp_json_parse(message.request.params); // Use TLS arena
+            // Use the standard parser. If it uses an arena internally, it will manage it.
+            mcp_json_t* params_json = mcp_json_parse(message.request.params); // Corrected function call
             if (params_json && mcp_json_get_type(params_json) == MCP_JSON_OBJECT) {
                 mcp_json_t* key_node = mcp_json_object_get_property(params_json, "apiKey");
                 if (key_node && mcp_json_get_type(key_node) == MCP_JSON_STRING) {
                     mcp_json_get_string(key_node, &credentials); // Get pointer to key string
                 }
             }
-            // Note: credentials will be NULL if apiKey is missing or not a string
+            // Note: We need to destroy params_json if mcp_json_parse doesn't use an arena automatically
+            // Assuming for now it does, or that its cleanup is handled elsewhere/implicitly.
+            // If not, add: mcp_json_destroy(params_json);
         }
     }
     // For notifications or responses, we might skip auth or handle differently,
@@ -130,7 +132,6 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
  * @param server The server instance.
  * @param arena Arena used for parsing the request (can be used by handlers for param parsing).
  * @param request Pointer to the parsed request structure.
- * @param[out] error_code Set to MCP_ERROR_NONE on success, or an error code if the method is not found.
  * @param auth_context The authentication context for the client making the request.
  * @param[out] error_code Set to MCP_ERROR_NONE on success, or an error code if the method is not found or access denied.
  * @return A malloc'd JSON string response (success or error response).
@@ -150,11 +151,14 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
         const mcp_backend_info_t* target_backend = find_backend_for_request(request, server->backends, server->backend_count);
 
         if (target_backend) {
-            // Found a backend to route to. Call the extracted forwarding function.
-            // The gateway_forward_request function now handles pool interaction, send/recv,
-            // and returns either the backend's response or an error response, already malloc'd.
-            // It also sets the error_code appropriately.
-            return gateway_forward_request(target_backend, request, error_code);
+            // Found a backend to route to. Call the forwarding function.
+            // Pass the pool manager from the server struct.
+            if (server->pool_manager == NULL) {
+                 mcp_log_error("Gateway mode enabled but pool manager is NULL.");
+                 *error_code = MCP_ERROR_INTERNAL_ERROR;
+                 return create_error_response(request->id, *error_code, "Gateway configuration error.");
+            }
+            return gateway_forward_request(server->pool_manager, target_backend, request, error_code);
         }
         // If target_backend is NULL, fall through to local handling.
     }

@@ -31,7 +31,7 @@
 #include "gateway.h"
 #include "mcp_thread_local.h"
 #include "mcp_connection_pool.h"
-#include "internal/server_internal.h"
+#include "server/internal/server_internal.h" 
 
 
 // Global server instance for signal handling

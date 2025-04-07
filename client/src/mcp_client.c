@@ -1,3 +1,9 @@
+#ifdef _WIN32
+#   ifndef _CRT_SECURE_NO_WARNINGS
+#       define _CRT_SECURE_NO_WARNINGS
+#   endif
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -7,6 +13,9 @@
 #include <mcp_log.h>
 #include "mcp_sync.h"
 #include "mcp_types.h"
+#include <mcp_json_message.h>
+#include <mcp_json_rpc.h>
+
 
 // Platform specific includes are no longer needed here for sync primitives,
 // but keep them for socket types if used elsewhere in the file.
@@ -19,7 +28,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <time.h>
+#include <time.h> // Still needed for timespec
+#include <errno.h> // Include for ETIMEDOUT on POSIX
 #endif
 
 
@@ -391,17 +401,29 @@ static void client_transport_error_callback(void* user_data, int transport_error
 // Connect/Disconnect functions are removed as transport is handled at creation/destruction.
 
 /**
- * Send a request to the MCP server and receive a response
+ * @brief Internal function to send a request and wait for a response.
+ *
+ * This function handles the core logic of sending a formatted request,
+ * managing the pending request state, waiting for the response via condition
+ * variables, and handling timeouts or errors.
+ *
+ * @param client The client instance.
+ * @param request_json The fully formatted JSON request string to send.
+ * @param request_id The ID used in the request_json.
+ * @param[out] result Pointer to receive the malloc'd result string (ownership transferred).
+ * @param[out] error_code Pointer to receive the MCP error code.
+ * @param[out] error_message Pointer to receive the malloc'd error message string (ownership transferred).
+ * @return 0 on success (check error_code for JSON-RPC errors), -1 on failure.
  */
-static int mcp_client_send_request(
+static int mcp_client_send_and_wait(
     mcp_client_t* client,
-    const char* method,
-    const char* params,
+    const char* request_json,
+    uint64_t request_id,
     char** result,
     mcp_error_code_t* error_code,
     char** error_message
 ) {
-    if (client == NULL || method == NULL || result == NULL || error_code == NULL || error_message == NULL) {
+     if (client == NULL || request_json == NULL || result == NULL || error_code == NULL || error_message == NULL) {
         return -1;
     }
 
@@ -414,62 +436,39 @@ static int mcp_client_send_request(
     *error_message = NULL;
     *error_code = MCP_ERROR_NONE;
 
-    // Create request JSON
-    char* request_json = NULL;
-    if (params != NULL) {
-        request_json = mcp_json_format_request(client->next_id, method, params);
-    } else {
-        request_json = mcp_json_format_request(client->next_id, method, "{}");
-    }
-    if (request_json == NULL) {
-        return -1;
-    }
-
     // Calculate JSON length - excluding null terminator, as required by server
-    size_t json_len = strlen(request_json);  // Don't add 1, exclude null terminator
-    uint32_t net_len = htonl((uint32_t)json_len); // Convert to network byte order
-    
+    size_t json_len = strlen(request_json);
+    uint32_t net_len = htonl((uint32_t)json_len);
+
     // Allocate buffer containing length prefix and JSON content
-    // Add 1 extra byte for null terminator, but don't include in transmission length
     size_t total_len = sizeof(net_len) + json_len;
-    char* send_buffer = (char*)malloc(total_len + 1); // +1 for null terminator space
+    char* send_buffer = (char*)malloc(total_len); // No need for +1 here
 
     if (send_buffer == NULL) {
-        free(request_json);
+        mcp_log_error("Failed to allocate send buffer.");
         return -1; // Allocation failed
     }
 
     // Copy length prefix and JSON data to buffer
     memcpy(send_buffer, &net_len, sizeof(net_len));
     memcpy(send_buffer + sizeof(net_len), request_json, json_len);
-    send_buffer[total_len] = '\0'; // Add null terminator (in extra allocated space)
-
-    // DEBUG: Log before sending
-    mcp_log_debug("Sending request ID %llu, method '%s', total_len=%zu, prefix=0x%08X (%02X %02X %02X %02X), json_start='%.10s...'",
-                (unsigned long long)client->next_id, // Note: ID used here is before incrementing for pending_req
-                method,
-                total_len,
-                net_len,
-                (unsigned char)send_buffer[0], (unsigned char)send_buffer[1], (unsigned char)send_buffer[2], (unsigned char)send_buffer[3],
-                request_json);
 
     // Send the combined buffer
     int send_status = mcp_transport_send(client->transport, send_buffer, total_len);
-    mcp_log_debug("mcp_transport_send returned: %d", send_status);
+    mcp_log_debug("mcp_transport_send returned: %d for request ID %llu", send_status, (unsigned long long)request_id);
 
-
-    // Clean up buffers
+    // Clean up send buffer
     free(send_buffer);
-    free(request_json); // Free original JSON string
 
     if (send_status != 0) {
+        mcp_log_error("mcp_transport_send failed with status %d", send_status);
         return -1; // Send failed
     }
 
     // --- Asynchronous Receive Logic ---
     // 1. Prepare pending request structure
     pending_request_t pending_req;
-    pending_req.id = client->next_id++; // Use and increment ID
+    pending_req.id = request_id; // Use the provided ID
     pending_req.status = PENDING_REQUEST_WAITING;
     pending_req.result_ptr = result;
     pending_req.error_code_ptr = error_code;
@@ -477,67 +476,70 @@ static int mcp_client_send_request(
     pending_req.cv = mcp_cond_create();
     if (pending_req.cv == NULL) {
         mcp_log_error("Failed to create condition variable for request %llu.", (unsigned long long)pending_req.id);
-        // Note: request_json and send_buffer are already freed
         return -1;
     }
 
     // 2. Add to pending requests map (protected by mutex)
     mcp_mutex_lock(client->pending_requests_mutex);
-    // Add the request to the hash table
     int add_status = add_pending_request_entry(client, pending_req.id, &pending_req);
     if (add_status != 0) {
         mcp_mutex_unlock(client->pending_requests_mutex);
-        // Destroy the CV we initialized if add failed
-        mcp_cond_destroy(pending_req.cv);
+        mcp_cond_destroy(pending_req.cv); // Destroy the CV we initialized if add failed
         mcp_log_error("Failed to add request %llu to hash table.\n", (unsigned long long)pending_req.id);
         return -1; // Failed to add to hash table
     }
     mcp_mutex_unlock(client->pending_requests_mutex);
 
-    // 3. Send the request (already done above)
-    if (send_status != 0) {
-    // If send failed, remove the pending request we just added from the hash table
-        mcp_mutex_lock(client->pending_requests_mutex);
-        remove_pending_request_entry(client, pending_req.id); // CV is destroyed inside remove
-        mcp_mutex_unlock(client->pending_requests_mutex);
-        return -1; // Send failed
-    }
-
-
-    // 4. Wait for response or timeout
-    int wait_status = 0;
+    // 3. Wait for response or timeout
+    int wait_result = 0; // 0=signaled, 1=timeout (Windows), ETIMEDOUT=timeout (POSIX), -1=error
     mcp_mutex_lock(client->pending_requests_mutex);
-    // Find the entry in the hash table by ID
     pending_request_entry_t* req_entry_wrapper = find_pending_request_entry(client, pending_req.id, false);
 
     if (req_entry_wrapper && req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
         if (client->config.request_timeout_ms > 0) {
-            wait_status = mcp_cond_timedwait(req_entry_wrapper->request.cv, client->pending_requests_mutex, client->config.request_timeout_ms);
+            wait_result = mcp_cond_timedwait(req_entry_wrapper->request.cv, client->pending_requests_mutex, client->config.request_timeout_ms);
         } else {
-            wait_status = mcp_cond_wait(req_entry_wrapper->request.cv, client->pending_requests_mutex);
+            wait_result = mcp_cond_wait(req_entry_wrapper->request.cv, client->pending_requests_mutex);
         }
 
-        // Check status after wait (could have changed due to timeout or error)
-        if (wait_status == 0) { // Signaled successfully
-             wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
-        } else if (wait_status == -2) { // Timeout
+        // Update status based on wait_result *before* checking request status
+        // Check for timeout using platform-specific or abstraction-defined value
+#ifdef ETIMEDOUT // Only check ETIMEDOUT if it's defined (i.e., on POSIX)
+        if (wait_result == ETIMEDOUT) {
              req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
+        } else if (wait_result != 0) {
+             mcp_log_error("mcp_cond_wait/timedwait failed with code: %d (%s)", wait_result, strerror(wait_result));
+             // Keep status as WAITING or whatever callback set if error occurred during wait
         }
-        // else: wait_status is -1 (error)
-    } else if (req_entry_wrapper) {
-         // Status changed before we could wait
-         wait_status = (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) ? 0 : -1;
-    } else {
-        // Request not found - could happen if callback processed it very quickly
-        // before we acquired the lock, or if send failed and it was removed.
-        // Check the caller's error code/message which might have been set.
-        if (*error_code != MCP_ERROR_NONE) {
-             wait_status = -1; // Error already set
-        } else {
-             mcp_log_error("Request %llu not found in table after send.\n", (unsigned long long)pending_req.id);
-             wait_status = -1;
+#else // Windows or other systems where ETIMEDOUT isn't the timeout indicator
+        // Assume the abstraction returns a specific value (e.g., 1) for timeout, 0 for success, -1 for error
+        if (wait_result == 1) { // Assuming 1 indicates timeout from the abstraction
+             req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
+        } else if (wait_result != 0) {
+             mcp_log_error("mcp_cond_wait/timedwait failed with code: %d", wait_result);
         }
+#endif
+        // If wait_result == 0, the request status should have been updated by the callback
     }
+    // else: Request was processed/removed before we could wait, or send failed initially.
+
+    // Determine final outcome based on request status
+    int final_status = -1; // Default to error
+    if (req_entry_wrapper) {
+        if(req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) {
+            final_status = 0; // Success
+        } else if (req_entry_wrapper->request.status == PENDING_REQUEST_TIMEOUT) {
+            final_status = -2; // Timeout
+        } else {
+            final_status = -1; // Error (set by callback or wait error)
+        }
+    } else {
+        // Entry removed before check. Rely on output params set by callback.
+        if (*error_code != MCP_ERROR_NONE) final_status = -1;
+        else if (*result != NULL) final_status = 0;
+        else { mcp_log_error("Request %llu not found and no result/error set.", (unsigned long long)pending_req.id); final_status = -1; }
+    }
+
 
     // Remove entry from hash table after waiting/timeout/error
     if (req_entry_wrapper) {
@@ -545,27 +547,106 @@ static int mcp_client_send_request(
     }
     mcp_mutex_unlock(client->pending_requests_mutex);
 
-
-    // 5. Return status based on wait result
-    if (wait_status == -2) { // Timeout case
+    // 4. Return status based on final outcome
+    if (final_status == -2) { // Timeout case
         mcp_log_error("Request %llu timed out.\n", (unsigned long long)pending_req.id);
-        *error_code = MCP_ERROR_TRANSPORT_ERROR; // Use a generic transport error for timeout
+        *error_code = MCP_ERROR_TRANSPORT_ERROR;
         *error_message = mcp_strdup("Request timed out");
-        return -1; // Return error for timeout
-    } else if (wait_status != 0) { // Other wait error or error signaled by callback
-         mcp_log_error("Error waiting for response for request %llu.\n", (unsigned long long)pending_req.id);
+        return -1;
+    } else if (final_status != 0) { // Other error
+         mcp_log_error("Error processing response for request %llu.\n", (unsigned long long)pending_req.id);
          if (*error_code != MCP_ERROR_NONE && *error_message == NULL) {
              *error_message = mcp_strdup("Unknown internal error occurred");
          } else if (*error_code == MCP_ERROR_NONE) {
              *error_code = MCP_ERROR_INTERNAL_ERROR;
-             *error_message = mcp_strdup("Internal error waiting for response");
+             *error_message = mcp_strdup("Internal error processing response");
          }
-         return -1; // Return error
+         return -1;
     }
 
-    // Success (wait_status == 0), result/error are already populated by callback via pointers
+    // Success (final_status == 0)
     return 0;
 }
+
+
+/**
+ * Send a request to the MCP server and receive a response (Original version)
+ */
+static int mcp_client_send_request(
+    mcp_client_t* client,
+    const char* method,
+    const char* params, // Assumed to be JSON string or NULL
+    char** result,
+    mcp_error_code_t* error_code,
+    char** error_message
+) {
+    if (client == NULL || method == NULL || result == NULL || error_code == NULL || error_message == NULL) {
+        return -1;
+    }
+
+    // Generate next request ID
+    mcp_mutex_lock(client->pending_requests_mutex);
+    uint64_t current_id = client->next_id++;
+    mcp_mutex_unlock(client->pending_requests_mutex);
+
+
+    // Create request JSON
+    char* request_json = NULL;
+    const char* params_to_use = (params != NULL) ? params : "{}";
+    request_json = mcp_json_format_request(current_id, method, params_to_use);
+
+    if (request_json == NULL) {
+        mcp_log_error("Failed to format request JSON for method '%s'", method);
+        return -1;
+    }
+
+    // Use the internal send_and_wait function
+    int status = mcp_client_send_and_wait(client, request_json, current_id, result, error_code, error_message);
+
+    // Free the formatted request JSON string
+    free(request_json);
+
+    return status;
+}
+
+/**
+ * Sends a pre-formatted request and receives the raw response.
+ */
+int mcp_client_send_raw_request(
+    mcp_client_t* client,
+    const char* method, // Still needed for logging/context? Or remove? Keep for now.
+    const char* params_json, // The raw JSON params string
+    uint64_t id, // Use the provided ID
+    char** response_json_out, // Changed name for clarity
+    mcp_error_code_t* error_code_out, // Changed name
+    char** error_message_out // Changed name
+) {
+     if (client == NULL || method == NULL || params_json == NULL || response_json_out == NULL || error_code_out == NULL || error_message_out == NULL) {
+        return -1;
+    }
+
+    // Create the full request JSON string using the provided components
+    char* request_json = mcp_json_format_request(id, method, params_json);
+    if (request_json == NULL) {
+        mcp_log_error("Failed to format raw request JSON for method '%s'", method);
+        return -1;
+    }
+
+    // Use the internal send_and_wait function
+    int status = mcp_client_send_and_wait(client, request_json, id, response_json_out, error_code_out, error_message_out);
+
+    // Free the formatted request JSON string
+    free(request_json);
+
+    // send_and_wait already populates the output parameters correctly based on success/error/timeout.
+    // Ensure response_json_out is NULL on failure.
+    if (status != 0) {
+        *response_json_out = NULL;
+    }
+
+    return status;
+}
+
 
 /**
  * List resources from the MCP server
@@ -588,27 +669,29 @@ int mcp_client_list_resources(
     mcp_error_code_t error_code;
     char* error_message = NULL;
     if (mcp_client_send_request(client, "list_resources", NULL, &result, &error_code, &error_message) != 0) {
-        free(error_message);
+        free(error_message); // Free error message if send failed
         return -1;
     }
 
-    // Check for error
+    // Check for JSON-RPC error in the response
     if (error_code != MCP_ERROR_NONE) {
+        mcp_log_error("Server returned error for list_resources: %d (%s)", error_code, error_message ? error_message : "N/A");
         free(error_message);
-        free(result);
+        free(result); // Free the result JSON containing the error object
         return -1;
     }
 
-    // Parse result
+    // Parse result if no error
     if (mcp_json_parse_resources(result, resources, count) != 0) {
-        free(error_message);
+        mcp_log_error("Failed to parse list_resources response.");
+        free(error_message); // Should be NULL here anyway
         free(result);
         return -1;
     }
 
     // Free the allocated strings before returning
     free(result);
-    free(error_message);
+    free(error_message); // Should be NULL
     return 0;
 }
 
@@ -719,6 +802,7 @@ int mcp_client_list_resource_templates(
 
     // Check for error
     if (error_code != MCP_ERROR_NONE) {
+        mcp_log_error("Server returned error for list_resource_templates: %d (%s)", error_code, error_message ? error_message : "N/A");
         free(error_message);
         free(result);
         return -1;
@@ -726,6 +810,7 @@ int mcp_client_list_resource_templates(
 
     // Parse result
     if (mcp_json_parse_resource_templates(result, templates, count) != 0) {
+         mcp_log_error("Failed to parse list_resource_templates response.");
         free(error_message);
         free(result);
         return -1;
@@ -773,6 +858,7 @@ int mcp_client_read_resource(
 
     // Check for error
     if (error_code != MCP_ERROR_NONE) {
+         mcp_log_error("Server returned error for read_resource: %d (%s)", error_code, error_message ? error_message : "N/A");
         free(error_message);
         free(result);
         return -1;
@@ -780,6 +866,7 @@ int mcp_client_read_resource(
 
     // Parse result
     if (mcp_json_parse_content(result, content, count) != 0) {
+         mcp_log_error("Failed to parse read_resource response.");
         free(error_message);
         free(result);
         return -1;
@@ -818,6 +905,7 @@ int mcp_client_list_tools(
 
     // Check for error
     if (error_code != MCP_ERROR_NONE) {
+         mcp_log_error("Server returned error for list_tools: %d (%s)", error_code, error_message ? error_message : "N/A");
         free(error_message);
         free(result);
         return -1;
@@ -825,6 +913,7 @@ int mcp_client_list_tools(
 
     // Parse result
     if (mcp_json_parse_tools(result, tools, count) != 0) {
+         mcp_log_error("Failed to parse list_tools response.");
         free(error_message);
         free(result);
         return -1;
@@ -875,6 +964,7 @@ int mcp_client_call_tool(
 
     // Check for error
     if (error_code != MCP_ERROR_NONE) {
+         mcp_log_error("Server returned error for call_tool '%s': %d (%s)", name, error_code, error_message ? error_message : "N/A");
         free(error_message);
         free(result);
         return -1;
@@ -882,6 +972,7 @@ int mcp_client_call_tool(
 
     // Parse result
     if (mcp_json_parse_tool_result(result, content, count, is_error) != 0) {
+         mcp_log_error("Failed to parse call_tool response for tool '%s'.", name);
         free(error_message);
         free(result);
         return -1;

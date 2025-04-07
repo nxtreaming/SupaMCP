@@ -7,7 +7,7 @@
 #include <ws2tcpip.h>
 #endif
 
-#include <mcp_server.h> // Public API header
+#include <mcp_server.h>
 #include <mcp_json.h>
 #include <mcp_arena.h>
 #include <mcp_log.h>
@@ -17,7 +17,8 @@
 #include <mcp_profiler.h>
 #include <mcp_transport.h>
 #include "gateway.h"
-#include "mcp_auth.h" // Include auth header for mcp_auth_context_t
+#include "gateway_pool.h"
+#include "mcp_auth.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -73,6 +74,7 @@ struct mcp_server {
     mcp_backend_info_t* backends;       /**< Array of configured backend servers. */
     size_t backend_count;               /**< Number of configured backend servers. */
     bool is_gateway_mode;               /**< Flag indicating if gateway mode is enabled. */
+    gateway_pool_manager_t* pool_manager; /**< Connection pool manager for gateway mode. */ // Added
 };
 
 // --- Internal Function Prototypes ---
