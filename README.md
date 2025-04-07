@@ -1,6 +1,6 @@
-# SupaMCPServer
+# SupaMCP
 
-A cross-platform implementation of the Model Context Protocol (MCP) server in C. This server can be used to provide resources and tools to MCP clients.
+A cross-platform implementation of the Model Context Protocol (MCP) server/client in C. This server can be used to provide resources and tools to MCP clients.
 
 ## Features
 
