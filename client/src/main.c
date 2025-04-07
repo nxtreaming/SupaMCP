@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
     // Initialize thread-local storage (arena) for the main thread
     // Using 1MB as the initial size. Adjust if needed.
     if (mcp_arena_init_current_thread(1024 * 1024) != 0) {
-        fprintf(stderr, "Failed to initialize thread-local arena for main thread.\n");
+        mcp_log_error("Failed to initialize thread-local arena for main thread.");
         mcp_log_close(); // Close log before exiting
         return 1;
     }
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
              printf("Usage: %s [--stdio | --tcp [HOST [PORT]]]\n", argv[0]);
              return 0;
         } else {
-            fprintf(stderr, "Unknown option: %s\n", argv[1]);
+            mcp_log_error("Unknown option: %s\n", argv[1]);
             return 1;
         }
     }
@@ -49,18 +49,18 @@ int main(int argc, char** argv) {
     // Create transport
     mcp_transport_t* transport = NULL;
     if (strcmp(transport_type, "stdio") == 0) {
-        printf("Using stdio transport\n");
+        mcp_log_info("Using stdio transport");
         transport = mcp_transport_stdio_create(); // Use specific create function
     } else if (strcmp(transport_type, "tcp") == 0) {
-        printf("Using TCP client transport (%s:%d)\n", host, port);
+        mcp_log_info("Using TCP client transport (%s:%d)", host, port);
         transport = mcp_transport_tcp_client_create(host, port);
     } else {
-        fprintf(stderr, "Unknown transport type: %s\n", transport_type);
+        mcp_log_error("Unknown transport type: %s", transport_type);
         return 1;
     }
 
     if (transport == NULL) {
-        fprintf(stderr, "Failed to create transport\n");
+        mcp_log_error("Failed to create transport");
         return 1;
     }
 
@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     // Create the client
     mcp_client_t* client = mcp_client_create(&client_config, transport);
     if (client == NULL) {
-        fprintf(stderr, "Failed to create client\n");
+        mcp_log_error("Failed to create client");
         //NOTE: transport has been destroyed in mcp_client_create()
         //mcp_transport_destroy(transport); // Use generic destroy
         return 1;
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
                 }
                 free(resources); // Free the array
             } else {
-                fprintf(stderr, "Error listing resources.\n");
+                mcp_log_error("Error listing resources.");
             }
         } else if (strncmp(buffer, "list_templates", 14) == 0) {
              mcp_resource_template_t** templates = NULL;
@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
                 }
                 free(templates);
             } else {
-                fprintf(stderr, "Error listing resource templates.\n");
+                mcp_log_error("Error listing resource templates.");
             }
         } else if (strncmp(buffer, "read ", 5) == 0) {
             const char* uri = buffer + 5;
@@ -140,7 +140,7 @@ int main(int argc, char** argv) {
                  }
                  free(content);
             } else {
-                fprintf(stderr, "Error reading resource '%s'.\n", uri);
+                mcp_log_error("Error reading resource '%s'.", uri);
             }
         } else if (strncmp(buffer, "list_tools", 10) == 0) {
             mcp_tool_t** tools = NULL;
@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
                 }
                 free(tools);
             } else {
-                fprintf(stderr, "Error listing tools.\n");
+                mcp_log_error("Error listing tools.");
             }
         } else if (strncmp(buffer, "call ", 5) == 0) {
             char* tool_name = strtok(buffer + 5, " ");
@@ -188,14 +188,14 @@ int main(int argc, char** argv) {
                     }
                     free(content);
                 } else {
-                     fprintf(stderr, "Error calling tool '%s'.\n", tool_name);
+                     mcp_log_error("Error calling tool '%s'.", tool_name);
                 }
             } else {
-                 fprintf(stderr, "Invalid call command. Usage: call <tool_name> [json_arguments]\n");
+                 mcp_log_error("Invalid call command. Usage: call <tool_name> [json_arguments]");
             }
         }
          else {
-            fprintf(stderr, "Unknown command: %s\n", buffer);
+            mcp_log_error("Unknown command: %s", buffer);
         }
     }
 
