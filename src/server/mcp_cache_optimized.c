@@ -166,16 +166,37 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
 
     mcp_mutex_lock(cache->lock); // Use abstracted lock
 
-    // Check if cache is full AND the key doesn't already exist
+    // --- Eviction Logic£ºEvict First Found strategy ---
     if (mcp_hashtable_size(cache->table) >= cache->capacity && !mcp_hashtable_contains(cache->table, uri)) {
-        mcp_log_warn("Cache full (capacity: %zu). Cannot insert new key '%s'.", cache->capacity, uri);
-        mcp_mutex_unlock(cache->lock); // Use abstracted unlock
-        PROFILE_END("mcp_cache_put");
-        return -1; // Return error indicating cache is full
+        mcp_log_warn("Cache full (capacity: %zu). Evicting an entry to insert '%s'.", cache->capacity, uri);
+        bool evicted = false;
+        // Iterate through buckets to find the first entry to evict
+        // Note: Accessing table->buckets directly breaks encapsulation.
+        // A better hashtable API would provide an eviction mechanism.
+        for (size_t i = 0; i < cache->table->capacity; ++i) {
+            mcp_hashtable_entry_t* bucket_entry = cache->table->buckets[i];
+            if (bucket_entry != NULL) {
+                // Found an entry to evict (first entry in the first non-empty bucket)
+                const char* key_to_evict = (const char*)bucket_entry->key;
+                mcp_log_debug("Evicting cache entry with key '%s'", key_to_evict);
+                // Remove function handles freeing the key and value
+                mcp_hashtable_remove(cache->table, key_to_evict);
+                evicted = true;
+                break; // Evict only one entry
+            }
+        }
+        if (!evicted) {
+            // Should not happen if size >= capacity > 0, but handle defensively
+            mcp_log_error("Cache full but failed to find an entry to evict.");
+            mcp_mutex_unlock(cache->lock);
+            PROFILE_END("mcp_cache_put");
+            return -1;
+        }
     }
+    // --- End Eviction Logic ---
 
     // If the key *does* exist, mcp_hashtable_put will replace it automatically.
-    // If the cache is not full, we proceed to create the entry.
+    // If the cache was not full, or if we successfully evicted an entry, proceed to create the new entry.
 
     // Create a new cache entry
     mcp_cache_entry_t* entry = (mcp_cache_entry_t*)malloc(sizeof(mcp_cache_entry_t));
