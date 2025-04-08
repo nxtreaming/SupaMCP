@@ -31,7 +31,7 @@
 // Default settings (consider moving defaults elsewhere if they grow)
 #define DEFAULT_THREAD_POOL_SIZE 4
 #define DEFAULT_TASK_QUEUE_SIZE 1024
-#define DEFAULT_CACHE_CAPACITY 128
+#define DEFAULT_CACHE_CAPACITY 4096
 #define DEFAULT_CACHE_TTL_SECONDS 300 // 5 minutes
 #define DEFAULT_MAX_MESSAGE_SIZE (1024 * 1024) // 1MB
 #define DEFAULT_RATE_LIMIT_CAPACITY 1024
