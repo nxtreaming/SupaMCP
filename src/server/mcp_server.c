@@ -31,15 +31,14 @@ mcp_server_t* mcp_server_create(
     server->config.api_key = config->api_key ? mcp_strdup(config->api_key) : NULL;
 
     // Copy numeric/boolean config values directly, applying defaults if 0
-    // KEEPING THIS LOGIC as requested by user, even though fields might not be used internally later
-    server->config.thread_pool_size = config->thread_pool_size;
-    server->config.task_queue_size = config->task_queue_size;
-    server->config.cache_capacity = config->cache_capacity;
-    server->config.cache_default_ttl_seconds = config->cache_default_ttl_seconds;
-    server->config.max_message_size = config->max_message_size;
-    server->config.rate_limit_capacity = config->rate_limit_capacity;
-    server->config.rate_limit_window_seconds = config->rate_limit_window_seconds;
-    server->config.rate_limit_max_requests = config->rate_limit_max_requests;
+    server->config.thread_pool_size = config->thread_pool_size > 0 ? config->thread_pool_size : DEFAULT_THREAD_POOL_SIZE;
+    server->config.task_queue_size = config->task_queue_size > 0 ? config->task_queue_size : DEFAULT_TASK_QUEUE_SIZE;
+    server->config.cache_capacity = config->cache_capacity > 0 ? config->cache_capacity : DEFAULT_CACHE_CAPACITY;
+    server->config.cache_default_ttl_seconds = config->cache_default_ttl_seconds > 0 ? config->cache_default_ttl_seconds : DEFAULT_CACHE_TTL_SECONDS;
+    server->config.max_message_size = config->max_message_size > 0 ? config->max_message_size : DEFAULT_MAX_MESSAGE_SIZE;
+    server->config.rate_limit_capacity = config->rate_limit_capacity > 0 ? config->rate_limit_capacity : DEFAULT_RATE_LIMIT_CAPACITY;
+    server->config.rate_limit_window_seconds = config->rate_limit_window_seconds; // Keep 0 if user wants to disable
+    server->config.rate_limit_max_requests = config->rate_limit_max_requests;   // Keep 0 if user wants to disable
 
     // Copy prewarm URIs if provided
     if (config->prewarm_resource_uris && config->prewarm_count > 0) {
@@ -76,33 +75,27 @@ mcp_server_t* mcp_server_create(
 
     // Initialize other fields (already zeroed by calloc)
     server->is_gateway_mode = false; // Explicitly set default
-    server->pool_manager = NULL; // Initialize gateway pool manager to NULL (as requested)
 
-    // Create the thread pool using values from config or defaults
-    size_t pool_size = server->config.thread_pool_size > 0 ? server->config.thread_pool_size : DEFAULT_THREAD_POOL_SIZE;
-    size_t queue_size = server->config.task_queue_size > 0 ? server->config.task_queue_size : DEFAULT_TASK_QUEUE_SIZE;
-    server->thread_pool = mcp_thread_pool_create(pool_size, queue_size);
+    // Create the thread pool using the final determined values
+    server->thread_pool = mcp_thread_pool_create(server->config.thread_pool_size, server->config.task_queue_size);
     if (server->thread_pool == NULL) {
         mcp_log_error("Failed to create server thread pool.");
         goto create_error_cleanup;
     }
 
-    // Create the resource cache if resources are supported, using values from config or defaults
+    // Create the resource cache if resources are supported, using final determined values
     if (server->capabilities.resources_supported) {
-        size_t cache_cap = server->config.cache_capacity > 0 ? server->config.cache_capacity : DEFAULT_CACHE_CAPACITY;
-        time_t cache_ttl = server->config.cache_default_ttl_seconds > 0 ? server->config.cache_default_ttl_seconds : DEFAULT_CACHE_TTL_SECONDS;
-        server->resource_cache = mcp_cache_create(cache_cap, cache_ttl);
+        server->resource_cache = mcp_cache_create(server->config.cache_capacity, server->config.cache_default_ttl_seconds);
         if (server->resource_cache == NULL) {
             mcp_log_error("Failed to create server resource cache.");
             goto create_error_cleanup;
         }
     }
 
-    // Create the rate limiter using values from config or defaults (if enabled)
+    // Create the rate limiter using final determined values (if enabled)
     if (server->config.rate_limit_window_seconds > 0 && server->config.rate_limit_max_requests > 0) {
-         size_t rl_cap = server->config.rate_limit_capacity > 0 ? server->config.rate_limit_capacity : DEFAULT_RATE_LIMIT_CAPACITY;
          server->rate_limiter = mcp_rate_limiter_create(
-             rl_cap,
+             server->config.rate_limit_capacity,
              server->config.rate_limit_window_seconds,
              server->config.rate_limit_max_requests
          );
@@ -112,11 +105,20 @@ mcp_server_t* mcp_server_create(
          }
     }
 
+    // Create the gateway pool manager (always create it, needed for destroy and dispatch logic)
+    server->pool_manager = gateway_pool_manager_create();
+    if (server->pool_manager == NULL) {
+        mcp_log_error("Failed to create gateway pool manager.");
+        goto create_error_cleanup;
+    }
+
+
     return server;
 
 create_error_cleanup:
     // Centralized cleanup using goto
     if (server) {
+        if (server->pool_manager) gateway_pool_manager_destroy(server->pool_manager); // Added cleanup
         if (server->rate_limiter) mcp_rate_limiter_destroy(server->rate_limiter);
         if (server->resource_cache) mcp_cache_destroy(server->resource_cache);
         if (server->thread_pool) mcp_thread_pool_destroy(server->thread_pool);
@@ -294,10 +296,10 @@ void mcp_server_destroy(mcp_server_t* server) {
     server->tool_capacity = 0;
 
     // Destroy components
-    // if (server->pool_manager) { // REMOVED as per user request
-    //     gateway_pool_manager_destroy(server->pool_manager);
-    //     server->pool_manager = NULL;
-    // }
+    if (server->pool_manager) { // Added destroy call
+        gateway_pool_manager_destroy(server->pool_manager);
+        server->pool_manager = NULL;
+    }
     if (server->rate_limiter) {
         mcp_rate_limiter_destroy(server->rate_limiter);
         server->rate_limiter = NULL;
