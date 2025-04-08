@@ -1,9 +1,12 @@
+#include <mcp_server.h>
 #include "internal/server_internal.h"
 #include <mcp_types.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include "gateway.h"
+#include "gateway_pool.h"
+#include "mcp_arena.h"
 
 // --- Public API Implementation ---
 
@@ -15,18 +18,20 @@ mcp_server_t* mcp_server_create(
         return NULL;
     }
 
-    mcp_server_t* server = (mcp_server_t*)malloc(sizeof(mcp_server_t));
+    mcp_server_t* server = (mcp_server_t*)calloc(1, sizeof(mcp_server_t)); // Use calloc for zero-initialization
     if (server == NULL) {
         return NULL;
     }
 
-    // Copy configuration (uses mcp_strdup)
+    // --- Copy Configuration ---
+    // Copy strings using mcp_strdup
     server->config.name = config->name ? mcp_strdup(config->name) : NULL;
     server->config.version = config->version ? mcp_strdup(config->version) : NULL;
     server->config.description = config->description ? mcp_strdup(config->description) : NULL;
-    server->config.api_key = config->api_key ? mcp_strdup(config->api_key) : NULL; // Copy API key
+    server->config.api_key = config->api_key ? mcp_strdup(config->api_key) : NULL;
 
-    // Copy numeric/boolean config values directly
+    // Copy numeric/boolean config values directly, applying defaults if 0
+    // KEEPING THIS LOGIC as requested by user, even though fields might not be used internally later
     server->config.thread_pool_size = config->thread_pool_size;
     server->config.task_queue_size = config->task_queue_size;
     server->config.cache_capacity = config->cache_capacity;
@@ -36,75 +41,75 @@ mcp_server_t* mcp_server_create(
     server->config.rate_limit_window_seconds = config->rate_limit_window_seconds;
     server->config.rate_limit_max_requests = config->rate_limit_max_requests;
 
-    // Copy capabilities struct
-    server->capabilities = *capabilities; // Assuming capabilities struct is simple enough for direct copy
-
-    // Initialize other fields
-    server->transport = NULL;
-    server->running = false;
-
-    server->resources = NULL;
-    server->resource_count = 0;
-    server->resource_capacity = 0;
-
-    server->resource_templates = NULL;
-    server->resource_template_count = 0;
-    server->resource_template_capacity = 0;
-
-    server->tools = NULL;
-    server->tool_count = 0;
-    server->tool_capacity = 0;
-
-    server->resource_handler = NULL;
-    server->resource_handler_user_data = NULL;
-    server->tool_handler = NULL;
-    server->tool_handler_user_data = NULL;
-    server->thread_pool = NULL;
-    server->resource_cache = NULL;
-    server->rate_limiter = NULL;
-    server->backends = NULL;
-    server->backend_count = 0;
-    server->is_gateway_mode = false;
-
-    // Check for allocation failures during config copy
-    if ((config->name && !server->config.name) ||
-        (config->version && !server->config.version) ||
-        (config->description && !server->config.description) ||
-        (config->api_key && !server->config.api_key))
-    {
-        goto create_error_cleanup; // Use goto for centralized cleanup
+    // Copy prewarm URIs if provided
+    if (config->prewarm_resource_uris && config->prewarm_count > 0) {
+        server->config.prewarm_count = config->prewarm_count;
+        server->config.prewarm_resource_uris = (char**)malloc(config->prewarm_count * sizeof(char*));
+        if (!server->config.prewarm_resource_uris) goto create_error_cleanup;
+        memset(server->config.prewarm_resource_uris, 0, config->prewarm_count * sizeof(char*));
+        for (size_t i = 0; i < config->prewarm_count; ++i) {
+            if (config->prewarm_resource_uris[i]) {
+                server->config.prewarm_resource_uris[i] = mcp_strdup(config->prewarm_resource_uris[i]);
+                if (!server->config.prewarm_resource_uris[i]) goto create_error_cleanup; // Handle allocation failure
+            } else {
+                 server->config.prewarm_resource_uris[i] = NULL; // Ensure NULL if source is NULL
+            }
+        }
+    } else {
+        server->config.prewarm_resource_uris = NULL;
+        server->config.prewarm_count = 0;
     }
 
-    // Create the thread pool
+    // Check for allocation failures during config string copy
+     if ((config->name && !server->config.name) ||
+         (config->version && !server->config.version) ||
+         (config->description && !server->config.description) ||
+         (config->api_key && !server->config.api_key))
+     {
+         goto create_error_cleanup;
+     }
+    // --- End Configuration Copy ---
+
+
+    // Copy capabilities struct
+    server->capabilities = *capabilities;
+
+    // Initialize other fields (already zeroed by calloc)
+    server->is_gateway_mode = false; // Explicitly set default
+    server->pool_manager = NULL; // Initialize gateway pool manager to NULL (as requested)
+
+    // Create the thread pool using values from config or defaults
     size_t pool_size = server->config.thread_pool_size > 0 ? server->config.thread_pool_size : DEFAULT_THREAD_POOL_SIZE;
     size_t queue_size = server->config.task_queue_size > 0 ? server->config.task_queue_size : DEFAULT_TASK_QUEUE_SIZE;
     server->thread_pool = mcp_thread_pool_create(pool_size, queue_size);
     if (server->thread_pool == NULL) {
-        fprintf(stderr, "Failed to create server thread pool.\n");
+        mcp_log_error("Failed to create server thread pool.");
         goto create_error_cleanup;
     }
 
-    // Create the resource cache if resources are supported
+    // Create the resource cache if resources are supported, using values from config or defaults
     if (server->capabilities.resources_supported) {
         size_t cache_cap = server->config.cache_capacity > 0 ? server->config.cache_capacity : DEFAULT_CACHE_CAPACITY;
         time_t cache_ttl = server->config.cache_default_ttl_seconds > 0 ? server->config.cache_default_ttl_seconds : DEFAULT_CACHE_TTL_SECONDS;
         server->resource_cache = mcp_cache_create(cache_cap, cache_ttl);
         if (server->resource_cache == NULL) {
-            fprintf(stderr, "Failed to create server resource cache.\n");
+            mcp_log_error("Failed to create server resource cache.");
             goto create_error_cleanup;
         }
     }
 
-    // Create the rate limiter if configured
+    // Create the rate limiter using values from config or defaults (if enabled)
     if (server->config.rate_limit_window_seconds > 0 && server->config.rate_limit_max_requests > 0) {
-        size_t rl_cap = server->config.rate_limit_capacity > 0 ? server->config.rate_limit_capacity : DEFAULT_RATE_LIMIT_CAPACITY;
-        size_t rl_win = server->config.rate_limit_window_seconds;
-        size_t rl_max = server->config.rate_limit_max_requests;
-        server->rate_limiter = mcp_rate_limiter_create(rl_cap, rl_win, rl_max);
-        if (server->rate_limiter == NULL) {
-            fprintf(stderr, "Failed to create server rate limiter.\n");
-            goto create_error_cleanup;
-        }
+         size_t rl_cap = server->config.rate_limit_capacity > 0 ? server->config.rate_limit_capacity : DEFAULT_RATE_LIMIT_CAPACITY;
+         server->rate_limiter = mcp_rate_limiter_create(
+             rl_cap,
+             server->config.rate_limit_window_seconds,
+             server->config.rate_limit_max_requests
+         );
+         if (server->rate_limiter == NULL) {
+             mcp_log_error("Failed to create server rate limiter.");
+             goto create_error_cleanup;
+         }
     }
 
     return server;
@@ -119,6 +124,12 @@ create_error_cleanup:
         free((void*)server->config.version);
         free((void*)server->config.description);
         free((void*)server->config.api_key);
+        if (server->config.prewarm_resource_uris) {
+             for (size_t i = 0; i < server->config.prewarm_count; ++i) {
+                 free(server->config.prewarm_resource_uris[i]);
+             }
+             free(server->config.prewarm_resource_uris);
+        }
         free(server);
     }
     return NULL;
@@ -134,6 +145,68 @@ int mcp_server_start(
 
     server->transport = transport; // Store the transport handle
     server->running = true;
+
+    // --- Cache Pre-warming ---
+    if (server->resource_cache && server->resource_handler &&
+        server->config.prewarm_resource_uris && server->config.prewarm_count > 0)
+    {
+        mcp_log_info("Starting cache pre-warming for %zu URIs...", server->config.prewarm_count);
+        mcp_arena_t prewarm_arena; // Use a temporary arena for handler calls
+        // Initialize with a reasonable size, adjust if needed
+        // mcp_arena_init returns void, so we cannot check its return value here.
+        // Assume initialization succeeds for now. Error handling within arena_init might be needed if it can fail.
+        mcp_arena_init(&prewarm_arena, MCP_ARENA_DEFAULT_SIZE);
+        // Proceed with pre-warming loop
+        for (size_t i = 0; i < server->config.prewarm_count; ++i) {
+            const char* uri = server->config.prewarm_resource_uris[i];
+                if (!uri) continue;
+
+                mcp_log_debug("Pre-warming resource: %s", uri);
+                mcp_content_item_t** content = NULL;
+                size_t content_count = 0;
+                char* error_message = NULL;
+                // Use the temporary arena for this handler call
+                mcp_error_code_t handler_err = MCP_ERROR_INTERNAL_ERROR; // Default error
+                if (server->resource_handler) {
+                     // Directly call the handler from the server struct
+                     handler_err = server->resource_handler(
+                        server, uri, server->resource_handler_user_data,
+                        &content, &content_count, &error_message
+                    );
+                } else {
+                     mcp_log_error("Resource handler is NULL during pre-warming.");
+                     // Handle error appropriately, maybe break or continue
+                }
+
+
+                if (handler_err == MCP_ERROR_NONE) {
+                    // Put the fetched content into the cache with infinite TTL (-1 or 0)
+                    int put_err = mcp_cache_put(server->resource_cache, uri, content, content_count, -1);
+                    if (put_err != 0) {
+                        mcp_log_warn("Failed to put pre-warmed resource '%s' into cache.", uri);
+                    } else {
+                        mcp_log_debug("Successfully pre-warmed and cached resource: %s", uri);
+                    }
+                    // Free the content returned by the handler (cache made copies)
+                    if (content) {
+                        for (size_t j = 0; j < content_count; ++j) {
+                            mcp_content_item_free(content[j]);
+                        }
+                        free(content);
+                    }
+                } else {
+                    mcp_log_warn("Failed to pre-warm resource '%s': Handler error %d (%s)",
+                                 uri, handler_err, error_message ? error_message : "N/A");
+                }
+                free(error_message); // Free error message if any
+                mcp_arena_reset(&prewarm_arena); // Reset arena for next iteration
+            }
+            mcp_arena_destroy(&prewarm_arena); // Destroy temporary arena
+            mcp_log_info("Cache pre-warming finished.");
+        // Removed the 'else' block corresponding to the removed 'if' check
+    }
+    // --- End Cache Pre-warming ---
+
 
     // Pass the callback from mcp_server_task.c (declared in internal header)
     return mcp_transport_start(
@@ -178,27 +251,53 @@ void mcp_server_destroy(mcp_server_t* server) {
     free((void*)server->config.version);
     free((void*)server->config.description);
     free((void*)server->config.api_key);
+    // Free prewarm URIs
+    if (server->config.prewarm_resource_uris) {
+        for (size_t i = 0; i < server->config.prewarm_count; ++i) {
+            free(server->config.prewarm_resource_uris[i]); // Free individual strings
+        }
+        free(server->config.prewarm_resource_uris); // Free the array itself
+    }
+    // Reset config pointers/counts after freeing
+    server->config.prewarm_resource_uris = NULL;
+    server->config.prewarm_count = 0;
+
 
     // Free gateway backend list
     mcp_free_backend_list(server->backends, server->backend_count);
+    server->backends = NULL; // Reset pointer
+    server->backend_count = 0; // Reset count
 
     // Free dynamically allocated resource/template/tool lists and their contents
     for (size_t i = 0; i < server->resource_count; i++) {
-        mcp_resource_free(server->resources[i]); // Frees internal strings and the struct itself
+        mcp_resource_free(server->resources[i]);
     }
     free(server->resources);
+    server->resources = NULL; // Reset pointer
+    server->resource_count = 0;
+    server->resource_capacity = 0;
 
     for (size_t i = 0; i < server->resource_template_count; i++) {
-        mcp_resource_template_free(server->resource_templates[i]); // Frees internal strings and the struct itself
+        mcp_resource_template_free(server->resource_templates[i]);
     }
     free(server->resource_templates);
+    server->resource_templates = NULL; // Reset pointer
+    server->resource_template_count = 0;
+    server->resource_template_capacity = 0;
 
     for (size_t i = 0; i < server->tool_count; i++) {
-        mcp_tool_free(server->tools[i]); // Frees internal strings, schema, and the struct itself
+        mcp_tool_free(server->tools[i]);
     }
     free(server->tools);
+    server->tools = NULL; // Reset pointer
+    server->tool_count = 0;
+    server->tool_capacity = 0;
 
-    // Destroy components (already handled by mcp_server_stop, but good practice for direct destroy calls)
+    // Destroy components
+    // if (server->pool_manager) { // REMOVED as per user request
+    //     gateway_pool_manager_destroy(server->pool_manager);
+    //     server->pool_manager = NULL;
+    // }
     if (server->rate_limiter) {
         mcp_rate_limiter_destroy(server->rate_limiter);
         server->rate_limiter = NULL;
