@@ -75,6 +75,7 @@ mcp_server_t* mcp_server_create(
 
     // Initialize other fields (already zeroed by calloc)
     server->is_gateway_mode = false; // Explicitly set default
+    server->pool_manager = NULL; // Initialize gateway pool manager to NULL
 
     // Create the thread pool using the final determined values
     server->thread_pool = mcp_thread_pool_create(server->config.thread_pool_size, server->config.task_queue_size);
