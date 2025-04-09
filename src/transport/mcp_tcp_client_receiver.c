@@ -1,4 +1,5 @@
 #include "internal/tcp_client_transport_internal.h"
+#include "mcp_framing.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,18 +36,16 @@ void* tcp_client_receive_thread_func(void* arg) {
 
     mcp_transport_t* transport = (mcp_transport_t*)arg;
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
-    char length_buf[4];
-    uint32_t message_length_net, message_length_host;
+    uint32_t message_length_host;
     char* message_buf = NULL;
-    bool buffer_malloced = false; // Flag to track if we used malloc fallback
-    int read_result;
+    int frame_result;
     bool error_signaled = false; // Track if error callback was already called in this loop iteration
 
     // Add initial connection health check
     mcp_log_debug("TCP Client receive thread started for socket %d", (int)data->sock);
     
     // Wait before sending handshake to ensure server is ready
-    sleep_ms(1000); // Add wait time to ensure server is ready
+    mcp_sleep_ms(1000); // Add wait time to ensure server is ready
     
     // Check if this is a thread startup during reconnection
     if (reconnection_in_progress) {
@@ -101,13 +100,15 @@ void* tcp_client_receive_thread_func(void* arg) {
                 (unsigned char)send_buffer[2],
                 (unsigned char)send_buffer[3]);
     
-    // 7. Send complete message in one operation (length prefix + message content)
+    // 7. Send complete message using framing function
     if (data->connected) {
-        int send_status = send_exact_client(data->sock, send_buffer, total_send_len, &data->running);
-        free(send_buffer); // Free buffer
-        
+        // Note: ping_content includes null terminator via strlen + 1 calculation for content_length
+        // Pass NULL for stop_flag as the outer loop checks data->running
+        int send_status = mcp_framing_send_message(data->sock, ping_content, content_length, NULL);
+        free(send_buffer); // Free the temporary combined buffer
+
         if (send_status != 0) {
-            mcp_log_error("Failed to send ping message (status: %d)", send_status);
+            mcp_log_error("Failed to send ping message using framing (status: %d)", send_status);
             mcp_arena_destroy_current_thread(); // Clean up arena before exiting
             return NULL;
         }
@@ -129,142 +130,40 @@ receive_loop:
             break;
         }
 
-        // --- 1. Read length prefix ---
-        mcp_log_debug("Waiting to receive length prefix from server...");
-        read_result = recv_exact_client(data->sock, length_buf, 4, &data->running);
-        mcp_log_debug("recv_exact_client for length returned: %d", read_result);
+        // --- 1. Receive Framed Message ---
+        mcp_log_debug("Waiting to receive framed message from server...");
+        frame_result = mcp_framing_recv_message(
+            data->sock,
+            &message_buf, // Let framing function allocate buffer
+            &message_length_host,
+            MAX_MCP_MESSAGE_SIZE,
+            NULL // Pass NULL; rely on shutdown() in stop() to unblock recv
+        );
+        mcp_log_debug("mcp_framing_recv_message returned: %d", frame_result);
 
-        // Check result
-        if (read_result == SOCKET_ERROR_VAL || read_result == 0) { // Error or connection closed
-             if (data->running) { // Only log during abnormal stops
-                 if (read_result == 0) { // Server gracefully closed the connection
-                     mcp_log_info("Server disconnected socket %d (length read).", (int)data->sock);
-                 } else { // Socket error
-                     char err_buf[128];
-#ifdef _WIN32
-                     strerror_s(err_buf, sizeof(err_buf), sock_errno);
-                     mcp_log_error("recv_exact_client (length) failed for socket %p: %d (%s)", (void*)data->sock, sock_errno, err_buf);
-#else
-                     if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-                         mcp_log_error("recv_exact_client (length) failed for socket %d: %d (%s)", data->sock, sock_errno, err_buf);
-                     } else {
-                         mcp_log_error("recv_exact_client (length) failed for socket %d: %d (strerror_r failed)", data->sock, sock_errno);
-                     }
-#endif
-                 }
-             }
-             data->connected = false; // Mark as disconnected
-             if (data->running && transport->error_callback) {
-                 transport->error_callback(transport->callback_user_data, MCP_ERROR_TRANSPORT_ERROR);
-                 error_signaled = true;
-             }
-              break;
-         } else if (read_result == -2) { // Stop signal interrupted
-              mcp_log_debug("Client receive thread for socket %d interrupted by stop signal.", (int)data->sock);
-              break;
-         }
-
-         // --- 2. Decode length ---
-         memcpy(&message_length_net, length_buf, 4);
-         message_length_host = ntohl(message_length_net);
-         mcp_log_debug("Received length: %u bytes", message_length_host);
-
-         // --- 3. Check length validity ---
-         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
-              mcp_log_error("Invalid message length from server: %u", message_length_host);
-              data->connected = false;
-              if (data->running && transport->error_callback && !error_signaled) {
-                 transport->error_callback(transport->callback_user_data, MCP_ERROR_PARSE_ERROR);
-                 error_signaled = true;
-             }
-             break;
+        if (frame_result != 0) {
+            if (data->running) { // Only log/callback during normal operation
+                int last_error = mcp_socket_get_last_error();
+                mcp_log_error("mcp_framing_recv_message failed for socket %d. Result: %d, Last Error: %d",
+                              (int)data->sock, frame_result, last_error);
+                if (transport->error_callback && !error_signaled) {
+                    // Determine error type based on result/errno if possible
+                    transport->error_callback(transport->callback_user_data, MCP_ERROR_TRANSPORT_ERROR);
+                    error_signaled = true;
+                }
+            } else {
+                mcp_log_debug("Client receive thread for socket %d interrupted or stopped during framing recv.", (int)data->sock);
+            }
+            data->connected = false; // Mark as disconnected
+            // message_buf should be NULL if framing function failed before allocation
+            free(message_buf); // Free buffer if allocated before error
+            message_buf = NULL;
+            break; // Exit loop on any error/close/abort
         }
 
-        // --- 4. Allocate message buffer ---
-        size_t required_size = message_length_host + 1; // +1 for null terminator
-        size_t pool_buffer_size = mcp_buffer_pool_get_buffer_size(data->buffer_pool);
-
-        if (required_size <= pool_buffer_size) {
-            message_buf = (char*)mcp_buffer_pool_acquire(data->buffer_pool);
-             if (message_buf != NULL) {
-                 buffer_malloced = false;
-             } else {
-                 mcp_log_warn("Buffer pool empty, using malloc for %zu bytes", required_size);
-                 message_buf = (char*)malloc(required_size);
-                 buffer_malloced = true;
-             }
-         } else {
-             mcp_log_warn("Message size %u exceeds pool buffer size %zu", message_length_host, pool_buffer_size);
-             message_buf = (char*)malloc(required_size);
-             buffer_malloced = true;
-        }
-
-         if (message_buf == NULL) {
-              mcp_log_error("Failed to allocate buffer for message size %u", message_length_host);
-              data->connected = false;
-              if (data->running && transport->error_callback && !error_signaled) {
-                 transport->error_callback(transport->callback_user_data, MCP_ERROR_INTERNAL_ERROR);
-                 error_signaled = true;
-             }
-             break;
-        }
-
-        // --- 5. Read message body ---
-        read_result = recv_exact_client(data->sock, message_buf, message_length_host, &data->running);
-
-          if (read_result == SOCKET_ERROR_VAL || read_result == 0) {
-               if (data->running) {
-                   if (read_result == 0) {
-                       mcp_log_info("Server disconnected socket %d while reading body.", (int)data->sock);
-                   } else {
-                       char err_buf[128];
- #ifdef _WIN32
-                       strerror_s(err_buf, sizeof(err_buf), sock_errno);
-                       mcp_log_error("recv_exact_client (body) failed: %d (%s)", sock_errno, err_buf);
- #else
-                       if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-                           mcp_log_error("recv_exact_client (body) failed: %d (%s)", sock_errno, err_buf);
-                       } else {
-                           mcp_log_error("recv_exact_client (body) failed: %d", sock_errno);
-                       }
- #endif
-                 }
-              }
-              
-              // Clean up buffer
-              if (buffer_malloced) {
-                  free(message_buf);
-              } else {
-                  mcp_buffer_pool_release(data->buffer_pool, message_buf);
-              }
-              message_buf = NULL;
-              data->connected = false;
-              
-              // Notify error callback
-              if (data->running && transport->error_callback && !error_signaled) {
-                  transport->error_callback(transport->callback_user_data, MCP_ERROR_TRANSPORT_ERROR);
-                  error_signaled = true;
-              }
-                break;
-            } else if (read_result == -2) { // Stop signal
-                mcp_log_debug("Client receive thread interrupted by stop signal.");
-                
-                // Clean up buffer
-              if (buffer_malloced) {
-                  free(message_buf);
-              } else {
-                  mcp_buffer_pool_release(data->buffer_pool, message_buf);
-              }
-              message_buf = NULL;
-              break;
-          }
-
-        // --- 6. Process received message ---
-          // Ensure NULL termination
-          message_buf[message_length_host] = '\0';
-          
-          // Print received message content (for debugging only)
-          mcp_log_debug("Received message from server: '%s'", message_buf);
+        // --- 2. Process received message ---
+        // message_buf is allocated by mcp_framing_recv_message and includes null terminator
+        mcp_log_debug("Received message from server (%u bytes): '%s'", message_length_host, message_buf);
           
           if (transport->message_callback != NULL) {
             int callback_error_code = 0;
@@ -282,28 +181,20 @@ receive_loop:
                }
           }
 
-        // --- 7. Release message buffer ---
-        if (message_buf != NULL) {
-            if (buffer_malloced) {
-                free(message_buf);
-            } else {
-                mcp_buffer_pool_release(data->buffer_pool, message_buf);
-            }
-            message_buf = NULL;
-        }
+        // --- 3. Release message buffer ---
+        // Caller (this function) is responsible for freeing the buffer allocated by mcp_framing_recv_message
+        free(message_buf);
+        message_buf = NULL;
 
       } // End of main loop
 
       mcp_log_debug("TCP Client receive thread exiting for socket %d", (int)data->sock);
       data->connected = false;
 
-      // Final check if buffer was released
+      // Final check if buffer was released (should be NULL here)
     if (message_buf != NULL) {
-        if (buffer_malloced) {
-            free(message_buf);
-        } else {
-            mcp_buffer_pool_release(data->buffer_pool, message_buf);
-        }
+        mcp_log_warn("message_buf was not NULL at thread exit, freeing.");
+        free(message_buf); // Free if somehow not freed earlier
     }
 
     // --- Cleanup Thread-Local Arena ---

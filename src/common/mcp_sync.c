@@ -239,18 +239,3 @@ int mcp_thread_join(mcp_thread_t thread_handle, void** retval) {
 #endif
 }
 
-// --- Sleep Implementation ---
-
-void mcp_sleep_ms(uint32_t milliseconds) {
-#ifdef _WIN32
-    Sleep(milliseconds);
-#else
-    if (milliseconds >= 1000) {
-        sleep(milliseconds / 1000); // Use sleep for whole seconds
-    }
-    struct timespec ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = (milliseconds % 1000) * 1000000L;
-    nanosleep(&ts, NULL);
-#endif
-}

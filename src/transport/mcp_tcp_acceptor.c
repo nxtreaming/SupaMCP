@@ -23,7 +23,7 @@ void* tcp_accept_thread_func(void* arg) {
     while (data->running) {
         struct sockaddr_in client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
-        socket_t client_socket = INVALID_SOCKET_VAL;
+        socket_t client_socket = MCP_INVALID_SOCKET;
 
         // Use select/poll to wait for connection or stop signal
 #ifdef _WIN32
@@ -35,8 +35,8 @@ void* tcp_accept_thread_func(void* arg) {
 
         if (!data->running) break; // Check stop flag after select
 
-        if (select_result == SOCKET_ERROR_VAL) {
-            mcp_log_error("select() failed in accept thread: %d", sock_errno);
+        if (select_result == MCP_SOCKET_ERROR) {
+            mcp_log_error("select() failed in accept thread: %d", mcp_socket_get_last_error()); // Use new function
             break; // Exit thread on select error
         } else if (select_result == 0) {
             continue; // Timeout, loop again to check running flag
@@ -71,12 +71,13 @@ void* tcp_accept_thread_func(void* arg) {
         }
 #endif
 
-        // Accept the connection
-        client_socket = accept(data->listen_socket, (struct sockaddr*)&client_addr, &client_addr_len);
+        // Accept the connection using the new utility function
+        client_socket = mcp_socket_accept(data->listen_socket, (struct sockaddr*)&client_addr, &client_addr_len);
 
-        if (client_socket == INVALID_SOCKET_VAL) {
-            if (data->running) { // Only log error if we are not stopping
-                mcp_log_error("accept() failed: %d", sock_errno);
+        if (client_socket == MCP_INVALID_SOCKET) {
+            // Error logging is handled within mcp_socket_accept
+            if (data->running) {
+                 mcp_log_debug("mcp_socket_accept returned invalid socket, continuing accept loop.");
             }
             continue; // Continue listening even if one accept fails
         }
@@ -100,18 +101,18 @@ void* tcp_accept_thread_func(void* arg) {
 
         if (client_index == -1) {
             mcp_log_warn("Max client connections reached (%d). Rejecting new connection.", MAX_TCP_CLIENTS);
-            close_socket(client_socket);
+            mcp_socket_close(client_socket);
             continue;
         }
 
         // Start a new thread to handle the client connection
         if (mcp_thread_create(&data->clients[client_index].thread_handle, tcp_client_handler_thread_func, &data->clients[client_index]) != 0) {
             mcp_log_error("Failed to create client handler thread for slot %d.", client_index);
-            close_socket(client_socket);
+            mcp_socket_close(client_socket);
             // Reset the slot state under lock
             mcp_mutex_lock(data->client_mutex);
             data->clients[client_index].state = CLIENT_STATE_INACTIVE;
-            data->clients[client_index].socket = INVALID_SOCKET_VAL;
+            data->clients[client_index].socket = MCP_INVALID_SOCKET;
             mcp_mutex_unlock(data->client_mutex);
         } else {
             // Successfully started handler thread, mark state as ACTIVE under lock
@@ -124,11 +125,12 @@ void* tcp_accept_thread_func(void* arg) {
                  mcp_log_info("Accepted connection from %s:%d on socket %d (slot %d)",
                              client_ip_str, ntohs(client_addr.sin_port), (int)client_socket, client_index);
             } else {
-                 // State changed before we could mark active (likely stopped), clean up
-                 mcp_log_warn("Client slot %d state changed before activation. Closing socket.", client_index);
-                 close_socket(client_socket); // Close the socket we accepted
-                 data->clients[client_index].socket = INVALID_SOCKET_VAL; // Ensure socket is marked invalid
-                 data->clients[client_index].state = CLIENT_STATE_INACTIVE; // Ensure state is inactive
+                 // State changed before we could mark active (likely stopped).
+                 // Do NOT close the socket here - the handler thread is responsible for it now.
+                 mcp_log_warn("Client slot %d state changed before activation. Handler thread will clean up.", client_index);
+                 // Ensure state is marked inactive so acceptor doesn't reuse slot prematurely.
+                 data->clients[client_index].state = CLIENT_STATE_INACTIVE;
+                 data->clients[client_index].socket = MCP_INVALID_SOCKET; // Mark socket as invalid *in the slot*
                  // Thread handle might be dangling if create succeeded but state changed,
                  // but we can't safely join it here. Assume thread will exit cleanly.
                  data->clients[client_index].thread_handle = 0;

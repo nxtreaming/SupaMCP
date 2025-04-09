@@ -1,5 +1,5 @@
-#include "internal/transport_internal.h" // Include the main internal transport header FIRST
-#include "internal/tcp_transport_internal.h" // Include TCP specific internal header
+#include "internal/transport_internal.h"
+#include "internal/tcp_transport_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,70 +28,18 @@ static int tcp_transport_start(
 
     if (data->running) return 0; // Already running
 
-    initialize_winsock(); // Initialize Winsock if on Windows
-
-    // Create listening socket
-    data->listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (data->listen_socket == INVALID_SOCKET_VAL) {
-        char err_buf[128];
-#ifdef _WIN32
-        strerror_s(err_buf, sizeof(err_buf), sock_errno);
-        mcp_log_error("socket creation failed: %d (%s)", sock_errno, err_buf);
-#else
-         if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-            mcp_log_error("socket creation failed: %d (%s)", sock_errno, err_buf);
-         } else {
-             mcp_log_error("socket creation failed: %d (strerror_r failed)", sock_errno);
-         }
-#endif
+    // Initialize socket library
+    if (mcp_socket_init() != 0) {
+        mcp_log_error("Failed to initialize socket library.");
         return -1;
     }
 
-    // Allow address reuse
-    int optval = 1;
-    setsockopt(data->listen_socket, SOL_SOCKET, SO_REUSEADDR, (const char*)&optval, sizeof(optval));
-
-    // Bind
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(data->port);
-    if (inet_pton(AF_INET, data->host, &server_addr.sin_addr) <= 0) {
-         mcp_log_error("Invalid address/ Address not supported: %s", data->host);
-         close_socket(data->listen_socket);
-         return -1;
-    }
-
-    if (bind(data->listen_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR_VAL) {
-        char err_buf[128];
-#ifdef _WIN32
-        strerror_s(err_buf, sizeof(err_buf), sock_errno);
-        mcp_log_error("bind failed on %s:%d: %d (%s)", data->host, data->port, sock_errno, err_buf);
-#else
-         if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-             mcp_log_error("bind failed on %s:%d: %d (%s)", data->host, data->port, sock_errno, err_buf);
-         } else {
-             mcp_log_error("bind failed on %s:%d: %d (strerror_r failed)", data->host, data->port, sock_errno);
-         }
-#endif
-        close_socket(data->listen_socket);
-        return -1;
-    }
-
-    // Listen
-    if (listen(data->listen_socket, SOMAXCONN) == SOCKET_ERROR_VAL) {
-        char err_buf[128];
-#ifdef _WIN32
-        strerror_s(err_buf, sizeof(err_buf), sock_errno);
-        mcp_log_error("listen failed: %d (%s)", sock_errno, err_buf);
-#else
-         if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-            mcp_log_error("listen failed: %d (%s)", sock_errno, err_buf);
-         } else {
-             mcp_log_error("listen failed: %d (strerror_r failed)", sock_errno);
-         }
-#endif
-        close_socket(data->listen_socket);
+    // Create listening socket using the new utility function
+    // SOMAXCONN is a reasonable default backlog
+    data->listen_socket = mcp_socket_create_listener(data->host, data->port, SOMAXCONN);
+    if (data->listen_socket == MCP_INVALID_SOCKET) {
+        // Error logged within mcp_socket_create_listener
+        mcp_socket_cleanup(); // Cleanup on failure
         return -1;
     }
 
@@ -101,8 +49,9 @@ static int tcp_transport_start(
     data->client_mutex = mcp_mutex_create();
     if (data->client_mutex == NULL) {
         mcp_log_error("Mutex creation failed.");
-        close_socket(data->listen_socket);
+        mcp_socket_close(data->listen_socket);
         data->running = false;
+        mcp_socket_cleanup();
         return -1;
     }
 
@@ -122,9 +71,10 @@ static int tcp_transport_start(
     if (flags == -1 || fcntl(data->stop_pipe[0], F_SETFL, flags | O_NONBLOCK) == -1) {
          mcp_log_error("Failed to set stop pipe read end non-blocking: %s", strerror(errno));
          close_stop_pipe(data);
-         close_socket(data->listen_socket);
+         mcp_socket_close(data->listen_socket);
          mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
          data->running = false;
+         mcp_socket_cleanup();
          return -1;
     }
 #endif
@@ -132,12 +82,13 @@ static int tcp_transport_start(
     // Start accept thread using abstraction
     if (mcp_thread_create(&data->accept_thread, tcp_accept_thread_func, transport) != 0) {
         mcp_log_error("Failed to create accept thread.");
-        close_socket(data->listen_socket);
+        mcp_socket_close(data->listen_socket);
         mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
 #ifndef _WIN32
-        close_stop_pipe(data); // Clean up pipe on failure
+        close_stop_pipe(data);
 #endif
         data->running = false;
+        mcp_socket_cleanup();
         return -1;
     }
 
@@ -157,13 +108,13 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
     // Signal and close the listening socket/pipe to interrupt accept/select
 #ifdef _WIN32
     // Close the listening socket to interrupt accept()
-    if (data->listen_socket != INVALID_SOCKET_VAL) {
+    if (data->listen_socket != MCP_INVALID_SOCKET) {
         shutdown(data->listen_socket, SD_BOTH); // Try shutdown first
-        close_socket(data->listen_socket);
-        data->listen_socket = INVALID_SOCKET_VAL;
+        mcp_socket_close(data->listen_socket);
+        data->listen_socket = MCP_INVALID_SOCKET;
     }
 #else
-    // Write to the stop pipe to interrupt select()
+    // Write to the stop pipe to interrupt select() or poll() in accept thread
     if (data->stop_pipe[1] != -1) {
         char dummy = 's';
         ssize_t written = write(data->stop_pipe[1], &dummy, 1);
@@ -173,10 +124,10 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
         // No need to close write end immediately, close_stop_pipe handles it
     }
     // Also close the listening socket
-    if (data->listen_socket != INVALID_SOCKET_VAL) {
+    if (data->listen_socket != MCP_INVALID_SOCKET) {
         shutdown(data->listen_socket, SHUT_RDWR); // Try shutdown first
-        close_socket(data->listen_socket);
-        data->listen_socket = INVALID_SOCKET_VAL;
+        mcp_socket_close(data->listen_socket);
+        data->listen_socket = MCP_INVALID_SOCKET;
     }
 #endif
 
@@ -224,8 +175,8 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
 
     mcp_log_info("TCP Transport stopped.");
 
-    // Cleanup Winsock on Windows
-    cleanup_winsock(); // Use helper
+    // Cleanup socket library
+    mcp_socket_cleanup();
 
     return 0;
 }
@@ -302,7 +253,7 @@ mcp_transport_t* mcp_transport_tcp_create(
 
      tcp_data->port = port;
      tcp_data->idle_timeout_ms = idle_timeout_ms; // Store timeout
-     tcp_data->listen_socket = INVALID_SOCKET_VAL; // Use defined constant
+     tcp_data->listen_socket = MCP_INVALID_SOCKET;
      tcp_data->running = false;
      tcp_data->buffer_pool = NULL; // Initialize pool pointer
      tcp_data->client_mutex = NULL; // Initialize mutex pointer
@@ -311,7 +262,7 @@ mcp_transport_t* mcp_transport_tcp_create(
      // Explicitly initialize all client slots
      for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
          tcp_data->clients[i].state = CLIENT_STATE_INACTIVE; // Initialize state
-         tcp_data->clients[i].socket = INVALID_SOCKET_VAL;
+         tcp_data->clients[i].socket = MCP_INVALID_SOCKET;
          tcp_data->clients[i].thread_handle = 0; // Initialize thread handle
          // Other fields are zeroed by calloc
      }

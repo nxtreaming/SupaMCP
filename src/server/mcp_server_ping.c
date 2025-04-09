@@ -43,6 +43,7 @@ char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_re
     }
 
     char* response = create_success_response(request->id, result_str);
+    // free(result_str); // Removed double free - create_success_response takes ownership
     mcp_log_debug("Sending pong response to ID %llu", (unsigned long long)request->id);
     return response;
 }

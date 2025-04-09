@@ -29,24 +29,31 @@ static int tcp_client_transport_start(
     transport->callback_user_data = user_data;
     transport->error_callback = error_callback;
 
-    initialize_winsock_client(); // Initialize Winsock if on Windows
 
-    // Establish connection
-    if (connect_to_server(data) != 0) {
-        cleanup_winsock_client();
+    if (mcp_socket_init() != 0) {
+        mcp_log_error("Failed to initialize socket library.");
         return -1;
     }
+
+    // Establish connection using the new utility function (e.g., 5 second timeout)
+    data->sock = mcp_socket_connect(data->host, data->port, 5000);
+    if (data->sock == MCP_INVALID_SOCKET) {
+        mcp_log_error("Failed to connect to server %s:%u", data->host, data->port);
+        mcp_socket_cleanup();
+        return -1;
+    }
+    data->connected = true; // Mark as connected after successful mcp_socket_connect
 
     data->running = true;
 
     // Start receiver thread
-    if (mcp_thread_create(&data->receive_thread, tcp_client_receive_thread_func, transport) != 0) { // Corrected function name
+    if (mcp_thread_create(&data->receive_thread, tcp_client_receive_thread_func, transport) != 0) {
         mcp_log_error("Failed to create client receiver thread.");
-        close_socket(data->sock);
-        data->sock = INVALID_SOCKET_VAL;
+        mcp_socket_close(data->sock);
+        data->sock = MCP_INVALID_SOCKET;
         data->connected = false;
         data->running = false;
-        cleanup_winsock_client();
+        mcp_socket_cleanup();
         return -1;
     }
 
@@ -64,7 +71,7 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
     data->running = false; // Signal receiver thread to stop
 
     // Shutdown the socket to potentially unblock the receiver thread
-    if (data->sock != INVALID_SOCKET_VAL) {
+    if (data->sock != MCP_INVALID_SOCKET) {
 #ifdef _WIN32
         shutdown(data->sock, SD_BOTH);
 #else
@@ -80,13 +87,13 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
     }
 
     // Close socket if not already closed by receiver
-    if (data->sock != INVALID_SOCKET_VAL) {
-        close_socket(data->sock);
-        data->sock = INVALID_SOCKET_VAL;
+    if (data->sock != MCP_INVALID_SOCKET) {
+        mcp_socket_close(data->sock);
+        data->sock = MCP_INVALID_SOCKET;
     }
     data->connected = false;
 
-    cleanup_winsock_client(); // Cleanup Winsock if on Windows
+    mcp_socket_cleanup(); // Cleanup socket library
     mcp_log_info("TCP Client Transport stopped.");
     return 0;
 }
@@ -96,25 +103,24 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* dat
     if (!transport || !transport->transport_data || !data_buf || size == 0) return -1;
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
-    if (!data->running || !data->connected || data->sock == INVALID_SOCKET_VAL) {
+    if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) { // Use new invalid socket macro
         mcp_log_error("Client transport not running or connected for send.");
         return -1;
     }
 
-    // Use the client-specific exact send helper
-    int result = send_exact_client(data->sock, (const char*)data_buf, size, &data->running);
-    if (result == -1) {
-        mcp_log_error("send_exact_client failed.");
-        // Consider triggering error callback or attempting reconnect?
+    // Use the new unified exact send helper, pass NULL for stop_flag
+    int result = mcp_socket_send_exact(data->sock, (const char*)data_buf, size, NULL);
+    if (result != 0) { // mcp_socket_send_exact returns 0 on success, -1 on error/abort
+        mcp_log_error("mcp_socket_send_exact failed (result: %d).", result);
         data->connected = false; // Mark as disconnected on send error
         if(transport->error_callback) {
-            transport->error_callback(transport->callback_user_data, sock_errno);
+            // Pass the last error code obtained via the utility function
+            transport->error_callback(transport->callback_user_data, mcp_socket_get_last_error());
         }
         return -1;
-    } else if (result == -2) {
-        mcp_log_info("Send interrupted by stop signal.");
-        return -1; // Treat stop signal as error for send
     }
+    // Note: The old function returned -2 for stop signal, the new one returns -1.
+    // The check for stop signal is handled within mcp_socket_send_exact.
     return 0; // Success
 }
 
@@ -123,58 +129,43 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
     if (!transport || !transport->transport_data || !buffers || buffer_count == 0) return -1;
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
-    if (!data->running || !data->connected || data->sock == INVALID_SOCKET_VAL) {
+    if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) { // Use new invalid socket macro
         mcp_log_error("Client transport not running or connected for sendv.");
         return -1;
     }
 
-    size_t total_len = 0;
-    for (size_t i = 0; i < buffer_count; ++i) {
-        total_len += buffers[i].size;
+    // Convert mcp_buffer_t to platform-specific mcp_iovec_t
+    mcp_iovec_t* iov = (mcp_iovec_t*)malloc(buffer_count * sizeof(mcp_iovec_t));
+    if (!iov) {
+        mcp_log_error("Failed to allocate iovec array for sendv.");
+        return -1;
     }
-    if (total_len == 0) return 0; // Nothing to send
 
-    int result = -1;
+    for (size_t i = 0; i < buffer_count; ++i) {
 #ifdef _WIN32
-    // Need to convert mcp_buffer_t to WSABUF
-    WSABUF* wsa_buffers = (WSABUF*)malloc(buffer_count * sizeof(WSABUF));
-    if (!wsa_buffers) {
-        mcp_log_error("Failed to allocate WSABUF array.");
-        return -1;
-    }
-    for (size_t i = 0; i < buffer_count; ++i) {
-        wsa_buffers[i].buf = (CHAR*)buffers[i].data; // Cast needed
-        wsa_buffers[i].len = (ULONG)buffers[i].size; // Cast needed
-    }
-    result = send_vectors_client_windows(data->sock, wsa_buffers, (DWORD)buffer_count, total_len, &data->running);
-    free(wsa_buffers);
+        iov[i].buf = (CHAR*)buffers[i].data;
+        iov[i].len = (ULONG)buffers[i].size;
 #else // POSIX
-    // Need to convert mcp_buffer_t to struct iovec
-    struct iovec* iov = (struct iovec*)malloc(buffer_count * sizeof(struct iovec));
-     if (!iov) {
-        mcp_log_error("Failed to allocate iovec array.");
-        return -1;
-    }
-    for (size_t i = 0; i < buffer_count; ++i) {
-        iov[i].iov_base = (void*)buffers[i].data; // Cast needed for non-const
+        iov[i].iov_base = (void*)buffers[i].data;
         iov[i].iov_len = buffers[i].size;
-    }
-    // Note: writev's iovcnt is int, potential overflow if buffer_count is huge
-    result = send_vectors_client_posix(data->sock, iov, (int)buffer_count, total_len, &data->running);
-    free(iov);
 #endif
+    }
 
-    if (result == -1) {
-        mcp_log_error("send_vectors failed (client).");
+    // Use the new unified vectored send function, pass NULL for stop_flag
+    // Note: iovcnt is int, potential overflow if buffer_count is huge
+    int result = mcp_socket_send_vectors(data->sock, iov, (int)buffer_count, NULL);
+    free(iov); // Free the allocated iovec array
+
+    if (result != 0) { // mcp_socket_send_vectors returns 0 on success, -1 on error/abort
+        mcp_log_error("mcp_socket_send_vectors failed (result: %d).", result);
         data->connected = false; // Mark as disconnected on send error
         if(transport->error_callback) {
-            transport->error_callback(transport->callback_user_data, sock_errno);
+            transport->error_callback(transport->callback_user_data, mcp_socket_get_last_error());
         }
         return -1;
-    } else if (result == -2) {
-        mcp_log_info("Sendv interrupted by stop signal.");
-        return -1; // Treat stop signal as error for send
     }
+    // Note: The old function returned -2 for stop signal, the new one returns -1.
+    // The check for stop signal is handled within mcp_socket_send_vectors.
 
     return 0; // Success
 }
@@ -188,7 +179,7 @@ static int tcp_client_transport_receive(mcp_transport_t* transport, char** data_
      *data_out = NULL;
      *size_out = 0;
 
-     if (!data->running || !data->connected || data->sock == INVALID_SOCKET_VAL) {
+     if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) { // Use new invalid socket macro
          mcp_log_error("Client transport not running or connected for receive.");
          return -1;
      }
@@ -237,11 +228,11 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
         return NULL;
     }
     data->port = port;
-    data->sock = INVALID_SOCKET_VAL;
+    data->sock = MCP_INVALID_SOCKET;
     data->connected = false;
     data->running = false;
-    data->receive_thread = 0; // Correct member name
-    data->buffer_pool = NULL; // Initialize pool pointer
+    data->receive_thread = 0;
+    data->buffer_pool = NULL;
 
     // Create buffer pool
     data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);

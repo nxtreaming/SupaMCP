@@ -32,17 +32,17 @@ set(COMMON_SOURCES
     src/transport/mcp_transport_factory.c
     src/transport/mcp_stdio_transport.c
     src/transport/mcp_tcp_transport.c
-    src/transport/mcp_tcp_socket_utils.c
     src/transport/mcp_tcp_client_handler.c
     src/transport/mcp_tcp_acceptor.c
     src/transport/mcp_tcp_client_transport.c
-    src/transport/mcp_tcp_client_socket_utils.c
     src/transport/mcp_tcp_client_receiver.c
     src/common/mcp_types.c
     src/common/mcp_arena.c
     src/common/mcp_log.c
     src/common/mcp_thread_local.c
     src/common/mcp_sync.c
+    src/common/mcp_socket_utils.c
+    src/common/mcp_framing.c
     src/server/mcp_buffer_pool.c
     src/server/mcp_thread_pool.c
     src/server/mcp_cache_optimized.c

@@ -363,7 +363,7 @@ static void client_transport_error_callback(void* user_data, int transport_error
     mcp_client_t* client = (mcp_client_t*)user_data;
     if (client == NULL) return;
 
-    mcp_log_info("Transport error detected (code: %d). Notifying waiting requests.\n", transport_error_code);
+    mcp_log_info("Transport error detected (code: %d). Notifying waiting requests.", transport_error_code);
 
     // Lock the mutex to safely access the pending requests table
     mcp_mutex_lock(client->pending_requests_mutex);
