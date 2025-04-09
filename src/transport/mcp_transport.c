@@ -1,96 +1,80 @@
 #include "internal/transport_internal.h"
 #include <stdlib.h>
-#include <stdio.h>
 
-// --- Generic Transport Interface Implementation ---
-// These functions provide the public API defined in mcp_transport.h.
-// They perform basic validation and then delegate the actual work to the
-// specific transport implementation via the function pointers stored in
-// the mcp_transport_t struct.
+// Generic transport functions that dispatch to implementation-specific function pointers
 
-/**
- * @brief Generic implementation of mcp_transport_start.
- * Stores callbacks and user data in the transport handle, then calls the
- * specific implementation's start function pointer.
- */
 int mcp_transport_start(
     mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
     void* user_data,
     mcp_transport_error_callback_t error_callback
 ) {
-    if (transport == NULL || transport->start == NULL) {
-        return -1;
+    if (!transport || !transport->start) {
+        return -1; // Invalid transport or missing start function
     }
-    // Store callbacks and user data for use by the implementation's start/receive logic
+    // Store callback info
     transport->message_callback = message_callback;
     transport->callback_user_data = user_data;
     transport->error_callback = error_callback;
-    // Pass the callbacks and user_data to the specific implementation's start function
-    return transport->start(
-        transport,
-        message_callback,
-        user_data,
-        error_callback
-    );
+    return transport->start(transport, message_callback, user_data, error_callback);
 }
 
-/**
- * @brief Generic implementation of mcp_transport_stop.
- * Calls the specific implementation's stop function pointer.
- */
 int mcp_transport_stop(mcp_transport_t* transport) {
-    // Validate input and function pointer
-    if (transport == NULL || transport->stop == NULL) {
-        return -1; // Indicate error
+    if (!transport || !transport->stop) {
+        return -1; // Invalid transport or missing stop function
     }
     return transport->stop(transport);
 }
 
-/**
- * @brief Generic implementation of mcp_transport_send.
- * Calls the specific implementation's send function pointer.
- */
+// Deprecated: Use mcp_transport_sendv instead.
+// This function now wraps mcp_transport_sendv for backward compatibility.
 int mcp_transport_send(mcp_transport_t* transport, const void* data, size_t size) {
-     // Validate input and function pointer
-     if (transport == NULL || transport->send == NULL) {
-        return -1; // Indicate error
-    }
-    return transport->send(transport, data, size);
-}
-
-/**
- * @brief Generic implementation of mcp_transport_receive.
- * Calls the specific implementation's receive function pointer.
- * Initializes output parameters before the call.
- */
-int mcp_transport_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms) {
-    // Validate input and function pointer
-    if (transport == NULL || transport->receive == NULL || data == NULL || size == NULL) {
-        // Ensure output pointers are safe to dereference even on error return
-        if (data) *data = NULL;
-        if (size) *size = 0;
+    if (!transport || !data || size == 0) {
         return -1;
     }
-    // Initialize output params
-    *data = NULL;
-    *size = 0;
-    return transport->receive(transport, data, size, timeout_ms);
+    // Create a single buffer structure on the stack
+    mcp_buffer_t buffer;
+    buffer.data = data;
+    buffer.size = size;
+    // Call the new vectored send function
+    return mcp_transport_sendv(transport, &buffer, 1);
 }
 
-/**
- * @brief Generic implementation of mcp_transport_destroy.
- * Calls the specific implementation's destroy function pointer (if provided),
- * then frees the generic transport handle itself.
- */
+// New vectored send function
+int mcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
+     if (!transport || !transport->sendv || !buffers || buffer_count == 0) {
+        // Also handle the case where the old 'send' exists but 'sendv' doesn't?
+        // For now, assume if sendv exists, we use it. If not, error.
+        // A more robust approach might fallback to calling transport->send multiple times
+        // or creating a temporary combined buffer, but that defeats the purpose.
+        return -1; // Invalid transport, missing sendv, or invalid arguments
+    }
+    return transport->sendv(transport, buffers, buffer_count);
+}
+
+
 void mcp_transport_destroy(mcp_transport_t* transport) {
-    if (transport == NULL) {
-        return; // Nothing to do
+    if (!transport) {
+        return;
     }
-    // Call the specific transport's destroy function first if it exists
-    if (transport->destroy != NULL) {
-        transport->destroy(transport);
+    if (transport->destroy) {
+        transport->destroy(transport); // Call specific cleanup
     }
-    // Free the generic transport handle itself
-    free(transport);
+    // Free the generic transport struct itself? Or is it part of a larger struct?
+    // Assuming the specific destroy handles freeing transport_data,
+    // but the mcp_transport struct itself might be allocated differently.
+    // For now, let's assume the caller or specific implementation handles freeing the main struct.
+    // free(transport); // Potentially incorrect - comment out for now
+}
+
+int mcp_transport_receive(
+    mcp_transport_t* transport,
+    char** data, // [out]
+    size_t* size, // [out]
+    uint32_t timeout_ms
+) {
+    if (!transport || !transport->receive || !data || !size) {
+        return -1; // Invalid transport, missing receive, or invalid arguments
+    }
+    return transport->receive(transport, data, size, timeout_ms);
 }

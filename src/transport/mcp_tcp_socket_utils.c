@@ -4,6 +4,11 @@
 #include <string.h>
 #include <errno.h>
 
+#ifdef _WIN32
+#else
+#include <sys/uio.h>
+#endif
+
 // --- Platform Initialization/Cleanup ---
 
 #ifdef _WIN32
@@ -81,6 +86,95 @@ int send_exact(
     return 0; // Success
 }
 
+#ifdef _WIN32
+// Helper function to send data from multiple buffers using WSASend (Windows)
+// Returns 0 on success, -1 on error, -2 on stop signal, -3 on connection closed/reset
+int send_vectors_windows(socket_t sock, WSABUF* buffers, DWORD buffer_count, size_t total_len, bool* stop_flag) {
+    DWORD bytes_sent_total = 0;
+    DWORD flags = 0; // Optional flags for WSASend
+
+    while (bytes_sent_total < total_len) {
+        if (stop_flag && *stop_flag) return -2; // Interrupted
+
+        // Adjust buffer pointers and lengths for the next WSASend call if needed
+        // (WSASend might not send all data from all buffers in one go, though less common for TCP)
+        // For simplicity, assume WSASend sends all or errors out here.
+        // A more robust implementation would handle partial sends across vectors.
+        DWORD current_bytes_sent = 0;
+        int result = WSASend(sock, buffers, buffer_count, &current_bytes_sent, flags, NULL, NULL);
+
+        if (result == SOCKET_ERROR) {
+            int error_code = WSAGetLastError();
+            if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN) {
+                return -3; // Connection closed/reset
+            }
+            mcp_log_error("WSASend failed: %d", error_code);
+            return -1; // Other socket error
+        }
+
+        bytes_sent_total += current_bytes_sent;
+
+        // If WSASend sent less than total_len, we'd need to adjust the WSABUF array
+        // for the next iteration, which complicates things significantly.
+        // Assuming for now it sends all or errors.
+        if (current_bytes_sent < total_len && bytes_sent_total < total_len) {
+             mcp_log_warn("WSASend sent partial data (%lu / %zu), handling not fully implemented.", current_bytes_sent, total_len);
+             // Break or implement complex buffer adjustment logic here. Breaking for now.
+             return -1;
+        }
+    }
+    return 0; // Success
+}
+#else // POSIX
+// Helper function to send data from multiple buffers using writev (POSIX)
+// Returns 0 on success, -1 on error, -2 on stop signal, -3 on connection closed/reset
+int send_vectors_posix(socket_t sock, struct iovec* iov, int iovcnt, size_t total_len, bool* stop_flag) {
+    size_t total_sent = 0;
+    while (total_sent < total_len) {
+        if (stop_flag && *stop_flag) return -2; // Interrupted
+
+        // writev might send partial data, need to handle it
+        ssize_t bytes_sent = writev(sock, iov, iovcnt);
+
+        if (bytes_sent == -1) {
+            int error_code = errno;
+            if (error_code == EPIPE || error_code == ECONNRESET || error_code == ENOTCONN) {
+                return -3; // Connection closed/reset
+            }
+            if (error_code == EINTR) { // Interrupted by signal, check stop flag and retry
+                 if (stop_flag && *stop_flag) return -2;
+                 continue;
+            }
+            mcp_log_error("writev failed: %d (%s)", error_code, strerror(error_code));
+            return -1; // Other socket error
+        }
+
+        total_sent += bytes_sent;
+
+        // Adjust iovec for the next iteration if partial write occurred
+        if (total_sent < total_len) {
+            size_t sent_so_far = bytes_sent;
+            int current_iov = 0;
+            while (sent_so_far > 0 && current_iov < iovcnt) {
+                if (sent_so_far < iov[current_iov].iov_len) {
+                    iov[current_iov].iov_base = (char*)iov[current_iov].iov_base + sent_so_far;
+                    iov[current_iov].iov_len -= sent_so_far;
+                    sent_so_far = 0;
+                } else {
+                    sent_so_far -= iov[current_iov].iov_len;
+                    iov[current_iov].iov_len = 0; // Mark this vector as fully sent
+                    current_iov++;
+                }
+            }
+            // Adjust iov and iovcnt for the next writev call
+            iov += current_iov;
+            iovcnt -= current_iov;
+        }
+    }
+    return 0; // Success
+}
+#endif
+
 
 // Helper function to read exactly n bytes from a socket (checks client stop flag)
 // Returns: 0 on success, -1 on error, -2 on stop signal, -3 on connection closed
@@ -148,14 +242,14 @@ int wait_for_socket_read(
         int error_code = sock_errno;
         char err_buf[128];
         strerror_s(err_buf, sizeof(err_buf), error_code);
-        mcp_log_error("select failed for socket %d: %d (%s)", 
+        mcp_log_error("select failed for socket %d: %d (%s)",
                    (int)sock, error_code, err_buf);
-        
+
         // Non-fatal errors, continue waiting instead of immediately disconnecting
         if (error_code == WSAEINTR || error_code == WSAEWOULDBLOCK) {
             return 0; // Return timeout result, letting the caller continue waiting
         }
-        
+
         return -1; // Other select errors
     } else if (result == 0) {
         return 0; // timeout (or intermediate check)

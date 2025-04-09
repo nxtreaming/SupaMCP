@@ -1,24 +1,12 @@
 #ifndef MCP_TCP_CLIENT_TRANSPORT_INTERNAL_H
 #define MCP_TCP_CLIENT_TRANSPORT_INTERNAL_H
 
-#include "mcp_tcp_client_transport.h"
-#include "transport_internal.h"
-#include "mcp_log.h"
-#include "mcp_types.h"
-#include "mcp_buffer_pool.h"
-#include "mcp_sync.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdbool.h>
-#include <errno.h>
-
-// 全局变量，用于控制重连逻辑
-extern bool reconnection_in_progress;
-
-// Platform-specific includes and definitions (similar to connection pool)
+// Platform-specific includes MUST come before standard headers that might include windows.h
 #ifdef _WIN32
-#   include <winsock2.h>
+#   ifndef WIN32_LEAN_AND_MEAN
+#       define WIN32_LEAN_AND_MEAN
+#   endif
+#   include <winsock2.h> // Include before windows.h (potentially included by stdio/stdlib)
 #   include <ws2tcpip.h>
 #   pragma comment(lib, "Ws2_32.lib")
     typedef SOCKET socket_t;
@@ -27,6 +15,7 @@ extern bool reconnection_in_progress;
     #define close_socket closesocket
     #define sock_errno WSAGetLastError()
     #define sleep_ms(ms) Sleep(ms)
+    #include <windows.h>
 #else
 #   include <sys/socket.h>
 #   include <netinet/in.h>
@@ -34,6 +23,7 @@ extern bool reconnection_in_progress;
 #   include <unistd.h>
 #   include <fcntl.h>
 #   include <netdb.h>
+#   include <sys/uio.h>
     typedef int socket_t;
     #define INVALID_SOCKET_VAL (-1)
     #define SOCKET_ERROR_VAL   (-1)
@@ -41,6 +31,25 @@ extern bool reconnection_in_progress;
     #define sock_errno errno
     #define sleep_ms(ms) usleep(ms * 1000)
 #endif
+
+// Now include project headers and standard libraries
+#include "mcp_tcp_client_transport.h"
+#include "transport_internal.h"
+#include "mcp_log.h"
+#include "mcp_types.h"
+#include "mcp_buffer_pool.h"
+#include "mcp_sync.h"
+#include <mcp_thread_pool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <errno.h>
+
+
+// 全局变量，用于控制重连逻辑
+extern bool reconnection_in_progress;
+
 
 // Constants (can reuse from other internal headers if appropriate, but define here for clarity)
 #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Example: 1MB limit
@@ -72,6 +81,13 @@ void cleanup_winsock_client(); // Added for consistency
 int connect_to_server(mcp_tcp_client_transport_data_t* data);
 int send_exact_client(socket_t sock, const char* buf, size_t len, bool* running_flag);
 int recv_exact_client(socket_t sock, char* buf, size_t len, bool* running_flag);
+// Declarations for vectored send helpers
+#ifdef _WIN32
+int send_vectors_client_windows(socket_t sock, WSABUF* buffers, DWORD buffer_count, size_t total_len, bool* running_flag);
+#else
+int send_vectors_client_posix(socket_t sock, struct iovec* iov, int iovcnt, size_t total_len, bool* running_flag);
+#endif
+
 
 // From mcp_tcp_client_receiver.c
 // Use the abstracted thread function signature

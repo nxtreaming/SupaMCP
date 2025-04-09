@@ -3,6 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include "mcp_buffer_pool.h"
+#include "mcp_log.h"
+#include "mcp_sync.h"
+#include <mcp_thread_pool.h>
 
 // --- Static Transport Interface Functions ---
 
@@ -225,20 +229,35 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
     return 0;
 }
 
-// Server transport send function - handles message sending to client sockets
+// Server transport send function - STUB
+// Actual sending happens in client handler thread
 static int tcp_transport_send(mcp_transport_t* transport, const void* data, size_t size) {
     if (transport == NULL || transport->transport_data == NULL || data == NULL || size == 0) {
         mcp_log_error("Invalid parameters in tcp_transport_send");
         return -1;
     }
-    
-    // We don't have a direct way to get the target socket, it relies on message callback context
-    // The actual sending is handled by the client handler thread using send_exact function
-    // This function just exists to provide a non-NULL send function to avoid NULL pointer issues
-    
-    mcp_log_debug("Server transport send function called with %zu bytes", size);
-    return 0; // Return success - actual sending is handled by client handler thread
+    mcp_log_debug("Server transport send function called (stub) with %zu bytes", size);
+    // This function is a stub because the server transport doesn't know which client to send to.
+    // The client handler thread is responsible for sending responses back to its specific client.
+    return 0; // Indicate success as no direct action is taken here.
 }
+
+// Server transport vectored send function - STUB
+// Actual sending happens in client handler thread
+static int tcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
+    if (transport == NULL || transport->transport_data == NULL || buffers == NULL || buffer_count == 0) {
+        mcp_log_error("Invalid parameters in tcp_transport_sendv");
+        return -1;
+    }
+    size_t total_size = 0;
+    for(size_t i = 0; i < buffer_count; ++i) {
+        total_size += buffers[i].size;
+    }
+    mcp_log_debug("Server transport sendv function called (stub) with %zu buffers, total size %zu bytes", buffer_count, total_size);
+    // This function is a stub for the same reason as tcp_transport_send.
+    return 0; // Indicate success as no direct action is taken here.
+}
+
 
 static void tcp_transport_destroy(mcp_transport_t* transport) {
      if (transport == NULL || transport->transport_data == NULL) return;
@@ -252,6 +271,7 @@ static void tcp_transport_destroy(mcp_transport_t* transport) {
      free(data);
      transport->transport_data = NULL;
      // Generic destroy will free the transport struct itself
+     free(transport); // Free the main transport struct allocated in create
 }
 
 
@@ -294,7 +314,7 @@ mcp_transport_t* mcp_transport_tcp_create(
          tcp_data->clients[i].thread_handle = 0; // Initialize thread handle
          // Other fields are zeroed by calloc
      }
-     
+
  #ifndef _WIN32
      tcp_data->stop_pipe[0] = -1; // Initialize pipe FDs
      tcp_data->stop_pipe[1] = -1;
@@ -313,7 +333,8 @@ mcp_transport_t* mcp_transport_tcp_create(
      // Initialize function pointers
     transport->start = tcp_transport_start;
     transport->stop = tcp_transport_stop;
-    transport->send = tcp_transport_send; // Use our new send function
+    transport->send = tcp_transport_send; // Keep stub send
+    transport->sendv = tcp_transport_sendv;
     transport->receive = NULL; // Set receive to NULL, not used by server transport
     transport->destroy = tcp_transport_destroy;
     transport->transport_data = tcp_data;

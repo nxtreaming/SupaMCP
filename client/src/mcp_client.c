@@ -440,28 +440,19 @@ static int mcp_client_send_and_wait(
     size_t json_len = strlen(request_json);
     uint32_t net_len = htonl((uint32_t)json_len);
 
-    // Allocate buffer containing length prefix and JSON content
-    size_t total_len = sizeof(net_len) + json_len;
-    char* send_buffer = (char*)malloc(total_len); // No need for +1 here
+    // Prepare buffers for vectored send
+    mcp_buffer_t send_buffers[2];
+    send_buffers[0].data = &net_len;
+    send_buffers[0].size = sizeof(net_len);
+    send_buffers[1].data = request_json;
+    send_buffers[1].size = json_len;
 
-    if (send_buffer == NULL) {
-        mcp_log_error("Failed to allocate send buffer.");
-        return -1; // Allocation failed
-    }
-
-    // Copy length prefix and JSON data to buffer
-    memcpy(send_buffer, &net_len, sizeof(net_len));
-    memcpy(send_buffer + sizeof(net_len), request_json, json_len);
-
-    // Send the combined buffer
-    int send_status = mcp_transport_send(client->transport, send_buffer, total_len);
-    mcp_log_debug("mcp_transport_send returned: %d for request ID %llu", send_status, (unsigned long long)request_id);
-
-    // Clean up send buffer
-    free(send_buffer);
+    // Send the buffers using vectored I/O
+    int send_status = mcp_transport_sendv(client->transport, send_buffers, 2);
+    mcp_log_debug("mcp_transport_sendv returned: %d for request ID %llu", send_status, (unsigned long long)request_id);
 
     if (send_status != 0) {
-        mcp_log_error("mcp_transport_send failed with status %d", send_status);
+        mcp_log_error("mcp_transport_sendv failed with status %d", send_status);
         return -1; // Send failed
     }
 

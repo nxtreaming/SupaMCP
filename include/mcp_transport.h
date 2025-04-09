@@ -16,6 +16,15 @@ extern "C" {
 typedef struct mcp_transport mcp_transport_t;
 
 /**
+ * @brief Represents a single buffer of data.
+ */
+typedef struct {
+    const void* data; /**< Pointer to the data buffer. */
+    size_t size;      /**< Size of the data buffer in bytes. */
+} mcp_buffer_t;
+
+
+/**
  * @brief Callback function type for received messages.
  *
  * @param user_data User data provided to mcp_transport_start.
@@ -68,19 +77,19 @@ int mcp_transport_start(
 int mcp_transport_stop(mcp_transport_t* transport);
 
 /**
- * @brief Sends raw data through the transport layer.
+ * @brief Sends data from one or more buffers through the transport layer using vectored I/O if possible.
  *
- * The caller is typically responsible for ensuring the provided data includes
- * any necessary framing (e.g., length prefixes) required by the specific MCP
- * transport implementation or protocol convention. This function sends the
- * exact bytes provided in the buffer.
+ * This function attempts to send the data contained in the provided buffer array
+ * efficiently, potentially using scatter/gather I/O system calls (`writev` or `WSASend`).
+ * The caller is responsible for ensuring the total data represents a valid message
+ * according to the protocol (e.g., includes length prefix if needed).
  *
  * @param transport The transport handle.
- * @param data Pointer to the data to send.
- * @param size Size of the data in bytes.
- * @return 0 on success, non-zero on error (e.g., connection closed, write error).
+ * @param buffers An array of mcp_buffer_t structures describing the data chunks to send.
+ * @param buffer_count The number of buffers in the array.
+ * @return 0 on success (all data sent), non-zero on error (e.g., connection closed, write error).
  */
-int mcp_transport_send(mcp_transport_t* transport, const void* data, size_t size);
+int mcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
 
 /**
  * @brief Destroys the transport handle and frees associated resources.

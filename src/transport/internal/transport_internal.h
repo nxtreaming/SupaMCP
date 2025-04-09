@@ -14,7 +14,8 @@ struct mcp_transport {
         mcp_transport_error_callback_t error_callback
     );
     int (*stop)(mcp_transport_t* transport);
-    int (*send)(mcp_transport_t* transport, const void* data, size_t size);
+    int (*send)(mcp_transport_t* transport, const void* data, size_t size); // Keep for compatibility? Or remove?
+    int (*sendv)(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count); // New vectored send
     // Receive function pointer (primarily for synchronous client usage)
     // Returns 0 on success, non-zero on error/timeout.
     // Allocates buffer for data, caller must free.

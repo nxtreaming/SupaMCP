@@ -13,6 +13,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <sys/uio.h>
 #endif
 
 // --- Client Socket Utility Implementations ---
@@ -122,6 +123,80 @@ int send_exact_client(socket_t sock, const char* buf, size_t len, bool* running_
     }
     return 0;
 }
+
+#ifdef _WIN32
+// Helper function to send data from multiple buffers using WSASend (Windows) - Client version
+// Returns 0 on success, -1 on error, -2 on stop signal
+int send_vectors_client_windows(socket_t sock, WSABUF* buffers, DWORD buffer_count, size_t total_len, bool* running_flag) {
+    DWORD bytes_sent_total = 0;
+    DWORD flags = 0;
+
+    while (bytes_sent_total < total_len) {
+        if (running_flag && !(*running_flag)) return -2;
+
+        DWORD current_bytes_sent = 0;
+        int result = WSASend(sock, buffers, buffer_count, &current_bytes_sent, flags, NULL, NULL);
+
+        if (result == SOCKET_ERROR) {
+            mcp_log_error("WSASend failed (client): %d", WSAGetLastError());
+            return -1; // Socket error
+        }
+
+        bytes_sent_total += current_bytes_sent;
+
+        if (current_bytes_sent < total_len && bytes_sent_total < total_len) {
+             mcp_log_warn("WSASend sent partial data (%lu / %zu) on client, handling not fully implemented.", current_bytes_sent, total_len);
+             return -1; // Treat partial send as error for now
+        }
+    }
+    return 0; // Success
+}
+#else // POSIX
+// Helper function to send data from multiple buffers using writev (POSIX) - Client version
+// Returns 0 on success, -1 on error, -2 on stop signal
+int send_vectors_client_posix(socket_t sock, struct iovec* iov, int iovcnt, size_t total_len, bool* running_flag) {
+    size_t total_sent = 0;
+    while (total_sent < total_len) {
+        if (running_flag && !(*running_flag)) return -2;
+
+        ssize_t bytes_sent = writev(sock, iov, iovcnt);
+
+        if (bytes_sent == -1) {
+            int error_code = errno;
+             if (error_code == EINTR) { // Interrupted by signal, check stop flag and retry
+                 if (running_flag && !(*running_flag)) return -2;
+                 continue;
+            }
+            mcp_log_error("writev failed (client): %d (%s)", error_code, strerror(error_code));
+            return -1; // Other socket error
+        }
+
+        total_sent += bytes_sent;
+
+        // Adjust iovec for the next iteration if partial write occurred
+        if (total_sent < total_len) {
+            size_t sent_so_far = bytes_sent;
+            int current_iov = 0;
+            while (sent_so_far > 0 && current_iov < iovcnt) {
+                if (sent_so_far < iov[current_iov].iov_len) {
+                    iov[current_iov].iov_base = (char*)iov[current_iov].iov_base + sent_so_far;
+                    iov[current_iov].iov_len -= sent_so_far;
+                    sent_so_far = 0;
+                } else {
+                    sent_so_far -= iov[current_iov].iov_len;
+                    iov[current_iov].iov_len = 0; // Mark this vector as fully sent
+                    current_iov++;
+                }
+            }
+            // Adjust iov and iovcnt for the next writev call
+            iov += current_iov;
+            iovcnt -= current_iov;
+        }
+    }
+    return 0; // Success
+}
+#endif
+
 
 /**
  * @internal
