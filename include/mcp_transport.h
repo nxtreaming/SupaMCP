@@ -92,6 +92,17 @@ int mcp_transport_stop(mcp_transport_t* transport);
 int mcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
 
 /**
+ * @brief Sends raw data through the transport layer. (Deprecated: Use sendv)
+ *
+ * @param transport The transport handle.
+ * @param data Pointer to the data to send.
+ * @param size Size of the data in bytes.
+ * @return 0 on success, non-zero on error.
+ */
+int mcp_transport_send(mcp_transport_t* transport, const void* data, size_t size);
+
+
+/**
  * @brief Destroys the transport handle and frees associated resources.
  *
  * This should implicitly call stop if the transport is running.
