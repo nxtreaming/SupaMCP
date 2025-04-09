@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <stdbool.h>
+#include "mcp_hashtable.h"
 
 /**
  * @internal
@@ -24,6 +25,18 @@ mcp_json_t* mcp_json_alloc_node(void) {
     }
     return (mcp_json_t*)mcp_arena_alloc(arena, sizeof(mcp_json_t));
 }
+
+/**
+ * @internal
+ * @brief Value free function for the generic hash table when storing mcp_json_t values.
+ *        Calls mcp_json_destroy on the value node.
+ */
+static void mcp_json_hashtable_value_free(void* value) {
+    mcp_json_destroy((mcp_json_t*)value);
+    // Note: This does NOT free the mcp_json_t node itself if it was arena allocated.
+    // It only frees internal data (like string values, array items, nested objects).
+}
+
 
 // --- Public JSON API Implementation ---
 
@@ -108,11 +121,19 @@ mcp_json_t* json = mcp_json_alloc_node();
         return NULL;
     }
     json->type = MCP_JSON_OBJECT;
-    // Initialize the internal hash table (which uses malloc for its parts)
-if (mcp_json_object_table_init(&json->object, MCP_JSON_HASH_TABLE_INITIAL_CAPACITY) != 0) {
-        mcp_log_error("Failed to initialize JSON object hash table.");
-        // Table init failed. Node is arena allocated, will be cleaned up by arena reset/destroy.
-        // No need to free(json) as it's from the arena.
+    // Create a generic hash table for the object properties
+    json->object_table = mcp_hashtable_create(
+        MCP_JSON_HASH_TABLE_INITIAL_CAPACITY, // Initial capacity
+        MCP_JSON_HASH_TABLE_MAX_LOAD_FACTOR,  // Load factor
+        mcp_hashtable_string_hash,            // Use standard string hash
+        mcp_hashtable_string_compare,         // Use standard string compare
+        mcp_hashtable_string_dup,             // Use standard string dup (malloc)
+        mcp_hashtable_string_free,            // Use standard string free
+        mcp_json_hashtable_value_free         // Use our custom value free function
+    );
+    if (json->object_table == NULL) {
+        mcp_log_error("Failed to create generic hash table for JSON object.");
+        // Hashtable creation failed. Node is arena allocated, will be cleaned up by arena reset/destroy.
         return NULL; // Return error
     }
     return json;
@@ -149,8 +170,9 @@ void mcp_json_destroy(mcp_json_t* json) {
             json->array.capacity = 0;
             break;
         case MCP_JSON_OBJECT:
-            // Destroy the internal hash table (frees buckets, entries, keys, and calls destroy on values)
-            mcp_json_object_table_destroy(&json->object);
+            // Destroy the generic hash table (frees buckets, entries, keys via key_free, and values via value_free)
+            mcp_hashtable_destroy(json->object_table);
+            json->object_table = NULL; // Prevent double free
             break;
         case MCP_JSON_NULL:
         case MCP_JSON_BOOLEAN:
@@ -229,20 +251,23 @@ int mcp_json_array_add_item(mcp_json_t* json, mcp_json_t* item) {
 }
 
 bool mcp_json_object_has_property(const mcp_json_t* json, const char* name) {
-    if (json == NULL || name == NULL || json->type != MCP_JSON_OBJECT) {
+    if (json == NULL || name == NULL || json->type != MCP_JSON_OBJECT || json->object_table == NULL) {
         return false;
     }
-    // Cast away const for internal find operation (doesn't modify the table)
-    return mcp_json_object_table_find((mcp_json_object_table_t*)&json->object, name) != NULL;
+    // Use the generic hashtable contains function
+    return mcp_hashtable_contains(json->object_table, name);
 }
 
 mcp_json_t* mcp_json_object_get_property(const mcp_json_t* json, const char* name) {
-    if (json == NULL || name == NULL || json->type != MCP_JSON_OBJECT) {
+    if (json == NULL || name == NULL || json->type != MCP_JSON_OBJECT || json->object_table == NULL) {
         return NULL;
     }
-    // Cast away const for internal find operation (doesn't modify the table)
-    mcp_json_object_entry_t* entry = mcp_json_object_table_find((mcp_json_object_table_t*)&json->object, name);
-    return (entry != NULL) ? entry->value : NULL;
+    void* value_ptr = NULL;
+    // Use the generic hashtable get function
+    if (mcp_hashtable_get(json->object_table, name, &value_ptr) == 0) {
+        return (mcp_json_t*)value_ptr; // Key found
+    }
+    return NULL; // Key not found
 }
 
 // NOTE: The internal hash table uses malloc/mcp_strdup for keys and entries.
@@ -250,18 +275,58 @@ mcp_json_t* mcp_json_object_get_property(const mcp_json_t* json, const char* nam
 //       The object takes ownership in the sense that mcp_json_destroy(object) will
 //       call mcp_json_destroy(value) later.
 int mcp_json_object_set_property(mcp_json_t* json, const char* name, mcp_json_t* value) {
-    if (json == NULL || name == NULL || value == NULL || json->type != MCP_JSON_OBJECT) {
+    if (json == NULL || name == NULL || value == NULL || json->type != MCP_JSON_OBJECT || json->object_table == NULL) {
         return -1; // Invalid input
     }
-    // Pass table directly to internal set function
-    return mcp_json_object_table_set(&json->object, name, value);
+    // Use the generic hashtable put function
+    // Note: mcp_hashtable_put will handle key duplication and freeing old value/key if necessary
+    return mcp_hashtable_put(json->object_table, name, value);
 }
 
 int mcp_json_object_delete_property(mcp_json_t* json, const char* name) {
-    if (json == NULL || name == NULL || json->type != MCP_JSON_OBJECT) {
+    if (json == NULL || name == NULL || json->type != MCP_JSON_OBJECT || json->object_table == NULL) {
         return -1;
     }
-    return mcp_json_object_table_delete(&json->object, name);
+    // Use the generic hashtable remove function
+    // Note: mcp_hashtable_remove will call key_free and value_free
+    // It returns 0 on success, non-zero if key not found.
+    return mcp_hashtable_remove(json->object_table, name);
+}
+
+// --- Helper for mcp_json_object_get_property_names ---
+
+// Context struct for the get_property_names callback
+typedef struct {
+    char** names_array;
+    size_t current_index;
+    size_t capacity;
+    bool error_occurred;
+} get_names_context_t;
+
+// Callback function for mcp_hashtable_foreach used in get_property_names
+static void collect_name_callback(const void* key, void* value, void* user_data) {
+    (void)value; // Value is unused in this callback
+    get_names_context_t* ctx = (get_names_context_t*)user_data;
+
+    if (ctx->error_occurred) {
+        return; // Stop processing if an error already occurred
+    }
+
+    if (ctx->current_index < ctx->capacity) {
+        // Duplicate the key string (which is const char*) using mcp_strdup
+        ctx->names_array[ctx->current_index] = mcp_strdup((const char*)key);
+        if (ctx->names_array[ctx->current_index] == NULL) {
+            mcp_log_error("mcp_strdup failed while collecting property names.");
+            ctx->error_occurred = true;
+            // Cleanup will happen after the foreach call returns
+        }
+        ctx->current_index++;
+    } else {
+        // This case should ideally not happen if size calculation is correct
+        mcp_log_error("Hash table size mismatch during name collection (index %zu >= capacity %zu).",
+                      ctx->current_index, ctx->capacity);
+        ctx->error_occurred = true;
+    }
 }
 
 // NOTE: The returned array of names and the names themselves use malloc/mcp_strdup.
@@ -272,41 +337,55 @@ int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names_out
         if (count_out) *count_out = 0;
         return -1; // Invalid input
     }
-    const mcp_json_object_table_t* table = &json->object;
-    *count_out = table->count;
-    if (table->count == 0) {
+
+    mcp_hashtable_t* table = json->object_table;
+    if (table == NULL) { // Check if table exists
+         if (names_out) *names_out = NULL;
+         if (count_out) *count_out = 0;
+         return 0; // Treat as empty object
+    }
+
+    *count_out = mcp_hashtable_size(table);
+    if (*count_out == 0) {
         *names_out = NULL; // No properties, return NULL array
         return 0;
     }
+
     // Allocate the array of char pointers using malloc
-    *names_out = (char**)malloc(table->count * sizeof(char*));
+    *names_out = (char**)malloc(*count_out * sizeof(char*));
     if (*names_out == NULL) {
         *count_out = 0;
         return -1; // Allocation failure
     }
-    size_t current_index = 0;
-    // Iterate through all buckets and entries in the hash table
-    for (size_t i = 0; i < table->capacity; i++) {
-        mcp_json_object_entry_t* entry = table->buckets[i];
-        while (entry != NULL) {
-            assert(current_index < table->count); // Internal consistency check
-            // Duplicate each name string using our helper (malloc)
-            (*names_out)[current_index] = mcp_strdup(entry->name);
-            if ((*names_out)[current_index] == NULL) {
-                // mcp_strdup failed, clean up already duplicated names and the array
-                for (size_t j = 0; j < current_index; j++) {
-                    free((*names_out)[j]); // Free individual name strings
-                }
-                free(*names_out);
-                *names_out = NULL;
-                *count_out = 0;
-                return -1;
+
+    // Initialize context for the callback
+    get_names_context_t context;
+    context.names_array = *names_out;
+    context.current_index = 0;
+    context.capacity = *count_out;
+    context.error_occurred = false;
+
+    // Iterate using the generic foreach, passing the callback function pointer
+    mcp_hashtable_foreach(table, collect_name_callback, &context);
+
+    // Check if an error occurred during iteration
+    if (context.error_occurred) {
+        // Clean up partially allocated names array
+        for (size_t j = 0; j < context.current_index; j++) {
+            // Check if the pointer is not NULL before freeing, in case mcp_strdup failed on the last one
+            if (context.names_array[j] != NULL) {
+                 free(context.names_array[j]);
             }
-            current_index++;
-            entry = entry->next;
         }
+        free(*names_out);
+        *names_out = NULL;
+        *count_out = 0;
+        return -1;
     }
-    assert(current_index == table->count); // Ensure we got all names
+
+    // Ensure we collected the expected number of names
+    assert(context.current_index == *count_out);
+
     return 0;
 }
 

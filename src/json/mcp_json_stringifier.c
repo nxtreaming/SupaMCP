@@ -79,28 +79,74 @@ static int stringify_string(const char* string, char** output, size_t* output_si
     return 0;
 }
 
+// Context structure for the stringify object callback
+typedef struct {
+    char** output;
+    size_t* output_size;
+    size_t* output_capacity;
+    bool first_property;
+    int error_code; // To signal errors from callback
+} stringify_object_context_t;
+
+// Callback function for mcp_hashtable_foreach used in stringify_object
+static void stringify_object_callback(const void* key, void* value, void* user_data) {
+    stringify_object_context_t* ctx = (stringify_object_context_t*)user_data;
+    if (ctx->error_code != 0) return; // Stop if an error already occurred
+
+    const char* name = (const char*)key;
+    mcp_json_t* json_value = (mcp_json_t*)value;
+
+    if (!ctx->first_property) {
+        if (append_string(ctx->output, ctx->output_size, ctx->output_capacity, ",") != 0) {
+            ctx->error_code = -1;
+            return;
+        }
+    } else {
+        ctx->first_property = false;
+    }
+
+    if (stringify_string(name, ctx->output, ctx->output_size, ctx->output_capacity) != 0) {
+        ctx->error_code = -1;
+        return;
+    }
+    if (append_string(ctx->output, ctx->output_size, ctx->output_capacity, ":") != 0) {
+        ctx->error_code = -1;
+        return;
+    }
+    if (stringify_value(json_value, ctx->output, ctx->output_size, ctx->output_capacity) != 0) {
+        ctx->error_code = -1;
+        return;
+    }
+}
 
 static int stringify_object(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity) {
-    if (append_string(output, output_size, output_capacity, "{") != 0) return -1;
-    bool first_property = true;
-    const mcp_json_object_table_t* table = &json->object;
-    for (size_t i = 0; i < table->capacity; i++) {
-        mcp_json_object_entry_t* entry = table->buckets[i];
-        while (entry != NULL) {
-            if (!first_property) {
-                if (append_string(output, output_size, output_capacity, ",") != 0) return -1;
-            } else {
-                first_property = false;
-            }
-            if (stringify_string(entry->name, output, output_size, output_capacity) != 0) return -1;
-            if (append_string(output, output_size, output_capacity, ":") != 0) return -1;
-            if (stringify_value(entry->value, output, output_size, output_capacity) != 0) return -1;
-            entry = entry->next;
-        }
+    if (json->object_table == NULL) {
+        // Handle case where object might be created but table allocation failed
+        return append_string(output, output_size, output_capacity, "{}");
     }
+
+    if (append_string(output, output_size, output_capacity, "{") != 0) return -1;
+
+    stringify_object_context_t context = {
+        .output = output,
+        .output_size = output_size,
+        .output_capacity = output_capacity,
+        .first_property = true,
+        .error_code = 0
+    };
+
+    // Iterate using the generic hash table foreach
+    mcp_hashtable_foreach(json->object_table, stringify_object_callback, &context);
+
+    // Check if an error occurred during iteration
+    if (context.error_code != 0) {
+        return -1;
+    }
+
     if (append_string(output, output_size, output_capacity, "}") != 0) return -1;
     return 0;
 }
+
 
 static int stringify_array(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity) {
     if (append_string(output, output_size, output_capacity, "[") != 0) return -1;

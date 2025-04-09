@@ -22,7 +22,6 @@ endif()
 # Common library source files
 set(COMMON_SOURCES
     src/json/mcp_json.c
-    src/json/mcp_json_hashtable.c
     src/json/mcp_json_parser.c
     src/json/mcp_json_stringifier.c
     src/json/mcp_json_utils.c

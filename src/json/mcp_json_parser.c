@@ -157,10 +157,12 @@ static mcp_json_t* parse_object(const char** json, int depth) {
             free(name);
             return NULL; // Invalid value
         }
-        // Set property - uses malloc for entry/name, value is from thread-local arena
-        if (mcp_json_object_table_set(&object->object, name, value) != 0) { // Pass table directly
-            mcp_log_error("JSON parse error: Failed to set property '%s'.", name);
-            free(name);
+        // Set property using generic hash table
+        // mcp_hashtable_put will handle key duplication (using mcp_hashtable_string_dup)
+        // and freeing old value if key exists (using mcp_json_hashtable_value_free)
+        if (mcp_hashtable_put(object->object_table, name, value) != 0) {
+            mcp_log_error("JSON parse error: Failed to set property '%s' using mcp_hashtable_put.", name);
+            free(name); // Free the parsed name string
             // Don't destroy value (it's in arena), don't destroy object
             return NULL; // Set property failed
         }
