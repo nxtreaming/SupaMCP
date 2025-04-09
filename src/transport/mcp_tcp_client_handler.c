@@ -1,3 +1,4 @@
+#include "internal/transport_internal.h"
 #include "internal/tcp_transport_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,6 +6,16 @@
 #include <errno.h>
 #include <time.h>
 #include "mcp_thread_local.h"
+#include "mcp_log.h"
+#include "mcp_buffer_pool.h"
+#include "mcp_types.h"
+
+// Platform-specific includes for vectored I/O
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
+#include <sys/uio.h>
+#endif
 
 // Thread function to handle a single client connection
 // Use the abstracted signature: void* func(void* arg)
@@ -12,23 +23,20 @@ void* tcp_client_handler_thread_func(void* arg) {
     tcp_client_connection_t* client_conn = (tcp_client_connection_t*)arg;
 
     // --- Initialize Thread-Local Arena for this handler thread ---
-    // Use a reasonable default size, e.g., 1MB. Adjust if needed.
-    if (mcp_arena_init_current_thread(1024 * 1024) != 0) {
+    if (mcp_arena_init_current_thread(1024 * 1024) != 0) { // Use a reasonable default size
         mcp_log_error("Failed to initialize thread-local arena for client handler thread. Exiting.");
-        return NULL; // Indicate error (void* return)
+        // Cannot reliably clean up client_conn if it's invalid here, assume acceptor handles it
+        return NULL;
     }
     mcp_log_debug("Thread-local arena initialized for client handler thread.");
 
 
     // --- Initial Sanity Check ---
-    // Check if the handler was started with invalid arguments or an already invalid socket
-    if (client_conn == NULL || client_conn->socket == INVALID_SOCKET_VAL) {
-        mcp_log_error("Client handler started with invalid arguments or socket handle (Socket: %p). Exiting immediately.",
-                    client_conn ? (void*)client_conn->socket : NULL);
-        // Cannot reliably clean up if client_conn is NULL.
-        // If socket is invalid, the acceptor or another thread likely already handled cleanup.
+    if (client_conn == NULL || client_conn->socket == INVALID_SOCKET_VAL || client_conn->transport == NULL) {
+        mcp_log_error("Client handler started with invalid arguments or socket handle (Socket: %p, Transport: %p). Exiting immediately.",
+                    client_conn ? (void*)client_conn->socket : NULL, client_conn ? client_conn->transport : NULL);
         mcp_arena_destroy_current_thread(); // Clean up arena before exiting
-        return NULL; // Indicate error (void* return)
+        return NULL;
     }
     // --- End Initial Sanity Check ---
 
@@ -49,7 +57,6 @@ void* tcp_client_handler_thread_func(void* arg) {
 #endif
 
     // Main receive loop with length prefix framing and idle timeout
-    // Loop while the state is ACTIVE and no stop signal is received
     while (!client_conn->should_stop && client_conn->state == CLIENT_STATE_ACTIVE) {
 
         // --- Calculate Deadline for Idle Timeout ---
@@ -67,7 +74,7 @@ void* tcp_client_handler_thread_func(void* arg) {
             mcp_log_debug("Exiting handler thread for invalid socket");
             goto client_cleanup;
         }
-        
+
         // Re-check state and socket validity before blocking call
         if (client_conn->state != CLIENT_STATE_ACTIVE || client_conn->socket == INVALID_SOCKET_VAL) {
             mcp_log_debug("Handler %d: Detected non-active state or invalid socket before wait.", (int)client_conn->socket);
@@ -115,9 +122,9 @@ void* tcp_client_handler_thread_func(void* arg) {
 
 
         // --- 2. Read the 4-byte Length Prefix ---
-        mcp_log_debug("Attempting to read 4-byte length prefix from socket %d (hex: %p)...", 
+        mcp_log_debug("Attempting to read 4-byte length prefix from socket %d (hex: %p)...",
                    (int)client_conn->socket, (void*)client_conn->socket);
-        
+
         // Check if socket is valid before reading
         if (client_conn->socket == INVALID_SOCKET_VAL) {
             mcp_log_error("Socket is invalid before read attempt!");
@@ -129,12 +136,12 @@ void* tcp_client_handler_thread_func(void* arg) {
             mcp_log_debug("Handler %d: Detected non-active state or invalid socket before recv.", (int)client_conn->socket);
             goto client_cleanup;
         }
-        
+
         // Use recv_exact from mcp_tcp_socket_utils.c
         read_result = recv_exact(client_conn->socket, length_buf, 4, &client_conn->should_stop);
-        mcp_log_debug("recv_exact (len=4) returned: %d, sock_errno: %d", 
+        mcp_log_debug("recv_exact (len=4) returned: %d, sock_errno: %d",
                    read_result, sock_errno);
-        
+
         // Check stop signal *immediately* after recv returns
         if (client_conn->should_stop) {
              mcp_log_debug("Handler %d: Stop signal detected immediately after recv (length).", (int)client_conn->socket);
@@ -290,22 +297,22 @@ void* tcp_client_handler_thread_func(void* arg) {
         } else if (message_length_host > 0 && message_buf[message_length_host - 1] == '\0') {
             mcp_log_debug("Message already ends with NULL terminator");
         }
-        
+
         // Check and debug non-printable characters
         size_t effective_length = message_length_host;
         if (message_length_host > 0 && message_buf[message_length_host - 1] == '\0') {
             effective_length = message_length_host - 1; // Exclude terminator
         }
-        
+
         for (size_t i = 0; i < effective_length; i++) {
             if (message_buf[i] < 32 && message_buf[i] != '\t' && message_buf[i] != '\n' && message_buf[i] != '\r') {
-                mcp_log_warn("Found control character at position %zu: 0x%02X", 
+                mcp_log_warn("Found control character at position %zu: 0x%02X",
                            i, (unsigned char)message_buf[i]);
                 // Replace control characters with spaces to avoid JSON parsing errors
                 message_buf[i] = ' ';
             }
         }
-        
+
         char* response_str = NULL;
         int callback_error_code = 0;
         if (transport->message_callback != NULL) {
@@ -326,29 +333,45 @@ void* tcp_client_handler_thread_func(void* arg) {
             if (response_len > 0 && response_len <= MAX_MCP_MESSAGE_SIZE) {
                 // Add 4-byte length prefix (network byte order)
                 uint32_t net_len = htonl((uint32_t)response_len);
+
+                // Prepare buffers for vectored send
+                mcp_buffer_t send_buffers[2];
+                send_buffers[0].data = &net_len;
+                send_buffers[0].size = sizeof(net_len);
+                send_buffers[1].data = response_str;
+                send_buffers[1].size = response_len;
                 size_t total_send_len = sizeof(net_len) + response_len;
-                char* send_buffer = (char*)malloc(total_send_len);
 
-                if (send_buffer) {
-                    memcpy(send_buffer, &net_len, sizeof(net_len));
-                    memcpy(send_buffer + sizeof(net_len), response_str, response_len);
+                // Re-check state and socket validity before sending
+                if (client_conn->state != CLIENT_STATE_ACTIVE || client_conn->socket == INVALID_SOCKET_VAL) {
+                    mcp_log_debug("Handler %d: Detected non-active state or invalid socket before send.", (int)client_conn->socket);
+                    // Need to free response_str before exiting
+                    free(response_str);
+                    response_str = NULL;
+                    goto client_cleanup;
+                }
 
-                    // Re-check state and socket validity before sending
-                    if (client_conn->state != CLIENT_STATE_ACTIVE || client_conn->socket == INVALID_SOCKET_VAL) {
-                        mcp_log_debug("Handler %d: Detected non-active state or invalid socket before send.", (int)client_conn->socket);
-                        free(send_buffer);
-                        // Need to free response_str before exiting
-                        free(response_str);
-                        response_str = NULL;
-                        goto client_cleanup;
-                    }
+                // Use vectored send functions from mcp_tcp_socket_utils.c
+                int send_result = -1;
+#ifdef _WIN32
+                WSABUF wsa_buffers[2];
+                wsa_buffers[0].buf = (CHAR*)&net_len;
+                wsa_buffers[0].len = (ULONG)sizeof(net_len);
+                wsa_buffers[1].buf = (CHAR*)response_str;
+                wsa_buffers[1].len = (ULONG)response_len;
+                send_result = send_vectors_windows(client_conn->socket, wsa_buffers, 2, total_send_len, &client_conn->should_stop);
+#else // POSIX
+                struct iovec iov[2];
+                iov[0].iov_base = &net_len;
+                iov[0].iov_len = sizeof(net_len);
+                iov[1].iov_base = (void*)response_str; // Cast needed for non-const
+                iov[1].iov_len = response_len;
+                send_result = send_vectors_posix(client_conn->socket, iov, 2, total_send_len, &client_conn->should_stop);
+#endif
+                // No combined buffer to free
 
-                    // Use send_exact from mcp_tcp_socket_utils.c
-                    int send_result = send_exact(client_conn->socket, send_buffer, total_send_len, &client_conn->should_stop);
-                    free(send_buffer); // Free combined buffer regardless of result
-
-                    // Check stop signal *immediately* after send returns
-                    if (client_conn->should_stop) {
+                // Check stop signal *immediately* after send returns
+                if (client_conn->should_stop) {
                          mcp_log_debug("Handler %d: Stop signal detected immediately after send.", (int)client_conn->socket);
                          // Need to free response_str before exiting
                          free(response_str);
@@ -361,12 +384,12 @@ void* tcp_client_handler_thread_func(void* arg) {
                             char err_buf[128];
 #ifdef _WIN32
                             strerror_s(err_buf, sizeof(err_buf), sock_errno);
-                            mcp_log_error("send_exact failed for socket %p: %d (%s)", (void*)client_conn->socket, sock_errno, err_buf);
+                            mcp_log_error("send_vectors failed for socket %p: %d (%s)", (void*)client_conn->socket, sock_errno, err_buf);
 #else
                             if (strerror_r(sock_errno, err_buf, sizeof(err_buf)) == 0) {
-                                mcp_log_error("send_exact failed for socket %d: %d (%s)", client_conn->socket, sock_errno, err_buf);
+                                mcp_log_error("send_vectors failed for socket %d: %d (%s)", client_conn->socket, sock_errno, err_buf);
                             } else {
-                                mcp_log_error("send_exact failed for socket %d: %d (strerror_r failed)", client_conn->socket, sock_errno);
+                                mcp_log_error("send_vectors failed for socket %d: %d (strerror_r failed)", client_conn->socket, sock_errno);
                             }
 #endif
                         }
@@ -385,12 +408,6 @@ void* tcp_client_handler_thread_func(void* arg) {
                     }
                     // Update activity time after successful send
                     client_conn->last_activity_time = time(NULL);
-                } else {
-                    mcp_log_error("Failed to allocate send buffer for response on socket %d", (int)client_conn->socket);
-                    free(response_str); // Free original response string on alloc failure
-                    mcp_log_debug("Handler %d: Exiting due to send buffer allocation failure.", (int)client_conn->socket);
-                    goto client_cleanup;
-                }
             } else if (response_len > MAX_MCP_MESSAGE_SIZE) {
                  mcp_log_error("Response generated by callback is too large (%zu bytes) for socket %d", response_len, (int)client_conn->socket);
                  // Don't send, but still need to free the response string
@@ -416,7 +433,7 @@ client_cleanup:
 
     // Ensure all resources are properly cleaned up before thread exit
     socket_t sock_to_close = INVALID_SOCKET_VAL;
-    
+
     // Acquire mutex to update client_conn state
     mcp_mutex_lock(tcp_data->client_mutex);
 

@@ -1,4 +1,5 @@
-#include "internal/tcp_transport_internal.h"
+#include "internal/transport_internal.h" // Include the main internal transport header FIRST
+#include "internal/tcp_transport_internal.h" // Include TCP specific internal header
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +18,7 @@ static int tcp_transport_start(
     void* user_data,
     mcp_transport_error_callback_t error_callback
 ) {
-    // Store callbacks
+    // Store callbacks IN THE MAIN TRANSPORT STRUCT
     transport->message_callback = message_callback;
     transport->callback_user_data = user_data;
     transport->error_callback = error_callback;
@@ -334,7 +335,7 @@ mcp_transport_t* mcp_transport_tcp_create(
     transport->start = tcp_transport_start;
     transport->stop = tcp_transport_stop;
     transport->send = tcp_transport_send; // Keep stub send
-    transport->sendv = tcp_transport_sendv;
+    transport->sendv = tcp_transport_sendv; // Assign new stub sendv
     transport->receive = NULL; // Set receive to NULL, not used by server transport
     transport->destroy = tcp_transport_destroy;
     transport->transport_data = tcp_data;

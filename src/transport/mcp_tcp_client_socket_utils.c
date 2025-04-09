@@ -13,7 +13,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <netdb.h>
-#include <sys/uio.h>
+#include <sys/uio.h> // For writev, struct iovec
 #endif
 
 // --- Client Socket Utility Implementations ---
@@ -103,7 +103,7 @@ int connect_to_server(mcp_tcp_client_transport_data_t* data) {
  * @param running_flag Pointer to the transport's running flag for interruption check.
  * @return 0 on success, -1 on socket error, -2 if interrupted by stop signal.
  */
-int send_exact_client(socket_t sock, const char* buf, size_t len, bool* running_flag) {
+int send_exact_client(socket_t sock, const char* buf, size_t len, volatile bool* running_flag) { // Changed to volatile bool*
     size_t total_sent = 0;
     while (total_sent < len) {
         // Check if the transport has been stopped
@@ -127,7 +127,7 @@ int send_exact_client(socket_t sock, const char* buf, size_t len, bool* running_
 #ifdef _WIN32
 // Helper function to send data from multiple buffers using WSASend (Windows) - Client version
 // Returns 0 on success, -1 on error, -2 on stop signal
-int send_vectors_client_windows(socket_t sock, WSABUF* buffers, DWORD buffer_count, size_t total_len, bool* running_flag) {
+int send_vectors_client_windows(socket_t sock, WSABUF* buffers, DWORD buffer_count, size_t total_len, volatile bool* running_flag) { // Changed to volatile bool*
     DWORD bytes_sent_total = 0;
     DWORD flags = 0;
 
@@ -154,7 +154,7 @@ int send_vectors_client_windows(socket_t sock, WSABUF* buffers, DWORD buffer_cou
 #else // POSIX
 // Helper function to send data from multiple buffers using writev (POSIX) - Client version
 // Returns 0 on success, -1 on error, -2 on stop signal
-int send_vectors_client_posix(socket_t sock, struct iovec* iov, int iovcnt, size_t total_len, bool* running_flag) {
+int send_vectors_client_posix(socket_t sock, struct iovec* iov, int iovcnt, size_t total_len, volatile bool* running_flag) { // Changed to volatile bool*
     size_t total_sent = 0;
     while (total_sent < total_len) {
         if (running_flag && !(*running_flag)) return -2;
@@ -208,7 +208,7 @@ int send_vectors_client_posix(socket_t sock, struct iovec* iov, int iovcnt, size
  * @param running_flag Pointer to the transport's running flag for interruption check.
  * @return 1 on success, 0 on graceful connection close, -1 on socket error, -2 if interrupted by stop signal.
  */
-int recv_exact_client(socket_t sock, char* buf, size_t len, bool* running_flag) {
+int recv_exact_client(socket_t sock, char* buf, size_t len, volatile bool* running_flag) { // Changed to volatile bool*
     size_t total_read = 0;
     while (total_read < len) {
         // Check if the transport has been stopped

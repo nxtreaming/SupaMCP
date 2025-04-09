@@ -1,92 +1,93 @@
 #ifndef MCP_TCP_TRANSPORT_INTERNAL_H
 #define MCP_TCP_TRANSPORT_INTERNAL_H
 
-#include "mcp_tcp_transport.h"
-#include "transport_internal.h"
-#include "mcp_log.h"
-#include "mcp_types.h"
-#include "mcp_buffer_pool.h"
-#include "mcp_sync.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <time.h>
-
-// Platform-specific socket includes and definitions
+// Platform-specific includes MUST come before standard headers that might include windows.h
 #ifdef _WIN32
-// Include winsock2.h FIRST
-#   include <winsock2.h>
+#   ifndef WIN32_LEAN_AND_MEAN
+#       define WIN32_LEAN_AND_MEAN
+#   endif
+#   include <winsock2.h> // Include before windows.h (potentially included by stdio/stdlib)
 #   include <ws2tcpip.h>
 #   pragma comment(lib, "Ws2_32.lib")
     typedef SOCKET socket_t;
-    typedef int socklen_t;
     #define INVALID_SOCKET_VAL INVALID_SOCKET
     #define SOCKET_ERROR_VAL   SOCKET_ERROR
     #define close_socket closesocket
     #define sock_errno WSAGetLastError()
-    #define SEND_FLAGS 0 // No MSG_NOSIGNAL on Windows
-#else
+    #define SEND_FLAGS 0 // No flags needed for send on Windows usually
+    #include <windows.h> // For Sleep
+    #define sleep_ms(ms) Sleep(ms)
+#else // POSIX
 #   include <sys/socket.h>
 #   include <netinet/in.h>
 #   include <arpa/inet.h>
 #   include <unistd.h>
 #   include <fcntl.h>
-#   include <sys/select.h>
 #   include <poll.h>
-#   include <errno.h>
+#   include <sys/uio.h> // For writev, struct iovec
     typedef int socket_t;
     #define INVALID_SOCKET_VAL (-1)
     #define SOCKET_ERROR_VAL   (-1)
     #define close_socket close
     #define sock_errno errno
-    #define SEND_FLAGS MSG_NOSIGNAL // Prevent SIGPIPE
+    #define SEND_FLAGS MSG_NOSIGNAL // Prevent SIGPIPE on send error
+    #define sleep_ms(ms) usleep(ms * 1000)
 #endif
 
+// Now include project headers and standard libraries
+#include "mcp_transport.h" // Include public transport header first
+#include "mcp_log.h"
+#include "mcp_types.h"
+#include "mcp_buffer_pool.h"
+#include "mcp_sync.h"
+#include <mcp_thread_pool.h> // For mcp_thread_t
+#include <stdbool.h>
+#include <stdint.h>
+#include <time.h> // For time_t
+#include <stdio.h> // Include standard headers after platform specifics
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+
+
 // Constants
-#define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Example: 1MB limit
-#define MAX_TCP_CLIENTS 10
+#define MAX_TCP_CLIENTS 64 // Max concurrent client connections for the server
 #define POOL_BUFFER_SIZE (1024 * 8) // 8KB buffer size
 #define POOL_NUM_BUFFERS 16         // Number of buffers in the pool
+#define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Example: 1MB limit
 
-// --- Structures ---
-
-// Forward declare transport struct
-typedef struct mcp_transport mcp_transport_t;
-
-// Enum for client connection state
+// Client connection states
 typedef enum {
-    CLIENT_STATE_INACTIVE,     // Slot is free
-    CLIENT_STATE_INITIALIZING, // Slot assigned, thread being created
-    CLIENT_STATE_ACTIVE        // Handler thread running
+    CLIENT_STATE_INACTIVE,
+    CLIENT_STATE_INITIALIZING, // Slot assigned, thread starting
+    CLIENT_STATE_ACTIVE        // Thread running, connection active
 } client_state_t;
 
-// Structure to hold info about a connected client
+// Structure to hold information about a single client connection on the server
 typedef struct {
     socket_t socket;
-    struct sockaddr_in address; // Assuming IPv4
-    client_state_t state;       // Current state of the connection slot
-    time_t last_activity_time;
+    struct sockaddr_in address;
     mcp_thread_t thread_handle; // Use abstracted thread type
-    mcp_transport_t* transport; // Pointer back to parent transport
-    bool should_stop;           // Flag to signal this specific handler thread
+    mcp_transport_t* transport; // Pointer back to the parent transport
+    volatile bool should_stop;  // Flag to signal the handler thread to stop
+    client_state_t state;       // Current state of this client slot
+    time_t last_activity_time;  // Timestamp of the last read/write activity
 } tcp_client_connection_t;
 
-// Internal structure for TCP transport data
+// Internal data structure for the TCP server transport
 typedef struct {
     char* host;
     uint16_t port;
-    uint32_t idle_timeout_ms;
     socket_t listen_socket;
-    bool running;
-    tcp_client_connection_t clients[MAX_TCP_CLIENTS];
+    volatile bool running;
     mcp_thread_t accept_thread; // Use abstracted thread type
-    mcp_mutex_t* client_mutex;  // Use abstracted mutex type (pointer)
+    tcp_client_connection_t clients[MAX_TCP_CLIENTS];
+    mcp_mutex_t* client_mutex; // Use abstracted mutex type
+    mcp_buffer_pool_t* buffer_pool; // Buffer pool for receive buffers
+    uint32_t idle_timeout_ms; // Idle timeout for client connections
 #ifndef _WIN32
-    int stop_pipe[2]; // Pipe used to signal accept thread on POSIX
+    int stop_pipe[2]; // Pipe used to signal the accept thread to stop on POSIX
 #endif
-    mcp_buffer_pool_t* buffer_pool;
 } mcp_tcp_transport_data_t;
 
 
@@ -94,21 +95,27 @@ typedef struct {
 
 // From mcp_tcp_socket_utils.c
 void initialize_winsock();
-void cleanup_winsock(); // Added for WSACleanup
-int send_exact(socket_t sock, const char* buf, size_t len, bool* client_should_stop_flag);
-int recv_exact(socket_t sock, char* buf, int len, bool* client_should_stop_flag);
-int wait_for_socket_read(socket_t sock, uint32_t timeout_ms, bool* should_stop);
+void cleanup_winsock();
+// Updated signatures to use volatile bool* for stop flags
+int send_exact(socket_t sock, const char* buf, size_t len, volatile bool* client_should_stop_flag);
+int recv_exact(socket_t sock, char* buf, int len, volatile bool* client_should_stop_flag);
+int wait_for_socket_read(socket_t sock, uint32_t timeout_ms, volatile bool* should_stop);
+// Declarations for vectored send helpers from mcp_tcp_socket_utils.c
+#ifdef _WIN32
+int send_vectors_windows(socket_t sock, WSABUF* buffers, DWORD buffer_count, size_t total_len, volatile bool* stop_flag);
+#else
+int send_vectors_posix(socket_t sock, struct iovec* iov, int iovcnt, size_t total_len, volatile bool* stop_flag);
+#endif
 #ifndef _WIN32
-void close_stop_pipe(mcp_tcp_transport_data_t* data);
+void close_stop_pipe(mcp_tcp_transport_data_t* data); // Declaration for POSIX helper
 #endif
 
-// From mcp_tcp_client_handler.c
-// Declare as function prototypes with the signature defined by mcp_thread_func_t
-void* tcp_client_handler_thread_func(void* arg);
 
 // From mcp_tcp_acceptor.c
-// Declare as function prototypes with the signature defined by mcp_thread_func_t
-void* tcp_accept_thread_func(void* arg);
+void* tcp_accept_thread_func(void* arg); // Use correct thread function signature
+
+// From mcp_tcp_client_handler.c
+void* tcp_client_handler_thread_func(void* arg); // Use correct thread function signature
 
 
 #endif // MCP_TCP_TRANSPORT_INTERNAL_H

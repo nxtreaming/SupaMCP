@@ -14,8 +14,8 @@
     #define SOCKET_ERROR_VAL   SOCKET_ERROR
     #define close_socket closesocket
     #define sock_errno WSAGetLastError()
-    #define sleep_ms(ms) Sleep(ms)
-    #include <windows.h>
+    #define sleep_ms(ms) Sleep(ms) // Sleep is from windows.h, which should be included after winsock2
+    #include <windows.h> // Include windows.h after winsock2 if needed (e.g., for Sleep)
 #else
 #   include <sys/socket.h>
 #   include <netinet/in.h>
@@ -23,7 +23,7 @@
 #   include <unistd.h>
 #   include <fcntl.h>
 #   include <netdb.h>
-#   include <sys/uio.h>
+#   include <sys/uio.h> // For struct iovec
     typedef int socket_t;
     #define INVALID_SOCKET_VAL (-1)
     #define SOCKET_ERROR_VAL   (-1)
@@ -34,12 +34,12 @@
 
 // Now include project headers and standard libraries
 #include "mcp_tcp_client_transport.h"
-#include "transport_internal.h"
+#include "transport_internal.h" // Include base internal transport header
 #include "mcp_log.h"
 #include "mcp_types.h"
 #include "mcp_buffer_pool.h"
 #include "mcp_sync.h"
-#include <mcp_thread_pool.h>
+#include <mcp_thread_pool.h> // Include for mcp_thread_t
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,7 +66,7 @@ typedef struct {
     char* host;
     uint16_t port;
     socket_t sock;
-    bool running;
+    volatile bool running; // Make running flag volatile
     bool connected; // Track connection state
     mcp_transport_t* transport_handle; // Pointer back to the main handle (contains callbacks)
     mcp_thread_t receive_thread; // Use abstracted thread type
@@ -79,13 +79,14 @@ typedef struct {
 void initialize_winsock_client();
 void cleanup_winsock_client(); // Added for consistency
 int connect_to_server(mcp_tcp_client_transport_data_t* data);
-int send_exact_client(socket_t sock, const char* buf, size_t len, bool* running_flag);
-int recv_exact_client(socket_t sock, char* buf, size_t len, bool* running_flag);
+// Updated signatures to use volatile bool* for stop flags
+int send_exact_client(socket_t sock, const char* buf, size_t len, volatile bool* running_flag);
+int recv_exact_client(socket_t sock, char* buf, size_t len, volatile bool* running_flag);
 // Declarations for vectored send helpers
 #ifdef _WIN32
-int send_vectors_client_windows(socket_t sock, WSABUF* buffers, DWORD buffer_count, size_t total_len, bool* running_flag);
+int send_vectors_client_windows(socket_t sock, WSABUF* buffers, DWORD buffer_count, size_t total_len, volatile bool* running_flag);
 #else
-int send_vectors_client_posix(socket_t sock, struct iovec* iov, int iovcnt, size_t total_len, bool* running_flag);
+int send_vectors_client_posix(socket_t sock, struct iovec* iov, int iovcnt, size_t total_len, volatile bool* running_flag);
 #endif
 
 
