@@ -6,7 +6,7 @@
 #   ifndef WIN32_LEAN_AND_MEAN
 #       define WIN32_LEAN_AND_MEAN
 #   endif
-#   include <winsock2.h> // Include before windows.h (potentially included by stdio/stdlib)
+#   include <winsock2.h>
 #   include <ws2tcpip.h>
 #   pragma comment(lib, "Ws2_32.lib")
     typedef SOCKET socket_t;
@@ -14,8 +14,8 @@
     #define SOCKET_ERROR_VAL   SOCKET_ERROR
     #define close_socket closesocket
     #define sock_errno WSAGetLastError()
-    #define SEND_FLAGS 0 // No flags needed for send on Windows usually
-    #include <windows.h> // For Sleep
+    #define SEND_FLAGS 0
+    #include <windows.h>
     #define sleep_ms(ms) Sleep(ms)
 #else // POSIX
 #   include <sys/socket.h>
@@ -24,27 +24,27 @@
 #   include <unistd.h>
 #   include <fcntl.h>
 #   include <poll.h>
-#   include <sys/uio.h> // For writev, struct iovec
+#   include <sys/uio.h>
     typedef int socket_t;
     #define INVALID_SOCKET_VAL (-1)
     #define SOCKET_ERROR_VAL   (-1)
     #define close_socket close
     #define sock_errno errno
-    #define SEND_FLAGS MSG_NOSIGNAL // Prevent SIGPIPE on send error
+    #define SEND_FLAGS MSG_NOSIGNAL
     #define sleep_ms(ms) usleep(ms * 1000)
 #endif
 
 // Now include project headers and standard libraries
-#include "mcp_transport.h" // Include public transport header first
+#include "mcp_transport.h"
 #include "mcp_log.h"
 #include "mcp_types.h"
 #include "mcp_buffer_pool.h"
 #include "mcp_sync.h"
-#include <mcp_thread_pool.h> // For mcp_thread_t
+#include <mcp_thread_pool.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <time.h> // For time_t
-#include <stdio.h> // Include standard headers after platform specifics
+#include <time.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -52,8 +52,8 @@
 
 // Constants
 #define MAX_TCP_CLIENTS 64 // Max concurrent client connections for the server
-#define POOL_BUFFER_SIZE (1024 * 8) // 8KB buffer size
-#define POOL_NUM_BUFFERS 16         // Number of buffers in the pool
+#define POOL_BUFFER_SIZE (1024 * 64) // 64KB buffer size (Increased)
+#define POOL_NUM_BUFFERS 64         // Increased number of buffers to match max clients
 #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Example: 1MB limit
 
 // Client connection states
