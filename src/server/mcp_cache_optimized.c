@@ -1,4 +1,5 @@
 #include "mcp_types.h"
+#include "mcp_string_utils.h"
 #include "mcp_cache.h"
 #include "mcp_log.h"
 #include "mcp_profiler.h"

@@ -1,5 +1,6 @@
 #include "mcp_rate_limiter.h"
 #include "mcp_types.h"
+#include "mcp_string_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

@@ -1,29 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "mcp_types.h"
-
-// --- Helper Functions ---
-
-/**
- * @internal
- * @brief Standard C equivalent of strdup. Allocates memory and copies string.
- * @param s The null-terminated string to duplicate.
- * @return Pointer to the newly allocated duplicated string, or NULL on error (NULL input or malloc failure).
- * @note Caller is responsible for freeing the returned string.
- */
-char* mcp_strdup(const char* s) { // Removed static keyword
-    if (s == NULL) {
-        return NULL;
-    }
-    size_t len = strlen(s) + 1; // +1 for null terminator
-    char* new_s = (char*)malloc(len);
-    if (new_s == NULL) {
-        return NULL; // malloc failed
-    }
-    memcpy(new_s, s, len); // Copy including null terminator
-    return new_s;
-}
-
+#include "mcp_string_utils.h"
 
 // --- Free Functions ---
 

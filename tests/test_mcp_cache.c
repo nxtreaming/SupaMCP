@@ -7,6 +7,7 @@
 #include "unity/unity.h"
 #include "mcp_cache.h"
 #include "mcp_types.h"
+#include "mcp_string_utils.h"
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>

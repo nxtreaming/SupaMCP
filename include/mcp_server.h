@@ -2,6 +2,7 @@
 #define MCP_SERVER_H
 
 #include <mcp_types.h>
+#include <mcp_string_utils.h>
 #include <mcp_transport.h>
 #include <mcp_json.h>
 

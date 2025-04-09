@@ -2,34 +2,14 @@
 #include "mcp_log.h"
 #include "mcp_profiler.h"
 #include "mcp_types.h"
+#include "mcp_string_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <time.h>
 
-// Placeholder: Simple wildcard matching (matches '*' at the end)
-// A real implementation might use fnmatch or a more robust pattern matching library.
-static bool simple_wildcard_match(const char* pattern, const char* text) {
-    if (!pattern || !text) return false; // Handle NULL inputs
-
-    size_t pattern_len = strlen(pattern);
-    size_t text_len = strlen(text);
-
-    if (pattern_len == 0) {
-        return text_len == 0; // Empty pattern matches only empty text
-    }
-
-    if (pattern[pattern_len - 1] == '*') {
-        if (pattern_len == 1) return true; // Pattern "*" matches everything
-        // Match prefix if pattern ends with '*' (and pattern is longer than just "*")
-        return pattern_len - 1 <= text_len &&
-               strncmp(pattern, text, pattern_len - 1) == 0;
-    } else {
-        // Exact match required
-        return pattern_len == text_len && strcmp(pattern, text) == 0;
-    }
-}
+// Removed static simple_wildcard_match function, now using mcp_wildcard_match from string utils
 
 
 /**
@@ -143,9 +123,9 @@ bool mcp_auth_check_resource_access(const mcp_auth_context_t* context, const cha
         return false; // Context expired
     }
 
-    // Check against allowed patterns using simple wildcard matching
+    // Check against allowed patterns using the utility function
     for (size_t i = 0; i < context->allowed_resources_count; ++i) {
-        if (context->allowed_resources[i] && simple_wildcard_match(context->allowed_resources[i], resource_uri)) {
+        if (context->allowed_resources[i] && mcp_wildcard_match(context->allowed_resources[i], resource_uri)) {
             mcp_log_debug("Access granted for '%s' to resource '%s' (match: %s)",
                     context->identifier ? context->identifier : "unknown", resource_uri, context->allowed_resources[i]);
             return true; // Found a matching allowed pattern
@@ -171,9 +151,9 @@ bool mcp_auth_check_tool_access(const mcp_auth_context_t* context, const char* t
         return false; // Context expired
     }
 
-    // Check against allowed patterns using simple wildcard matching
+    // Check against allowed patterns using the utility function
     for (size_t i = 0; i < context->allowed_tools_count; ++i) {
-        if (context->allowed_tools[i] && simple_wildcard_match(context->allowed_tools[i], tool_name)) {
+        if (context->allowed_tools[i] && mcp_wildcard_match(context->allowed_tools[i], tool_name)) {
              mcp_log_debug("Access granted for '%s' to tool '%s' (match: %s)",
                     context->identifier ? context->identifier : "unknown", tool_name, context->allowed_tools[i]);
             return true; // Found a matching allowed pattern

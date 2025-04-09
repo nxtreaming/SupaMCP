@@ -13,6 +13,7 @@
 #include <mcp_log.h>
 #include "mcp_sync.h"
 #include "mcp_types.h"
+#include "mcp_string_utils.h"
 #include <mcp_json_message.h>
 #include <mcp_json_rpc.h>
 

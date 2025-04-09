@@ -7,6 +7,7 @@
 #include "mcp_profiler.h"
 #include "mcp_log.h"
 #include "mcp_types.h"
+#include "mcp_string_utils.h"
 
 // --- Formatting Functions ---
 

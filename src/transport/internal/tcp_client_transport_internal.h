@@ -9,6 +9,7 @@
 #include "transport_internal.h" // Include base internal transport header
 #include "mcp_log.h"
 #include "mcp_types.h"
+#include "mcp_string_utils.h"
 #include "mcp_buffer_pool.h"
 #include "mcp_sync.h"
 #include <mcp_thread_pool.h> // Include for mcp_thread_t

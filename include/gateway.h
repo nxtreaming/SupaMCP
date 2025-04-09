@@ -2,6 +2,7 @@
 #define MCP_GATEWAY_H
 
 #include "mcp_types.h"
+#include "mcp_string_utils.h"
 #include "mcp_connection_pool.h"
 #include <stdint.h>
 #include <stdbool.h>

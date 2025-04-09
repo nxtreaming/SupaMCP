@@ -5,6 +5,7 @@
 #include "mcp_log.h"
 #include "mcp_profiler.h"
 #include "mcp_types.h"
+#include "mcp_string_utils.h"
 #include "mcp_sync.h"
 
 #include <stdlib.h>
