@@ -5,6 +5,7 @@
 #endif
 
 #include "mcp_log.h"
+#include "mcp_json_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,45 +63,7 @@ static bool g_log_mutex_initialized = false;
 
 // --- Internal Helper ---
 
-// Helper to escape JSON strings (basic implementation)
-// A robust version would handle all required escapes.
-static void escape_json_string(const char* input, char* output, size_t output_size) {
-    size_t out_idx = 0;
-    for (size_t i = 0; input[i] != '\0' && out_idx < output_size - 1; ++i) {
-        char c = input[i];
-        const char* escaped = NULL;
-        switch (c) {
-            case '\\': escaped = "\\\\"; break;
-            case '"':  escaped = "\\\""; break;
-            case '\b': escaped = "\\b"; break;
-            case '\f': escaped = "\\f"; break;
-            case '\n': escaped = "\\n"; break;
-            case '\r': escaped = "\\r"; break;
-            case '\t': escaped = "\\t"; break;
-            // Add other controls chars if needed
-        }
-        if (escaped) {
-            size_t len = strlen(escaped);
-            if (out_idx + len < output_size - 1) {
-                strcpy(output + out_idx, escaped);
-                out_idx += len;
-            } else {
-                break; // Not enough space
-            }
-        } else if (c >= 0 && c < 32) { // Control characters
-             if (out_idx + 6 < output_size - 1) { // Need space for \uXXXX
-                 sprintf(output + out_idx, "\\u%04x", c);
-                 out_idx += 6;
-             } else {
-                 break; // Not enough space
-             }
-        } else {
-            output[out_idx++] = c;
-        }
-    }
-    output[out_idx] = '\0';
-}
-
+// (Removed internal escape_json_string function)
 
 // --- Public API Implementation ---
 
@@ -193,10 +156,14 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
 
 
     if (g_log_format == MCP_LOG_FORMAT_JSON) {
-        char escaped_message[sizeof(message) * 2]; // Estimate escaped size
-        char escaped_file[256]; // Assume max file length
-        escape_json_string(message, escaped_message, sizeof(escaped_message));
-        escape_json_string(filename, escaped_file, sizeof(escaped_file));
+        // Use fixed-size buffers. mcp_json_escape_string handles truncation.
+        char escaped_message[sizeof(message) * 2];
+        char escaped_file[256];
+
+        // Use the new utility function. Ignore return value for now, rely on truncation.
+        mcp_json_escape_string(message, escaped_message, sizeof(escaped_message));
+        mcp_json_escape_string(filename, escaped_file, sizeof(escaped_file));
+        // Ensure null termination is handled by mcp_json_escape_string even on truncation.
 
         const char* json_fmt = "{\"timestamp\":\"%s\", \"level\":\"%s\", \"file\":\"%s\", \"line\":%d, \"message\":\"%s\"}\n";
 
@@ -521,9 +488,11 @@ void mcp_log_structured(
         char escaped_component[256]; // Assume max component/event length
         char escaped_event[256];
 
-        escape_json_string(base_message, escaped_message, sizeof(escaped_message));
-        escape_json_string(component ? component : "", escaped_component, sizeof(escaped_component));
-        escape_json_string(event ? event : "", escaped_event, sizeof(escaped_event));
+        // Use the new utility function. Ignore return value for now, rely on truncation.
+        mcp_json_escape_string(base_message, escaped_message, sizeof(escaped_message));
+        mcp_json_escape_string(component ? component : "", escaped_component, sizeof(escaped_component));
+        mcp_json_escape_string(event ? event : "", escaped_event, sizeof(escaped_event));
+        // Ensure null termination is handled by mcp_json_escape_string even on truncation.
 
         const char* json_fmt = "{\"timestamp\":\"%s\", \"level\":\"%s\", \"component\":\"%s\", \"event\":\"%s\", \"message\":\"%s\"}\n";
 

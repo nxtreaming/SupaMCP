@@ -1,4 +1,5 @@
 #include "internal/json_internal.h"
+#include "mcp_json_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -43,37 +44,41 @@ static int append_string(char** output, size_t* output_size, size_t* output_capa
 }
 
 static int stringify_string(const char* string, char** output, size_t* output_size, size_t* output_capacity) {
-    if (append_string(output, output_size, output_capacity, "\"") != 0) return -1;
-    for (const char* p = string; *p != '\0'; p++) {
-        char buffer[8];
-        const char* escaped = NULL;
-        switch (*p) {
-            case '\\': escaped = "\\\\"; break;
-            case '"':  escaped = "\\\""; break;
-            case '\b': escaped = "\\b"; break;
-            case '\f': escaped = "\\f"; break;
-            case '\n': escaped = "\\n"; break;
-            case '\r': escaped = "\\r"; break;
-            case '\t': escaped = "\\t"; break;
-            default:
-                // Escape control characters (U+0000 to U+001F)
-                if ((unsigned char)*p < 32) {
-                    // Use \uXXXX format for control characters
-                    snprintf(buffer, sizeof(buffer), "\\u%04x", (unsigned char)*p);
-                    escaped = buffer;
-                }
-                break;
-        }
-        if (escaped != NULL) {
-            if (append_string(output, output_size, output_capacity, escaped) != 0) return -1;
-        } else {
-            if (ensure_output_capacity(output, output_size, output_capacity, 1) != 0) return -1;
-            (*output)[(*output_size)++] = *p;
-        }
+    // 1. Calculate required size for the escaped string content (excluding quotes)
+    int required_escaped_len = mcp_json_escape_string(string, NULL, 0);
+    if (required_escaped_len < 0) {
+        return -1; // Error during calculation
     }
-    if (append_string(output, output_size, output_capacity, "\"") != 0) return -1;
+    // required_escaped_len includes the null terminator, content length is required_escaped_len - 1
+    size_t escaped_content_len = (size_t)required_escaped_len - 1;
+    size_t total_needed_space = 2 + escaped_content_len; // 2 for quotes + content length
+
+    // 2. Ensure output buffer has enough capacity
+    if (ensure_output_capacity(output, output_size, output_capacity, total_needed_space) != 0) {
+        return -1; // Failed to allocate memory
+    }
+
+    // 3. Append opening quote
+    (*output)[(*output_size)++] = '"';
+
+    // 4. Append the escaped string content directly into the buffer
+    // We pass the remaining capacity, which we know is sufficient.
+    // The function will write escaped_content_len bytes + a null terminator.
+    int written_len = mcp_json_escape_string(string, *output + *output_size, *output_capacity - *output_size);
+    if (written_len < 0 || (size_t)written_len != (size_t)required_escaped_len) {
+        // This shouldn't happen if ensure_output_capacity worked and calculation was correct
+        return -1; // Error during escaping/writing
+    }
+
+    // 5. Update the output size by the length of the *content* written
+    *output_size += escaped_content_len;
+
+    // 6. Append closing quote
+    (*output)[(*output_size)++] = '"';
+
     return 0;
 }
+
 
 static int stringify_object(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity) {
     if (append_string(output, output_size, output_capacity, "{") != 0) return -1;

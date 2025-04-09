@@ -25,6 +25,7 @@ set(COMMON_SOURCES
     src/json/mcp_json_hashtable.c
     src/json/mcp_json_parser.c
     src/json/mcp_json_stringifier.c
+    src/json/mcp_json_utils.c
     src/json/mcp_json_message.c
     src/json/mcp_json_rpc.c
     src/transport/mcp_transport.c
@@ -41,7 +42,7 @@ set(COMMON_SOURCES
     src/common/mcp_arena.c
     src/common/mcp_log.c
     src/common/mcp_thread_local.c
-    src/common/mcp_sync.c # Added sync implementation
+    src/common/mcp_sync.c
     src/server/mcp_buffer_pool.c
     src/server/mcp_thread_pool.c
     src/server/mcp_cache_optimized.c
