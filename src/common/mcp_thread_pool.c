@@ -5,22 +5,33 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdint.h>
+#include "mcp_types.h"
 
 #ifdef _WIN32
 #include <windows.h>
 #include <intrin.h>
+#   ifdef _MSC_VER
+    #pragma warning( disable : 4324 )
+#   endif
 #else
 // GCC/Clang atomics are built-in
 #endif
 
 /**
- * @brief Bounded queue structure using platform atomics.
+ * @brief Bounded queue structure using platform atomics with cache line padding.
  */
 typedef struct {
     mcp_task_t* buffer;     /**< The underlying circular buffer. */
     size_t capacity;        /**< Capacity of the buffer (must be power of 2 for simple masking). */
-    volatile size_t head;   /**< Index for the next dequeue operation. */
-    volatile size_t tail;   /**< Index for the next enqueue operation. */
+
+    // Align head to cache line and add padding
+    MCP_CACHE_ALIGNED volatile size_t head;   /**< Index for the next dequeue operation. */
+    char head_padding[CACHE_LINE_SIZE - sizeof(volatile size_t)]; /**< Pad to prevent false sharing with tail. */
+
+    // Align tail to cache line and add padding
+    MCP_CACHE_ALIGNED volatile size_t tail;   /**< Index for the next enqueue operation. */
+    char tail_padding[CACHE_LINE_SIZE - sizeof(volatile size_t)]; /**< Pad to prevent false sharing with other data. */
+
 } bounded_queue_t;
 
 /**
