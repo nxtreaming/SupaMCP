@@ -20,6 +20,7 @@
 #include "gateway_pool.h"
 #include "mcp_auth.h"
 #include "mcp_hashtable.h"
+#include "mcp_object_pool.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -66,6 +67,7 @@ struct mcp_server {
     size_t backend_count;               /**< Number of configured backend servers. */
     bool is_gateway_mode;               /**< Flag indicating if gateway mode is enabled. */
     gateway_pool_manager_t* pool_manager; /**< Connection pool manager for gateway mode. */
+    mcp_object_pool_t* content_item_pool; /**< Object pool for mcp_content_item_t. */
 };
 
 // --- Internal Function Prototypes ---

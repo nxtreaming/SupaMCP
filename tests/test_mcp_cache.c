@@ -8,6 +8,7 @@
 #include "mcp_cache.h"
 #include "mcp_types.h"
 #include "mcp_string_utils.h"
+#include "mcp_object_pool.h"
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -43,6 +44,10 @@ mcp_content_item_t* create_text_item(const char* text) {
     return item;
 }
 
+// Global pool for tests
+mcp_object_pool_t* test_pool = NULL; // Keep global pool pointer needed by tests
+
+
 // Helper to check content (assumes single text item)
 void check_content(mcp_content_item_t** content, size_t count, const char* expected_text) {
     TEST_ASSERT_NOT_NULL(content);
@@ -54,9 +59,24 @@ void check_content(mcp_content_item_t** content, size_t count, const char* expec
     // Optionally, check size: TEST_ASSERT_EQUAL_size_t(strlen(expected_text) + 1, content[0]->data_size);
 }
 
-// Helper to free retrieved content
-void free_retrieved_content(mcp_content_item_t** content, size_t count) {
-    if (content) {
+// Helper to release retrieved pooled content
+void release_retrieved_content(mcp_content_item_t** content, size_t count) {
+    if (content && test_pool) { // Check if pool exists
+        for (size_t i = 0; i < count; ++i) {
+            if (content[i]) {
+                // Free internal data/mime_type first (allocated by acquire_pooled)
+                free(content[i]->mime_type);
+                free(content[i]->data);
+                content[i]->mime_type = NULL;
+                content[i]->data = NULL;
+                content[i]->data_size = 0;
+                // Release the item struct back to the pool
+                mcp_object_pool_release(test_pool, content[i]);
+            }
+        }
+        free(content); // Free the array of pointers itself
+    } else if (content) {
+        // Fallback if pool doesn't exist (shouldn't happen with setUp/tearDown)
         for (size_t i = 0; i < count; ++i) {
             mcp_content_item_free(content[i]);
         }
@@ -76,16 +96,18 @@ void test_cache_put_get_simple(void) {
     mcp_resource_cache_t* cache = mcp_cache_create(10, 60);
     mcp_content_item_t* item1 = create_text_item("value1");
     mcp_content_item_t** content_to_put = &item1;
-    int put_result = mcp_cache_put(cache, "key1", content_to_put, 1, 0);
+    // Pass test_pool to put
+    int put_result = mcp_cache_put(cache, "key1", test_pool, content_to_put, 1, 0);
     TEST_ASSERT_EQUAL_INT(0, put_result);
 
     mcp_content_item_t** retrieved_content = NULL;
     size_t retrieved_count = 0;
-    int get_result = mcp_cache_get(cache, "key1", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    int get_result = mcp_cache_get(cache, "key1", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
     check_content(retrieved_content, retrieved_count, "value1");
 
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
     mcp_content_item_free(item1); // Free original item
     mcp_cache_destroy(cache);
 }
@@ -94,7 +116,8 @@ void test_cache_get_miss(void) {
     mcp_resource_cache_t* cache = mcp_cache_create(10, 60);
     mcp_content_item_t** retrieved_content = NULL;
     size_t retrieved_count = 0;
-    int get_result = mcp_cache_get(cache, "nonexistent", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    int get_result = mcp_cache_get(cache, "nonexistent", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(-1, get_result);
     TEST_ASSERT_NULL(retrieved_content);
     TEST_ASSERT_EQUAL_size_t(0, retrieved_count);
@@ -108,16 +131,18 @@ void test_cache_overwrite(void) {
     mcp_content_item_t** content_to_put1 = &item1;
     mcp_content_item_t** content_to_put2 = &item2;
 
-    mcp_cache_put(cache, "key1", content_to_put1, 1, 0);
-    mcp_cache_put(cache, "key1", content_to_put2, 1, 0); // Overwrite
+    // Pass test_pool to put
+    mcp_cache_put(cache, "key1", test_pool, content_to_put1, 1, 0);
+    mcp_cache_put(cache, "key1", test_pool, content_to_put2, 1, 0); // Overwrite
 
     mcp_content_item_t** retrieved_content = NULL;
     size_t retrieved_count = 0;
-    int get_result = mcp_cache_get(cache, "key1", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    int get_result = mcp_cache_get(cache, "key1", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
     check_content(retrieved_content, retrieved_count, "value2"); // Check overwritten value
 
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
     mcp_content_item_free(item1);
     mcp_content_item_free(item2);
     mcp_cache_destroy(cache);
@@ -127,14 +152,16 @@ void test_cache_invalidate(void) {
     mcp_resource_cache_t* cache = mcp_cache_create(10, 60);
     mcp_content_item_t* item1 = create_text_item("value1");
     mcp_content_item_t** content_to_put = &item1;
-    mcp_cache_put(cache, "key1", content_to_put, 1, 0);
+    // Pass test_pool to put
+    mcp_cache_put(cache, "key1", test_pool, content_to_put, 1, 0);
 
     int invalidate_result = mcp_cache_invalidate(cache, "key1");
     TEST_ASSERT_EQUAL_INT(0, invalidate_result);
 
     mcp_content_item_t** retrieved_content = NULL;
     size_t retrieved_count = 0;
-    int get_result = mcp_cache_get(cache, "key1", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    int get_result = mcp_cache_get(cache, "key1", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(-1, get_result); // Should be gone
 
     invalidate_result = mcp_cache_invalidate(cache, "nonexistent");
@@ -150,35 +177,41 @@ void test_cache_expiry(void) {
     mcp_content_item_t** content_to_put = &item1;
 
     // Put with specific TTL of 1 second
-    mcp_cache_put(cache, "key_ttl", content_to_put, 1, 1);
+    // Pass test_pool to put
+    mcp_cache_put(cache, "key_ttl", test_pool, content_to_put, 1, 1);
 
     mcp_content_item_t** retrieved_content = NULL;
     size_t retrieved_count = 0;
-    int get_result = mcp_cache_get(cache, "key_ttl", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    int get_result = mcp_cache_get(cache, "key_ttl", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result); // Should be present initially
     check_content(retrieved_content, retrieved_count, "value_ttl");
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
     platform_sleep(2); // Wait for expiry
 
-    get_result = mcp_cache_get(cache, "key_ttl", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    get_result = mcp_cache_get(cache, "key_ttl", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(-1, get_result); // Should be expired now
 
     // Test prune expired
     mcp_content_item_t* item_perm = create_text_item("permanent");
     mcp_content_item_t** content_perm = &item_perm;
-    mcp_cache_put(cache, "key_perm", content_perm, 1, -1); // Never expires
-    mcp_cache_put(cache, "key_ttl2", content_to_put, 1, 1); // Expires
+    // Pass test_pool to put
+    mcp_cache_put(cache, "key_perm", test_pool, content_perm, 1, -1); // Never expires
+    mcp_cache_put(cache, "key_ttl2", test_pool, content_to_put, 1, 1); // Expires
 
     platform_sleep(2);
     size_t pruned = mcp_cache_prune_expired(cache);
     TEST_ASSERT_EQUAL_size_t(1, pruned); // Only key_ttl2 should be pruned
 
-    get_result = mcp_cache_get(cache, "key_perm", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    get_result = mcp_cache_get(cache, "key_perm", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result); // Permanent should still be there
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
-    get_result = mcp_cache_get(cache, "key_ttl2", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    get_result = mcp_cache_get(cache, "key_ttl2", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(-1, get_result); // Expired one should be gone
 
     mcp_content_item_free(item1);
@@ -200,36 +233,43 @@ void test_lruk_evict_less_than_k_accessed(void) {
         sprintf(value, "val%d", i);
         items[i] = create_text_item(value);
         content_ptrs[i] = &items[i];
-        mcp_cache_put(cache, key, content_ptrs[i], 1, 0);
+        // Pass test_pool to put
+        mcp_cache_put(cache, key, test_pool, content_ptrs[i], 1, 0);
         platform_sleep(1); // Ensure distinct access times
     }
 
     // Access key1 once more (key1 accessed twice, key0/key2 once)
     mcp_content_item_t** retrieved_content = NULL;
     size_t retrieved_count = 0;
-    mcp_cache_get(cache, "key1", &retrieved_content, &retrieved_count);
-    free_retrieved_content(retrieved_content, retrieved_count);
+    // Pass test_pool to get
+    mcp_cache_get(cache, "key1", test_pool, &retrieved_content, &retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
     // Add key3, should evict key0 (oldest access among those accessed < K times)
     items[3] = create_text_item("val3");
     content_ptrs[3] = &items[3];
-    mcp_cache_put(cache, "key3", content_ptrs[3], 1, 0);
+    // Pass test_pool to put
+    mcp_cache_put(cache, "key3", test_pool, content_ptrs[3], 1, 0);
 
     // Verify key0 is gone, others remain
-    int get_result = mcp_cache_get(cache, "key0", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    int get_result = mcp_cache_get(cache, "key0", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(-1, get_result);
 
-    get_result = mcp_cache_get(cache, "key1", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    get_result = mcp_cache_get(cache, "key1", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
-    get_result = mcp_cache_get(cache, "key2", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    get_result = mcp_cache_get(cache, "key2", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
-    get_result = mcp_cache_get(cache, "key3", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    get_result = mcp_cache_get(cache, "key3", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
     for (int i = 0; i < 4; ++i) mcp_content_item_free(items[i]);
     mcp_cache_destroy(cache);
@@ -249,7 +289,8 @@ void test_lruk_evict_k_accessed(void) {
         sprintf(value, "val%d", i);
         items[i] = create_text_item(value);
         content_ptrs[i] = &items[i];
-        mcp_cache_put(cache, key, content_ptrs[i], 1, 0);
+        // Pass test_pool to put
+        mcp_cache_put(cache, key, test_pool, content_ptrs[i], 1, 0);
         platform_sleep(1); // Stagger initial put times (which count as first access)
     }
 
@@ -257,31 +298,37 @@ void test_lruk_evict_k_accessed(void) {
     // Access order: key0, key1, key2 (key0 has oldest 2nd access)
     for (int i = 0; i < 3; ++i) {
         sprintf(key, "key%d", i);
-        mcp_cache_get(cache, key, &retrieved_content, &retrieved_count);
-        free_retrieved_content(retrieved_content, retrieved_count);
+        // Pass test_pool to get
+        mcp_cache_get(cache, key, test_pool, &retrieved_content, &retrieved_count);
+        release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
         platform_sleep(1); // Stagger second access times
     }
 
     // Add key3, should evict key0 (oldest K-th access time, K=2 -> history[1])
     items[3] = create_text_item("val3");
     content_ptrs[3] = &items[3];
-    mcp_cache_put(cache, "key3", content_ptrs[3], 1, 0);
+    // Pass test_pool to put
+    mcp_cache_put(cache, "key3", test_pool, content_ptrs[3], 1, 0);
 
     // Verify key0 is gone, others remain
-    int get_result = mcp_cache_get(cache, "key0", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    int get_result = mcp_cache_get(cache, "key0", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(-1, get_result);
 
-    get_result = mcp_cache_get(cache, "key1", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    get_result = mcp_cache_get(cache, "key1", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
-    get_result = mcp_cache_get(cache, "key2", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    get_result = mcp_cache_get(cache, "key2", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
-    get_result = mcp_cache_get(cache, "key3", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    get_result = mcp_cache_get(cache, "key3", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
     for (int i = 0; i < 4; ++i) mcp_content_item_free(items[i]);
     mcp_cache_destroy(cache);
@@ -295,7 +342,8 @@ void test_cache_zero_capacity(void) {
     mcp_content_item_t** content_to_put = &item1;
 
     // Put should effectively fail or do nothing gracefully
-    int put_result = mcp_cache_put(cache, "key1", content_to_put, 1, 0);
+    // Pass test_pool to put
+    int put_result = mcp_cache_put(cache, "key1", test_pool, content_to_put, 1, 0);
     // Depending on implementation, put might return 0 but not store, or -1.
     // Let's assume it doesn't store.
     TEST_ASSERT_EQUAL_INT(0, put_result); // Or -1 if it signals failure
@@ -303,7 +351,8 @@ void test_cache_zero_capacity(void) {
     // Get should always miss
     mcp_content_item_t** retrieved_content = NULL;
     size_t retrieved_count = 0;
-    int get_result = mcp_cache_get(cache, "key1", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    int get_result = mcp_cache_get(cache, "key1", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(-1, get_result); // Should miss
 
     mcp_content_item_free(item1);
@@ -317,12 +366,14 @@ void test_cache_multiple_items(void) {
     mcp_content_item_t* items_to_put[] = {item1, item2};
     size_t count_to_put = sizeof(items_to_put) / sizeof(items_to_put[0]);
 
-    int put_result = mcp_cache_put(cache, "multi_key", items_to_put, count_to_put, 0);
+    // Pass test_pool to put
+    int put_result = mcp_cache_put(cache, "multi_key", test_pool, items_to_put, count_to_put, 0);
     TEST_ASSERT_EQUAL_INT(0, put_result);
 
     mcp_content_item_t** retrieved_content = NULL;
     size_t retrieved_count = 0;
-    int get_result = mcp_cache_get(cache, "multi_key", &retrieved_content, &retrieved_count);
+    // Pass test_pool to get
+    int get_result = mcp_cache_get(cache, "multi_key", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
     TEST_ASSERT_EQUAL_size_t(count_to_put, retrieved_count);
     TEST_ASSERT_NOT_NULL(retrieved_content);
@@ -336,7 +387,7 @@ void test_cache_multiple_items(void) {
         TEST_ASSERT_EQUAL_STRING("value2", (const char*)retrieved_content[1]->data);
     }
 
-    free_retrieved_content(retrieved_content, retrieved_count);
+    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
     mcp_content_item_free(item1); // Free original items
     mcp_content_item_free(item2);
     mcp_cache_destroy(cache);

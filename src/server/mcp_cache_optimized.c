@@ -5,6 +5,7 @@
 #include "mcp_profiler.h"
 #include "mcp_hashtable.h"
 #include "mcp_sync.h"
+#include "mcp_object_pool.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -43,8 +44,33 @@ static void free_cache_entry(void* value) {
         free(entry->content); // Free the array of pointers
     }
 
+    // Note: We need a way to release the item back to the pool if it was acquired from one.
+    // This simple free function assumes items were created with malloc.
+    // For pooled items, the release should happen *before* freeing the entry.
+    // TODO: Modify cache logic to release pooled items correctly before freeing entry.
     free(entry); // Free the entry itself
 }
+
+// Helper to release pooled items within an entry before freeing the entry
+static void release_pooled_cache_entry_content(mcp_object_pool_t* pool, mcp_cache_entry_t* entry) {
+    if (!pool || !entry || !entry->content) return;
+    for (size_t i = 0; i < entry->content_count; ++i) {
+        if (entry->content[i]) {
+            // Free internal data/mime_type first (allocated by acquire_pooled)
+            free(entry->content[i]->mime_type);
+            free(entry->content[i]->data);
+            entry->content[i]->mime_type = NULL;
+            entry->content[i]->data = NULL;
+            entry->content[i]->data_size = 0;
+            // Release the item struct back to the pool
+            mcp_object_pool_release(pool, entry->content[i]);
+        }
+    }
+    free(entry->content); // Free the array of pointers
+    entry->content = NULL;
+    entry->content_count = 0;
+}
+
 
 // --- Public API Implementation ---
 
@@ -97,8 +123,9 @@ void mcp_cache_destroy(mcp_resource_cache_t* cache) {
     free(cache);
 }
 
-int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item_t*** content, size_t* content_count) {
-    if (!cache || !uri || !content || !content_count) return -1;
+// Updated signature to include pool
+int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_t* pool, mcp_content_item_t*** content, size_t* content_count) {
+    if (!cache || !uri || !pool || !content || !content_count) return -1; // Added pool check
 
     *content = NULL;
     *content_count = 0;
@@ -122,24 +149,38 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
                 bool copy_error = false;
 
                 for (size_t i = 0; i < entry->content_count; ++i) {
-                    // Use mcp_content_item_copy to create a deep copy of the item pointed to by the internal pointer
-                    content_copy_ptrs[i] = mcp_content_item_copy(entry->content[i]); // Corrected: Use pointer directly
+                    // Acquire a pooled item and copy data into it
+                    content_copy_ptrs[i] = mcp_content_item_acquire_pooled(
+                        pool,
+                        entry->content[i]->type,
+                        entry->content[i]->mime_type,
+                        entry->content[i]->data,
+                        entry->content[i]->data_size
+                    );
                     if (!content_copy_ptrs[i]) {
                         copy_error = true;
-                        break;
+                        break; // Exit loop on acquisition/copy failure
                     }
                     copied_count++;
                 }
 
                 if (!copy_error) {
-                    *content = content_copy_ptrs; // Return the array of pointers
+                    *content = content_copy_ptrs; // Return the array of pointers to pooled items
                     *content_count = entry->content_count;
                     entry->last_accessed = now; // Update last accessed time
                     result = 0; // Success
                 } else {
-                    // Free partially copied items on error
+                    // Release partially acquired/copied items back to pool on error
                     for (size_t i = 0; i < copied_count; ++i) {
-                        mcp_content_item_free(content_copy_ptrs[i]); // Frees internal data AND the struct pointer itself
+                        if (content_copy_ptrs[i]) {
+                             // Free internal data/mime_type first
+                             free(content_copy_ptrs[i]->mime_type);
+                             free(content_copy_ptrs[i]->data);
+                             content_copy_ptrs[i]->mime_type = NULL;
+                             content_copy_ptrs[i]->data = NULL;
+                             content_copy_ptrs[i]->data_size = 0;
+                             mcp_object_pool_release(pool, content_copy_ptrs[i]);
+                        }
                     }
                     free(content_copy_ptrs); // Free the array of pointers
                     // result remains -1 (error)
@@ -159,15 +200,15 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     return result;
 }
 
-// Updated signature to match header: content is mcp_content_item_t**
-int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item_t** content, size_t content_count, int ttl_seconds) {
+// Updated signature to include pool
+int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_t* pool, mcp_content_item_t** content, size_t content_count, int ttl_seconds) {
     // Note: 'content' is now mcp_content_item_t** (array of pointers)
-    if (!cache || !uri || !content || content_count == 0) return -1;
+    if (!cache || !uri || !pool || !content || content_count == 0) return -1; // Added pool check
     PROFILE_START("mcp_cache_put");
 
     mcp_mutex_lock(cache->lock); // Use abstracted lock
 
-    // --- Eviction Logic£ºEvict First Found strategy ---
+    // --- Eviction Logicï¿½ï¿½Evict First Found strategy ---
     if (mcp_hashtable_size(cache->table) >= cache->capacity && !mcp_hashtable_contains(cache->table, uri)) {
         mcp_log_warn("Cache full (capacity: %zu). Evicting an entry to insert '%s'.", cache->capacity, uri);
         bool evicted = false;
@@ -222,18 +263,32 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
     time_t effective_ttl = (ttl_seconds == 0) ? cache->default_ttl_seconds : (time_t)ttl_seconds;
     entry->expiry_time = (effective_ttl < 0) ? 0 : entry->last_accessed + effective_ttl; // 0 means never expires
 
-    // Copy content items
+    // Acquire pooled items and copy content into them
     bool copy_error = false;
     for (size_t i = 0; i < content_count; ++i) {
-        // Deep copy the item pointed to by the input array
-        entry->content[i] = mcp_content_item_copy(content[i]); // Corrected: Use copy function
+        // Acquire a pooled item and copy data into it
+        entry->content[i] = mcp_content_item_acquire_pooled(
+            pool,
+            content[i]->type,
+            content[i]->mime_type,
+            content[i]->data,
+            content[i]->data_size
+        );
         if (!entry->content[i]) {
             copy_error = true;
-            // Free already copied items in the cache entry's pointer array
+            // Release already acquired/copied items back to pool
             for(size_t j = 0; j < i; ++j) {
-                mcp_content_item_free(entry->content[j]);
+                 if (entry->content[j]) {
+                     // Free internal data/mime_type first
+                     free(entry->content[j]->mime_type);
+                     free(entry->content[j]->data);
+                     entry->content[j]->mime_type = NULL;
+                     entry->content[j]->data = NULL;
+                     entry->content[j]->data_size = 0;
+                     mcp_object_pool_release(pool, entry->content[j]);
+                 }
             }
-            break;
+            break; // Exit loop on acquisition/copy failure
         }
         entry->content_count++; // Increment count only after successful copy
     }

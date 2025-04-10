@@ -51,8 +51,9 @@ void mcp_cache_destroy(mcp_resource_cache_t* cache);
  *                           items in the `content` array.
  * @return 0 if the item was found in the cache and is still valid (not expired),
  *         -1 otherwise (not found or expired).
+ * @note Items returned in `content` are acquired from the provided pool.
  */
-int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item_t*** content, size_t* content_count);
+int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, struct mcp_object_pool_s* pool, mcp_content_item_t*** content, size_t* content_count);
 
 /**
  * @brief Stores content items for a given URI in the cache.
@@ -69,8 +70,9 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_content_item
  * @param ttl_seconds The time-to-live for this specific entry in seconds.
  *                    If 0, the cache's default TTL is used. If negative, the entry never expires.
  * @return 0 on success, -1 on failure (e.g., allocation error).
+ * @note The cache uses the provided pool to create internal copies if needed.
  */
-int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_content_item_t** content, size_t content_count, int ttl_seconds);
+int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, struct mcp_object_pool_s* pool, mcp_content_item_t** content, size_t content_count, int ttl_seconds);
 
 /**
  * @brief Removes an entry from the cache.

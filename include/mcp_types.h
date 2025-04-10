@@ -15,6 +15,9 @@
 extern "C" {
 #endif
 
+// Forward declaration for object pool structure
+struct mcp_object_pool_s;
+
 /**
  * @brief The current version of the MCP protocol implemented by this library.
  */
@@ -337,6 +340,31 @@ mcp_content_item_t* mcp_content_item_create(
  * @note The caller is responsible for freeing the returned structure using mcp_content_item_free().
  */
 mcp_content_item_t* mcp_content_item_copy(const mcp_content_item_t* original);
+
+/**
+ * @brief Acquires an mcp_content_item_t from an object pool and initializes it.
+ *
+ * Acquires an object from the provided pool, copies the mime_type string,
+ * and copies the content data based on its size. The acquired object's
+ * internal fields (`data`, `mime_type`) will be allocated using standard malloc.
+ *
+ * @param pool The object pool to acquire the item from.
+ * @param type The type of the content.
+ * @param mime_type Content MIME type string (copied). Can be NULL.
+ * @param data Pointer to the content data to be copied.
+ * @param data_size Size of the content data in bytes.
+ * @return Pointer to the acquired and initialized mcp_content_item_t, or NULL on error (pool empty or allocation failure).
+ * @note The caller is responsible for releasing the returned structure back to the pool using mcp_object_pool_release()
+ *       AND freeing the internal `data` and `mime_type` fields manually before release, or by calling a dedicated release function.
+ *       (Consider adding mcp_content_item_release_pooled which handles internal freeing + pool release).
+ */
+mcp_content_item_t* mcp_content_item_acquire_pooled(
+    struct mcp_object_pool_s* pool, // Use the forward-declared struct
+    mcp_content_type_t type,
+    const char* mime_type,
+    const void* data,
+    size_t data_size
+);
 
 
 /**

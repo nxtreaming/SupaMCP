@@ -2,6 +2,8 @@
 #include <string.h>
 #include "mcp_types.h"
 #include "mcp_string_utils.h"
+#include "mcp_object_pool.h"
+#include "mcp_log.h"
 
 // --- Free Functions ---
 
@@ -433,6 +435,63 @@ mcp_content_item_t* mcp_content_item_copy(const mcp_content_item_t* original) {
         original->data,
         original->data_size
     );
+}
+
+/**
+ * @brief Acquires an mcp_content_item_t from an object pool and initializes it.
+ * Uses standard malloc for internal data/mime_type copies.
+ */
+mcp_content_item_t* mcp_content_item_acquire_pooled(
+    mcp_object_pool_t* pool,
+    mcp_content_type_t type,
+    const char* mime_type,
+    const void* data,
+    size_t data_size
+) {
+    if (pool == NULL) {
+        mcp_log_error("Attempted to acquire content item from NULL pool.");
+        return NULL;
+    }
+
+    // Acquire the main structure from the pool
+    mcp_content_item_t* item = (mcp_content_item_t*)mcp_object_pool_acquire(pool);
+    if (item == NULL) {
+        mcp_log_warn("Failed to acquire content item from pool (pool empty or max capacity reached).");
+        return NULL; // Pool acquisition failed
+    }
+
+    // Initialize fields - IMPORTANT: Clear previous data first
+    item->type = type;
+    item->mime_type = NULL; // Initialize for safe cleanup
+    item->data = NULL;      // Initialize for safe cleanup
+    item->data_size = 0;
+
+    // Duplicate mime_type string if provided (using standard malloc)
+    if (mime_type != NULL) {
+        item->mime_type = mcp_strdup(mime_type);
+        if (item->mime_type == NULL) {
+            mcp_log_error("Failed to allocate memory for pooled content item mime_type.");
+            mcp_object_pool_release(pool, item); // Release item back to pool on error
+            return NULL;
+        }
+    }
+
+    // Allocate buffer and copy data if provided (using standard malloc)
+    if (data != NULL && data_size > 0) {
+        item->data = malloc(data_size);
+        if (item->data == NULL) {
+            mcp_log_error("Failed to allocate memory for pooled content item data buffer.");
+            free(item->mime_type); // Free already allocated mime_type
+            item->mime_type = NULL;
+            mcp_object_pool_release(pool, item); // Release item back to pool on error
+            return NULL;
+        }
+        memcpy(item->data, data, data_size);
+        item->data_size = data_size;
+    }
+    // If data is NULL or data_size is 0, item->data remains NULL and item->data_size remains 0
+
+    return item; // Success
 }
 
 

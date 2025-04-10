@@ -260,7 +260,8 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 
     // 1. Check cache first
     if (server->resource_cache != NULL) {
-        if (mcp_cache_get(server->resource_cache, uri, &content_items, &content_count) == 0) {
+        // Pass the content item pool to mcp_cache_get
+        if (mcp_cache_get(server->resource_cache, uri, server->content_item_pool, &content_items, &content_count) == 0) {
             fprintf(stdout, "Cache hit for URI: %s\n", uri);
         } else {
             fprintf(stdout, "Cache miss for URI: %s\n", uri);
@@ -336,7 +337,8 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 
     // 3. If fetched from handler, put it in the cache
     if (fetched_from_handler && server->resource_cache != NULL) {
-        if (mcp_cache_put(server->resource_cache, uri, content_items, content_count, 0) != 0) {
+        // Pass the content item pool to mcp_cache_put
+        if (mcp_cache_put(server->resource_cache, uri, server->content_item_pool, content_items, content_count, 0) != 0) {
             fprintf(stderr, "Warning: Failed to put resource %s into cache.\n", uri);
         } else {
             fprintf(stdout, "Stored resource %s in cache.\n", uri);
@@ -373,10 +375,12 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
         }
     }
 
-    // Free original content items after copying to JSON
+    // Release original content items back to pool after copying to JSON
     if (content_items) {
-        for (size_t i = 0; i < content_count; i++) mcp_content_item_free(content_items[i]);
-        free(content_items);
+        for (size_t i = 0; i < content_count; i++) {
+            if (content_items[i]) mcp_object_pool_release(server->content_item_pool, content_items[i]);
+        }
+        free(content_items); // Free the array itself
     }
 
     if (json_build_error) {
@@ -708,10 +712,12 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
         }
     }
 
-    // Free handler-allocated content items after copying to JSON
+    // Release handler-allocated content items back to pool after copying to JSON
     if (content_items) {
-        for (size_t i = 0; i < content_count; i++) mcp_content_item_free(content_items[i]);
-        free(content_items);
+        for (size_t i = 0; i < content_count; i++) {
+             if (content_items[i]) mcp_object_pool_release(server->content_item_pool, content_items[i]);
+        }
+        free(content_items); // Free the array itself
     }
     free(handler_error_message);
 

@@ -1,7 +1,12 @@
 #include "unity.h"
 #include "mcp_thread_local.h"
+#include "mcp_object_pool.h"
+#include "mcp_types.h"
 
 #define TEST_ARENA_SIZE (1024 * 1024) // 1MB arena for tests
+
+// Declare the global test pool pointer (defined in test_mcp_cache.c)
+extern mcp_object_pool_t* test_pool;
 
 // Forward declarations for test suite runners
 void run_mcp_arena_tests(void);
@@ -30,10 +35,23 @@ void setUp(void) {
     if (arena) {
         mcp_arena_reset(arena);
     }
+    // Create the global test pool if it doesn't exist
+    if (test_pool == NULL) {
+        test_pool = mcp_object_pool_create(sizeof(mcp_content_item_t), 32, 0);
+        // We don't use TEST_ASSERT here as it's setUp, maybe log?
+        if (test_pool == NULL) {
+            printf("CRITICAL: Failed to create global test object pool in setUp!\n");
+        }
+    }
 }
 
 void tearDown(void) {
-    // Nothing to clean up - arena is reset in setUp
+    // Destroy the global test pool if it exists
+    if (test_pool != NULL) {
+        mcp_object_pool_destroy(test_pool);
+        test_pool = NULL;
+    }
+    // Arena is reset in setUp
 }
 
 // Main test runner

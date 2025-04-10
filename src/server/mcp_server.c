@@ -7,6 +7,7 @@
 #include "gateway.h"
 #include "gateway_pool.h"
 #include "mcp_arena.h"
+#include "mcp_object_pool.h"
 
 // --- Public API Implementation ---
 
@@ -79,6 +80,7 @@ mcp_server_t* mcp_server_create(
     server->resources_table = NULL;
     server->resource_templates_table = NULL;
     server->tools_table = NULL;
+    server->content_item_pool = NULL; // Initialize pool pointer
 
     // Create the thread pool using the final determined values
     server->thread_pool = mcp_thread_pool_create(server->config.thread_pool_size, server->config.task_queue_size);
@@ -139,12 +141,28 @@ mcp_server_t* mcp_server_create(
     }
     // --- End Hash Table Creation ---
 
+    // --- Create Content Item Pool ---
+    // TODO: Make pool capacities configurable?
+    size_t initial_pool_cap = 128;
+    size_t max_pool_cap = 0; // Unlimited
+    server->content_item_pool = mcp_object_pool_create(sizeof(mcp_content_item_t), initial_pool_cap, max_pool_cap);
+    if (server->content_item_pool == NULL) {
+        mcp_log_error("Failed to create content item object pool.");
+        goto create_error_cleanup;
+    }
+    // --- End Content Item Pool Creation ---
+
+
     return server;
 
 create_error_cleanup:
     // Centralized cleanup using goto
     if (server) {
-        if (server->pool_manager) gateway_pool_manager_destroy(server->pool_manager); // Added cleanup
+        if (server->content_item_pool) mcp_object_pool_destroy(server->content_item_pool); // Cleanup pool
+        if (server->tools_table) mcp_hashtable_destroy(server->tools_table); // Cleanup tables
+        if (server->resource_templates_table) mcp_hashtable_destroy(server->resource_templates_table);
+        if (server->resources_table) mcp_hashtable_destroy(server->resources_table);
+        if (server->pool_manager) gateway_pool_manager_destroy(server->pool_manager);
         if (server->rate_limiter) mcp_rate_limiter_destroy(server->rate_limiter);
         if (server->resource_cache) mcp_cache_destroy(server->resource_cache);
         if (server->thread_pool) mcp_thread_pool_destroy(server->thread_pool);
@@ -209,7 +227,8 @@ int mcp_server_start(
 
                 if (handler_err == MCP_ERROR_NONE) {
                     // Put the fetched content into the cache with infinite TTL (-1 or 0)
-                    int put_err = mcp_cache_put(server->resource_cache, uri, content, content_count, -1);
+                    // Pass the content item pool to mcp_cache_put
+                    int put_err = mcp_cache_put(server->resource_cache, uri, server->content_item_pool, content, content_count, -1);
                     if (put_err != 0) {
                         mcp_log_warn("Failed to put pre-warmed resource '%s' into cache.", uri);
                     } else {
@@ -327,6 +346,10 @@ void mcp_server_destroy(mcp_server_t* server) {
         // Should be destroyed by stop, but check just in case
         mcp_thread_pool_destroy(server->thread_pool);
         server->thread_pool = NULL;
+    }
+    if (server->content_item_pool) { // Destroy object pool
+        mcp_object_pool_destroy(server->content_item_pool);
+        server->content_item_pool = NULL;
     }
 
     // Finally, free the server struct itself
