@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "mcp_string_utils.h"
+#include <inttypes.h>
 
 // --- MCP Message Parsing/Stringification ---
 // These functions now use the thread-local arena implicitly for parsing/creating
@@ -156,127 +158,101 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
     return parse_status;
 }
 
-// Stringify message uses the _create and _parse functions which now use the
-// thread-local arena implicitly for temporary node creation during stringification.
-// The final output string is still allocated with malloc.
+
+// Rewritten stringify function using dynamic buffer
 char* mcp_json_stringify_message(const mcp_message_t* message) {
     if (message == NULL) {
         return NULL;
     }
     PROFILE_START("mcp_json_stringify_message");
-    // Create the root JSON object using the thread-local arena
-     mcp_json_t* json = mcp_json_object_create();
-     if (json == NULL) {
-         PROFILE_END("mcp_json_stringify_message"); // End profile on error
-         mcp_log_error("Failed to create root JSON object for stringify.");
-         return NULL;
-     }
 
-    char* final_json_string = NULL; // Store final malloc'd string here
-
-    switch (message->type) {
-        case MCP_MESSAGE_TYPE_REQUEST: {
-            // Create nodes using thread-local arena
-            mcp_json_t* id_node = mcp_json_number_create((double)message->request.id);
-            mcp_json_t* method_node = mcp_json_string_create(message->request.method);
-            // Parse params string (if exists) using thread-local arena
-            mcp_json_t* params_node = (message->request.params != NULL) ? mcp_json_parse(message->request.params) : NULL;
-
-            if (id_node && method_node && (message->request.params == NULL || params_node)) {
-                mcp_json_object_set_property(json, "id", id_node); // table_set uses malloc for entry/key
-                mcp_json_object_set_property(json, "method", method_node); // table_set uses malloc for entry/key
-                if (params_node) {
-                    mcp_json_object_set_property(json, "params", params_node); // table_set uses malloc for entry/key
-                }
-
-                 final_json_string = mcp_json_stringify(json); // Stringify uses malloc for output buffer
-             } else {
-                 mcp_log_error("Failed to create/parse nodes for stringifying request.");
-                 // Nodes are in thread-local arena, no manual destroy needed here.
-             }
-            break;
-        }
-
-        case MCP_MESSAGE_TYPE_RESPONSE: {
-            // Create nodes using thread-local arena
-            mcp_json_t* id_node = mcp_json_number_create((double)message->response.id);
-            if (!id_node) break; // Failed to create ID node
-            mcp_json_object_set_property(json, "id", id_node); // table_set uses malloc
-
-            if (message->response.error_code != MCP_ERROR_NONE) { // Error response
-                mcp_json_t* error_obj = mcp_json_object_create(); // Uses arena
-                mcp_json_t* code_node = mcp_json_number_create((double)message->response.error_code); // Uses arena
-                // Use error_message directly if it's a const literal, otherwise create string node
-                mcp_json_t* msg_node = (message->response.error_message != NULL) ? mcp_json_string_create(message->response.error_message) : NULL; // Uses arena
-
-                if (error_obj && code_node && (message->response.error_message == NULL || msg_node)) {
-                    mcp_json_object_set_property(error_obj, "code", code_node); // table_set uses malloc
-                    if (msg_node) {
-                        mcp_json_object_set_property(error_obj, "message", msg_node); // table_set uses malloc
-                    }
-
-                    mcp_json_object_set_property(json, "error", error_obj); // table_set uses malloc
-                     final_json_string = mcp_json_stringify(json); // Stringify uses malloc
-                 } else {
-                      mcp_log_error("Failed to create nodes for stringifying error response.");
-                     // Nodes are in thread-local arena.
-                 }
-
-            } else if (message->response.result != NULL) { // Success response with result
-                // Parse result string using thread-local arena
-                mcp_json_t* result_node = mcp_json_parse(message->response.result);
-                if (result_node) {
-                    mcp_json_object_set_property(json, "result", result_node); // table_set uses malloc
-                     final_json_string = mcp_json_stringify(json); // Stringify uses malloc
-                 } else {
-                      mcp_log_error("Failed to parse result string for stringifying response.");
-                 }
-
-            } else { // Success response with null result
-                mcp_json_t* result_node = mcp_json_null_create(); // Uses arena
-                 if (result_node) {
-                    mcp_json_object_set_property(json, "result", result_node); // table_set uses malloc
-                     final_json_string = mcp_json_stringify(json); // Stringify uses malloc
-                  } else {
-                       mcp_log_error("Failed to create null result node for stringifying response.");
-                 }
-             }
-            break;
-        }
-
-        case MCP_MESSAGE_TYPE_NOTIFICATION: {
-             // Create nodes using thread-local arena
-             mcp_json_t* method_node = mcp_json_string_create(message->notification.method);
-             // Parse params string (if exists) using thread-local arena
-             mcp_json_t* params_node = (message->notification.params != NULL) ? mcp_json_parse(message->notification.params) : NULL;
-
-             if (method_node && (message->notification.params == NULL || params_node)) {
-                 mcp_json_object_set_property(json, "method", method_node); // table_set uses malloc
-                 if (params_node) {
-                     mcp_json_object_set_property(json, "params", params_node); // table_set uses malloc
-                 }
-
-                  final_json_string = mcp_json_stringify(json); // Stringify uses malloc
-              } else {
-                   mcp_log_error("Failed to create/parse nodes for stringifying notification.");
-                  // Nodes are in thread-local arena.
-              }
-             break;
-        }
-        default:
-            // Should not happen
-            break;
+    dyn_buf_t db;
+    // Estimate initial size (can be tuned)
+    if (dyn_buf_init(&db, 256) != 0) {
+        mcp_log_error("Failed to initialize dynamic buffer for stringify.");
+        PROFILE_END("mcp_json_stringify_message");
+        return NULL;
     }
 
-    // Temporary JSON structure 'json' and its sub-nodes were allocated in the
-    // thread-local arena. They will be cleaned up when the caller resets or
-    // destroys the thread's arena. We don't call mcp_json_destroy on 'json' here.
+    // Common parts
+    dyn_buf_append(&db, "{\"jsonrpc\":\"2.0\","); // Assume success for core parts
+
+    char id_buf[32]; // Buffer for integer ID stringification
+
+    switch (message->type) {
+        case MCP_MESSAGE_TYPE_REQUEST:
+            // Append ID
+            snprintf(id_buf, sizeof(id_buf), "%" PRIu64, message->request.id);
+            dyn_buf_append(&db, "\"id\":");
+            dyn_buf_append(&db, id_buf);
+            dyn_buf_append(&db, ",");
+
+            // Append Method
+            dyn_buf_append(&db, "\"method\":");
+            dyn_buf_append_json_string(&db, message->request.method ? message->request.method : "");
+
+            // Append Params (if they exist - assume params is already a valid JSON string or NULL)
+            if (message->request.params != NULL) {
+                dyn_buf_append(&db, ",\"params\":");
+                dyn_buf_append(&db, (const char*)message->request.params); // Append raw JSON string
+            }
+            break;
+
+        case MCP_MESSAGE_TYPE_RESPONSE:
+            // Append ID
+            snprintf(id_buf, sizeof(id_buf), "%" PRIu64, message->response.id);
+            dyn_buf_append(&db, "\"id\":");
+            dyn_buf_append(&db, id_buf);
+
+            if (message->response.error_code != MCP_ERROR_NONE) { // Error response
+                dyn_buf_append(&db, ",\"error\":{\"code\":");
+                snprintf(id_buf, sizeof(id_buf), "%d", message->response.error_code); // Use %d for error code
+                dyn_buf_append(&db, id_buf);
+                dyn_buf_append(&db, ",\"message\":");
+                dyn_buf_append_json_string(&db, message->response.error_message ? message->response.error_message : "");
+                dyn_buf_append(&db, "}"); // Close error object
+            } else { // Success response
+                dyn_buf_append(&db, ",\"result\":");
+                if (message->response.result != NULL) {
+                    dyn_buf_append(&db, (const char*)message->response.result); // Append raw JSON string
+                } else {
+                    dyn_buf_append(&db, "null");
+                }
+            }
+            break;
+
+        case MCP_MESSAGE_TYPE_NOTIFICATION:
+            // Append Method
+            dyn_buf_append(&db, "\"method\":");
+            dyn_buf_append_json_string(&db, message->notification.method ? message->notification.method : "");
+
+            // Append Params (if they exist - assume params is already a valid JSON string or NULL)
+            if (message->notification.params != NULL) {
+                dyn_buf_append(&db, ",\"params\":");
+                dyn_buf_append(&db, (const char*)message->notification.params); // Append raw JSON string
+            }
+            break;
+
+        default:
+            mcp_log_error("Invalid message type encountered during stringify.");
+            dyn_buf_free(&db); // Clean up buffer
+            PROFILE_END("mcp_json_stringify_message");
+            return NULL; // Indicate error
+    }
+
+    dyn_buf_append(&db, "}"); // Close root object
+
+    // Finalize buffer (transfers ownership of buffer to final_json_string)
+    char* final_json_string = dyn_buf_finalize(&db);
+
+    // dyn_buf_free(&db); // Not needed after finalize
+
     PROFILE_END("mcp_json_stringify_message");
     return final_json_string; // Return the malloc'd final string
 }
 
 
-// --- Creation Functions ---
+// --- Creation Functions --- (Keep original versions for now)
 
 // Note: These functions now use the thread-local arena for temporary JSON nodes
 // during creation, but the final returned string is allocated with malloc.
