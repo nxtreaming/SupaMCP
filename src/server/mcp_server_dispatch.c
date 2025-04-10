@@ -19,7 +19,19 @@
  * @param data Raw message data (expected to be null-terminated JSON string).
  * @param size Size of the data.
  * @param[out] error_code Set to MCP_ERROR_NONE on success, or an error code on failure (e.g., parse error).
- * @return A malloc'd JSON string response if the message was a request, NULL otherwise (or on error).
+ * @brief Parses and handles a single incoming message or a batch of messages.
+ *
+ * Uses an arena for temporary allocations during parsing. Determines message type
+ * and dispatches to the appropriate handler. Handles batch requests/notifications.
+ *
+ * @param server The server instance.
+ * @param data Raw message data (expected to be null-terminated JSON string).
+ * @param size Size of the data.
+ * @param[out] error_code Set to MCP_ERROR_NONE on success, or an error code on failure (e.g., parse error).
+ *                        For batches, this reflects the overall processing status.
+ * @return A malloc'd JSON string response. For single requests, it's the response object.
+ *         For batches containing requests, it's a JSON array of response objects.
+ *         Returns NULL for notifications, single responses, or errors during parsing/allocation.
  */
 char* handle_message(mcp_server_t* server, const void* data, size_t size, int* error_code) {
     if (server == NULL || data == NULL || size == 0 || error_code == NULL) {
@@ -32,60 +44,53 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     mcp_arena_t arena;
     mcp_arena_init(&arena, MCP_ARENA_DEFAULT_SIZE);
 
-    // Data received from transport_message_callback is guaranteed to be NULL-terminated.
-    PROFILE_START("handle_message"); // Profile overall message handling
+    PROFILE_START("handle_message");
 
-    const char* json_str = (const char*)data; // Cast directly, it's null-terminated
+    const char* json_str = (const char*)data;
+    mcp_message_t* messages = NULL;
+    size_t message_count = 0;
 
-    // Parse the message using the thread-local arena implicitly
-    mcp_message_t message;
-    // Pass the null-terminated string directly to the parser
-    int parse_result = mcp_json_parse_message(json_str, &message);
+    // Parse message or batch
+    int parse_result = mcp_json_parse_message_or_batch(json_str, &messages, &message_count);
 
-    if (parse_result != 0) {
-        mcp_log_error("JSON parsing failed within handle_message (parser error code: %d)", parse_result);
-        mcp_arena_destroy(&arena); // Clean up arena on parse error
-        *error_code = MCP_ERROR_PARSE_ERROR;
-        // TODO: Generate and return a JSON-RPC Parse Error response string?
-        // For now, just return NULL indicating failure.
-        return NULL;
+    if (parse_result != 0 || messages == NULL) {
+        mcp_log_error("JSON parsing failed (Code: %d)", parse_result);
+        mcp_arena_destroy(&arena);
+        *error_code = parse_result != 0 ? parse_result : MCP_ERROR_PARSE_ERROR;
+        // Generate JSON-RPC Parse Error response (ID is unknown)
+        return create_error_response(0, MCP_ERROR_PARSE_ERROR, "Parse error");
     }
 
-    // --- Authentication Check ---
+    // --- Authentication (Simplified for Batch - Authenticate once based on first request?) ---
+    // TODO: Implement more granular auth per request in batch if needed.
     mcp_auth_context_t* auth_context = NULL;
     mcp_auth_type_t required_auth_type = (server->config.api_key != NULL && strlen(server->config.api_key) > 0)
                                            ? MCP_AUTH_API_KEY
                                            : MCP_AUTH_NONE;
     const char* credentials = NULL;
-    uint64_t request_id_for_auth_error = 0; // Use 0 if ID not available
+    uint64_t first_request_id = 0; // For potential batch auth error response
 
-    if (message.type == MCP_MESSAGE_TYPE_REQUEST) {
-        request_id_for_auth_error = message.request.id; // Get ID for potential error response
+    if (message_count > 0 && messages[0].type == MCP_MESSAGE_TYPE_REQUEST) {
+        first_request_id = messages[0].request.id;
         if (required_auth_type == MCP_AUTH_API_KEY) {
-            // Extract apiKey from params if required
-            // Use the standard parser. If it uses an arena internally, it will manage it.
-            mcp_json_t* params_json = mcp_json_parse(message.request.params); // Corrected function call
+            mcp_json_t* params_json = mcp_json_parse(messages[0].request.params);
             if (params_json && mcp_json_get_type(params_json) == MCP_JSON_OBJECT) {
                 mcp_json_t* key_node = mcp_json_object_get_property(params_json, "apiKey");
                 if (key_node && mcp_json_get_type(key_node) == MCP_JSON_STRING) {
-                    mcp_json_get_string(key_node, &credentials); // Get pointer to key string
+                    mcp_json_get_string(key_node, &credentials);
                 }
             }
-            // Note: We need to destroy params_json if mcp_json_parse doesn't use an arena automatically
-            // Assuming for now it does, or that its cleanup is handled elsewhere/implicitly.
-            // If not, add: mcp_json_destroy(params_json);
+            // Arena handles params_json cleanup
         }
     }
-    // For notifications or responses, we might skip auth or handle differently,
-    // but for now, we'll verify based on server config even for these.
-    // If API key is required, notifications without it would fail here.
 
     if (mcp_auth_verify(server, required_auth_type, credentials, &auth_context) != 0) {
-        mcp_log_warn("Authentication failed for incoming message.");
-        *error_code = MCP_ERROR_INVALID_REQUEST; // Use a generic auth failure code for JSON-RPC
-        char* error_response = create_error_response(request_id_for_auth_error, *error_code, "Authentication failed");
-        // Cleanup before returning error
-        mcp_message_release_contents(&message);
+        mcp_log_warn("Authentication failed for incoming message/batch.");
+        *error_code = MCP_ERROR_INVALID_REQUEST; // Generic auth failure
+        // For batch, JSON-RPC spec is unclear on error response format.
+        // Sending a single error response might be appropriate.
+        char* error_response = create_error_response(first_request_id, *error_code, "Authentication failed");
+        mcp_json_free_message_array(messages, message_count); // Free parsed messages
         mcp_arena_destroy(&arena);
         PROFILE_END("handle_message");
         return error_response;
@@ -93,36 +98,115 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     mcp_log_debug("Authentication successful (Identifier: %s)", auth_context ? auth_context->identifier : "N/A");
     // --- End Authentication Check ---
 
+    char* final_response_str = NULL;
+    dyn_buf_t response_batch_buf; // Use dynamic buffer for batch response array
+    bool is_batch_response = false;
+    bool batch_buffer_initialized = false;
 
-    // Handle the message based on its type
-    char* response_str = NULL;
-    switch (message.type) {
-        case MCP_MESSAGE_TYPE_REQUEST:
-            // Pass auth_context to handle_request
-            response_str = handle_request(server, &arena, &message.request, auth_context, error_code);
-            break;
-        case MCP_MESSAGE_TYPE_RESPONSE:
-            // Server typically doesn't process responses it receives
-            *error_code = 0; // No error, just no response to send
-            break;
-        case MCP_MESSAGE_TYPE_NOTIFICATION:
-            // Server could handle notifications if needed
-            // For now, just acknowledge success, no response needed.
-            *error_code = 0;
-            break;
+    if (message_count > 1) {
+        is_batch_response = true;
+        if (dyn_buf_init(&response_batch_buf, 512) != 0) { // Initial capacity
+             mcp_log_error("Failed to init batch response buffer.");
+             *error_code = MCP_ERROR_INTERNAL_ERROR;
+             // Fall through to cleanup
+        } else {
+            batch_buffer_initialized = true;
+            dyn_buf_append(&response_batch_buf, "[");
+        }
     }
 
-    // Free the message structure contents (which used malloc/strdup)
-    mcp_message_release_contents(&message);
+    bool first_response_in_batch = true;
 
-    // Free the authentication context if it was created
+    // Process each message
+    for (size_t i = 0; i < message_count && *error_code == MCP_ERROR_NONE; ++i) {
+        mcp_message_t* current_msg = &messages[i];
+        char* single_response_str = NULL;
+        int current_msg_error = MCP_ERROR_NONE;
+
+        switch (current_msg->type) {
+            case MCP_MESSAGE_TYPE_REQUEST:
+                single_response_str = handle_request(server, &arena, &current_msg->request, auth_context, &current_msg_error);
+                // If handle_request failed internally, current_msg_error will be set.
+                // single_response_str will be an error response string or success response string.
+                if (single_response_str != NULL) {
+                    if (is_batch_response && batch_buffer_initialized) {
+                        if (!first_response_in_batch) {
+                            dyn_buf_append(&response_batch_buf, ",");
+                        }
+                        dyn_buf_append(&response_batch_buf, single_response_str);
+                        first_response_in_batch = false;
+                        free(single_response_str); // Free individual response string after appending
+                        single_response_str = NULL;
+                    } else if (!is_batch_response) {
+                        // This was the only message, store its response directly
+                        final_response_str = single_response_str;
+                        single_response_str = NULL; // Avoid double free
+                    } else {
+                        // Batch buffer init failed, discard individual response
+                         free(single_response_str);
+                         single_response_str = NULL;
+                    }
+                } else if (current_msg_error != MCP_ERROR_NONE && is_batch_response) {
+                     // Handle cases where handle_request failed but didn't return a string (shouldn't happen ideally)
+                     // Optionally generate and append an error response here.
+                }
+                break;
+
+            case MCP_MESSAGE_TYPE_NOTIFICATION:
+                // Process notification (currently does nothing)
+                // No response generated for notifications.
+                break;
+
+            case MCP_MESSAGE_TYPE_RESPONSE:
+                // Server received a response - typically ignore.
+                break;
+
+            case MCP_MESSAGE_TYPE_INVALID:
+                // Message was invalid during parsing (e.g., non-object in batch)
+                // JSON-RPC spec says: "If the batch array contains invalid JSON, or if the batch array is empty,
+                // the server MUST return a single Response object." - This is handled by initial parse check.
+                // "If the batch array contains character data that is not valid JSON, the server MUST return a single Response object." - Handled by initial parse check.
+                // "If the batch array contains invalid Request objects (e.g. wrong method parameter type),
+                // the server MUST return a Response object for each invalid Request object."
+                // We need to generate an error response if this was detected during parsing.
+                // Our current parse_single_message_from_json marks type as invalid but doesn't store details.
+                // TODO: Enhance parsing to generate specific error responses for invalid requests within a batch.
+                // For now, we just skip generating a response for invalid types found post-parsing.
+                break;
+        }
+         // Reset arena for the next message in the batch (if any)
+         mcp_arena_reset(&arena);
+    }
+
+    // Finalize batch response if needed
+    if (is_batch_response && batch_buffer_initialized) {
+        dyn_buf_append(&response_batch_buf, "]");
+        final_response_str = dyn_buf_finalize(&response_batch_buf);
+        if (final_response_str == NULL) {
+             *error_code = MCP_ERROR_INTERNAL_ERROR; // Finalization/allocation failed
+        }
+        // Check if the batch response is just "[]" (only notifications or errors occurred)
+        if (final_response_str && strcmp(final_response_str, "[]") == 0) {
+             free(final_response_str);
+             final_response_str = NULL; // No actual responses to send
+        }
+    } else if (is_batch_response && !batch_buffer_initialized) {
+         // Error occurred during buffer init, ensure no response is sent
+         final_response_str = NULL;
+    }
+
+
+    // Free the parsed message array and its contents
+    mcp_json_free_message_array(messages, message_count);
+
+    // Free the authentication context
     mcp_auth_context_free(auth_context);
 
-    // Clean up the arena used for this message cycle.
+    // Clean up the arena used for the last message cycle.
     mcp_arena_destroy(&arena);
     PROFILE_END("handle_message");
 
-    return response_str; // Return malloc'd response string (or NULL)
+    return final_response_str; // Return malloc'd response string (single object or array, or NULL)
 }
 
 /**

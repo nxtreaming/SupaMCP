@@ -61,6 +61,29 @@ char* mcp_json_create_error_response(uint64_t id, int error_code, const char* er
  *       but the final returned string is allocated using `malloc`. */
 char* mcp_json_stringify_message(const mcp_message_t* message);
 
+/**
+ * @brief Parses a JSON string representing either a single MCP message or a batch (array) of messages.
+ *
+ * Uses the calling thread's thread-local arena for parsing the JSON structure.
+ * @param json_str The null-terminated JSON string.
+ * @param[out] messages Pointer to receive a heap-allocated array of `mcp_message_t` structures.
+ *                      The caller is responsible for freeing this array and its contents using `mcp_json_free_message_array`.
+ * @param[out] count Pointer to receive the number of messages parsed (1 for single, >=0 for batch).
+ * @return 0 on success, non-zero on error (e.g., parse error, invalid structure).
+ * @note On success, the `messages` array contains structures with dynamically allocated internal data
+ *       (strings like method, error_message, result/params). These are freed by `mcp_json_free_message_array`.
+ */
+int mcp_json_parse_message_or_batch(const char* json_str, mcp_message_t** messages, size_t* count);
+
+/**
+ * @brief Frees an array of mcp_message_t structures and their internal contents.
+ *
+ * @param messages The array of messages to free (allocated by `mcp_json_parse_message_or_batch`).
+ * @param count The number of messages in the array.
+ */
+void mcp_json_free_message_array(mcp_message_t* messages, size_t count);
+
+
 #ifdef __cplusplus
 }
 #endif
