@@ -42,7 +42,7 @@ static void mcp_json_hashtable_value_free(void* value) {
 
 mcp_json_t* mcp_json_null_create(void) {
     // Allocate the node structure itself using thread-local arena
-mcp_json_t* json = mcp_json_alloc_node();
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
         // Arena allocation failed, likely OOM or uninitialized arena
         // Logging might not be safe/possible here.
@@ -53,7 +53,7 @@ mcp_json_t* json = mcp_json_alloc_node();
 }
 
 mcp_json_t* mcp_json_boolean_create(bool value) {
-mcp_json_t* json = mcp_json_alloc_node();
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
         // Arena allocation failed
         return NULL;
@@ -64,7 +64,7 @@ mcp_json_t* json = mcp_json_alloc_node();
 }
 
 mcp_json_t* mcp_json_number_create(double value) {
-mcp_json_t* json = mcp_json_alloc_node();
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
         // Arena allocation failed
         return NULL;
@@ -80,14 +80,14 @@ mcp_json_t* mcp_json_string_create(const char* value) {
         return NULL; // Cannot create string from NULL
     }
     // Allocate the node structure using thread-local arena
-mcp_json_t* json = mcp_json_alloc_node();
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
         // Arena allocation failed
         return NULL;
     }
     json->type = MCP_JSON_STRING;
     // Duplicate the input string using our helper
-json->string_value = mcp_strdup(value);
+    json->string_value = mcp_strdup(value);
     if (json->string_value == NULL) {
         mcp_log_error("mcp_strdup failed for JSON string value.");
         // Node is arena allocated, will be cleaned up by arena reset/destroy.
@@ -100,7 +100,7 @@ json->string_value = mcp_strdup(value);
 // NOTE: Array backing storage (the array of pointers `items`) *always* uses malloc/realloc.
 mcp_json_t* mcp_json_array_create(void) {
     // Allocate the node structure using thread-local arena
-mcp_json_t* json = mcp_json_alloc_node();
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
         // Arena allocation failed
         return NULL;
@@ -115,7 +115,7 @@ mcp_json_t* json = mcp_json_alloc_node();
 // NOTE: Object hash table structures (buckets, entries, keys) *always* use malloc/realloc/mcp_strdup.
 mcp_json_t* mcp_json_object_create(void) {
     // Allocate the node structure using thread-local arena
-mcp_json_t* json = mcp_json_alloc_node();
+    mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
         // Arena allocation failed
         return NULL;
