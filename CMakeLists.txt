@@ -43,8 +43,8 @@ set(COMMON_SOURCES
     src/common/mcp_socket_utils.c
     src/common/mcp_framing.c
     src/common/mcp_string_utils.c
+    src/common/mcp_thread_pool.c
     src/server/mcp_buffer_pool.c
-    src/server/mcp_thread_pool.c
     src/server/mcp_cache_optimized.c
     src/server/mcp_rate_limiter.c
     src/server/mcp_profiler.c
