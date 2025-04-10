@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(SupaMCPServer VERSION 1.0.0 LANGUAGES C)
 
-# Set C standard (C11 required for stdatomic.h)
-set(CMAKE_C_STANDARD 11)
+# Set C standard
+set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Add compiler flags

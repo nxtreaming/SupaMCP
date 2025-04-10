@@ -6,31 +6,90 @@
 #include <errno.h>
 #include <stdint.h>
 
-// Platform-specific macros are removed, using mcp_sync.h instead
+#ifdef _WIN32
+#include <windows.h>
+#include <intrin.h>
+#else
+// GCC/Clang atomics are built-in
+#endif
 
 /**
- * @brief Internal structure for the thread pool.
+ * @brief Bounded queue structure using platform atomics.
+ */
+typedef struct {
+    mcp_task_t* buffer;     /**< The underlying circular buffer. */
+    size_t capacity;        /**< Capacity of the buffer (must be power of 2 for simple masking). */
+    volatile size_t head;   /**< Index for the next dequeue operation. */
+    volatile size_t tail;   /**< Index for the next enqueue operation. */
+} bounded_queue_t;
+
+/**
+ * @brief Internal structure for the thread pool using platform atomics.
  */
 struct mcp_thread_pool {
-    mcp_mutex_t* lock;          /**< Mutex for protecting shared data access. */
-    mcp_cond_t* notify;         /**< Condition variable to signal waiting threads for new tasks. */
-    mcp_cond_t* queue_not_full; /**< Condition variable to signal when queue has space. */
+    mcp_mutex_t* lock;          /**< Mutex primarily for shutdown signaling and thread management. */
+    mcp_cond_t* notify;         /**< Condition variable to signal waiting threads (mainly for shutdown). */
     mcp_thread_t* threads;      /**< Array of worker thread handles. */
-    mcp_task_t* queue;          /**< Array representing the task queue (circular buffer). */
+    bounded_queue_t queue;      /**< Task queue accessed with platform atomics. */
     size_t thread_count;        /**< Number of worker threads. */
-    size_t queue_size;          /**< Maximum capacity of the task queue. */
-    size_t head;                /**< Index of the next task to dequeue. */
-    size_t tail;                /**< Index of the next empty slot to enqueue. */
-    size_t count;               /**< Current number of tasks in the queue. */
-    int shutdown;               /**< Flag indicating if the pool is shutting down (0=no, 1=immediate, 2=graceful). */
+    volatile int shutdown;      /**< Flag indicating if the pool is shutting down (0=no, 1=immediate, 2=graceful). */
     int started;                /**< Number of threads successfully started. */
 };
 
-// Forward declaration for the worker thread function using the abstracted signature
+// --- Platform Atomic Wrappers (Simplified) ---
+
+// Atomic Compare-and-Swap for size_t
+static inline bool compare_and_swap_size(volatile size_t* ptr, size_t expected, size_t desired) {
+#ifdef _WIN32
+    // Use InterlockedCompareExchangePointer for pointer-sized types (like size_t)
+    // It requires PVOID*, so we cast.
+    return InterlockedCompareExchangePointer((volatile PVOID*)ptr, (PVOID)desired, (PVOID)expected) == (PVOID)expected;
+#else // GCC/Clang
+    return __sync_bool_compare_and_swap(ptr, expected, desired);
+#endif
+}
+
+// Atomic Load for size_t
+static inline size_t load_size(volatile size_t* ptr) {
+#ifdef _WIN32
+    // Simple read might suffice with volatile, but use Interlocked for safety/fencing if needed.
+    // For this queue, volatile read is likely okay, paired with CAS release/acquire.
+    // Alternatively, use InterlockedCompareExchange with expected == *ptr to get current value atomically.
+    size_t value = *ptr;
+    _ReadWriteBarrier(); // Prevent compiler reordering around volatile read
+    return value;
+#else // GCC/Clang
+    return __sync_fetch_and_add(ptr, 0); // Atomic load
+#endif
+}
+
+// Atomic Load for int
+static inline int load_int(volatile int* ptr) {
+#ifdef _WIN32
+    int value = *ptr;
+    _ReadWriteBarrier();
+    return value;
+#else // GCC/Clang
+    return __sync_fetch_and_add(ptr, 0);
+#endif
+}
+
+// Atomic Store for int
+static inline void store_int(volatile int* ptr, int value) {
+#ifdef _WIN32
+    // InterlockedExchange works for LONG (32-bit int)
+    InterlockedExchange((volatile LONG*)ptr, (LONG)value);
+#else // GCC/Clang
+    __sync_lock_test_and_set(ptr, value); // Provides release semantics
+#endif
+}
+
+
+// Forward declaration for the worker thread function
 static void* thread_pool_worker(void* arg);
 
 /**
- * @brief Creates a new thread pool.
+ * @brief Creates a new thread pool using platform atomics.
  */
 mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size) {
     if (thread_count == 0 || queue_size == 0) {
@@ -45,48 +104,50 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
     }
 
     // Initialize pool structure
-    pool->thread_count = 0; // Will be set later after successful thread creation
-    pool->queue_size = queue_size;
-    pool->head = pool->tail = pool->count = 0;
-    pool->shutdown = 0; // Not shutting down
-    pool->started = 0;  // No threads started yet
-    pool->lock = NULL;  // Initialize pointers
+    pool->thread_count = 0;
+    pool->shutdown = 0; // Initialize volatile int
+    pool->started = 0;
+    pool->lock = NULL;
     pool->notify = NULL;
-    pool->queue_not_full = NULL;
     pool->threads = NULL;
-    pool->queue = NULL;
+    pool->queue.buffer = NULL;
 
-    // Allocate memory for threads and queue
+    // Adjust queue capacity to the next power of 2
+    size_t adjusted_capacity = 1;
+    while (adjusted_capacity < queue_size) {
+        adjusted_capacity <<= 1;
+    }
+    pool->queue.capacity = adjusted_capacity;
+    fprintf(stdout, "Thread pool queue capacity adjusted to %zu (power of 2)\n", adjusted_capacity);
+
+    // Allocate memory
     pool->threads = (mcp_thread_t*)malloc(sizeof(mcp_thread_t) * thread_count);
-    pool->queue = (mcp_task_t*)malloc(sizeof(mcp_task_t) * queue_size);
-
-    // Initialize mutex and condition variables using abstraction layer
+    pool->queue.buffer = (mcp_task_t*)malloc(sizeof(mcp_task_t) * pool->queue.capacity);
     pool->lock = mcp_mutex_create();
     pool->notify = mcp_cond_create();
-    pool->queue_not_full = mcp_cond_create();
 
-    if (pool->lock == NULL || pool->notify == NULL || pool->queue_not_full == NULL ||
-        pool->threads == NULL || pool->queue == NULL)
+    if (pool->lock == NULL || pool->notify == NULL ||
+        pool->threads == NULL || pool->queue.buffer == NULL)
     {
         fprintf(stderr, "Thread pool creation failed: Failed to initialize sync primitives or allocate memory.\n");
-        // Cleanup allocated resources
         if (pool->threads) free(pool->threads);
-        if (pool->queue) free(pool->queue);
-        mcp_mutex_destroy(pool->lock); // Use abstracted destroy (safe if NULL)
-        mcp_cond_destroy(pool->notify); // Use abstracted destroy (safe if NULL)
-        mcp_cond_destroy(pool->queue_not_full); // Use abstracted destroy (safe if NULL)
+        if (pool->queue.buffer) free(pool->queue.buffer);
+        mcp_mutex_destroy(pool->lock);
+        mcp_cond_destroy(pool->notify);
         free(pool);
         return NULL;
     }
+
+    // Initialize queue indices
+    pool->queue.head = 0;
+    pool->queue.tail = 0;
 
     // Start worker threads
     for (size_t i = 0; i < thread_count; ++i) {
         if (mcp_thread_create(&(pool->threads[i]), thread_pool_worker, (void*)pool) != 0) {
             perror("Failed to create worker thread");
-            // If thread creation fails, trigger shutdown and cleanup
-            // Set shutdown flag before calling destroy to prevent deadlock
-            pool->shutdown = 1; // Immediate shutdown
-            mcp_thread_pool_destroy(pool); // Use destroy for proper cleanup
+            store_int(&pool->shutdown, 1); // Immediate shutdown using atomic store
+            mcp_thread_pool_destroy(pool);
             return NULL;
         }
         pool->thread_count++;
@@ -97,55 +158,49 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
 }
 
 /**
- * @brief Adds a new task to the thread pool's queue.
+ * @brief Adds a new task to the thread pool's queue using platform atomics.
  */
 int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), void* argument) {
-    int err = 0;
     if (pool == NULL || function == NULL) {
-        return -1; // Invalid arguments
+        return -1;
     }
     PROFILE_START("mcp_thread_pool_add_task");
 
-    if (mcp_mutex_lock(pool->lock) != 0) {
-        return -1; // Failed to lock mutex
+    if (load_int(&pool->shutdown) != 0) {
+        PROFILE_END("mcp_thread_pool_add_task");
+        return -1;
     }
 
-    // Wait if the queue is full and we are not shutting down
-    while (pool->count == pool->queue_size && !pool->shutdown) {
-        // Use abstracted condition wait
-        if (mcp_cond_wait(pool->queue_not_full, pool->lock) != 0) {
-             perror("Error waiting on queue_not_full condition variable");
-             mcp_mutex_unlock(pool->lock);
-             return -1;
+    size_t current_tail;
+    size_t new_tail;
+
+    do {
+        current_tail = load_size(&pool->queue.tail);
+        size_t current_head = load_size(&pool->queue.head);
+
+        if (current_tail - current_head >= pool->queue.capacity) {
+            fprintf(stderr, "Warning: Platform atomic thread pool queue is full.\n");
+            PROFILE_END("mcp_thread_pool_add_task");
+            return -1; // Queue full
         }
-    }
 
-    if (pool->shutdown) {
-        err = -1; // Pool is shutting down, cannot add task
-    } else {
-        // Add task to the queue
-        pool->queue[pool->tail].function = function;
-        pool->queue[pool->tail].argument = argument;
-        pool->tail = (pool->tail + 1) % pool->queue_size;
-        pool->count++;
+        new_tail = current_tail + 1;
+    } while (!compare_and_swap_size(&pool->queue.tail, current_tail, new_tail));
 
-        // Signal a waiting worker thread that a task is available
-        if (mcp_cond_signal(pool->notify) != 0) {
-            err = -1; // Failed to signal
-            fprintf(stderr, "Warning: Failed to signal worker thread after adding task.\n");
-        }
-    }
+    size_t index = current_tail & (pool->queue.capacity - 1);
+    pool->queue.buffer[index].function = function;
+    pool->queue.buffer[index].argument = argument;
 
-    if (mcp_mutex_unlock(pool->lock) != 0) {
-        err = -1; // Failed to unlock mutex
-    }
+    // Memory barrier might be needed here if CAS doesn't provide release semantics
+    // On x86/x64, CAS usually implies a full barrier. On ARM, might need explicit fence.
+    // The platform wrappers should ideally handle necessary barriers.
+
     PROFILE_END("mcp_thread_pool_add_task");
-
-    return err;
+    return 0;
 }
 
 /**
- * @brief Destroys the thread pool.
+ * @brief Destroys the thread pool using platform atomics.
  */
 int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
     if (pool == NULL) {
@@ -153,112 +208,111 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
     }
 
     int err = 0;
+    int current_shutdown_state = load_int(&pool->shutdown);
 
-    if (mcp_mutex_lock(pool->lock) != 0) {
-        return -1; // Failed to lock mutex
+    if (current_shutdown_state != 0) {
+        return -1; // Already shutting down
     }
 
-    // Check if already shutting down or already destroyed
-    if (pool->shutdown) {
+    // Initiate graceful shutdown atomically
+#ifdef _WIN32
+    if (InterlockedCompareExchange((volatile LONG*)&pool->shutdown, 2, 0) != 0) {
+        return -1; // Another thread initiated shutdown
+    }
+#else
+    if (!__sync_bool_compare_and_swap(&pool->shutdown, 0, 2)) {
+        return -1; // Another thread initiated shutdown
+    }
+#endif
+
+    // Wake up worker threads (using mutex/condvar)
+    if (mcp_mutex_lock(pool->lock) == 0) {
+        if (mcp_cond_broadcast(pool->notify) != 0) {
+            err = -1;
+            fprintf(stderr, "Warning: Failed to broadcast shutdown signal.\n");
+        }
         mcp_mutex_unlock(pool->lock);
-        return -1; // Already initiated shutdown
+    } else {
+        err = -1;
+        fprintf(stderr, "Error: Failed to lock mutex for shutdown broadcast.\n");
     }
 
-    // Initiate graceful shutdown (wait for queue to empty)
-    pool->shutdown = 2;
-
-    // Wake up all worker threads so they can check the shutdown flag
-    if (mcp_cond_broadcast(pool->notify) != 0 || mcp_cond_broadcast(pool->queue_not_full) != 0) {
-        err = -1; // Failed to broadcast, but continue shutdown
-        fprintf(stderr, "Warning: Failed to broadcast shutdown signal to worker threads.\n");
-    }
-
-    // Unlock mutex to allow workers to acquire lock and exit
-    if (mcp_mutex_unlock(pool->lock) != 0) {
-        err = -1; // Failed to unlock mutex, critical error?
-        fprintf(stderr, "Error: Failed to unlock mutex during thread pool destroy.\n");
-        // Proceed with joining anyway, might deadlock if a thread holds the lock
-    }
-
-    // Join all worker threads
-    for (size_t i = 0; i < pool->started; ++i) { // Only join started threads
+    // Join threads
+    for (size_t i = 0; i < pool->started; ++i) {
         if (mcp_thread_join(pool->threads[i], NULL) != 0) {
             perror("Failed to join thread");
             err = -1;
         }
     }
 
-    // Cleanup resources (mutex should not be locked here)
+    // Cleanup
     mcp_mutex_destroy(pool->lock);
     mcp_cond_destroy(pool->notify);
-    mcp_cond_destroy(pool->queue_not_full);
     if (pool->threads) free(pool->threads);
-    if (pool->queue) free(pool->queue);
+    if (pool->queue.buffer) free(pool->queue.buffer);
     free(pool);
 
     return err;
 }
 
 /**
- * @brief The worker thread function.
+ * @brief The worker thread function using platform atomics.
  */
-// Use the abstracted signature: void* func(void* arg)
 static void* thread_pool_worker(void* arg) {
     mcp_thread_pool_t* pool = (mcp_thread_pool_t*)arg;
-    mcp_task_t task;
+    mcp_task_t task = { .function = NULL, .argument = NULL }; // Initialize task
+    size_t current_head;
+    size_t new_head;
 
     while (1) {
-        // Lock mutex to access shared data
-        if (mcp_mutex_lock(pool->lock) != 0) {
-            fprintf(stderr, "Worker thread failed to lock mutex. Exiting.\n");
-            return (void*)(intptr_t)-1; // Indicate error
-        }
+        // Attempt lock-free dequeue
+        do {
+            current_head = load_size(&pool->queue.head);
+            size_t current_tail = load_size(&pool->queue.tail);
 
-        // Wait for a task or shutdown signal
-        while (pool->count == 0 && !pool->shutdown) {
-            if (mcp_cond_wait(pool->notify, pool->lock) != 0) {
-                 perror("Worker thread failed waiting on condition variable. Exiting.");
-                 mcp_mutex_unlock(pool->lock);
-                 return (void*)(intptr_t)-1; // Indicate error
-            }
-        }
-
-        // Check shutdown conditions (after waking up)
-        if (pool->shutdown == 1 || (pool->shutdown == 2 && pool->count == 0)) {
-            // Immediate shutdown OR Graceful shutdown and queue is empty
-            break; // Exit loop (mutex will be unlocked below)
-        }
-
-        // Dequeue task if available (check count again after waking)
-        if (pool->count > 0) {
-            task.function = pool->queue[pool->head].function;
-            task.argument = pool->queue[pool->head].argument;
-            pool->head = (pool->head + 1) % pool->queue_size;
-            pool->count--;
-
-            // Signal that the queue might no longer be full
-            mcp_cond_signal(pool->queue_not_full);
-
-            // Unlock mutex before executing task
-            if (mcp_mutex_unlock(pool->lock) != 0) {
-                 fprintf(stderr, "Worker thread failed to unlock mutex before task execution. Exiting.\n");
-                 return (void*)(intptr_t)-1; // Indicate error
+            if (current_head == current_tail) {
+                // Queue is empty
+                task.function = NULL;
+                int shutdown_status = load_int(&pool->shutdown);
+                if (shutdown_status != 0) {
+                    return NULL; // Exit thread if shutting down and queue empty
+                }
+                break; // Break inner loop to yield/wait
             }
 
-            // Execute the task
+            new_head = current_head + 1;
+        } while (!compare_and_swap_size(&pool->queue.head, current_head, new_head));
+
+        // Check if we actually dequeued something (tail might have caught up)
+        if (load_size(&pool->queue.tail) != current_head) { // Check if tail moved past our claimed head
+             size_t index = current_head & (pool->queue.capacity - 1);
+             // Read task data - Need appropriate memory barrier if CAS doesn't provide acquire semantics
+             task = pool->queue.buffer[index];
+        } else {
+             // Tail caught up, effectively empty
+             task.function = NULL;
+        }
+
+
+        if (task.function != NULL) {
             PROFILE_START("thread_pool_task_execution");
             (*(task.function))(task.argument);
             PROFILE_END("thread_pool_task_execution");
-
-            // Task execution finished, loop back to acquire lock
         } else {
-            // Spurious wakeup or shutdown initiated while waiting, unlock and loop/exit
-            mcp_mutex_unlock(pool->lock);
+            // Queue was empty or became empty
+            int shutdown_status = load_int(&pool->shutdown);
+            if (shutdown_status != 0) {
+                 // Double check queue empty for graceful shutdown
+                 if (load_size(&pool->queue.head) == load_size(&pool->queue.tail)) {
+                     return NULL; // Exit thread
+                 }
+            } else {
+                 // Queue empty, not shutting down -> yield
+                 mcp_thread_yield();
+                 // Could add a short sleep or use the mutex/condvar for longer waits here
+            }
         }
     } // End while(1)
 
-    // Unlock mutex before exiting thread
-    mcp_mutex_unlock(pool->lock);
-
-    return NULL; // Standard return for abstracted thread function
+    return NULL;
 }

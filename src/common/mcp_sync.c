@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/time.h>
+#include <sched.h>
 #endif
 
 // --- Internal Structures ---
@@ -239,3 +240,13 @@ int mcp_thread_join(mcp_thread_t thread_handle, void** retval) {
 #endif
 }
 
+/**
+ * @brief Yields the execution of the current thread.
+ */
+void mcp_thread_yield(void) {
+#ifdef _WIN32
+    SwitchToThread(); // Allows another ready thread on the same processor to run
+#else
+    sched_yield();    // Yields processor to another thread
+#endif
+}

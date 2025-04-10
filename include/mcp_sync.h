@@ -121,6 +121,11 @@ int mcp_thread_create(mcp_thread_t* thread_handle, mcp_thread_func_t start_routi
  */
 int mcp_thread_join(mcp_thread_t thread_handle, void** retval);
 
+/**
+ * @brief Yields the execution of the current thread, allowing other threads to run.
+ */
+void mcp_thread_yield(void);
+
 // --- Sleep ---
 
 /**
