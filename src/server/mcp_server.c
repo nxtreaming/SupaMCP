@@ -76,6 +76,9 @@ mcp_server_t* mcp_server_create(
     // Initialize other fields (already zeroed by calloc)
     server->is_gateway_mode = false; // Explicitly set default
     server->pool_manager = NULL; // Initialize gateway pool manager to NULL
+    server->resources_table = NULL;
+    server->resource_templates_table = NULL;
+    server->tools_table = NULL;
 
     // Create the thread pool using the final determined values
     server->thread_pool = mcp_thread_pool_create(server->config.thread_pool_size, server->config.task_queue_size);
@@ -113,6 +116,28 @@ mcp_server_t* mcp_server_create(
         goto create_error_cleanup;
     }
 
+    // --- Create Hash Tables ---
+    // Resources Table (Key: URI string, Value: mcp_resource_t*)
+    server->resources_table = mcp_hashtable_create(16, 0.75f, mcp_hashtable_string_hash, mcp_hashtable_string_compare, mcp_hashtable_string_dup, mcp_hashtable_string_free, (mcp_value_free_func_t)mcp_resource_free);
+    if (server->resources_table == NULL) {
+        mcp_log_error("Failed to create resources hash table.");
+        goto create_error_cleanup;
+    }
+
+    // Resource Templates Table (Key: URI Template string, Value: mcp_resource_template_t*)
+    server->resource_templates_table = mcp_hashtable_create(16, 0.75f, mcp_hashtable_string_hash, mcp_hashtable_string_compare, mcp_hashtable_string_dup, mcp_hashtable_string_free, (mcp_value_free_func_t)mcp_resource_template_free);
+    if (server->resource_templates_table == NULL) {
+        mcp_log_error("Failed to create resource templates hash table.");
+        goto create_error_cleanup;
+    }
+
+    // Tools Table (Key: Tool Name string, Value: mcp_tool_t*)
+    server->tools_table = mcp_hashtable_create(16, 0.75f, mcp_hashtable_string_hash, mcp_hashtable_string_compare, mcp_hashtable_string_dup, mcp_hashtable_string_free, (mcp_value_free_func_t)mcp_tool_free);
+    if (server->tools_table == NULL) {
+        mcp_log_error("Failed to create tools hash table.");
+        goto create_error_cleanup;
+    }
+    // --- End Hash Table Creation ---
 
     return server;
 
@@ -271,33 +296,22 @@ void mcp_server_destroy(mcp_server_t* server) {
     server->backends = NULL; // Reset pointer
     server->backend_count = 0; // Reset count
 
-    // Free dynamically allocated resource/template/tool lists and their contents
-    for (size_t i = 0; i < server->resource_count; i++) {
-        mcp_resource_free(server->resources[i]);
+    // Destroy hash tables (this will call the appropriate free functions for keys and values)
+    if (server->resources_table) {
+        mcp_hashtable_destroy(server->resources_table);
+        server->resources_table = NULL;
     }
-    free(server->resources);
-    server->resources = NULL; // Reset pointer
-    server->resource_count = 0;
-    server->resource_capacity = 0;
-
-    for (size_t i = 0; i < server->resource_template_count; i++) {
-        mcp_resource_template_free(server->resource_templates[i]);
+    if (server->resource_templates_table) {
+        mcp_hashtable_destroy(server->resource_templates_table);
+        server->resource_templates_table = NULL;
     }
-    free(server->resource_templates);
-    server->resource_templates = NULL; // Reset pointer
-    server->resource_template_count = 0;
-    server->resource_template_capacity = 0;
-
-    for (size_t i = 0; i < server->tool_count; i++) {
-        mcp_tool_free(server->tools[i]);
+    if (server->tools_table) {
+        mcp_hashtable_destroy(server->tools_table);
+        server->tools_table = NULL;
     }
-    free(server->tools);
-    server->tools = NULL; // Reset pointer
-    server->tool_count = 0;
-    server->tool_capacity = 0;
 
-    // Destroy components
-    if (server->pool_manager) { // Added destroy call
+    // Destroy other components
+    if (server->pool_manager) {
         gateway_pool_manager_destroy(server->pool_manager);
         server->pool_manager = NULL;
     }
@@ -350,21 +364,23 @@ int mcp_server_add_resource(
     mcp_server_t* server,
     const mcp_resource_t* resource
 ) {
-    if (server == NULL || resource == NULL || !server->capabilities.resources_supported) {
+    if (server == NULL || resource == NULL || resource->uri == NULL || !server->capabilities.resources_supported) {
         return -1;
     }
-    if (server->resource_count >= server->resource_capacity) {
-        size_t new_capacity = server->resource_capacity == 0 ? 8 : server->resource_capacity * 2;
-        mcp_resource_t** new_resources = (mcp_resource_t**)realloc(server->resources, new_capacity * sizeof(mcp_resource_t*));
-        if (new_resources == NULL) return -1;
-        server->resources = new_resources;
-        server->resource_capacity = new_capacity;
-    }
-    // Use the create function to make a deep copy
+    // Create a deep copy first, as the hashtable takes ownership
     mcp_resource_t* resource_copy = mcp_resource_create(resource->uri, resource->name, resource->mime_type, resource->description);
-    if (resource_copy == NULL) return -1;
-    server->resources[server->resource_count++] = resource_copy;
-    return 0;
+    if (resource_copy == NULL) {
+        return -1; // Allocation failed
+    }
+    // Add the copy to the hash table (key is resource URI)
+    // mcp_hashtable_put handles replacing existing entry if URI matches
+    int result = mcp_hashtable_put(server->resources_table, resource_copy->uri, resource_copy);
+    if (result != 0) {
+        mcp_log_error("Failed to add resource '%s' to hash table.", resource_copy->uri);
+        mcp_resource_free(resource_copy); // Free the copy if put failed
+        return -1;
+    }
+    return 0; // Success
 }
 
 // Uses malloc for template copy
@@ -372,21 +388,22 @@ int mcp_server_add_resource_template(
     mcp_server_t* server,
     const mcp_resource_template_t* tmpl
 ) {
-    if (server == NULL || tmpl == NULL || !server->capabilities.resources_supported) {
+    if (server == NULL || tmpl == NULL || tmpl->uri_template == NULL || !server->capabilities.resources_supported) {
         return -1;
     }
-     if (server->resource_template_count >= server->resource_template_capacity) {
-        size_t new_capacity = server->resource_template_capacity == 0 ? 8 : server->resource_template_capacity * 2;
-        mcp_resource_template_t** new_templates = (mcp_resource_template_t**)realloc(server->resource_templates, new_capacity * sizeof(mcp_resource_template_t*));
-        if (new_templates == NULL) return -1;
-        server->resource_templates = new_templates;
-        server->resource_template_capacity = new_capacity;
-    }
-    // Use the create function to make a deep copy
+    // Create a deep copy first
     mcp_resource_template_t* template_copy = mcp_resource_template_create(tmpl->uri_template, tmpl->name, tmpl->mime_type, tmpl->description);
-    if (template_copy == NULL) return -1;
-    server->resource_templates[server->resource_template_count++] = template_copy;
-    return 0;
+    if (template_copy == NULL) {
+        return -1; // Allocation failed
+    }
+    // Add the copy to the hash table (key is URI template)
+    int result = mcp_hashtable_put(server->resource_templates_table, template_copy->uri_template, template_copy);
+    if (result != 0) {
+        mcp_log_error("Failed to add resource template '%s' to hash table.", template_copy->uri_template);
+        mcp_resource_template_free(template_copy); // Free the copy if put failed
+        return -1;
+    }
+    return 0; // Success
 }
 
 // Uses malloc for tool copy
@@ -394,17 +411,10 @@ int mcp_server_add_tool(
     mcp_server_t* server,
     const mcp_tool_t* tool
 ) {
-    if (server == NULL || tool == NULL || !server->capabilities.tools_supported) {
+    if (server == NULL || tool == NULL || tool->name == NULL || !server->capabilities.tools_supported) {
         return -1;
     }
-    if (server->tool_count >= server->tool_capacity) {
-        size_t new_capacity = server->tool_capacity == 0 ? 8 : server->tool_capacity * 2;
-        mcp_tool_t** new_tools = (mcp_tool_t**)realloc(server->tools, new_capacity * sizeof(mcp_tool_t*));
-        if (new_tools == NULL) return -1;
-        server->tools = new_tools;
-        server->tool_capacity = new_capacity;
-    }
-    // Use the create function and add_param to make a deep copy
+    // Create a deep copy first
     mcp_tool_t* tool_copy = mcp_tool_create(tool->name, tool->description);
     if (tool_copy == NULL) return -1;
     // Copy parameters
@@ -418,8 +428,14 @@ int mcp_server_add_tool(
             return -1;
         }
     }
-    server->tools[server->tool_count++] = tool_copy;
-    return 0;
+    // Add the copy to the hash table (key is tool name)
+    int result = mcp_hashtable_put(server->tools_table, tool_copy->name, tool_copy);
+    if (result != 0) {
+        mcp_log_error("Failed to add tool '%s' to hash table.", tool_copy->name);
+        mcp_tool_free(tool_copy); // Free the copy if put failed
+        return -1;
+    }
+    return 0; // Success
 }
 
 // --- Deprecated Function ---

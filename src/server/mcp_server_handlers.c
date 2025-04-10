@@ -6,6 +6,33 @@
 
 // --- Internal Request Handler Implementations ---
 
+// Context struct for list callbacks
+typedef struct {
+    mcp_json_t* json_array;
+    bool error_occurred;
+} list_context_t;
+
+// Callback to add resource info to JSON array
+static void list_resource_callback(const void* key, void* value, void* user_data) {
+    (void)key; // Key (URI) is not needed directly in the output object
+    list_context_t* ctx = (list_context_t*)user_data;
+    if (ctx->error_occurred) return;
+
+    mcp_resource_t* resource = (mcp_resource_t*)value;
+    mcp_json_t* res_obj = mcp_json_object_create(); // Uses arena
+
+    if (!res_obj ||
+        (resource->uri && mcp_json_object_set_property(res_obj, "uri", mcp_json_string_create(resource->uri)) != 0) ||
+        (resource->name && mcp_json_object_set_property(res_obj, "name", mcp_json_string_create(resource->name)) != 0) ||
+        (resource->mime_type && mcp_json_object_set_property(res_obj, "mimeType", mcp_json_string_create(resource->mime_type)) != 0) ||
+        (resource->description && mcp_json_object_set_property(res_obj, "description", mcp_json_string_create(resource->description)) != 0) ||
+        mcp_json_array_add_item(ctx->json_array, res_obj) != 0)
+    {
+        mcp_json_destroy(res_obj); // Cleanup partially created object
+        ctx->error_occurred = true;
+    }
+}
+
 /**
  * @internal
  * @brief Handles the 'list_resources' request.
@@ -28,14 +55,8 @@ char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, co
         return response;
     }
 
-    // Permission Check (Optional for list, but good practice)
-    // For listing, we might check a general permission like "list_resources"
-    // if (!mcp_auth_check_general_permission(auth_context, "list_resources")) {
-    //     *error_code = MCP_ERROR_FORBIDDEN;
-    //     char* response = create_error_response(request->id, *error_code, "Permission denied to list resources");
-    //     PROFILE_END("handle_list_resources");
-    //     return response;
-    // }
+    // Permission Check (Optional for list)
+    // if (!mcp_auth_check_general_permission(auth_context, "list_resources")) { ... }
 
     mcp_json_t* resources_json = mcp_json_array_create();
     if (!resources_json) {
@@ -45,24 +66,14 @@ char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, co
         return response;
     }
 
-    bool build_error = false;
-    for (size_t i = 0; i < server->resource_count; i++) {
-        mcp_resource_t* resource = server->resources[i];
-        mcp_json_t* res_obj = mcp_json_object_create();
-        if (!res_obj ||
-            (resource->uri && mcp_json_object_set_property(res_obj, "uri", mcp_json_string_create(resource->uri)) != 0) ||
-            (resource->name && mcp_json_object_set_property(res_obj, "name", mcp_json_string_create(resource->name)) != 0) ||
-            (resource->mime_type && mcp_json_object_set_property(res_obj, "mimeType", mcp_json_string_create(resource->mime_type)) != 0) ||
-            (resource->description && mcp_json_object_set_property(res_obj, "description", mcp_json_string_create(resource->description)) != 0) ||
-            mcp_json_array_add_item(resources_json, res_obj) != 0)
-        {
-            mcp_json_destroy(res_obj);
-            build_error = true;
-            break;
-        }
+    list_context_t context = { .json_array = resources_json, .error_occurred = false };
+
+    // Iterate through the resources hash table
+    if (server->resources_table) { // Check if table exists
+        mcp_hashtable_foreach(server->resources_table, list_resource_callback, &context);
     }
 
-    if (build_error) {
+    if (context.error_occurred) {
         mcp_json_destroy(resources_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to build resource JSON");
@@ -92,6 +103,27 @@ char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, co
     char* response = create_success_response(request->id, result_str);
     PROFILE_END("handle_list_resources");
     return response;
+}
+
+// Callback to add template info to JSON array
+static void list_template_callback(const void* key, void* value, void* user_data) {
+    (void)key; // Key (URI template) is not needed directly in the output object
+    list_context_t* ctx = (list_context_t*)user_data;
+    if (ctx->error_occurred) return;
+
+    mcp_resource_template_t* tmpl = (mcp_resource_template_t*)value;
+    mcp_json_t* tmpl_obj = mcp_json_object_create(); // Uses arena
+
+    if (!tmpl_obj ||
+        (tmpl->uri_template && mcp_json_object_set_property(tmpl_obj, "uriTemplate", mcp_json_string_create(tmpl->uri_template)) != 0) ||
+        (tmpl->name && mcp_json_object_set_property(tmpl_obj, "name", mcp_json_string_create(tmpl->name)) != 0) ||
+        (tmpl->mime_type && mcp_json_object_set_property(tmpl_obj, "mimeType", mcp_json_string_create(tmpl->mime_type)) != 0) ||
+        (tmpl->description && mcp_json_object_set_property(tmpl_obj, "description", mcp_json_string_create(tmpl->description)) != 0) ||
+        mcp_json_array_add_item(ctx->json_array, tmpl_obj) != 0)
+    {
+        mcp_json_destroy(tmpl_obj); // Cleanup partially created object
+        ctx->error_occurred = true;
+    }
 }
 
 /**
@@ -127,24 +159,14 @@ char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* 
          return response;
      }
 
-    bool build_error = false;
-    for (size_t i = 0; i < server->resource_template_count; i++) {
-        mcp_resource_template_t* tmpl = server->resource_templates[i];
-        mcp_json_t* tmpl_obj = mcp_json_object_create();
-        if (!tmpl_obj ||
-            (tmpl->uri_template && mcp_json_object_set_property(tmpl_obj, "uriTemplate", mcp_json_string_create(tmpl->uri_template)) != 0) ||
-            (tmpl->name && mcp_json_object_set_property(tmpl_obj, "name", mcp_json_string_create(tmpl->name)) != 0) ||
-            (tmpl->mime_type && mcp_json_object_set_property(tmpl_obj, "mimeType", mcp_json_string_create(tmpl->mime_type)) != 0) ||
-            (tmpl->description && mcp_json_object_set_property(tmpl_obj, "description", mcp_json_string_create(tmpl->description)) != 0) ||
-            mcp_json_array_add_item(templates_json, tmpl_obj) != 0)
-        {
-            mcp_json_destroy(tmpl_obj);
-            build_error = true;
-            break;
-        }
+    list_context_t context = { .json_array = templates_json, .error_occurred = false };
+
+    // Iterate through the resource templates hash table
+    if (server->resource_templates_table) { // Check if table exists
+        mcp_hashtable_foreach(server->resource_templates_table, list_template_callback, &context);
     }
 
-    if (build_error) {
+    if (context.error_occurred) {
         mcp_json_destroy(templates_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to build template JSON");
@@ -235,7 +257,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     mcp_content_item_t** content_items = NULL;
     size_t content_count = 0;
     bool fetched_from_handler = false;
- 
+
     // 1. Check cache first
     if (server->resource_cache != NULL) {
         if (mcp_cache_get(server->resource_cache, uri, &content_items, &content_count) == 0) {
@@ -291,9 +313,22 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
             }
             fetched_from_handler = true;
         } else {
+             // Check if resource exists in static list (hashtable)
+             void* resource_ptr = NULL;
+             if (!server->resources_table || mcp_hashtable_get(server->resources_table, uri, &resource_ptr) != 0) { // Check table exists & use hashtable_get
+                 // Not found in static list either
+                 mcp_json_destroy(params_json);
+                 *error_code = MCP_ERROR_RESOURCE_NOT_FOUND; // More specific error
+                 char* response = create_error_response(request->id, *error_code, "Resource not found and no handler configured");
+                 PROFILE_END("handle_read_resource");
+                 return response;
+             }
+             // Resource found in static list, but no handler to generate content.
+             // This case might indicate an error or simply that the resource has no dynamic content.
+             // For now, return an error indicating no handler.
              mcp_json_destroy(params_json);
              *error_code = MCP_ERROR_INTERNAL_ERROR;
-             char* response = create_error_response(request->id, *error_code, "Resource handler not configured");
+             char* response = create_error_response(request->id, *error_code, "Resource found but no handler configured to read content");
              PROFILE_END("handle_read_resource");
              return response;
         }
@@ -380,6 +415,83 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     return response;
 }
 
+// Callback to add tool info to JSON array
+static void list_tool_callback(const void* key, void* value, void* user_data) {
+    (void)key; // Key (tool name) is part of the value object
+    list_context_t* ctx = (list_context_t*)user_data;
+    if (ctx->error_occurred) return;
+
+    mcp_tool_t* tool = (mcp_tool_t*)value;
+    mcp_json_t* tool_obj = mcp_json_object_create(); // Uses arena
+    mcp_json_t* schema_obj = NULL;
+    mcp_json_t* props_obj = NULL;
+    mcp_json_t* req_arr = NULL;
+    bool json_build_error = false; // Local flag for this callback instance
+
+    if (!tool_obj || mcp_json_object_set_property(tool_obj, "name", mcp_json_string_create(tool->name)) != 0 ||
+        (tool->description && mcp_json_object_set_property(tool_obj, "description", mcp_json_string_create(tool->description)) != 0))
+    {
+        json_build_error = true; goto tool_callback_cleanup;
+    }
+
+    if (tool->input_schema_count > 0) {
+        schema_obj = mcp_json_object_create();
+        props_obj = mcp_json_object_create();
+        req_arr = mcp_json_array_create();
+        if (!schema_obj || !props_obj || !req_arr ||
+            mcp_json_object_set_property(schema_obj, "type", mcp_json_string_create("object")) != 0 ||
+            mcp_json_object_set_property(schema_obj, "properties", props_obj) != 0)
+        {
+             json_build_error = true; goto tool_callback_cleanup;
+        }
+
+        for (size_t j = 0; j < tool->input_schema_count; j++) {
+            mcp_tool_param_schema_t* param = &tool->input_schema[j];
+            mcp_json_t* param_obj = mcp_json_object_create();
+             if (!param_obj ||
+                mcp_json_object_set_property(param_obj, "type", mcp_json_string_create(param->type)) != 0 ||
+                (param->description && mcp_json_object_set_property(param_obj, "description", mcp_json_string_create(param->description)) != 0) ||
+                mcp_json_object_set_property(props_obj, param->name, param_obj) != 0)
+             {
+                 mcp_json_destroy(param_obj);
+                 json_build_error = true; goto tool_callback_cleanup;
+             }
+
+             if (param->required) {
+                 mcp_json_t* name_str = mcp_json_string_create(param->name);
+                 if (!name_str || mcp_json_array_add_item(req_arr, name_str) != 0) {
+                     mcp_json_destroy(name_str);
+                     json_build_error = true; goto tool_callback_cleanup;
+                 }
+             }
+        }
+
+        if (mcp_json_array_get_size(req_arr) > 0) {
+            if (mcp_json_object_set_property(schema_obj, "required", req_arr) != 0) {
+                 json_build_error = true; goto tool_callback_cleanup;
+            }
+        } else {
+            mcp_json_destroy(req_arr);
+            req_arr = NULL;
+        }
+
+         if (mcp_json_object_set_property(tool_obj, "inputSchema", schema_obj) != 0) {
+             json_build_error = true; goto tool_callback_cleanup;
+         }
+    }
+
+    if (mcp_json_array_add_item(ctx->json_array, tool_obj) != 0) {
+         json_build_error = true; goto tool_callback_cleanup;
+    }
+    return; // Success for this item
+
+tool_callback_cleanup:
+    mcp_json_destroy(req_arr);
+    mcp_json_destroy(schema_obj); // props_obj is part of schema_obj
+    mcp_json_destroy(tool_obj);
+    ctx->error_occurred = true; // Signal error occurred
+}
+
 /**
  * @internal
  * @brief Handles the 'list_tools' request.
@@ -413,79 +525,14 @@ char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const 
         return response;
     }
 
-    bool json_build_error = false;
-    for (size_t i = 0; i < server->tool_count; i++) {
-        mcp_tool_t* tool = server->tools[i];
-        mcp_json_t* tool_obj = mcp_json_object_create();
-        mcp_json_t* schema_obj = NULL;
-        mcp_json_t* props_obj = NULL;
-        mcp_json_t* req_arr = NULL;
+    list_context_t context = { .json_array = tools_json, .error_occurred = false };
 
-        if (!tool_obj || mcp_json_object_set_property(tool_obj, "name", mcp_json_string_create(tool->name)) != 0 ||
-            (tool->description && mcp_json_object_set_property(tool_obj, "description", mcp_json_string_create(tool->description)) != 0))
-        {
-            json_build_error = true; goto tool_loop_cleanup;
-        }
-
-        if (tool->input_schema_count > 0) {
-            schema_obj = mcp_json_object_create();
-            props_obj = mcp_json_object_create();
-            req_arr = mcp_json_array_create();
-            if (!schema_obj || !props_obj || !req_arr ||
-                mcp_json_object_set_property(schema_obj, "type", mcp_json_string_create("object")) != 0 ||
-                mcp_json_object_set_property(schema_obj, "properties", props_obj) != 0)
-            {
-                 json_build_error = true; goto tool_loop_cleanup;
-            }
-
-            for (size_t j = 0; j < tool->input_schema_count; j++) {
-                mcp_tool_param_schema_t* param = &tool->input_schema[j];
-                mcp_json_t* param_obj = mcp_json_object_create();
-                 if (!param_obj ||
-                    mcp_json_object_set_property(param_obj, "type", mcp_json_string_create(param->type)) != 0 ||
-                    (param->description && mcp_json_object_set_property(param_obj, "description", mcp_json_string_create(param->description)) != 0) ||
-                    mcp_json_object_set_property(props_obj, param->name, param_obj) != 0)
-                 {
-                     mcp_json_destroy(param_obj);
-                     json_build_error = true; goto tool_loop_cleanup;
-                 }
-
-                 if (param->required) {
-                     mcp_json_t* name_str = mcp_json_string_create(param->name);
-                     if (!name_str || mcp_json_array_add_item(req_arr, name_str) != 0) {
-                         mcp_json_destroy(name_str);
-                         json_build_error = true; goto tool_loop_cleanup;
-                     }
-                 }
-            }
-
-            if (mcp_json_array_get_size(req_arr) > 0) {
-                if (mcp_json_object_set_property(schema_obj, "required", req_arr) != 0) {
-                     json_build_error = true; goto tool_loop_cleanup;
-                }
-            } else {
-                mcp_json_destroy(req_arr);
-                req_arr = NULL;
-            }
-
-             if (mcp_json_object_set_property(tool_obj, "inputSchema", schema_obj) != 0) {
-                 json_build_error = true; goto tool_loop_cleanup;
-             }
-        }
-
-        if (mcp_json_array_add_item(tools_json, tool_obj) != 0) {
-             json_build_error = true; goto tool_loop_cleanup;
-        }
-        continue;
-
-    tool_loop_cleanup:
-        mcp_json_destroy(req_arr);
-        mcp_json_destroy(schema_obj);
-        mcp_json_destroy(tool_obj);
-        if (json_build_error) break;
+    // Iterate through the tools hash table
+    if (server->tools_table) { // Check if table exists
+        mcp_hashtable_foreach(server->tools_table, list_tool_callback, &context);
     }
 
-    if (json_build_error) {
+    if (context.error_occurred) {
         mcp_json_destroy(tools_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to build tool JSON");

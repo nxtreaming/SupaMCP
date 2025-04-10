@@ -246,28 +246,44 @@ void test_server_resource_management(void) {
     TEST_ASSERT_EQUAL_INT(0, mcp_server_add_resource(server, r1));
     TEST_ASSERT_EQUAL_INT(0, mcp_server_add_resource(server, r2));
     
-    // Test finding resources
-    const mcp_resource_t* found = mcp_server_find_resource(server, "test://resource1");
+    // Test finding resources using hashtable API
+    void* found_ptr = NULL;
+    TEST_ASSERT_EQUAL_INT(0, mcp_hashtable_get(server->resources_table, "test://resource1", &found_ptr));
+    const mcp_resource_t* found = (const mcp_resource_t*)found_ptr;
     TEST_ASSERT_NOT_NULL(found);
     TEST_ASSERT_EQUAL_STRING("Resource 1", found->name);
     TEST_ASSERT_EQUAL_STRING("text/plain", found->mime_type);
     TEST_ASSERT_EQUAL_STRING("Description 1", found->description);
     
-    found = mcp_server_find_resource(server, "test://resource2");
+    found_ptr = NULL;
+    TEST_ASSERT_EQUAL_INT(0, mcp_hashtable_get(server->resources_table, "test://resource2", &found_ptr));
+    found = (const mcp_resource_t*)found_ptr;
     TEST_ASSERT_NOT_NULL(found);
     TEST_ASSERT_EQUAL_STRING("Resource 2", found->name);
     TEST_ASSERT_NULL(found->mime_type);
     TEST_ASSERT_NULL(found->description);
     
     // Test duplicate resource
-    TEST_ASSERT_NOT_EQUAL(0, mcp_server_add_resource(server, r1));
-    
-    // Test removing resources
-    TEST_ASSERT_EQUAL_INT(0, mcp_server_remove_resource(server, "test://resource1"));
-    TEST_ASSERT_NULL(mcp_server_find_resource(server, "test://resource1"));
-    
+    // Test duplicate resource (mcp_hashtable_put should handle update, return 0)
+    // We need to create a new resource object to put, as the old one was freed by add_resource
+    mcp_resource_t* r1_dup = mcp_resource_create("test://resource1", "Resource 1 Dup", NULL, NULL);
+    TEST_ASSERT_EQUAL_INT(0, mcp_server_add_resource(server, r1_dup)); // Should update existing
+    mcp_resource_free(r1_dup); // Free the temporary duplicate
+    // Verify update (optional)
+    found_ptr = NULL;
+    TEST_ASSERT_EQUAL_INT(0, mcp_hashtable_get(server->resources_table, "test://resource1", &found_ptr));
+    found = (const mcp_resource_t*)found_ptr;
+    TEST_ASSERT_EQUAL_STRING("Resource 1 Dup", found->name);
+
+
+    // Test removing resources using hashtable API
+    TEST_ASSERT_EQUAL_INT(0, mcp_hashtable_remove(server->resources_table, "test://resource1"));
+    found_ptr = NULL;
+    TEST_ASSERT_NOT_EQUAL(0, mcp_hashtable_get(server->resources_table, "test://resource1", &found_ptr)); // Should not be found
+    TEST_ASSERT_NULL(found_ptr);
+
     // Test removing nonexistent resource
-    TEST_ASSERT_NOT_EQUAL(0, mcp_server_remove_resource(server, "test://nonexistent"));
+    TEST_ASSERT_NOT_EQUAL(0, mcp_hashtable_remove(server->resources_table, "test://nonexistent"));
     
     mcp_resource_free(r1);
     mcp_resource_free(r2);
@@ -301,30 +317,43 @@ void test_server_tool_management(void) {
     TEST_ASSERT_EQUAL_INT(0, mcp_server_add_tool(server, t1));
     TEST_ASSERT_EQUAL_INT(0, mcp_server_add_tool(server, t2));
     
-    // Test finding tools
-    const mcp_tool_t* found = mcp_server_find_tool(server, "echo");
+    // Test finding tools using hashtable API
+    void* found_ptr = NULL;
+    TEST_ASSERT_EQUAL_INT(0, mcp_hashtable_get(server->tools_table, "echo", &found_ptr));
+    const mcp_tool_t* found = (const mcp_tool_t*)found_ptr;
     TEST_ASSERT_NOT_NULL(found);
     TEST_ASSERT_EQUAL_STRING("Echo Tool", found->description);
     // Verify tool has one parameter
     TEST_ASSERT_NOT_NULL(found->input_schema);
     TEST_ASSERT_EQUAL_UINT(1, found->input_schema_count);
     
-    found = mcp_server_find_tool(server, "reverse");
+    found_ptr = NULL;
+    TEST_ASSERT_EQUAL_INT(0, mcp_hashtable_get(server->tools_table, "reverse", &found_ptr));
+    found = (const mcp_tool_t*)found_ptr;
     TEST_ASSERT_NOT_NULL(found);
     TEST_ASSERT_EQUAL_STRING("Reverse Tool", found->description);
     // Verify tool has two parameters
     TEST_ASSERT_NOT_NULL(found->input_schema);
     TEST_ASSERT_EQUAL_UINT(2, found->input_schema_count);
     
-    // Test duplicate tool
-    TEST_ASSERT_NOT_EQUAL(0, mcp_server_add_tool(server, t1));
-    
-    // Test removing tools
-    TEST_ASSERT_EQUAL_INT(0, mcp_server_remove_tool(server, "echo"));
-    TEST_ASSERT_NULL(mcp_server_find_tool(server, "echo"));
-    
+    // Test duplicate tool (mcp_hashtable_put should handle update, return 0)
+    mcp_tool_t* t1_dup = mcp_tool_create("echo", "Echo Tool Updated");
+    TEST_ASSERT_EQUAL_INT(0, mcp_server_add_tool(server, t1_dup)); // Should update
+    mcp_tool_free(t1_dup);
+    // Verify update (optional)
+    found_ptr = NULL;
+    TEST_ASSERT_EQUAL_INT(0, mcp_hashtable_get(server->tools_table, "echo", &found_ptr));
+    found = (const mcp_tool_t*)found_ptr;
+    TEST_ASSERT_EQUAL_STRING("Echo Tool Updated", found->description);
+
+    // Test removing tools using hashtable API
+    TEST_ASSERT_EQUAL_INT(0, mcp_hashtable_remove(server->tools_table, "echo"));
+    found_ptr = NULL;
+    TEST_ASSERT_NOT_EQUAL(0, mcp_hashtable_get(server->tools_table, "echo", &found_ptr)); // Should not be found
+    TEST_ASSERT_NULL(found_ptr);
+
     // Test removing nonexistent tool
-    TEST_ASSERT_NOT_EQUAL(0, mcp_server_remove_tool(server, "nonexistent"));
+    TEST_ASSERT_NOT_EQUAL(0, mcp_hashtable_remove(server->tools_table, "nonexistent"));
     
     mcp_tool_free(t1);
     mcp_tool_free(t2);

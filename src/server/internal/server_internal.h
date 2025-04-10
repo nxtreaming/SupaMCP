@@ -19,6 +19,7 @@
 #include "gateway.h"
 #include "gateway_pool.h"
 #include "mcp_auth.h"
+#include "mcp_hashtable.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -49,20 +50,10 @@ struct mcp_server {
     mcp_rate_limiter_t* rate_limiter;   // Rate limiter instance
     bool running;
 
-    // Resources
-    mcp_resource_t** resources;
-    size_t resource_count;
-    size_t resource_capacity;
-
-    // Resource templates
-    mcp_resource_template_t** resource_templates;
-    size_t resource_template_count;
-    size_t resource_template_capacity;
-
-    // Tools
-    mcp_tool_t** tools;
-    size_t tool_count;
-    size_t tool_capacity;
+    // Use hash tables for managing resources, templates, and tools
+    mcp_hashtable_t* resources_table;         // Key: URI (string), Value: mcp_resource_t*
+    mcp_hashtable_t* resource_templates_table; // Key: URI Template (string), Value: mcp_resource_template_t*
+    mcp_hashtable_t* tools_table;             // Key: Tool Name (string), Value: mcp_tool_t*
 
     // Handlers
     mcp_server_resource_handler_t resource_handler;
@@ -105,10 +96,5 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
 char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message);
 char* create_success_response(uint64_t id, char* result_str); // Takes ownership of result_str
 
-// Internal server functions
-const mcp_resource_t* mcp_server_find_resource(mcp_server_t* server, const char* uri);
-const mcp_tool_t* mcp_server_find_tool(mcp_server_t* server, const char* name);
-int mcp_server_remove_resource(mcp_server_t* server, const char* uri);
-int mcp_server_remove_tool(mcp_server_t* server, const char* name);
 
 #endif // MCP_SERVER_INTERNAL_H
