@@ -37,9 +37,6 @@ static void mcp_json_hashtable_value_free(void* value) {
     // It only frees internal data (like string values, array items, nested objects).
 }
 
-
-// --- Public JSON API Implementation ---
-
 mcp_json_t* mcp_json_null_create(void) {
     // Allocate the node structure itself using thread-local arena
     mcp_json_t* json = mcp_json_alloc_node();
@@ -184,7 +181,6 @@ void mcp_json_destroy(mcp_json_t* json) {
     // Note: We don't touch json->type or the value fields here, only pointers we allocated.
 }
 
-
 mcp_json_type_t mcp_json_get_type(const mcp_json_t* json) {
     if (json == NULL) {
         return MCP_JSON_NULL;
@@ -293,8 +289,6 @@ int mcp_json_object_delete_property(mcp_json_t* json, const char* name) {
     return mcp_hashtable_remove(json->object_table, name);
 }
 
-// --- Helper for mcp_json_object_get_property_names ---
-
 // Context struct for the get_property_names callback
 typedef struct {
     char** names_array;
@@ -388,8 +382,6 @@ int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names_out
 
     return 0;
 }
-
-// --- Security Enhancement Functions (Placeholders) ---
 
 /**
  * @brief Validate if a JSON message conforms to a specified schema. (Placeholder)

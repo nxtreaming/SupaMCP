@@ -5,8 +5,6 @@
 #include <stdbool.h>
 #include <time.h>
 
-// --- Public API Functions ---
-
 mcp_connection_pool_t* mcp_connection_pool_create(
     const char* host,
     int port,

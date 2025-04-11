@@ -53,7 +53,8 @@ struct mcp_thread_pool {
     volatile size_t next_submit_deque; /**< Index for round-robin task submission. */
 };
 
-// --- Platform Atomic Wrappers (Simplified) ---
+// Forward declaration for the worker thread function
+static void* thread_pool_worker(void* arg);
 
 // Atomic Compare-and-Swap for size_t
 static inline bool compare_and_swap_size(volatile size_t* ptr, size_t expected, size_t desired) {
@@ -111,17 +112,11 @@ static inline size_t fetch_add_size(volatile size_t* ptr, size_t value) {
 #endif
 }
 
-
 // Argument struct for worker threads
 typedef struct {
     mcp_thread_pool_t* pool;
     size_t worker_index;
 } worker_arg_t;
-
-// Forward declaration for the worker thread function
-static void* thread_pool_worker(void* arg);
-
-// --- Deque Operations ---
 
 // Push task onto the bottom of the deque (owner thread only)
 static bool deque_push_bottom(work_stealing_deque_t* deque, mcp_task_t task) {
@@ -226,7 +221,6 @@ static bool deque_steal_top(work_stealing_deque_t* deque, mcp_task_t* task) {
         return false;
     }
 }
-
 
 /**
  * @brief Creates a new thread pool using work-stealing deques.

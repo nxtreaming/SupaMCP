@@ -40,9 +40,6 @@ char* mcp_strdup(const char* str) {
     return new_str;
 }
 
-
-// --- Dynamic Buffer Implementation ---
-
 #define DYN_BUF_MIN_CAPACITY 64
 
 // Ensures the buffer has enough capacity for 'additional_len' more characters + null terminator.
@@ -137,7 +134,6 @@ int dyn_buf_append_json_string(dyn_buf_t* db, const char* str) {
     dyn_buf_append_char(db, '"');
     return 0;
 }
-
 
 char* dyn_buf_finalize(dyn_buf_t* db) {
     if (!db || !db->buffer) return NULL;

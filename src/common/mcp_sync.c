@@ -12,8 +12,6 @@
 #include <sched.h>
 #endif
 
-// --- Internal Structures ---
-
 struct mcp_mutex_s {
 #ifdef _WIN32
     CRITICAL_SECTION cs;
@@ -29,8 +27,6 @@ struct mcp_cond_s {
     pthread_cond_t cond;
 #endif
 };
-
-// --- Mutex Implementation ---
 
 mcp_mutex_t* mcp_mutex_create(void) {
     mcp_mutex_t* mutex = (mcp_mutex_t*)malloc(sizeof(mcp_mutex_t));
@@ -86,8 +82,6 @@ int mcp_mutex_unlock(mcp_mutex_t* mutex) {
     return pthread_mutex_unlock(&mutex->mutex);
 #endif
 }
-
-// --- Condition Variable Implementation ---
 
 mcp_cond_t* mcp_cond_create(void) {
     mcp_cond_t* cond = (mcp_cond_t*)malloc(sizeof(mcp_cond_t));
@@ -194,8 +188,6 @@ int mcp_cond_broadcast(mcp_cond_t* cond) {
     return pthread_cond_broadcast(&cond->cond);
 #endif
 }
-
-// --- Thread Implementation ---
 
 int mcp_thread_create(mcp_thread_t* thread_handle, mcp_thread_func_t start_routine, void* arg) {
     if (!thread_handle || !start_routine) {

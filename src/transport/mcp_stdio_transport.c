@@ -375,9 +375,6 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
     // The generic mcp_transport_destroy will free the main transport struct
 }
 
-
-// --- Public Creation Function ---
-
 mcp_transport_t* mcp_transport_stdio_create(void) {
     // Allocate the generic transport struct
     mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));

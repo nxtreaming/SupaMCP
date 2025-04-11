@@ -158,7 +158,6 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
     return parse_status;
 }
 
-
 // Rewritten stringify function using dynamic buffer
 char* mcp_json_stringify_message(const mcp_message_t* message) {
     if (message == NULL) {
@@ -251,9 +250,6 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
     return final_json_string; // Return the malloc'd final string
 }
 
-
-// --- Creation Functions --- (Keep original versions for now)
-
 // Note: These functions now use the thread-local arena for temporary JSON nodes
 // during creation, but the final returned string is allocated with malloc.
 
@@ -309,7 +305,6 @@ char* mcp_json_create_request(const char* method, const char* params, uint64_t i
     return final_json_string; // Return malloc'd string or NULL
 }
 
-
 char* mcp_json_create_response(uint64_t id, const char* result) {
     PROFILE_START("mcp_json_create_response");
 
@@ -348,9 +343,6 @@ char* mcp_json_create_response(uint64_t id, const char* result) {
     PROFILE_END("mcp_json_create_response");
      return final_json_string;
 }
-
-
-// --- Batch Parsing Implementation ---
 
 // Internal helper to parse a single JSON object within a batch
 static int parse_single_message_from_json(mcp_json_t* json, mcp_message_t* message) {
@@ -548,7 +540,6 @@ void mcp_json_free_message_array(mcp_message_t* messages, size_t count) {
     // Free the array itself
     free(messages);
 }
-
 
 char* mcp_json_create_error_response(uint64_t id, int error_code, const char* error_message) {
      PROFILE_START("mcp_json_create_error_response");

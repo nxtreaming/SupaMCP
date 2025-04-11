@@ -20,8 +20,6 @@ extern long long get_current_time_ms();
 #define DEFAULT_IDLE_TIMEOUT_MS 60000 // 60 seconds
 #define DEFAULT_GET_TIMEOUT_MS -1 // Default: wait indefinitely for get_connection
 
-// --- Internal Structures ---
-
 // Structure to represent an idle connection node in the list
 typedef struct idle_connection_node {
     mcp_client_t* client;
@@ -54,9 +52,6 @@ struct gateway_connection_pool_manager {
     mcp_hashtable_t* backend_pools; // Map: backend_address (char*) -> backend_pool_t*
     mcp_mutex_t* manager_lock;      // Mutex for thread-safe access to the hashtable
 };
-
-
-// --- Hashtable Helper Functions ---
 
 // Hash function for backend addresses (simple string hash)
 static unsigned long address_hash_func(const void* key) {
@@ -94,8 +89,6 @@ static void backend_pool_free_func(void* value) {
         free(pool);
     }
 }
-
-// --- Manager API Functions ---
 
 // Implementation of gateway_pool_manager_create
 gateway_pool_manager_t* gateway_pool_manager_create(void) {
@@ -153,8 +146,6 @@ void gateway_pool_manager_destroy(gateway_pool_manager_t* manager) {
     mcp_log_info("Gateway connection pool manager destroyed.");
 }
 
-// --- Connection Get/Release Logic ---
-
 // Helper to create a new backend pool structure
 static backend_pool_t* create_backend_pool(const mcp_backend_info_t* backend_info) {
     backend_pool_t* pool = (backend_pool_t*)calloc(1, sizeof(backend_pool_t)); // Use calloc
@@ -205,7 +196,6 @@ static backend_pool_t* create_backend_pool(const mcp_backend_info_t* backend_inf
     return pool;
 }
 
-
 // Implementation of gateway_pool_get_connection
 // Adding timeout parameter
 void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_backend_info_t* backend_info /*, int timeout_ms = DEFAULT_GET_TIMEOUT_MS */) {
@@ -227,7 +217,6 @@ void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_bac
     if (use_timeout) {
         start_time_ms = get_current_time_ms(); // Assuming get_current_time_ms() exists
     }
-
 
     // Lock the manager mutex to safely access the hashtable
     mcp_mutex_lock(manager->manager_lock);

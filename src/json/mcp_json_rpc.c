@@ -9,8 +9,6 @@
 #include "mcp_types.h"
 #include "mcp_string_utils.h"
 
-// --- Formatting Functions ---
-
 char* mcp_json_format_request(uint64_t id, const char* method, const char* params) {
     if (method == NULL) { // Params can be NULL for request without params
         return NULL;
@@ -173,8 +171,6 @@ char* mcp_json_format_error_response(uint64_t id, mcp_error_code_t error_code, c
     mcp_json_destroy(response);
     return json;
 }
-
-// --- Parsing Functions ---
 
 int mcp_json_parse_response(
     const char* json_str,

@@ -173,7 +173,6 @@ static mcp_error_code_t parse_and_compile_regex_array(
 }
 #endif // !_WIN32
 
-
 // Implementation of load_gateway_config
 mcp_error_code_t load_gateway_config(
     const char* config_path,
@@ -336,7 +335,6 @@ mcp_error_code_t load_gateway_config(
         current_backend->routing.compiled_resource_regexes_dummy = NULL;
         current_backend->routing.resource_regex_count_dummy = 0;
 #endif
-
 
         // --- Parse optional fields ---
         mcp_json_t* timeout_node = mcp_json_object_get_property(backend_obj, "timeout_ms");

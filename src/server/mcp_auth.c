@@ -9,9 +9,6 @@
 #include <stdbool.h>
 #include <time.h>
 
-// Removed static simple_wildcard_match function, now using mcp_wildcard_match from string utils
-
-
 /**
  * @brief Verifies client credentials. (Placeholder - Basic Functionality Only)
  * @note This implementation provides basic functionality for MCP_AUTH_NONE and a single

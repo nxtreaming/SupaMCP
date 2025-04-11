@@ -10,7 +10,8 @@
  * Simple handler that returns a pong response to confirm server is live.
  * This is primarily used as an initial handshake for connection testing.
  */
-char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
+char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request,
+    const mcp_auth_context_t* auth_context, int* error_code) {
     // No params needed, arena unused, auth_context unused for ping
     (void)arena;
     (void)auth_context; // Explicitly mark as unused for ping

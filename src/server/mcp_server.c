@@ -9,8 +9,6 @@
 #include "mcp_arena.h"
 #include "mcp_object_pool.h"
 
-// --- Public API Implementation ---
-
 mcp_server_t* mcp_server_create(
     const mcp_server_config_t* config,
     const mcp_server_capabilities_t* capabilities
@@ -152,7 +150,6 @@ mcp_server_t* mcp_server_create(
     }
     // --- End Content Item Pool Creation ---
 
-
     return server;
 
 create_error_cleanup:
@@ -253,7 +250,6 @@ int mcp_server_start(
         // Removed the 'else' block corresponding to the removed 'if' check
     }
     // --- End Cache Pre-warming ---
-
 
     // Pass the callback from mcp_server_task.c (declared in internal header)
     return mcp_transport_start(
@@ -460,8 +456,6 @@ int mcp_server_add_tool(
     }
     return 0; // Success
 }
-
-// --- Deprecated Function ---
 
 // This function is likely unused now, as messages come via the transport callback.
 // Keep it for potential direct injection testing, but it's not part of the main flow.

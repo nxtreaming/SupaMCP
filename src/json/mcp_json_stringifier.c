@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-// --- JSON Stringification Implementation ---
 // Stringification uses malloc/realloc for the output buffer, not arena.
 
 // Static forward declarations for internal helper functions within this file
@@ -15,7 +14,6 @@ static int append_string(char** output, size_t* output_size, size_t* output_capa
 static int stringify_string(const char* string, char** output, size_t* output_size, size_t* output_capacity);
 static int stringify_object(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity);
 static int stringify_array(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity);
-
 
 static int ensure_output_capacity(char** output, size_t* output_size, size_t* output_capacity, size_t additional) {
     if (*output_size + additional > *output_capacity) {
@@ -146,7 +144,6 @@ static int stringify_object(const mcp_json_t* json, char** output, size_t* outpu
     if (append_string(output, output_size, output_capacity, "}") != 0) return -1;
     return 0;
 }
-
 
 static int stringify_array(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity) {
     if (append_string(output, output_size, output_capacity, "[") != 0) return -1;

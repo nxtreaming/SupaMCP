@@ -11,8 +11,6 @@
 #include <time.h>
 #include <stdio.h>
 
-// Platform-specific mutex includes/definitions removed
-
 // Structure for a cache entry
 typedef struct {
     mcp_content_item_t** content;   // Value (array of pointers to copies, malloc'd)
@@ -28,8 +26,6 @@ struct mcp_resource_cache {
     size_t capacity;                // Max number of entries
     time_t default_ttl_seconds;     // Default TTL for new entries
 };
-
-// --- Helper Functions ---
 
 // Free function for cache entries (used by hash table)
 static void free_cache_entry(void* value) {
@@ -70,9 +66,6 @@ static void release_pooled_cache_entry_content(mcp_object_pool_t* pool, mcp_cach
     entry->content = NULL;
     entry->content_count = 0;
 }
-
-
-// --- Public API Implementation ---
 
 mcp_resource_cache_t* mcp_cache_create(size_t capacity, time_t default_ttl_seconds) {
     if (capacity == 0) return NULL;

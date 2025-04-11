@@ -52,8 +52,6 @@ struct mcp_rate_limiter {
     size_t max_requests_per_window; /**< Max requests allowed per window. */
 };
 
-// --- Helper Functions ---
-
 /** @internal Simple string hash function (djb2). */
 static unsigned long hash_client_id(const char* str) {
     unsigned long hash = 5381;
@@ -135,8 +133,6 @@ static rate_limit_entry_t* find_or_create_entry(mcp_rate_limiter_t* limiter, con
     if (created) *created = true;
     return new_entry;
 }
-
-// --- Public API Implementation ---
 
 mcp_rate_limiter_t* mcp_rate_limiter_create(size_t capacity_hint, size_t window_seconds, size_t max_requests_per_window) {
     if (window_seconds == 0 || max_requests_per_window == 0) {

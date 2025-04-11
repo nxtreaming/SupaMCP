@@ -9,8 +9,6 @@
 #include <sys/time.h>
 #endif
 
-// --- Utility Functions ---
-
 // Helper function to get current time in milliseconds
 long long get_current_time_ms() {
 #ifdef _WIN32

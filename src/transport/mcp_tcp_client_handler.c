@@ -11,8 +11,6 @@
 #include "mcp_buffer_pool.h"
 #include "mcp_types.h"
 
-// Platform-specific includes for vectored I/O are now in mcp_socket_utils.h
-
 // Thread function to handle a single client connection
 // Use the abstracted signature: void* func(void* arg)
 void* tcp_client_handler_thread_func(void* arg) {

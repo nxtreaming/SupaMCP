@@ -10,9 +10,6 @@
 #include <sys/uio.h>
 #endif
 
-
-// --- Static Transport Interface Functions ---
-
 static int tcp_client_transport_start(
     mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
@@ -170,7 +167,6 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
     return 0; // Success
 }
 
-
 // Implementation for the synchronous receive function
 static int tcp_client_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
      if (!transport || !transport->transport_data || !data_out || !size_out) return -1;
@@ -207,8 +203,6 @@ static void tcp_client_transport_destroy(mcp_transport_t* transport) {
     free(transport); // Free the main transport struct
 }
 
-// --- Public Creation Function ---
-
 mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port) {
     if (!host) return NULL;
 
@@ -243,7 +237,6 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
          free(transport);
          return NULL;
      }
-
 
     // Assign function pointers
     transport->start = tcp_client_transport_start;

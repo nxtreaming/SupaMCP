@@ -5,8 +5,6 @@
 #include "mcp_object_pool.h"
 #include "mcp_log.h"
 
-// --- Free Functions ---
-
 /**
  * @brief Frees an mcp_resource_t structure and its contained strings.
  */
@@ -128,9 +126,6 @@ void mcp_message_release_contents(mcp_message_t* message) {
     // Reset type? Optional, but might help catch use-after-release errors.
     // message->type = MCP_MESSAGE_TYPE_INVALID;
 }
-
-
-// --- Create Functions ---
 
 /**
  * @brief Creates and allocates an mcp_resource_t structure using malloc.
@@ -536,8 +531,6 @@ mcp_message_t* mcp_request_create(
     return message;
 }
 
-
-// --- Array Free Functions (Moved from mcp_client.c) ---
 
 /**
  * @brief Frees an array of resources and its contents.

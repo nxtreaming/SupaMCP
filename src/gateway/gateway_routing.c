@@ -100,7 +100,6 @@ const mcp_backend_info_t* find_backend_for_request(
     return NULL;
 }
 
-
 /**
  * @internal
  * @brief Forwards a request to a specified backend server using the gateway pool manager.

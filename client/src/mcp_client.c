@@ -186,9 +186,6 @@ void mcp_client_destroy(mcp_client_t* client) {
     free(client);
 }
 
-
-// --- Hash Table Helper Function Implementations ---
-
 // Simple hash function (using bitwise AND for power-of-2 table size)
 static size_t hash_id(uint64_t id, size_t table_size) {
     // Assumes table_size is a power of 2
@@ -341,7 +338,6 @@ static int resize_pending_requests_table(mcp_client_t* client) {
          // Proceeding, but this warrants investigation.
     }
 
-
     // Replace old table with new one
     free(client->pending_requests_table);
     client->pending_requests_table = new_table;
@@ -350,9 +346,6 @@ static int resize_pending_requests_table(mcp_client_t* client) {
     mcp_log_info("Resized pending requests hash table to capacity %zu\n", new_capacity); // Optional: Log resize event
     return 0; // Success
 }
-
-
-// --- Client Internal Transport Error Callback ---
 
 /**
  * @brief Callback invoked by the transport layer when a fatal error occurs (e.g., disconnection).
@@ -397,7 +390,6 @@ static void client_transport_error_callback(void* user_data, int transport_error
     // Unlock the mutex
     mcp_mutex_unlock(client->pending_requests_mutex);
 }
-
 
 // Connect/Disconnect functions are removed as transport is handled at creation/destruction.
 
@@ -532,7 +524,6 @@ static int mcp_client_send_and_wait(
         else { mcp_log_error("Request %llu not found and no result/error set.", (unsigned long long)pending_req.id); final_status = -1; }
     }
 
-
     // Remove entry from hash table after waiting/timeout/error
     if (req_entry_wrapper) {
         remove_pending_request_entry(client, pending_req.id); // CV destroyed inside remove
@@ -559,7 +550,6 @@ static int mcp_client_send_and_wait(
     // Success (final_status == 0)
     return 0;
 }
-
 
 /**
  * Send a request to the MCP server and receive a response (Original version)
@@ -639,7 +629,6 @@ int mcp_client_send_raw_request(
     return status;
 }
 
-
 /**
  * List resources from the MCP server
  */
@@ -687,9 +676,6 @@ int mcp_client_list_resources(
     return 0;
 }
 
-
-// --- Client Internal Receive Callback ---
-
 static char* client_receive_callback(void* user_data, const void* data, size_t size, int* error_code) {
     mcp_client_t* client = (mcp_client_t*)user_data;
     if (client == NULL || data == NULL || size == 0 || error_code == NULL) {
@@ -723,7 +709,6 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
         return NULL; // Don't process further
     }
     // --- End Special Handling ---
-
 
     // Find the pending request and signal it
     mcp_mutex_lock(client->pending_requests_mutex);
@@ -765,7 +750,6 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
 
     return NULL; // Client callback never sends a response back
 }
-
 
 /**
  * List resource templates from the MCP server

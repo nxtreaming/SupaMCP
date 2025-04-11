@@ -60,13 +60,6 @@ static mcp_log_mutex_t g_log_mutex;
 /** @internal Flag indicating if the mutex has been initialized. */
 static bool g_log_mutex_initialized = false;
 
-
-// --- Internal Helper ---
-
-// (Removed internal escape_json_string function)
-
-// --- Public API Implementation ---
-
 // Core logging function
 void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* format, ...) {
     // 1. Check if logging is quiet or level is too low
@@ -109,7 +102,6 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
         strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
     }
 
-
     // 3. Format the log message using varargs
     va_list args;
     va_start(args, format);
@@ -128,7 +120,6 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
         snprintf(message, sizeof(message), "Encoding error in log message format: %s", format);
     }
     // If written is non-negative and less than buffer size, vsnprintf added null terminator.
-
 
     // 4. Lock mutex before accessing shared resources
     LOCK_LOG_MUTEX(&g_log_mutex);
@@ -153,7 +144,6 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
     } else {
         color_end = ""; // No need to reset if no color was started
     }
-
 
     if (g_log_format == MCP_LOG_FORMAT_JSON) {
         // Use fixed-size buffers. mcp_json_escape_string handles truncation.
@@ -397,9 +387,6 @@ void mcp_log_close(void) {
     //     g_log_mutex_initialized = false;
     // }
 }
-
-
-// --- Logging Enhancements ---
 
 /**
  * @brief Sets the desired output format for logs.

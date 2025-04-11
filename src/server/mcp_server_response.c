@@ -3,8 +3,6 @@
 #include "mcp_json_message.h"
 #include <stdlib.h>
 
-// --- Internal Response Helper Functions ---
-
 /**
  * @internal
  * @brief Helper function to construct a JSON-RPC error response string.

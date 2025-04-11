@@ -46,7 +46,6 @@ static char* mcp_strdup(const char* s) {
 }
 #endif
 
-
 /**
  * @brief Loads a plugin from a shared library file.
  */

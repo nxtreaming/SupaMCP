@@ -28,7 +28,6 @@
 #define SOCKET_ERROR (-1)
 #endif
 
-// --- Internal Helper: send_exact ---
 // Sends exactly 'len' bytes from 'buf' over 'sock'.
 // Returns 0 on success, -1 on socket error, -2 on timeout.
 static int send_exact(SOCKET sock, const char* buf, size_t len, int timeout_ms) {
@@ -74,7 +73,6 @@ static int send_exact(SOCKET sock, const char* buf, size_t len, int timeout_ms) 
     return 0; // Success
 }
 
-// --- Internal Helper: recv_exact ---
 // Receives exactly 'len' bytes into 'buf' from 'sock'.
 // Returns 0 on success, -1 on socket error, -2 on timeout, -3 on connection closed cleanly.
 static int recv_exact(SOCKET sock, char* buf, size_t len, int timeout_ms) {
@@ -120,9 +118,6 @@ static int recv_exact(SOCKET sock, char* buf, size_t len, int timeout_ms) {
     return 0; // Success
 }
 
-
-// --- Public Functions ---
-
 int gateway_send_message(SOCKET sock, const char* message, int timeout_ms) {
     if (sock == INVALID_SOCKET || message == NULL) {
         return -1;
@@ -152,7 +147,6 @@ int gateway_send_message(SOCKET sock, const char* message, int timeout_ms) {
     free(send_buffer);
     return send_status; // 0 on success, -1 on error, -2 on timeout
 }
-
 
 int gateway_receive_message(SOCKET sock, char** message_out, size_t* message_len_out, size_t max_size, int timeout_ms) {
     if (sock == INVALID_SOCKET || message_out == NULL || message_len_out == NULL) {

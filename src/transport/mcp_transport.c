@@ -52,7 +52,6 @@ int mcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers,
     return transport->sendv(transport, buffers, buffer_count);
 }
 
-
 void mcp_transport_destroy(mcp_transport_t* transport) {
     if (!transport) {
         return;

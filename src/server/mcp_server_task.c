@@ -3,8 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// --- Thread Pool Task Data and Worker ---
-
 // Structure to hold data for a message processing task
 // Definition moved here from mcp_server.c
 typedef struct message_task_data_t {
@@ -69,9 +67,6 @@ void process_message_task(void* arg) {
     free(task_data);
     PROFILE_END("process_message_task");
 }
-
-
-// --- Transport Callback ---
 
 /**
  * @internal

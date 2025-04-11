@@ -59,7 +59,6 @@ int mcp_framing_send_message(socket_t sock, const char* message_data, uint32_t m
     return 0; // Success
 }
 
-
 int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* message_len_out, uint32_t max_message_size, volatile bool* stop_flag) {
     if (message_data_out == NULL || message_len_out == NULL) {
         mcp_log_error("mcp_framing_recv_message: Output parameters cannot be NULL.");

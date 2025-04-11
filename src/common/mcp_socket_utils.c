@@ -8,7 +8,7 @@
 #include <time.h>
 
 #ifdef _WIN32
-    // Included via mcp_socket_utils.h
+    #include <windows.h>
 #else // POSIX
     #include <sys/time.h>
     #include <poll.h>
@@ -17,12 +17,6 @@
     #include <netdb.h>
 #endif
 
-#ifdef _WIN32
-#include <windows.h> // For Sleep()
-#endif
-
-// --- Platform Utilities ---
-
 void mcp_sleep_ms(uint32_t milliseconds) {
 #ifdef _WIN32
     Sleep(milliseconds);
@@ -30,8 +24,6 @@ void mcp_sleep_ms(uint32_t milliseconds) {
     usleep(milliseconds * 1000);
 #endif
 }
-
-// --- Initialization and Cleanup ---
 
 int mcp_socket_init(void) {
 #ifdef _WIN32
@@ -51,8 +43,6 @@ void mcp_socket_cleanup(void) {
     WSACleanup();
 #endif
 }
-
-// --- Socket Operations ---
 
 int mcp_socket_close(socket_t sock) {
 #ifdef _WIN32
@@ -139,7 +129,6 @@ socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms
 
     return sock;
 }
-
 
 int mcp_socket_send_exact(socket_t sock, const char* buf, size_t len, volatile bool* stop_flag) {
     size_t total_sent = 0;
@@ -255,7 +244,6 @@ int mcp_socket_recv_exact(socket_t sock, char* buf, size_t len, volatile bool* s
     }
     return 0; // Success
 }
-
 
 int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatile bool* stop_flag) {
     size_t total_to_send = 0;
@@ -387,7 +375,6 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
 
     return (total_sent == total_to_send) ? 0 : -1; // Success only if all bytes sent
 }
-
 
 int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_flag) {
     // Abort if stop_flag is provided and is true
@@ -531,9 +518,6 @@ int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_
     } // end while
 #endif
 }
-
-
-// --- Server Specific ---
 
 socket_t mcp_socket_create_listener(const char* host, uint16_t port, int backlog) {
     socket_t listen_sock = MCP_INVALID_SOCKET;

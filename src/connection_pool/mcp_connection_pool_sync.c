@@ -4,10 +4,6 @@
 #include <string.h>
 #include <errno.h>
 
-// Platform-specific includes are no longer needed here
-
-// --- Synchronization Primitive Helpers ---
-
 int init_sync_primitives(mcp_connection_pool_t* pool) {
     pool->mutex = mcp_mutex_create();
     if (!pool->mutex) {

@@ -17,8 +17,6 @@
 #include <netdb.h>
 #endif
 
-// --- Socket Helper Implementations ---
-
 // Creates a TCP socket, connects to host:port with a timeout.
 // Returns connected socket descriptor or INVALID_SOCKET_HANDLE on failure.
 socket_handle_t create_new_connection(const char* host, int port, int connect_timeout_ms) {
@@ -200,7 +198,6 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 
     return sock;
 }
-
 
 void close_connection(socket_handle_t socket_fd) {
     if (socket_fd != INVALID_SOCKET_HANDLE) {

@@ -4,8 +4,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// --- Internal Request Handler Implementations ---
-
 // Context struct for list callbacks
 typedef struct {
     mcp_json_t* json_array;

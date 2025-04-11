@@ -9,8 +9,6 @@
 #include "mcp_sync.h"
 #include <mcp_thread_pool.h>
 
-// --- Static Transport Interface Functions ---
-
 // Note: Update tcp_transport_start signature to match interface
 static int tcp_transport_start(
     mcp_transport_t* transport,
@@ -210,7 +208,6 @@ static int tcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* b
     return 0; // Indicate success as no direct action is taken here.
 }
 
-
 static void tcp_transport_destroy(mcp_transport_t* transport) {
      if (transport == NULL || transport->transport_data == NULL) return;
      mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)transport->transport_data;
@@ -225,9 +222,6 @@ static void tcp_transport_destroy(mcp_transport_t* transport) {
      // Generic destroy will free the transport struct itself
      free(transport); // Free the main transport struct allocated in create
 }
-
-
-// --- Public Creation Function ---
 
 mcp_transport_t* mcp_transport_tcp_create(
     const char* host,
