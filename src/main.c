@@ -194,7 +194,8 @@ static mcp_error_code_t example_tool_handler(
         goto cleanup;
     }
     mcp_json_t* text_node = mcp_json_object_get_property(params, "text");
-    if (text_node == NULL || mcp_json_get_type(text_node) != MCP_JSON_STRING || mcp_json_get_string(text_node, &input_text) != 0 || input_text == NULL) {
+    if (text_node == NULL || mcp_json_get_type(text_node) != MCP_JSON_STRING ||
+        mcp_json_get_string(text_node, &input_text) != 0 || input_text == NULL) {
         mcp_log_warn("Tool '%s': Missing or invalid 'text' string parameter.", name);
         *is_error = true;
         *error_message = mcp_strdup("Missing or invalid 'text' string parameter.");
@@ -450,7 +451,7 @@ int main(int argc, char** argv) {
             mcp_log_close(); // Use renamed function
             return 1;
         }
-         mcp_log_info("Daemonization complete."); // This won't be seen on console
+        mcp_log_info("Daemonization complete."); // This won't be seen on console
     }
 #endif
 
@@ -561,11 +562,33 @@ int main(int argc, char** argv) {
     mcp_resource_template_t* t1 = mcp_resource_template_create("example://{name}", "Example Template", NULL, NULL);
     mcp_tool_t* tool1 = mcp_tool_create("echo", "Echo Tool");
     mcp_tool_t* tool2 = mcp_tool_create("reverse", "Reverse Tool");
-    if (r1) mcp_server_add_resource(g_server, r1); mcp_resource_free(r1);
-    if (r2) mcp_server_add_resource(g_server, r2); mcp_resource_free(r2);
-    if (t1) mcp_server_add_resource_template(g_server, t1); mcp_resource_template_free(t1);
-    if (tool1) { mcp_tool_add_param(tool1, "text", "string", "Text to echo", true); mcp_server_add_tool(g_server, tool1); mcp_tool_free(tool1); }
-    if (tool2) { mcp_tool_add_param(tool2, "text", "string", "Text to reverse", true); mcp_server_add_tool(g_server, tool2); mcp_tool_free(tool2); }
+    if (r1) {
+        mcp_server_add_resource(g_server, r1);
+        mcp_resource_free(r1);
+    }
+
+    if (r2) {
+        mcp_server_add_resource(g_server, r2);
+        mcp_resource_free(r2);
+    }
+
+    if (t1) {
+        mcp_server_add_resource_template(g_server, t1);
+        mcp_resource_template_free(t1);
+    }
+
+    if (tool1) {
+        mcp_tool_add_param(tool1, "text", "string", "Text to echo", true);
+        mcp_server_add_tool(g_server, tool1);
+        mcp_tool_free(tool1);
+    }
+
+    if (tool2) {
+        mcp_tool_add_param(tool2, "text", "string", "Text to reverse", true);
+        mcp_server_add_tool(g_server, tool2);
+        mcp_tool_free(tool2);
+    }
+
     mcp_log_info("Added example resources and tools.");
 
     // Create transport based on config
