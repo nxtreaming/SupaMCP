@@ -1,27 +1,11 @@
 #include "mcp_rate_limiter.h"
 #include "mcp_types.h"
 #include "mcp_string_utils.h"
+#include "mcp_sync.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-typedef CRITICAL_SECTION mutex_t;
-#define mutex_init(m) (InitializeCriticalSection(m), 0)
-#define mutex_lock(m) (EnterCriticalSection(m), 0)
-#define mutex_unlock(m) (LeaveCriticalSection(m), 0)
-#define mutex_destroy(m) (DeleteCriticalSection(m), 0)
-#else
-#include <pthread.h>
-typedef pthread_mutex_t mutex_t;
-#define mutex_init(m) pthread_mutex_init(m, NULL)
-#define mutex_lock(m) pthread_mutex_lock(m)
-#define mutex_unlock(m) pthread_mutex_unlock(m)
-#define mutex_destroy(m) pthread_mutex_destroy(m)
-#endif
 
 /** @internal Initial capacity factor for the hash table. Capacity = capacity_hint * factor. */
 #define RATE_LIMIT_HASH_TABLE_CAPACITY_FACTOR 2
@@ -44,7 +28,7 @@ typedef struct rate_limit_entry {
  * @brief Internal structure for the rate limiter.
  */
 struct mcp_rate_limiter {
-    mutex_t lock;                   /**< Mutex for thread safety. */
+    mcp_mutex_t *lock;              /**< Mutex for thread safety. */
     rate_limit_entry_t** buckets;   /**< Hash table buckets. */
     size_t capacity;                /**< Current capacity of the hash table. */
     size_t count;                   /**< Current number of entries in the table. */
@@ -154,7 +138,8 @@ mcp_rate_limiter_t* mcp_rate_limiter_create(size_t capacity_hint, size_t window_
         return NULL;
     }
 
-    if (mutex_init(&limiter->lock) != 0) {
+    limiter->lock = mcp_mutex_create();
+    if (!limiter->lock) {
         free(limiter->buckets);
         free(limiter);
         return NULL;
@@ -166,7 +151,7 @@ mcp_rate_limiter_t* mcp_rate_limiter_create(size_t capacity_hint, size_t window_
 void mcp_rate_limiter_destroy(mcp_rate_limiter_t* limiter) {
     if (!limiter) return;
 
-    mutex_lock(&limiter->lock);
+    mcp_mutex_lock(limiter->lock); // Lock before destroying
     for (size_t i = 0; i < limiter->capacity; ++i) {
         rate_limit_entry_t* entry = limiter->buckets[i];
         while (entry) {
@@ -176,20 +161,20 @@ void mcp_rate_limiter_destroy(mcp_rate_limiter_t* limiter) {
         }
     }
     free(limiter->buckets);
-    mutex_unlock(&limiter->lock); // Unlock before destroying
-    mutex_destroy(&limiter->lock);
+    mcp_mutex_unlock(limiter->lock); // Unlock before destroying
+    mcp_mutex_destroy(limiter->lock);
     free(limiter);
 }
 
 bool mcp_rate_limiter_check(mcp_rate_limiter_t* limiter, const char* client_id) {
     if (!limiter || !client_id) return false; // Deny if invalid input
 
-    mutex_lock(&limiter->lock);
+    mcp_mutex_lock(limiter->lock);
 
     bool created = false;
     rate_limit_entry_t* entry = find_or_create_entry(limiter, client_id, &created);
     if (!entry) {
-        mutex_unlock(&limiter->lock);
+        mcp_mutex_unlock(limiter->lock);
         fprintf(stderr, "Rate limiter failed to find/create entry for %s\n", client_id);
         return false; // Internal error, deny request
     }
@@ -213,6 +198,6 @@ bool mcp_rate_limiter_check(mcp_rate_limiter_t* limiter, const char* client_id) 
         }
     }
 
-    mutex_unlock(&limiter->lock);
+    mcp_mutex_unlock(limiter->lock);
     return allowed;
 }
