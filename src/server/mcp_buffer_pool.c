@@ -1,14 +1,8 @@
 #include "mcp_buffer_pool.h"
+#include "mcp_sync.h"
 #include "mcp_log.h"
 #include <stdlib.h>
 #include <stdio.h>
-
-// Platform-specific mutex includes
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <pthread.h>
-#endif
 
 /**
  * @internal
@@ -27,11 +21,7 @@ typedef struct mcp_buffer_node {
 struct mcp_buffer_pool {
     size_t buffer_size;         /**< The fixed size of each buffer in the pool. */
     mcp_buffer_node_t* free_list; /**< Head of the linked list of free buffer nodes. */
-#ifdef _WIN32
-    CRITICAL_SECTION mutex;     /**< Mutex for thread-safe access to the free list. */
-#else
-    pthread_mutex_t mutex;      /**< Mutex for thread-safe access to the free list. */
-#endif
+    mcp_mutex_t* mutex;        /**< Mutex for thread-safe access to the free list. */
 };
 
 mcp_buffer_pool_t* mcp_buffer_pool_create(size_t buffer_size, size_t num_buffers) {
@@ -50,15 +40,12 @@ mcp_buffer_pool_t* mcp_buffer_pool_create(size_t buffer_size, size_t num_buffers
     pool->free_list = NULL;
 
     // Initialize mutex
-#ifdef _WIN32
-    InitializeCriticalSection(&pool->mutex);
-#else
-    if (pthread_mutex_init(&pool->mutex, NULL) != 0) {
+    pool->mutex =  mcp_mutex_create();
+    if (!pool->mutex) {
         mcp_log_error("Failed to initialize buffer pool mutex.");
         free(pool);
         return NULL;
     }
-#endif
 
     // Pre-allocate the combined node+buffer blocks
     for (size_t i = 0; i < num_buffers; ++i) {
@@ -86,11 +73,7 @@ void mcp_buffer_pool_destroy(mcp_buffer_pool_t* pool) {
     }
 
     // Lock mutex before accessing list
-#ifdef _WIN32
-    EnterCriticalSection(&pool->mutex);
-#else
-    pthread_mutex_lock(&pool->mutex);
-#endif
+    mcp_mutex_lock(pool->mutex);
 
     // Free all combined node+buffer blocks in the free list
     mcp_buffer_node_t* current = pool->free_list;
@@ -102,15 +85,9 @@ void mcp_buffer_pool_destroy(mcp_buffer_pool_t* pool) {
     pool->free_list = NULL; // Mark list as empty
 
     // Unlock mutex
-#ifdef _WIN32
-    LeaveCriticalSection(&pool->mutex);
+    mcp_mutex_unlock(pool->mutex);
     // Destroy mutex
-    DeleteCriticalSection(&pool->mutex);
-#else
-    pthread_mutex_unlock(&pool->mutex);
-    // Destroy mutex
-    pthread_mutex_destroy(&pool->mutex);
-#endif
+    mcp_mutex_destroy(pool->mutex);
 
     // Free the pool structure itself
     free(pool);
@@ -125,11 +102,7 @@ void* mcp_buffer_pool_acquire(mcp_buffer_pool_t* pool) {
     void* buffer = NULL;
 
     // Lock mutex
-#ifdef _WIN32
-    EnterCriticalSection(&pool->mutex);
-#else
-    pthread_mutex_lock(&pool->mutex);
-#endif
+    mcp_mutex_lock(pool->mutex);
 
     // Check if the free list is empty
     if (pool->free_list != NULL) {
@@ -147,11 +120,7 @@ void* mcp_buffer_pool_acquire(mcp_buffer_pool_t* pool) {
     }
 
     // Unlock mutex
-#ifdef _WIN32
-    LeaveCriticalSection(&pool->mutex);
-#else
-    pthread_mutex_unlock(&pool->mutex);
-#endif
+    mcp_mutex_unlock(pool->mutex);
 
     return buffer;
 }
@@ -165,22 +134,14 @@ void mcp_buffer_pool_release(mcp_buffer_pool_t* pool, void* buffer) {
     mcp_buffer_node_t* node = (mcp_buffer_node_t*)((char*)buffer - sizeof(mcp_buffer_node_t));
 
     // Lock mutex
-#ifdef _WIN32
-    EnterCriticalSection(&pool->mutex);
-#else
-    pthread_mutex_lock(&pool->mutex);
-#endif
+    mcp_mutex_lock(pool->mutex);
 
     // Add the node (the entire block) back to the head of the free list
     node->next = pool->free_list;
     pool->free_list = node;
 
     // Unlock mutex
-#ifdef _WIN32
-    LeaveCriticalSection(&pool->mutex);
-#else
-    pthread_mutex_unlock(&pool->mutex);
-#endif
+    mcp_mutex_unlock(pool->mutex);
 }
 
 size_t mcp_buffer_pool_get_buffer_size(const mcp_buffer_pool_t* pool) {
