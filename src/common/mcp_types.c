@@ -41,10 +41,6 @@ void mcp_resource_template_free(mcp_resource_template_t* tmpl) {
     free(tmpl);
 }
 
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable: 6001) // Suppress warning about using uninitialized memory 'tool->input_schema'
-#endif
 /**
  * @brief Frees an mcp_tool_t structure, its contained strings, and its input schema array.
  */
@@ -72,9 +68,6 @@ void mcp_tool_free(mcp_tool_t* tool) {
     // Free the main tool struct (allocated by mcp_tool_create using malloc)
     free(tool);
 }
-#ifdef _MSC_VER
-#pragma warning(pop) // Restore warning settings
-#endif
 
 /**
  * @brief Frees an mcp_content_item_t structure and its contained data/strings.

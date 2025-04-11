@@ -11,12 +11,14 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <intrin.h>
-#   ifdef _MSC_VER
-    #pragma warning( disable : 4324 ) // Disable padding warning
-#   endif
 #else
 // GCC/Clang atomics are built-in
 #include <sched.h> // For sched_yield
+#endif
+
+#ifdef _MSC_VER
+#   pragma warning(push)
+#   pragma warning(disable: 4324) // Disable padding warning
 #endif
 
 /**
@@ -32,6 +34,9 @@ typedef struct {
     // Padding might be needed between top/bottom/buffer depending on layout and access patterns
 } work_stealing_deque_t;
 
+#ifdef _MSC_VER
+#   pragma warning(pop) // Restore warning settings
+#endif
 
 /**
  * @brief Internal structure for the thread pool using work-stealing deques.
