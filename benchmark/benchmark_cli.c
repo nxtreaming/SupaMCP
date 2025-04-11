@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h> // For bool type
+#include <stdbool.h>
 
 int main(int argc, char *argv[]) {
     (void)argc;

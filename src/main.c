@@ -33,7 +33,6 @@
 #include "mcp_connection_pool.h"
 #include "server/internal/server_internal.h" 
 
-
 // Global server instance for signal handling
 static mcp_server_t* g_server = NULL;
 static mcp_backend_info_t* g_backends = NULL;
@@ -54,8 +53,6 @@ typedef struct {
 // Forward declarations
 static void cleanup(void);
 static bool parse_tcp_address(const char* address, char* host_buf, size_t host_buf_size, int* port);
-
-// --- Logging functions moved to mcp_log.c ---
 
 // Example resource handler - Updated Signature
 static mcp_error_code_t example_resource_handler(
@@ -549,7 +546,6 @@ int main(int argc, char** argv) {
     }
     // --- End Gateway Mode Setup ---
 
-
     // Set local handlers (these might be used if no backend matches a request)
     if (mcp_server_set_resource_handler(g_server, example_resource_handler, NULL) != 0 ||
         mcp_server_set_tool_handler(g_server, example_tool_handler, NULL) != 0) {
@@ -571,7 +567,6 @@ int main(int argc, char** argv) {
     if (tool1) { mcp_tool_add_param(tool1, "text", "string", "Text to echo", true); mcp_server_add_tool(g_server, tool1); mcp_tool_free(tool1); }
     if (tool2) { mcp_tool_add_param(tool2, "text", "string", "Text to reverse", true); mcp_server_add_tool(g_server, tool2); mcp_tool_free(tool2); }
     mcp_log_info("Added example resources and tools.");
-
 
     // Create transport based on config
     mcp_transport_t* transport = NULL;
@@ -621,7 +616,6 @@ int main(int argc, char** argv) {
 
     return 0;
 }
-
 
 /**
  * @internal

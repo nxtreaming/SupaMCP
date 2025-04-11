@@ -33,9 +33,6 @@ typedef int SOCKET;
 #endif
 #endif
 
-
-// --- Benchmark Implementation ---
-
 // Structure to pass arguments to each client thread
 typedef struct {
     const mcp_benchmark_config_t* config;
@@ -58,7 +55,6 @@ typedef struct {
     double total_latency;
     size_t total_requests_processed; // successful + failed + timeout
 } aggregated_results_t;
-
 
 // Forward declaration for the client thread function
 #ifdef _WIN32
@@ -178,7 +174,6 @@ static void* client_thread_func(void* arg) {
     return NULL;
 #endif
 }
-
 
 // --- Main Benchmark Function ---
 int mcp_run_benchmark(const mcp_benchmark_config_t* config, mcp_benchmark_result_t* result) {
@@ -463,7 +458,6 @@ static void print_comparison_line_sz(const char* metric, size_t baseline, size_t
     }
      printf("  %-20s: %10zu -> %10zu %s%.2f%%\n", metric, baseline, current, indicator, fabs(change));
 }
-
 
 // Placeholder for comparing results
 void mcp_benchmark_compare(const mcp_benchmark_result_t* baseline, const mcp_benchmark_result_t* current) {
