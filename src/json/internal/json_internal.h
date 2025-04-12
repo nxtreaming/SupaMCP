@@ -28,6 +28,12 @@
  * @internal
  * @brief Internal structure representing a JSON value.
  */
+
+#ifdef _MSC_VER
+#   pragma warning(push)
+#   pragma warning(disable:4201)
+#endif
+
 struct mcp_json {
     mcp_json_type_t type; /**< The type of this JSON value. */
     union {
@@ -42,9 +48,11 @@ struct mcp_json {
         mcp_hashtable_t* object_table; /**< Generic hash table for properties. Used if type is MCP_JSON_OBJECT. */
     };
 };
+#ifdef _MSC_VER
+#   pragma warning(pop)
+#endif
 
 // --- Internal Function Prototypes ---
-
 
 // From mcp_json_parser.c
 #define MCP_JSON_MAX_PARSE_DEPTH 100

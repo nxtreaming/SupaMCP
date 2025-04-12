@@ -5,12 +5,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-// Handle Windows-specific compatibility issues
-#ifdef _WIN32
-    // Disable warning about nameless struct/union
-    #pragma warning(disable: 4201)
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -166,6 +160,12 @@ typedef struct {
 /**
  * @brief Represents a generic MCP message, which can be a request, response, or notification.
  */
+
+#ifdef _MSC_VER
+#   pragma warning(push)
+#   pragma warning(disable:4201)
+#endif
+
 typedef struct {
     mcp_message_type_t type; /**< Discriminator indicating the message type. */
     union {
@@ -174,6 +174,10 @@ typedef struct {
         mcp_notification_t notification;/**< Valid if type is MCP_MESSAGE_TYPE_NOTIFICATION. */
     };
 } mcp_message_t;
+
+#ifdef _MSC_VER
+#   pragma warning(pop)
+#endif
 
 /**
  * @brief Frees the memory allocated for an mcp_resource_t structure and its internal strings.
@@ -212,7 +216,6 @@ void mcp_content_item_free(mcp_content_item_t* item);
  */
 void mcp_message_release_contents(mcp_message_t* message);
 
-
 // --- Array Free Functions ---
 
 /**
@@ -242,7 +245,6 @@ void mcp_free_content(mcp_content_item_t** content, size_t count);
  * @param count The number of elements in the tools array.
  */
 void mcp_free_tools(mcp_tool_t** tools, size_t count);
-
 
 // --- Create Functions ---
 
@@ -376,7 +378,6 @@ mcp_content_item_t* mcp_content_item_acquire_pooled(
     const void* data,
     size_t data_size
 );
-
 
 /**
  * @brief Creates a new heap-allocated mcp_message_t representing a request.

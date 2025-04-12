@@ -282,7 +282,6 @@ mcp_tool_t* mcp_tool_create(
         return NULL;
     }
 
-
     // Duplicate description string if provided
     if (description != NULL) {
         tool->description = mcp_strdup(description);
@@ -482,7 +481,6 @@ mcp_content_item_t* mcp_content_item_acquire_pooled(
     return item; // Success
 }
 
-
 // --- Deprecated Message Creation Functions ---
 // These allocate the top-level mcp_message_t struct using malloc, which is often less flexible
 // than stack allocation combined with mcp_message_release_contents.
@@ -517,7 +515,6 @@ mcp_message_t* mcp_request_create(
         return NULL;
     }
 
-
     // Duplicate params string (assuming input is string)
     if (params != NULL) {
         message->request.params = mcp_strdup((const char*)params);
@@ -530,7 +527,6 @@ mcp_message_t* mcp_request_create(
 
     return message;
 }
-
 
 /**
  * @brief Frees an array of resources and its contents.
@@ -659,7 +655,6 @@ mcp_message_t* mcp_notification_create(
         free(message);
         return NULL;
     }
-
 
     // Duplicate params string if provided
     if (params != NULL) {

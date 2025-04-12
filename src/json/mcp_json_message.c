@@ -430,7 +430,6 @@ static int parse_single_message_from_json(mcp_json_t* json, mcp_message_t* messa
     return parse_status; // Return 0 on success for this message, -1 on failure
 }
 
-
 int mcp_json_parse_message_or_batch(const char* json_str, mcp_message_t** messages, size_t* count) {
     if (json_str == NULL || messages == NULL || count == NULL) {
         return -1;
