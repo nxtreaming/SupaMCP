@@ -164,8 +164,8 @@ receive_loop:
         // --- 2. Process received message ---
         // message_buf is allocated by mcp_framing_recv_message and includes null terminator
         mcp_log_debug("Received message from server (%u bytes): '%s'", message_length_host, message_buf);
-          
-          if (transport->message_callback != NULL) {
+
+        if (transport->message_callback != NULL) {
             int callback_error_code = 0;
             char* unused_response = transport->message_callback(
                 transport->callback_user_data, 
@@ -173,19 +173,18 @@ receive_loop:
                 message_length_host, 
                 &callback_error_code
             );
-            
-              free(unused_response); // Client doesn't need this response
+
+            free(unused_response); // Client doesn't need this response
               
-              if (callback_error_code != 0) {
-                   mcp_log_warn("Client message callback error: %d", callback_error_code);
-               }
-          }
+            if (callback_error_code != 0) {
+                mcp_log_warn("Client message callback error: %d", callback_error_code);
+            }
+        }
 
         // --- 3. Release message buffer ---
         // Caller (this function) is responsible for freeing the buffer allocated by mcp_framing_recv_message
         free(message_buf);
         message_buf = NULL;
-
       } // End of main loop
 
       mcp_log_debug("TCP Client receive thread exiting for socket %d", (int)data->sock);

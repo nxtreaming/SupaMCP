@@ -195,7 +195,6 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
          final_response_str = NULL;
     }
 
-
     // Free the parsed message array and its contents
     mcp_json_free_message_array(messages, message_count);
 
@@ -247,7 +246,6 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
         // If target_backend is NULL, fall through to local handling.
     }
     // --- End Gateway Routing Check ---
-
 
     // --- Local Handling (Gateway mode disabled OR no backend route found) ---
     mcp_log_debug("Handling request locally (method: %s).", request->method);

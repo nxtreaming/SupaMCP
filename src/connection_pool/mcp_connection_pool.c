@@ -167,7 +167,7 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
 }
 
 int mcp_connection_pool_release(mcp_connection_pool_t* pool, socket_handle_t connection, bool is_valid) {
-     if (!pool || connection == INVALID_SOCKET_HANDLE) {
+    if (!pool || connection == INVALID_SOCKET_HANDLE) {
         mcp_log_error("mcp_connection_pool_release: Invalid arguments (pool=%p, connection=%d).", (void*)pool, (int)connection);
         return -1;
     }
@@ -184,7 +184,6 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, socket_handle_t con
     } else {
         pool->active_count--;
     }
-
 
     if (pool->shutting_down) {
         mcp_log_info("Pool shutting down, closing connection %d.", (int)connection);

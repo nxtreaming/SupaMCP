@@ -12,13 +12,13 @@
  * @return A malloc'd JSON string representing the error response, or NULL on allocation failure.
  */
 char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message) {
-    mcp_response_t response; // Stack allocation is fine here
+    mcp_response_t response;
     response.id = id;
     response.error_code = code;
     response.error_message = message; // String literal, no copy needed
     response.result = NULL;
 
-    mcp_message_t msg; // Stack allocation
+    mcp_message_t msg;
     msg.type = MCP_MESSAGE_TYPE_RESPONSE;
     msg.response = response;
 
@@ -35,7 +35,7 @@ char* create_error_response(uint64_t id, mcp_error_code_t code, const char* mess
  * @return A malloc'd JSON string representing the success response, or NULL on allocation failure.
  */
 char* create_success_response(uint64_t id, char* result_str) {
-    mcp_response_t response; // Stack allocation
+    mcp_response_t response;
     response.id = id;
     response.error_code = MCP_ERROR_NONE;
     response.error_message = NULL;
@@ -43,7 +43,7 @@ char* create_success_response(uint64_t id, char* result_str) {
     // will handle embedding it correctly.
     response.result = result_str;
 
-    mcp_message_t msg; // Stack allocation
+    mcp_message_t msg;
     msg.type = MCP_MESSAGE_TYPE_RESPONSE;
     msg.response = response;
 

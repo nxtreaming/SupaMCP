@@ -67,7 +67,7 @@ const mcp_backend_info_t* find_backend_for_request(
 
     // --- Handle 'call_tool' routing ---
     if (strcmp(request->method, "call_tool") == 0) {
-         if (!request->params) return NULL; // Invalid request
+        if (!request->params) return NULL; // Invalid request
 
         // Params should be a parsed JSON object
         const mcp_json_t* params_obj = (const mcp_json_t*)request->params;
@@ -91,7 +91,7 @@ const mcp_backend_info_t* find_backend_for_request(
             }
             // TODO: Add regex matching for tool names if needed
         }
-         mcp_log_debug("No backend route found for tool '%s'", name_str);
+        mcp_log_debug("No backend route found for tool '%s'", name_str);
         return NULL; // No match found
     }
 

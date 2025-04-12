@@ -56,7 +56,6 @@ static DWORD WINAPI stdio_read_thread_func(LPVOID arg);
 static void* stdio_read_thread_func(void* arg);
 #endif
 
-
 // --- Static Implementation Functions ---
 
 // Note: MAX_LINE_LENGTH is defined globally near the top of the file.
@@ -221,9 +220,10 @@ static void* stdio_read_thread_func(void* arg) {
         // 7. Free the message buffer for the next read
         free(message_buf);
         message_buf = NULL;
-
     } // End while(data->running)
-    fprintf(stderr, "[MCP Stdio Transport] Read thread exiting.\n");
+
+    mcp_log_info("[MCP Stdio Transport] Read thread exiting.");
+
 #ifdef _WIN32
     return 0;
 #else
@@ -266,7 +266,7 @@ static int stdio_transport_start(
 #ifdef _WIN32
     data->read_thread = CreateThread(NULL, 0, stdio_read_thread_func, data, 0, NULL);
     if (data->read_thread == NULL) {
-        fprintf(stderr, "[MCP Stdio Transport] Failed to create read thread.\n");
+        mcp_log_error("[MCP Stdio Transport] Failed to create read thread.");
         data->running = false;
         return -1;
     }
@@ -277,7 +277,8 @@ static int stdio_transport_start(
         return -1;
     }
 #endif
-    fprintf(stderr, "[MCP Stdio Transport] Read thread started.\n");
+    mcp_log_info("[MCP Stdio Transport] Read thread started.");
+
     return 0;
 }
 
@@ -313,7 +314,7 @@ static int stdio_transport_stop(mcp_transport_t* transport) {
     // pthread_cancel(data->read_thread); // Force cancellation (might leave resources locked)
     pthread_join(data->read_thread, NULL); // Wait for thread to exit cleanly
 #endif
-    fprintf(stderr, "[MCP Stdio Transport] Read thread stopped.\n");
+    mcp_log_info("[MCP Stdio Transport] Read thread stopped.");
 
     return 0;
 }
@@ -338,19 +339,19 @@ static int stdio_transport_send(mcp_transport_t* transport, const void* payload_
     // 1. Send 4-byte length prefix (network byte order)
     uint32_t net_len = htonl((uint32_t)payload_size);
     if (fwrite(&net_len, 1, sizeof(net_len), stdout) != sizeof(net_len)) {
-        perror("[MCP Stdio Transport] Failed to write length prefix to stdout");
+        mcp_log_error("[MCP Stdio Transport] Failed to write length prefix to stdout");
         return -1;
     }
 
     // 2. Send the actual payload data
     if (fwrite(payload_data, 1, payload_size, stdout) != payload_size) {
-        perror("[MCP Stdio Transport] Failed to write payload data to stdout");
+        mcp_log_error("[MCP Stdio Transport] Failed to write payload data to stdout");
         return -1;
     }
 
     // 3. Ensure the output is flushed immediately
     if (fflush(stdout) != 0) {
-        perror("[MCP Stdio Transport] Failed to flush stdout");
+        mcp_log_error("[MCP Stdio Transport] Failed to flush stdout");
         return -1;
     }
     return 0;

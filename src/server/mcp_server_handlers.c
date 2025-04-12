@@ -251,7 +251,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     }
     // --- End Permission Check ---
 
-
     mcp_content_item_t** content_items = NULL;
     size_t content_count = 0;
     bool fetched_from_handler = false;
@@ -620,7 +619,6 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
         return response;
     }
     // --- End Permission Check ---
-
 
     mcp_json_t* args_json = mcp_json_object_get_property(params_json, "arguments");
     // Arguments can be any JSON type. Pass the parsed mcp_json_t* directly.

@@ -26,7 +26,6 @@ static int tcp_client_transport_start(
     transport->callback_user_data = user_data;
     transport->error_callback = error_callback;
 
-
     if (mcp_socket_init() != 0) {
         mcp_log_error("Failed to initialize socket library.");
         return -1;
@@ -40,7 +39,6 @@ static int tcp_client_transport_start(
         return -1;
     }
     data->connected = true; // Mark as connected after successful mcp_socket_connect
-
     data->running = true;
 
     // Start receiver thread

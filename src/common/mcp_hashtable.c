@@ -140,10 +140,8 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
         }
     }
 
-
     // --- Calculate bucket index ---
     size_t index = table->hash_func(key) & (table->capacity - 1);
-
 
     // --- Check if key already exists ---
     mcp_hashtable_entry_t* entry = table->buckets[index];
@@ -161,7 +159,6 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
         prev = entry;
         entry = entry->next;
     }
-
 
     // --- Key doesn't exist, create and insert new entry ---
     mcp_hashtable_entry_t* new_entry = (mcp_hashtable_entry_t*)malloc(

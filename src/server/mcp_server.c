@@ -68,7 +68,6 @@ mcp_server_t* mcp_server_create(
      }
     // --- End Configuration Copy ---
 
-
     // Copy capabilities struct
     server->capabilities = *capabilities;
 
@@ -202,51 +201,50 @@ int mcp_server_start(
         // Proceed with pre-warming loop
         for (size_t i = 0; i < server->config.prewarm_count; ++i) {
             const char* uri = server->config.prewarm_resource_uris[i];
-                if (!uri) continue;
+            if (!uri) continue;
 
-                mcp_log_debug("Pre-warming resource: %s", uri);
-                mcp_content_item_t** content = NULL;
-                size_t content_count = 0;
-                char* error_message = NULL;
-                // Use the temporary arena for this handler call
-                mcp_error_code_t handler_err = MCP_ERROR_INTERNAL_ERROR; // Default error
-                if (server->resource_handler) {
-                     // Directly call the handler from the server struct
-                     handler_err = server->resource_handler(
-                        server, uri, server->resource_handler_user_data,
-                        &content, &content_count, &error_message
-                    );
-                } else {
-                     mcp_log_error("Resource handler is NULL during pre-warming.");
-                     // Handle error appropriately, maybe break or continue
-                }
-
-
-                if (handler_err == MCP_ERROR_NONE) {
-                    // Put the fetched content into the cache with infinite TTL (-1 or 0)
-                    // Pass the content item pool to mcp_cache_put
-                    int put_err = mcp_cache_put(server->resource_cache, uri, server->content_item_pool, content, content_count, -1);
-                    if (put_err != 0) {
-                        mcp_log_warn("Failed to put pre-warmed resource '%s' into cache.", uri);
-                    } else {
-                        mcp_log_debug("Successfully pre-warmed and cached resource: %s", uri);
-                    }
-                    // Free the content returned by the handler (cache made copies)
-                    if (content) {
-                        for (size_t j = 0; j < content_count; ++j) {
-                            mcp_content_item_free(content[j]);
-                        }
-                        free(content);
-                    }
-                } else {
-                    mcp_log_warn("Failed to pre-warm resource '%s': Handler error %d (%s)",
-                                 uri, handler_err, error_message ? error_message : "N/A");
-                }
-                free(error_message); // Free error message if any
-                mcp_arena_reset(&prewarm_arena); // Reset arena for next iteration
+            mcp_log_debug("Pre-warming resource: %s", uri);
+            mcp_content_item_t** content = NULL;
+            size_t content_count = 0;
+            char* error_message = NULL;
+            // Use the temporary arena for this handler call
+            mcp_error_code_t handler_err = MCP_ERROR_INTERNAL_ERROR; // Default error
+            if (server->resource_handler) {
+                // Directly call the handler from the server struct
+                handler_err = server->resource_handler(
+                    server, uri, server->resource_handler_user_data,
+                    &content, &content_count, &error_message
+                );
+            } else {
+                mcp_log_error("Resource handler is NULL during pre-warming.");
+                // Handle error appropriately, maybe break or continue
             }
-            mcp_arena_destroy(&prewarm_arena); // Destroy temporary arena
-            mcp_log_info("Cache pre-warming finished.");
+
+            if (handler_err == MCP_ERROR_NONE) {
+                // Put the fetched content into the cache with infinite TTL (-1 or 0)
+                // Pass the content item pool to mcp_cache_put
+                int put_err = mcp_cache_put(server->resource_cache, uri, server->content_item_pool, content, content_count, -1);
+                if (put_err != 0) {
+                    mcp_log_warn("Failed to put pre-warmed resource '%s' into cache.", uri);
+                } else {
+                    mcp_log_debug("Successfully pre-warmed and cached resource: %s", uri);
+                }
+                // Free the content returned by the handler (cache made copies)
+                if (content) {
+                    for (size_t j = 0; j < content_count; ++j) {
+                        mcp_content_item_free(content[j]);
+                    }
+                    free(content);
+                }
+            } else {
+                mcp_log_warn("Failed to pre-warm resource '%s': Handler error %d (%s)",
+                                uri, handler_err, error_message ? error_message : "N/A");
+            }
+            free(error_message); // Free error message if any
+            mcp_arena_reset(&prewarm_arena); // Reset arena for next iteration
+        }
+        mcp_arena_destroy(&prewarm_arena); // Destroy temporary arena
+        mcp_log_info("Cache pre-warming finished.");
         // Removed the 'else' block corresponding to the removed 'if' check
     }
     // --- End Cache Pre-warming ---
@@ -304,7 +302,6 @@ void mcp_server_destroy(mcp_server_t* server) {
     // Reset config pointers/counts after freeing
     server->config.prewarm_resource_uris = NULL;
     server->config.prewarm_count = 0;
-
 
     // Free gateway backend list
     mcp_free_backend_list(server->backends, server->backend_count);

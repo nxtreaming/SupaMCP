@@ -38,7 +38,6 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
     int parse_status = -1; // Default to error
     message->type = MCP_MESSAGE_TYPE_INVALID; // Default type
 
-
     // --- Request Check ---
     if (method != NULL && method->type == MCP_JSON_STRING) {
         if (id != NULL) { // Must have ID for request
@@ -81,7 +80,6 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
                 }
             }
         }
-
     // --- Response Check ---
     } else if (id != NULL && (result != NULL || error != NULL)) { // Response
         // Check ID type
@@ -90,10 +88,10 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
             message->response.id = (uint64_t)id->number_value; // TODO: Handle potential precision loss?
 
             if (error != NULL && error->type == MCP_JSON_OBJECT) { // Error Response
-                 if (result != NULL) {
-                     // Error: Both result and error members MUST NOT exist
-                     message->type = MCP_MESSAGE_TYPE_INVALID;
-                 } else {
+                if (result != NULL) {
+                    // Error: Both result and error members MUST NOT exist
+                    message->type = MCP_MESSAGE_TYPE_INVALID;
+                } else {
                     mcp_json_t* code = mcp_json_object_get_property(error, "code");
                     mcp_json_t* msg = mcp_json_object_get_property(error, "message");
                     // Code MUST be an integer
@@ -110,16 +108,15 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
                                 message->type = MCP_MESSAGE_TYPE_INVALID;
                                 // Parsed JSON tree is in thread-local arena, caller handles cleanup.
                             }
-                         } else { // Invalid error message type
-                             mcp_log_error("MCP message parse error: Response 'error.message' is not a string.");
-                              message->type = MCP_MESSAGE_TYPE_INVALID;
-                         }
-                     } else { // Invalid error code type
-                         mcp_log_error("MCP message parse error: Response 'error.code' is not a number.");
-                         message->type = MCP_MESSAGE_TYPE_INVALID;
-                     }
+                        } else { // Invalid error message type
+                            mcp_log_error("MCP message parse error: Response 'error.message' is not a string.");
+                            message->type = MCP_MESSAGE_TYPE_INVALID;
+                        }
+                    } else { // Invalid error code type
+                        mcp_log_error("MCP message parse error: Response 'error.code' is not a number.");
+                        message->type = MCP_MESSAGE_TYPE_INVALID;
+                    }
                 }
-
             } else if (result != NULL) { // Success Response
                 // Success Response (result can be any JSON type)
                 message->response.error_code = MCP_ERROR_NONE;
@@ -127,28 +124,26 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
                 message->response.result = mcp_json_stringify(result); // Uses malloc
                 if (message->response.result != NULL) {
                     parse_status = 0; // Success
-                 } else {
-                     // stringify failed
-                     mcp_log_error("Failed to stringify response result.");
-                     message->type = MCP_MESSAGE_TYPE_INVALID;
-                     // Parsed JSON tree is in thread-local arena, caller handles cleanup.
+                } else {
+                    // stringify failed
+                    mcp_log_error("Failed to stringify response result.");
+                    message->type = MCP_MESSAGE_TYPE_INVALID;
+                    // Parsed JSON tree is in thread-local arena, caller handles cleanup.
                 }
-             } else {
-                  // Invalid response: Must have 'result' or 'error'
-                  mcp_log_error("MCP message parse error: Response must have 'result' or 'error'.");
-                  message->type = MCP_MESSAGE_TYPE_INVALID;
-             }
-
-         } else { // Invalid ID type
-              mcp_log_error("MCP message parse error: Response 'id' is not a number.");
-              message->type = MCP_MESSAGE_TYPE_INVALID;
-         }
-
+            } else {
+                // Invalid response: Must have 'result' or 'error'
+                mcp_log_error("MCP message parse error: Response must have 'result' or 'error'.");
+                message->type = MCP_MESSAGE_TYPE_INVALID;
+            }
+        } else { // Invalid ID type
+            mcp_log_error("MCP message parse error: Response 'id' is not a number.");
+            message->type = MCP_MESSAGE_TYPE_INVALID;
+        }
      // --- Invalid Message Type ---
-     } else { // Not a request, notification, or response
-         mcp_log_error("MCP message parse error: Message is not a valid request, response, or notification.");
-         message->type = MCP_MESSAGE_TYPE_INVALID;
-     }
+    } else { // Not a request, notification, or response
+        mcp_log_error("MCP message parse error: Message is not a valid request, response, or notification.");
+        message->type = MCP_MESSAGE_TYPE_INVALID;
+    }
 
     // Parsed JSON tree ('json') lives in the thread-local arena.
     // The caller is responsible for calling mcp_arena_reset_current_thread()
@@ -292,11 +287,11 @@ char* mcp_json_create_request(const char* method, const char* params, uint64_t i
         }
         final_json_string = mcp_json_stringify(request); // Uses malloc
     } else {
-         mcp_log_error("Failed to create nodes for JSON-RPC request.");
-         // Nodes are in arena, no need to destroy individually here.
-         // Destroy the partially built request object in the arena if creation failed
-         // Note: mcp_json_destroy handles NULL safely
-         mcp_json_destroy(request); // This will free associated arena nodes if needed by impl
+        mcp_log_error("Failed to create nodes for JSON-RPC request.");
+        // Nodes are in arena, no need to destroy individually here.
+        // Destroy the partially built request object in the arena if creation failed
+        // Note: mcp_json_destroy handles NULL safely
+        mcp_json_destroy(request); // This will free associated arena nodes if needed by impl
     }
 
     // The 'request' object and its direct children (jsonrpc, method_node, id_node, params_node if parsed)
@@ -336,12 +331,12 @@ char* mcp_json_create_response(uint64_t id, const char* result) {
         mcp_json_object_set_property(response, "result", result_node);
         final_json_string = mcp_json_stringify(response); // Uses malloc
     } else {
-         mcp_log_error("Failed to create nodes for JSON-RPC response.");
-         mcp_json_destroy(response); // Clean up arena nodes if creation failed
+        mcp_log_error("Failed to create nodes for JSON-RPC response.");
+        mcp_json_destroy(response); // Clean up arena nodes if creation failed
     }
 
     PROFILE_END("mcp_json_create_response");
-     return final_json_string;
+    return final_json_string;
 }
 
 // Internal helper to parse a single JSON object within a batch
@@ -399,7 +394,8 @@ static int parse_single_message_from_json(mcp_json_t* json, mcp_message_t* messa
             message->type = MCP_MESSAGE_TYPE_RESPONSE;
             message->response.id = (uint64_t)id->number_value;
             if (error != NULL && error->type == MCP_JSON_OBJECT) { // Error Response
-                if (result != NULL) { message->type = MCP_MESSAGE_TYPE_INVALID; }
+                if (result != NULL) 
+                    message->type = MCP_MESSAGE_TYPE_INVALID;
                 else {
                     mcp_json_t* code = mcp_json_object_get_property(error, "code");
                     mcp_json_t* msg = mcp_json_object_get_property(error, "message");
@@ -407,19 +403,33 @@ static int parse_single_message_from_json(mcp_json_t* json, mcp_message_t* messa
                         message->response.error_code = (mcp_error_code_t)(int)code->number_value;
                         message->response.error_message = mcp_strdup(msg->string_value);
                         message->response.result = NULL;
-                        if (message->response.error_message != NULL) { parse_status = 0; }
-                        else { message->type = MCP_MESSAGE_TYPE_INVALID; }
-                    } else { message->type = MCP_MESSAGE_TYPE_INVALID; }
+                        if (message->response.error_message != NULL) {
+                            parse_status = 0;
+                        } else {
+                            message->type = MCP_MESSAGE_TYPE_INVALID;
+                        }
+                    } else {
+                        message->type = MCP_MESSAGE_TYPE_INVALID;
+                    }
                 }
             } else if (result != NULL) { // Success Response
                 message->response.error_code = MCP_ERROR_NONE;
                 message->response.error_message = NULL;
                 message->response.result = mcp_json_stringify(result); // Still uses malloc
-                if (message->response.result != NULL) { parse_status = 0; }
-                else { message->type = MCP_MESSAGE_TYPE_INVALID; }
-            } else { message->type = MCP_MESSAGE_TYPE_INVALID; }
-        } else { message->type = MCP_MESSAGE_TYPE_INVALID; }
-    } else { message->type = MCP_MESSAGE_TYPE_INVALID; }
+                if (message->response.result != NULL)
+                    parse_status = 0; 
+                else {
+                    message->type = MCP_MESSAGE_TYPE_INVALID; 
+                }
+            } else {
+                message->type = MCP_MESSAGE_TYPE_INVALID;
+            }
+        } else {
+            message->type = MCP_MESSAGE_TYPE_INVALID;
+        }
+    } else {
+        message->type = MCP_MESSAGE_TYPE_INVALID;
+    }
 
     // If parsing failed for this specific message, ensure type is invalid
     if (parse_status != 0) {
@@ -509,12 +519,12 @@ int mcp_json_parse_message_or_batch(const char* json_str, mcp_message_t** messag
                         parse_error_occurred = true;
                     }
                 }
-                 // If any item failed parsing, the overall result might be considered an error,
-                 // but we still return the partially parsed array. Let the caller decide.
-                 // For now, return success if at least one message was parsed, otherwise error.
-                 // result = (*count > 0) ? 0 : MCP_ERROR_INVALID_REQUEST;
-                 // Let's return success even if some items failed, caller checks individual types.
-                 result = 0;
+                // If any item failed parsing, the overall result might be considered an error,
+                // but we still return the partially parsed array. Let the caller decide.
+                // For now, return success if at least one message was parsed, otherwise error.
+                // result = (*count > 0) ? 0 : MCP_ERROR_INVALID_REQUEST;
+                // Let's return success even if some items failed, caller checks individual types.
+                result = 0;
             }
         }
     } else {
@@ -541,35 +551,35 @@ void mcp_json_free_message_array(mcp_message_t* messages, size_t count) {
 }
 
 char* mcp_json_create_error_response(uint64_t id, int error_code, const char* error_message) {
-     PROFILE_START("mcp_json_create_error_response");
+    PROFILE_START("mcp_json_create_error_response");
 
-     mcp_json_t* response = mcp_json_object_create(); // Uses arena
-     if (response == NULL) {
-         PROFILE_END("mcp_json_create_error_response");
-         return NULL;
-     }
+    mcp_json_t* response = mcp_json_object_create(); // Uses arena
+    if (response == NULL) {
+        PROFILE_END("mcp_json_create_error_response");
+        return NULL;
+    }
 
-     mcp_json_t* jsonrpc = mcp_json_string_create("2.0"); // Uses arena
-     mcp_json_t* id_node = mcp_json_number_create((double)id); // Uses arena
-     mcp_json_t* error_obj = mcp_json_object_create(); // Uses arena
-     mcp_json_t* code_node = mcp_json_number_create((double)error_code); // Uses arena
-     // Use empty string if message is NULL
-     mcp_json_t* msg_node = mcp_json_string_create(error_message ? error_message : ""); // Uses arena
+    mcp_json_t* jsonrpc = mcp_json_string_create("2.0"); // Uses arena
+    mcp_json_t* id_node = mcp_json_number_create((double)id); // Uses arena
+    mcp_json_t* error_obj = mcp_json_object_create(); // Uses arena
+    mcp_json_t* code_node = mcp_json_number_create((double)error_code); // Uses arena
+    // Use empty string if message is NULL
+    mcp_json_t* msg_node = mcp_json_string_create(error_message ? error_message : ""); // Uses arena
 
-     char* final_json_string = NULL;
+    char* final_json_string = NULL;
 
-     if (jsonrpc && id_node && error_obj && code_node && msg_node) {
-         mcp_json_object_set_property(error_obj, "code", code_node);
-         mcp_json_object_set_property(error_obj, "message", msg_node);
-         mcp_json_object_set_property(response, "jsonrpc", jsonrpc);
-         mcp_json_object_set_property(response, "id", id_node);
-         mcp_json_object_set_property(response, "error", error_obj);
-         final_json_string = mcp_json_stringify(response); // Uses malloc
-     } else {
-          mcp_log_error("Failed to create nodes for JSON-RPC error response.");
-          mcp_json_destroy(response); // Clean up arena nodes if creation failed
-     }
+    if (jsonrpc && id_node && error_obj && code_node && msg_node) {
+        mcp_json_object_set_property(error_obj, "code", code_node);
+        mcp_json_object_set_property(error_obj, "message", msg_node);
+        mcp_json_object_set_property(response, "jsonrpc", jsonrpc);
+        mcp_json_object_set_property(response, "id", id_node);
+        mcp_json_object_set_property(response, "error", error_obj);
+        final_json_string = mcp_json_stringify(response); // Uses malloc
+    } else {
+        mcp_log_error("Failed to create nodes for JSON-RPC error response.");
+        mcp_json_destroy(response); // Clean up arena nodes if creation failed
+    }
 
-     PROFILE_END("mcp_json_create_error_response");
-     return final_json_string;
+    PROFILE_END("mcp_json_create_error_response");
+    return final_json_string;
 }

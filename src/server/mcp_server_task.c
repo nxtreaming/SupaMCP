@@ -4,7 +4,6 @@
 #include <stdlib.h>
 
 // Structure to hold data for a message processing task
-// Definition moved here from mcp_server.c
 typedef struct message_task_data_t {
     mcp_server_t* server;
     mcp_transport_t* transport; // Transport to send response on
@@ -17,7 +16,7 @@ void process_message_task(void* arg) {
     PROFILE_START("process_message_task"); // Profile task execution
     message_task_data_t* task_data = (message_task_data_t*)arg;
     if (!task_data || !task_data->server || !task_data->transport || !task_data->message_data) {
-        fprintf(stderr, "Error: Invalid task data in process_message_task.\n");
+        mcp_log_error("Error: Invalid task data in process_message_task.");
         // Attempt cleanup even with invalid data
         if (task_data) free(task_data->message_data);
         free(task_data);
@@ -32,7 +31,7 @@ void process_message_task(void* arg) {
 
     // --- Input Validation: Check message size ---
     if (size > max_size) {
-        fprintf(stderr, "Error: Received message size (%zu) exceeds limit (%zu).\n", size, max_size);
+        mcp_log_error("Error: Received message size (%zu) exceeds limit (%zu).", size, max_size);
         // We cannot generate a JSON-RPC error here as we haven't parsed the ID yet.
         // The connection will likely be closed by the transport layer after this task finishes.
         free(task_data->message_data); // Free copied data

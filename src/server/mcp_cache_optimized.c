@@ -201,7 +201,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
 
     mcp_mutex_lock(cache->lock); // Use abstracted lock
 
-    // --- Eviction Logic��Evict First Found strategy ---
+    // --- Eviction Logic: Evict First Found strategy ---
     if (mcp_hashtable_size(cache->table) >= cache->capacity && !mcp_hashtable_contains(cache->table, uri)) {
         mcp_log_warn("Cache full (capacity: %zu). Evicting an entry to insert '%s'.", cache->capacity, uri);
         bool evicted = false;

@@ -296,7 +296,6 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
         allocation_failed = true;
     }
 
-
     if (pool->lock == NULL || pool->notify == NULL || pool->threads == NULL || allocation_failed) {
         mcp_log_error("Thread pool creation failed: Failed to initialize sync primitives or allocate memory for deques.");
         if (pool->threads) free(pool->threads);
@@ -482,7 +481,6 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
 
     return err;
 }
-
 
 /**
  * @brief The worker thread function using work-stealing deques.

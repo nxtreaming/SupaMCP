@@ -30,8 +30,7 @@ int mcp_socket_init(void) {
     WSADATA wsaData;
     int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
-        // Use fprintf as logging might not be initialized yet
-        fprintf(stderr, "[MCP Socket] WSAStartup failed: %d\n", iResult);
+        mcp_log_error("[MCP Socket] WSAStartup failed: %d", iResult);
         return -1;
     }
 #endif

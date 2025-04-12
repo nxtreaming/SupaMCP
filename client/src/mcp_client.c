@@ -17,7 +17,6 @@
 #include <mcp_json_message.h>
 #include <mcp_json_rpc.h>
 
-
 // Platform specific includes are no longer needed here for sync primitives,
 // but keep them for socket types if used elsewhere in the file.
 #ifdef _WIN32
@@ -32,7 +31,6 @@
 #include <time.h> // Still needed for timespec
 #include <errno.h> // Include for ETIMEDOUT on POSIX
 #endif
-
 
 // Initial capacity for pending requests hash table (must be power of 2)
 #define INITIAL_PENDING_REQUESTS_CAPACITY 16
@@ -64,7 +62,6 @@ typedef struct {
     pending_request_t request;
 } pending_request_entry_t;
 
-
 /**
  * MCP client structure (Internal definition)
  */
@@ -91,7 +88,6 @@ static int resize_pending_requests_table(mcp_client_t* client);
 static char* client_receive_callback(void* user_data, const void* data, size_t size, int* error_code);
 // Forward declaration for the client's internal transport error callback
 static void client_transport_error_callback(void* user_data, int error_code);
-
 
 /**
  * @brief Create an MCP client instance.
@@ -133,8 +129,8 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
     }
     // Initialize status and CV pointers for all allocated entries
     for (size_t i = 0; i < client->pending_requests_capacity; ++i) {
-         client->pending_requests_table[i].request.status = PENDING_REQUEST_INVALID;
-         client->pending_requests_table[i].request.cv = NULL; // Initialize CV pointer
+        client->pending_requests_table[i].request.status = PENDING_REQUEST_INVALID;
+        client->pending_requests_table[i].request.cv = NULL; // Initialize CV pointer
     }
 
 
@@ -252,7 +248,6 @@ static int add_pending_request_entry(mcp_client_t* client, uint64_t id, pending_
          // This indicates a logic error (ID reuse before completion) or hash collision issue not handled
          return -1;
     }
-
 
     // Found an empty or deleted slot
     entry->id = id;
@@ -416,7 +411,7 @@ static int mcp_client_send_and_wait(
     mcp_error_code_t* error_code,
     char** error_message
 ) {
-     if (client == NULL || request_json == NULL || result == NULL || error_code == NULL || error_message == NULL) {
+    if (client == NULL || request_json == NULL || result == NULL || error_code == NULL || error_message == NULL) {
         return -1;
     }
 
@@ -603,7 +598,7 @@ int mcp_client_send_raw_request(
     mcp_error_code_t* error_code_out, // Changed name
     char** error_message_out // Changed name
 ) {
-     if (client == NULL || method == NULL || params_json == NULL || response_json_out == NULL || error_code_out == NULL || error_message_out == NULL) {
+    if (client == NULL || method == NULL || params_json == NULL || response_json_out == NULL || error_code_out == NULL || error_message_out == NULL) {
         return -1;
     }
 

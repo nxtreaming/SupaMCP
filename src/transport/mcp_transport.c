@@ -59,6 +59,7 @@ void mcp_transport_destroy(mcp_transport_t* transport) {
     if (transport->destroy) {
         transport->destroy(transport); // Call specific cleanup
     }
+    // TODO:
     // Free the generic transport struct itself? Or is it part of a larger struct?
     // Assuming the specific destroy handles freeing transport_data,
     // but the mcp_transport struct itself might be allocated differently.

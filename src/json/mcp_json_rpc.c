@@ -239,10 +239,9 @@ int mcp_json_parse_response(
         }
         // Result should not be present in error response
         if (mcp_json_object_has_property(json, "result")) {
-             mcp_log_warn("JSON-RPC response contains both 'error' and 'result'.");
-             // Technically invalid, but proceed with error info
+            mcp_log_warn("JSON-RPC response contains both 'error' and 'result'.");
+            // Technically invalid, but proceed with error info
         }
-
     } else if (mcp_json_object_has_property(json, "result")) {
         // Success response
         mcp_json_t* result_node = mcp_json_object_get_property(json, "result");
@@ -314,11 +313,11 @@ char* mcp_json_format_call_tool_params(const char* name, const char* arguments) 
     if (arguments != NULL) {
         mcp_json_t* arguments_json = mcp_json_parse(arguments);
         if (arguments_json == NULL) {
-             mcp_log_warn("Invalid JSON provided for tool arguments: %s", arguments);
-             // Proceed without arguments if parsing fails? Or return error?
-             // Let's return error for now.
-             mcp_json_destroy(params);
-             return NULL;
+            mcp_log_warn("Invalid JSON provided for tool arguments: %s", arguments);
+            // Proceed without arguments if parsing fails? Or return error?
+            // Let's return error for now.
+            mcp_json_destroy(params);
+            return NULL;
         }
         if (mcp_json_object_set_property(params, "arguments", arguments_json) != 0) {
             mcp_json_destroy(params); // Destroys arguments_json too
@@ -425,7 +424,7 @@ int mcp_json_parse_resource_templates(
     mcp_resource_template_t*** templates,
     size_t* count
 ) {
-     if (json_str == NULL || templates == NULL || count == NULL) {
+    if (json_str == NULL || templates == NULL || count == NULL) {
         return -1;
     }
 
@@ -512,7 +511,7 @@ int mcp_json_parse_content(
     mcp_content_item_t*** content,
     size_t* count
 ) {
-     if (json_str == NULL || content == NULL || count == NULL) {
+    if (json_str == NULL || content == NULL || count == NULL) {
         return -1;
     }
 
@@ -606,7 +605,7 @@ int mcp_json_parse_tools(
     mcp_tool_t*** tools,
     size_t* count
 ) {
-     if (json_str == NULL || tools == NULL || count == NULL) {
+    if (json_str == NULL || tools == NULL || count == NULL) {
         return -1;
     }
 
@@ -735,7 +734,7 @@ int mcp_json_parse_tool_result(
     size_t* count,
     bool* is_error
 ) {
-     if (json_str == NULL || content == NULL || count == NULL || is_error == NULL) {
+    if (json_str == NULL || content == NULL || count == NULL || is_error == NULL) {
         return -1;
     }
 
@@ -765,7 +764,7 @@ int mcp_json_parse_tool_result(
 
     // Get count
     int array_size = mcp_json_array_get_size(content_array);
-     if (array_size <= 0) {
+    if (array_size <= 0) {
         mcp_json_destroy(json);
         return 0; // Empty content array is valid
     }

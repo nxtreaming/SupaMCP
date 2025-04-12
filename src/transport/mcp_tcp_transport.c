@@ -9,7 +9,6 @@
 #include "mcp_sync.h"
 #include <mcp_thread_pool.h>
 
-// Note: Update tcp_transport_start signature to match interface
 static int tcp_transport_start(
     mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
@@ -128,7 +127,6 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
         data->listen_socket = MCP_INVALID_SOCKET;
     }
 #endif
-
 
     // Wait for the accept thread to finish using abstraction
     if (data->accept_thread) { // Check if thread handle is valid

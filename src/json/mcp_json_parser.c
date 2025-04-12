@@ -181,7 +181,7 @@ static mcp_json_t* parse_object(const char** json, int depth) {
 }
 
 static mcp_json_t* parse_array(const char** json, int depth) {
-     if (depth > MCP_JSON_MAX_PARSE_DEPTH) {
+    if (depth > MCP_JSON_MAX_PARSE_DEPTH) {
         mcp_log_error("JSON parsing depth exceeded limit (%d).", MCP_JSON_MAX_PARSE_DEPTH);
         return NULL; // Depth limit exceeded
     }
@@ -303,17 +303,17 @@ mcp_json_t* mcp_json_parse(const char* json) {
     const char* current = json; // Use a temporary pointer
     skip_whitespace(&current);
     mcp_json_t* result = parse_value(&current, 0); // Start parsing at depth 0
-     if (result == NULL) {
-         // Parsing failed, thread-local arena contains partially allocated nodes.
-         // Caller should reset/destroy the thread-local arena if appropriate.
-         mcp_log_error("JSON parsing failed.");
-         return NULL;
-     }
-     skip_whitespace(&current);
-     if (*current != '\0') {
-         mcp_log_error("JSON parse error: Trailing characters found after valid JSON: '%s'", current);
-         // Trailing characters after valid JSON
-         // Don't destroy result (it's in thread-local arena), let caller handle arena.
+    if (result == NULL) {
+        // Parsing failed, thread-local arena contains partially allocated nodes.
+        // Caller should reset/destroy the thread-local arena if appropriate.
+        mcp_log_error("JSON parsing failed.");
+        return NULL;
+    }
+    skip_whitespace(&current);
+    if (*current != '\0') {
+        mcp_log_error("JSON parse error: Trailing characters found after valid JSON: '%s'", current);
+        // Trailing characters after valid JSON
+        // Don't destroy result (it's in thread-local arena), let caller handle arena.
         return NULL;
     }
     return result;

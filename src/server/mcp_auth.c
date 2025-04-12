@@ -138,26 +138,26 @@ bool mcp_auth_check_resource_access(const mcp_auth_context_t* context, const cha
  * @brief Checks tool access permission using simple wildcard matching.
  */
 bool mcp_auth_check_tool_access(const mcp_auth_context_t* context, const char* tool_name) {
-     if (!context || !tool_name) {
+    if (!context || !tool_name) {
         return false; // Cannot check access without context or tool name
     }
 
     // Check expiry if applicable
     if (context->expiry != 0 && time(NULL) > context->expiry) {
-         mcp_log_warn("Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
+        mcp_log_warn("Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
         return false; // Context expired
     }
 
     // Check against allowed patterns using the utility function
     for (size_t i = 0; i < context->allowed_tools_count; ++i) {
         if (context->allowed_tools[i] && mcp_wildcard_match(context->allowed_tools[i], tool_name)) {
-             mcp_log_debug("Access granted for '%s' to tool '%s' (match: %s)",
+            mcp_log_debug("Access granted for '%s' to tool '%s' (match: %s)",
                     context->identifier ? context->identifier : "unknown", tool_name, context->allowed_tools[i]);
             return true; // Found a matching allowed pattern
         }
     }
 
-     mcp_log_info("Access denied for '%s' to tool '%s'. No matching rule found.",
+    mcp_log_info("Access denied for '%s' to tool '%s'. No matching rule found.",
             context->identifier ? context->identifier : "unknown", tool_name);
     return false; // No matching pattern found
 }

@@ -303,43 +303,55 @@ void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_bac
                 colon = strchr(host_part, ':');
                 if (colon) {
                     *colon = '\0';
-                    if (*(colon + 1) != '\0') port_part = (uint16_t)atoi(colon + 1);
-                    else { mcp_log_error("Invalid port format..."); port_part = 0; }
-                } else { mcp_log_error("Port missing..."); port_part = 0; }
-            } else { mcp_log_error("Failed to duplicate address..."); /* Handle error */ }
+                    if (*(colon + 1) != '\0')
+                        port_part = (uint16_t)atoi(colon + 1);
+                    else {
+                        mcp_log_error("Invalid port format...");
+                        port_part = 0;
+                    }
+                } else {
+                    mcp_log_error("Port missing..."); 
+                    port_part = 0;
+                }
+            } else {
+                mcp_log_error("Failed to duplicate address..."); 
+                /* Handle error */
+            }
 
             mcp_transport_t* transport = NULL;
             if (port_part > 0 && host_part && *host_part != '\0') {
-                 // Use the function from the included header
-                 transport = mcp_transport_tcp_client_create(host_part, port_part);
-            } else { mcp_log_error("Invalid host or port..."); }
+                // Use the function from the included header
+                transport = mcp_transport_tcp_client_create(host_part, port_part);
+            } else {
+                mcp_log_error("Invalid host or port...");
+            }
             free(host_part);
 
             if (!transport) {
-                 mcp_log_error("Failed to create transport for %s", pool->backend_address);
-                 mcp_mutex_lock(pool->pool_lock);
-                 pool->total_count--;
-                 mcp_mutex_unlock(pool->pool_lock);
-                 goto found_connection; // Exit loop, client_connection is NULL
+                mcp_log_error("Failed to create transport for %s", pool->backend_address);
+                mcp_mutex_lock(pool->pool_lock);
+                pool->total_count--;
+                mcp_mutex_unlock(pool->pool_lock);
+                goto found_connection; // Exit loop, client_connection is NULL
             }
 
             mcp_client_config_t client_config = { .request_timeout_ms = pool->connect_timeout_ms };
             mcp_client_t* new_client = mcp_client_create(&client_config, transport);
 
             if (!new_client) {
-                 mcp_log_error("Failed to create client for %s", pool->backend_address);
-                 mcp_mutex_lock(pool->pool_lock);
-                 pool->total_count--;
-                 mcp_mutex_unlock(pool->pool_lock);
-                 goto found_connection; // Exit loop, client_connection is NULL
+                mcp_log_error("Failed to create client for %s", pool->backend_address);
+                mcp_mutex_lock(pool->pool_lock);
+                pool->total_count--;
+                mcp_mutex_unlock(pool->pool_lock);
+                goto found_connection; // Exit loop, client_connection is NULL
             }
 
             mcp_mutex_lock(pool->pool_lock);
             if (pool->pool_lock == NULL) {
-                 mcp_mutex_unlock(pool->pool_lock);
-                 mcp_log_warn("Pool destroyed while creating connection...");
-                 mcp_client_destroy(new_client);
-                 return NULL;
+                mcp_mutex_unlock(pool->pool_lock);
+                mcp_log_warn("Pool destroyed while creating connection...");
+                mcp_client_destroy(new_client);
+                return NULL;
             }
             pool->active_count++;
             client_connection = new_client;
@@ -363,14 +375,14 @@ void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_bac
         }
 
         if (remaining_timeout_ms < 0) { // Wait indefinitely
-             wait_result = mcp_cond_wait(pool->pool_cond, pool->pool_lock);
+            wait_result = mcp_cond_wait(pool->pool_cond, pool->pool_lock);
         } else { // Wait with timeout
-             wait_result = mcp_cond_timedwait(pool->pool_cond, pool->pool_lock, (uint32_t)remaining_timeout_ms);
+            wait_result = mcp_cond_timedwait(pool->pool_cond, pool->pool_lock, (uint32_t)remaining_timeout_ms);
         }
 
         if (wait_result == ETIMEDOUT) {
-             mcp_log_warn("Timed out waiting for connection to %s", pool->backend_address);
-             goto found_connection; // Exit loop, client_connection is NULL
+            mcp_log_warn("Timed out waiting for connection to %s", pool->backend_address);
+            goto found_connection; // Exit loop, client_connection is NULL
         } else if (wait_result != 0) {
             mcp_log_error("Failed waiting for connection pool condition for %s (err: %d)", pool->backend_address, wait_result);
             goto found_connection; // Exit loop on wait error, client_connection is NULL
@@ -386,7 +398,7 @@ found_connection:
 
 // Implementation of gateway_pool_release_connection
 void gateway_pool_release_connection(gateway_pool_manager_t* manager, const mcp_backend_info_t* backend_info, void* connection_handle) {
-     if (!manager || !backend_info || !backend_info->address || !connection_handle) {
+    if (!manager || !backend_info || !backend_info->address || !connection_handle) {
         mcp_log_error("gateway_pool_release_connection: Invalid arguments.");
         return;
     }
@@ -398,10 +410,10 @@ void gateway_pool_release_connection(gateway_pool_manager_t* manager, const mcp_
     mcp_mutex_lock(manager->manager_lock);
     // Find the pool for this backend
     if (mcp_hashtable_get(manager->backend_pools, backend_info->address, (void**)&pool) != 0 || pool == NULL) {
-         mcp_log_warn("Attempted to release connection for unknown or missing backend pool: %s. Destroying connection.", backend_info->address);
-         mcp_mutex_unlock(manager->manager_lock);
-         mcp_client_destroy(client); // Destroy the orphaned connection
-         return;
+        mcp_log_warn("Attempted to release connection for unknown or missing backend pool: %s. Destroying connection.", backend_info->address);
+        mcp_mutex_unlock(manager->manager_lock);
+        mcp_client_destroy(client); // Destroy the orphaned connection
+        return;
     }
     // Unlock manager mutex after getting the pool pointer
     mcp_mutex_unlock(manager->manager_lock);

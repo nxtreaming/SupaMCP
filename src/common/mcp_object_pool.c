@@ -101,7 +101,7 @@ mcp_object_pool_t* mcp_object_pool_create(size_t object_size, size_t initial_cap
                     return NULL;
                 }
             }
-             // MCP_LOG(MCP_LOG_DEBUG, "Pre-allocated %zu objects individually", initial_capacity);
+            // MCP_LOG(MCP_LOG_DEBUG, "Pre-allocated %zu objects individually", initial_capacity);
         }
     }
 
@@ -134,12 +134,12 @@ void mcp_object_pool_destroy(mcp_object_pool_t* pool) {
             freed_count++;
             current = next;
         }
-         // MCP_LOG(MCP_LOG_DEBUG, "Freed %zu individual objects from free list", freed_count);
-         if (freed_count != pool->free_objects) {
-             mcp_log_warn("Mismatch freeing objects: freed %zu, expected %zu (acquired objects not freed)", freed_count, pool->free_objects);
-         }
-         // Ideally, we should also free objects that were acquired but not released.
-         // This simple version doesn't track acquired objects separately from the initial block.
+        // MCP_LOG(MCP_LOG_DEBUG, "Freed %zu individual objects from free list", freed_count);
+        if (freed_count != pool->free_objects) {
+            mcp_log_warn("Mismatch freeing objects: freed %zu, expected %zu (acquired objects not freed)", freed_count, pool->free_objects);
+        }
+        // Ideally, we should also free objects that were acquired but not released.
+        // This simple version doesn't track acquired objects separately from the initial block.
     }
 
     pool->free_list_head = NULL;
