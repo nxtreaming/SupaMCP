@@ -39,5 +39,9 @@ else()
     target_link_libraries(template_server PRIVATE Threads::Threads)
 endif()
 
+# Template Benchmark
+add_executable(template_benchmark template_benchmark.c)
+target_link_libraries(template_benchmark PRIVATE mcp_common)
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_demo template_server DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_demo template_server template_benchmark DESTINATION bin/examples)

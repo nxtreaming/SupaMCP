@@ -1,6 +1,7 @@
 #include <mcp_server.h>
 #include "internal/server_internal.h"
 #include <mcp_types.h>
+#include <mcp_template_optimized.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -352,6 +353,9 @@ void mcp_server_destroy(mcp_server_t* server) {
         mcp_hashtable_destroy(server->template_routes_table);
         server->template_routes_table = NULL;
     }
+
+    // Clean up the template cache
+    mcp_template_cache_cleanup();
 
     // Destroy other components
     if (server->pool_manager) {

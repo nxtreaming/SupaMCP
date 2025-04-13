@@ -1,5 +1,6 @@
 #include "internal/server_internal.h"
 #include "mcp_template.h"
+#include "mcp_template_optimized.h"
 #include "mcp_hashtable.h"
 #include "mcp_string_utils.h"
 #include "mcp_log.h"
@@ -82,10 +83,10 @@ static void template_route_match_callback(const void* key, void* value, void* us
         return;
     }
 
-    // Check if the URI matches the template
-    if (mcp_template_matches(context->uri, route->template_uri)) {
-        // Extract parameters from the URI
-        context->params = mcp_template_extract_params(context->uri, route->template_uri);
+    // Check if the URI matches the template using the optimized function
+    if (mcp_template_matches_optimized(context->uri, route->template_uri)) {
+        // Extract parameters from the URI using the optimized function
+        context->params = mcp_template_extract_params_optimized(context->uri, route->template_uri);
         context->match = route;
     }
 }
