@@ -20,6 +20,7 @@
 #include "gateway_pool.h"
 #include "mcp_auth.h"
 #include "mcp_hashtable.h"
+#include "mcp_server_template_router.h"
 #include "mcp_object_pool.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -55,6 +56,7 @@ struct mcp_server {
     mcp_hashtable_t* resources_table;         // Key: URI (string), Value: mcp_resource_t*
     mcp_hashtable_t* resource_templates_table; // Key: URI Template (string), Value: mcp_resource_template_t*
     mcp_hashtable_t* tools_table;             // Key: Tool Name (string), Value: mcp_tool_t*
+    mcp_hashtable_t* template_routes_table;   // Key: URI Template (string), Value: template_route_t*
 
     // Handlers
     mcp_server_resource_handler_t resource_handler;
@@ -97,9 +99,6 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
 // From mcp_server_response.c
 char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message);
 char* create_success_response(uint64_t id, char* result_str); // Takes ownership of result_str
-
-// From mcp_json_message.c
-char* mcp_json_create_response(uint64_t id, const char* result);
 
 
 #endif // MCP_SERVER_INTERNAL_H

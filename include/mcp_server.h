@@ -205,6 +205,26 @@ int mcp_server_set_resource_handler(
 );
 
 /**
+ * @brief Registers a template-based resource handler.
+ *
+ * This function registers a handler for a specific URI template pattern.
+ * When a resource request matches the template pattern, the handler will be called
+ * with the extracted parameters.
+ *
+ * @param server Pointer to the server instance.
+ * @param template_uri The template URI pattern (e.g., "example://{name}/resource").
+ * @param handler The function pointer to the resource handler implementation.
+ * @param user_data An arbitrary pointer passed back to the handler during calls.
+ * @return 0 on success, non-zero on error.
+ */
+int mcp_server_register_template_handler(
+    mcp_server_t* server,
+    const char* template_uri,
+    mcp_server_resource_handler_t handler,
+    void* user_data
+);
+
+/**
  * @brief Sets the handler function for processing tool call requests.
  *
  * @param server Pointer to the server instance.

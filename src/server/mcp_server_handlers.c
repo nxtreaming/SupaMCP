@@ -274,9 +274,43 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
         }
     }
 
-    // 2. If not found in cache, call the resource handler
+    // 2. If not found in cache, try template-based routing first, then fall back to the default resource handler
     if (content_items == NULL) {
-        if (server->resource_handler != NULL) {
+        // Try template-based routing first
+        if (server->template_routes_table != NULL) {
+            char* handler_error_message = NULL;
+            mcp_error_code_t handler_status = MCP_ERROR_NONE;
+
+            PROFILE_START("template_handler_callback");
+            handler_status = mcp_server_handle_template_resource(
+                server,
+                uri,
+                &content_items,
+                &content_count,
+                &handler_error_message
+            );
+            PROFILE_END("template_handler_callback");
+
+            // If the template handler found a match and processed the request successfully,
+            // we're done. Otherwise, fall back to the default resource handler.
+            if (handler_status != MCP_ERROR_RESOURCE_NOT_FOUND) {
+                fetched_from_handler = true;
+                if (handler_status != MCP_ERROR_NONE) {
+                    // Template handler found a match but encountered an error
+                    *error_code = handler_status;
+                    char* response = create_error_response(request->id, *error_code,
+                        handler_error_message ? handler_error_message : "Error processing template resource");
+                    free(handler_error_message);
+                    mcp_json_destroy(params_json);
+                    PROFILE_END("handle_read_resource");
+                    return response;
+                }
+            }
+        }
+
+        // If template routing didn't find a match or we don't have template routes,
+        // fall back to the default resource handler
+        if (content_items == NULL && server->resource_handler != NULL) {
             char* handler_error_message = NULL;
             mcp_error_code_t handler_status = MCP_ERROR_NONE;
 

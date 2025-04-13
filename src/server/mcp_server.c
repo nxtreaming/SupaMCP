@@ -155,6 +155,13 @@ mcp_server_t* mcp_server_create(
         mcp_log_error("Failed to create tools hash table.");
         goto create_error_cleanup;
     }
+
+    // Template Routes Table (Key: URI Template string, Value: template_route_t*)
+    server->template_routes_table = mcp_hashtable_create(16, 0.75f, mcp_hashtable_string_hash, mcp_hashtable_string_compare, mcp_hashtable_string_dup, mcp_hashtable_string_free, (mcp_value_free_func_t)mcp_server_free_template_routes);
+    if (server->template_routes_table == NULL) {
+        mcp_log_error("Failed to create template routes hash table.");
+        goto create_error_cleanup;
+    }
     // --- End Hash Table Creation ---
 
     // --- Create Content Item Pool ---
@@ -175,6 +182,7 @@ create_error_cleanup:
     if (server) {
         if (server->content_item_pool) mcp_object_pool_destroy(server->content_item_pool); // Cleanup pool
         if (server->tools_table) mcp_hashtable_destroy(server->tools_table); // Cleanup tables
+        if (server->template_routes_table) mcp_hashtable_destroy(server->template_routes_table);
         if (server->resource_templates_table) mcp_hashtable_destroy(server->resource_templates_table);
         if (server->resources_table) mcp_hashtable_destroy(server->resources_table);
         if (server->pool_manager) gateway_pool_manager_destroy(server->pool_manager);
@@ -340,6 +348,10 @@ void mcp_server_destroy(mcp_server_t* server) {
         mcp_hashtable_destroy(server->tools_table);
         server->tools_table = NULL;
     }
+    if (server->template_routes_table) {
+        mcp_hashtable_destroy(server->template_routes_table);
+        server->template_routes_table = NULL;
+    }
 
     // Destroy other components
     if (server->pool_manager) {
@@ -382,6 +394,28 @@ int mcp_server_set_resource_handler(
     server->resource_handler = handler;
     server->resource_handler_user_data = user_data;
     return 0;
+}
+
+int mcp_server_register_template_handler(
+    mcp_server_t* server,
+    const char* template_uri,
+    mcp_server_resource_handler_t handler,
+    void* user_data
+) {
+    if (server == NULL || template_uri == NULL || handler == NULL) {
+        return -1;
+    }
+
+    // Create the template routes table if it doesn't exist
+    if (server->template_routes_table == NULL) {
+        server->template_routes_table = mcp_hashtable_create(16, 0.75f, mcp_hashtable_string_hash, mcp_hashtable_string_compare, mcp_hashtable_string_dup, mcp_hashtable_string_free, (mcp_value_free_func_t)mcp_server_free_template_routes);
+        if (server->template_routes_table == NULL) {
+            return -1;
+        }
+    }
+
+    // Register the template handler using the internal function
+    return mcp_server_register_template_handler_internal(server, template_uri, handler, user_data);
 }
 
 int mcp_server_set_tool_handler(

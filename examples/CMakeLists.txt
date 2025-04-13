@@ -29,5 +29,15 @@ endif()
 add_executable(template_demo template_demo.c)
 target_link_libraries(template_demo PRIVATE mcp_common)
 
+# Template Server Example
+add_executable(template_server template_server.c)
+target_link_libraries(template_server PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(template_server PRIVATE ws2_32)
+else()
+    target_link_libraries(template_server PRIVATE Threads::Threads)
+endif()
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_demo DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_demo template_server DESTINATION bin/examples)
