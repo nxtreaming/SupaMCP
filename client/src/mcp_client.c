@@ -16,6 +16,10 @@
 #include "mcp_string_utils.h"
 #include <mcp_json_message.h>
 #include <mcp_json_rpc.h>
+#include "mcp_memory_pool.h"
+#include "mcp_thread_cache.h"
+#include "mcp_arena.h"
+#include "mcp_thread_local.h"
 
 // Platform specific includes are no longer needed here for sync primitives,
 // but keep them for socket types if used elsewhere in the file.
@@ -97,6 +101,33 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
         return NULL; // Config and transport are required
     }
 
+    // Initialize the memory pool system if not already initialized
+    static int memory_system_initialized = 0;
+    if (!memory_system_initialized) {
+        if (!mcp_memory_pool_system_init(64, 32, 16)) {
+            mcp_log_error("Failed to initialize memory pool system.");
+            mcp_transport_destroy(transport);
+            return NULL;
+        }
+
+        // Initialize the thread cache
+        if (!mcp_thread_cache_init()) {
+            mcp_log_error("Failed to initialize thread cache.");
+            mcp_transport_destroy(transport);
+            return NULL;
+        }
+
+        // Initialize thread-local arena
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            mcp_transport_destroy(transport);
+            return NULL;
+        }
+
+        memory_system_initialized = 1;
+    }
+
+    // Allocate client structure using malloc to avoid potential circular dependencies
     mcp_client_t* client = (mcp_client_t*)malloc(sizeof(mcp_client_t));
     if (client == NULL) {
         mcp_transport_destroy(transport);
@@ -179,7 +210,11 @@ void mcp_client_destroy(mcp_client_t* client) {
         free(client->pending_requests_table);
     }
 
+    // Free the client structure
     free(client);
+
+    // Note: We don't clean up the thread cache and memory pool system here
+    // because they might be used by other clients
 }
 
 // Simple hash function (using bitwise AND for power-of-2 table size)
@@ -470,9 +505,14 @@ static int mcp_client_send_and_wait(
     mcp_mutex_unlock(client->pending_requests_mutex);
 
     // 3. Wait for response or timeout
+    mcp_log_debug("Waiting for response to request ID %llu", (unsigned long long)pending_req.id);
     int wait_result = 0; // 0=signaled, 1=timeout (Windows), ETIMEDOUT=timeout (POSIX), -1=error
     mcp_mutex_lock(client->pending_requests_mutex);
     pending_request_entry_t* req_entry_wrapper = find_pending_request_entry(client, pending_req.id, false);
+
+    if (!req_entry_wrapper) {
+        mcp_log_error("Failed to find pending request entry for ID %llu", (unsigned long long)pending_req.id);
+    }
 
     if (req_entry_wrapper && req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
         if (client->config.request_timeout_ms > 0) {
@@ -505,9 +545,12 @@ static int mcp_client_send_and_wait(
     // Determine final outcome based on request status
     int final_status = -1; // Default to error
     if (req_entry_wrapper) {
+        mcp_log_debug("Request ID %llu status: %d", (unsigned long long)pending_req.id, req_entry_wrapper->request.status);
         if(req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) {
+            mcp_log_debug("Request ID %llu completed successfully", (unsigned long long)pending_req.id);
             final_status = 0; // Success
         } else if (req_entry_wrapper->request.status == PENDING_REQUEST_TIMEOUT) {
+            mcp_log_error("Request ID %llu timed out", (unsigned long long)pending_req.id);
             final_status = -2; // Timeout
         } else {
             final_status = -1; // Error (set by callback or wait error)
@@ -566,10 +609,12 @@ static int mcp_client_send_request(
     uint64_t current_id = client->next_id++;
     mcp_mutex_unlock(client->pending_requests_mutex);
 
-
     // Create request JSON
     char* request_json = NULL;
     const char* params_to_use = (params != NULL) ? params : "{}";
+
+    // NOTE: we can use mcp_json_format_request_direct() here if we want to simplify
+    // request_json = mcp_json_format_request_direct(current_id, method, params_to_use);
     request_json = mcp_json_format_request(current_id, method, params_to_use);
 
     if (request_json == NULL) {
@@ -603,7 +648,12 @@ int mcp_client_send_raw_request(
     }
 
     // Create the full request JSON string using the provided components
-    char* request_json = mcp_json_format_request(id, method, params_json);
+    char* request_json = NULL;
+
+    // NOTE: we can use mcp_json_format_request_direct here if we want to simplify
+    //request_json = mcp_json_format_request_direct(id, method, params_json);
+    request_json = mcp_json_format_request(id, method, params_json);
+
     if (request_json == NULL) {
         mcp_log_error("Failed to format raw request JSON for method '%s'", method);
         return -1;
@@ -640,14 +690,33 @@ int mcp_client_list_resources(
     *resources = NULL;
     *count = 0;
 
+    // Initialize thread-local arena for JSON parsing
+    if (!mcp_thread_cache_is_initialized()) {
+        mcp_thread_cache_init();
+    }
+    mcp_arena_t* current_arena = mcp_arena_get_current();
+    if (current_arena == NULL) {
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            return -1;
+        }
+    }
+
     // Send request
     char* result = NULL;
     mcp_error_code_t error_code;
     char* error_message = NULL;
-    if (mcp_client_send_request(client, "list_resources", NULL, &result, &error_code, &error_message) != 0) {
+
+    mcp_log_debug("Sending list_resources request");
+    int send_result = mcp_client_send_request(client, "list_resources", NULL, &result, &error_code, &error_message);
+
+    if (send_result != 0) {
+        mcp_log_error("Failed to send list_resources request: %d", send_result);
         free(error_message); // Free error message if send failed
         return -1;
     }
+
+    mcp_log_debug("Received list_resources response: %s", result ? result : "NULL");
 
     // Check for JSON-RPC error in the response
     if (error_code != MCP_ERROR_NONE) {
@@ -657,9 +726,25 @@ int mcp_client_list_resources(
         return -1;
     }
 
-    // Parse result if no error
-    if (mcp_json_parse_resources(result, resources, count) != 0) {
-        mcp_log_error("Failed to parse list_resources response.");
+    // Make sure the thread-local arena is initialized for parsing
+    if (mcp_arena_get_current() == NULL) {
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            free(error_message);
+            free(result);
+            return -1;
+        }
+    }
+
+    //Note: We can use mcp_json_parse_resources_indirect() here if we want to simplify
+    //int parse_result = mcp_json_parse_resources_indirect(result, resources, count);
+    int parse_result = mcp_json_parse_resources(result, resources, count);
+
+    // Reset the arena after parsing
+    mcp_arena_reset_current_thread();
+
+    if (parse_result != 0) {
+        mcp_log_error("Failed to parse list_resources response: %d", parse_result);
         free(error_message); // Should be NULL here anyway
         free(result);
         return -1;
@@ -687,12 +772,18 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
     char* resp_result = NULL;
 
     // Parse the response
-    if (mcp_json_parse_response(response_json, &id, &resp_error_code, &resp_error_message, &resp_result) != 0) {
-        mcp_log_error("Client failed to parse response JSON: %s\n", response_json);
+    mcp_log_debug("Parsing response JSON: %s", response_json);
+    int parse_result = mcp_json_parse_response(response_json, &id, &resp_error_code, &resp_error_message, &resp_result);
+
+    if (parse_result != 0) {
+        mcp_log_error("Client failed to parse response JSON (error: %d): %s", parse_result, response_json);
         *error_code = MCP_ERROR_PARSE_ERROR;
         // Cannot signal specific request on parse error, maybe log?
         return NULL;
     }
+
+    mcp_log_debug("Parsed response: ID=%llu, error_code=%d, result=%s",
+                 (unsigned long long)id, resp_error_code, resp_result ? resp_result : "NULL");
 
     // --- Special Handling for ID 0 (Initial Ping/Pong) ---
     if (id == 0) {
@@ -713,7 +804,12 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
 
     if (req_entry_wrapper != NULL && req_entry_wrapper->request.status != PENDING_REQUEST_INVALID) {
         // Found the pending request
+        mcp_log_debug("Found pending request for ID %llu, status: %d",
+                     (unsigned long long)id, req_entry_wrapper->request.status);
+
         if (req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
+            mcp_log_debug("Updating pending request ID %llu with response", (unsigned long long)id);
+
             // Store results via pointers
             *(req_entry_wrapper->request.error_code_ptr) = resp_error_code;
             *(req_entry_wrapper->request.error_message_ptr) = resp_error_message; // Transfer ownership
@@ -721,10 +817,15 @@ static char* client_receive_callback(void* user_data, const void* data, size_t s
 
             // Update status
             req_entry_wrapper->request.status = (resp_error_code == MCP_ERROR_NONE) ? PENDING_REQUEST_COMPLETED : PENDING_REQUEST_ERROR;
+            mcp_log_debug("Updated request ID %llu status to %d",
+                         (unsigned long long)id, req_entry_wrapper->request.status);
 
             // Signal the waiting thread
             if (req_entry_wrapper->request.cv) {
+                mcp_log_debug("Signaling condition variable for request ID %llu", (unsigned long long)id);
                 mcp_cond_signal(req_entry_wrapper->request.cv);
+            } else {
+                mcp_log_error("No condition variable for request ID %llu", (unsigned long long)id);
             }
             // Note: We don't remove the entry here. The waiting thread will remove it after waking up.
         } else {
@@ -762,6 +863,18 @@ int mcp_client_list_resource_templates(
     *templates = NULL;
     *count = 0;
 
+    // Initialize thread-local arena for JSON parsing
+    if (!mcp_thread_cache_is_initialized()) {
+        mcp_thread_cache_init();
+    }
+    mcp_arena_t* current_arena = mcp_arena_get_current();
+    if (current_arena == NULL) {
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            return -1;
+        }
+    }
+
     // Send request
     char* result = NULL;
     mcp_error_code_t error_code;
@@ -779,8 +892,26 @@ int mcp_client_list_resource_templates(
         return -1;
     }
 
+    // Make sure the thread-local arena is initialized for parsing
+    void* arena_ptr = mcp_arena_get_current();
+    if (arena_ptr == NULL) {
+        mcp_log_debug("Initializing thread-local arena for template parsing");
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            free(error_message);
+            free(result);
+            return -1;
+        }
+    }
+
     // Parse result
-    if (mcp_json_parse_resource_templates(result, templates, count) != 0) {
+    int parse_result = mcp_json_parse_resource_templates(result, templates, count);
+
+    // Reset the arena after parsing
+    mcp_log_debug("Resetting thread-local arena after template parsing");
+    mcp_arena_reset_current_thread();
+
+    if (parse_result != 0) {
          mcp_log_error("Failed to parse list_resource_templates response.");
         free(error_message);
         free(result);
@@ -810,6 +941,18 @@ int mcp_client_read_resource(
     *content = NULL;
     *count = 0;
 
+    // Initialize thread-local arena for JSON parsing
+    if (!mcp_thread_cache_is_initialized()) {
+        mcp_thread_cache_init();
+    }
+    mcp_arena_t* current_arena = mcp_arena_get_current();
+    if (current_arena == NULL) {
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            return -1;
+        }
+    }
+
     // Create params
     char* params = mcp_json_format_read_resource_params(uri);
     if (params == NULL) {
@@ -835,8 +978,26 @@ int mcp_client_read_resource(
         return -1;
     }
 
+    // Make sure the thread-local arena is initialized for parsing
+    void* arena_ptr = mcp_arena_get_current();
+    if (arena_ptr == NULL) {
+        mcp_log_debug("Initializing thread-local arena for content parsing");
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            free(error_message);
+            free(result);
+            return -1;
+        }
+    }
+
     // Parse result
-    if (mcp_json_parse_content(result, content, count) != 0) {
+    int parse_result = mcp_json_parse_content(result, content, count);
+
+    // Reset the arena after parsing
+    mcp_log_debug("Resetting thread-local arena after content parsing");
+    mcp_arena_reset_current_thread();
+
+    if (parse_result != 0) {
          mcp_log_error("Failed to parse read_resource response.");
         free(error_message);
         free(result);
@@ -865,6 +1026,18 @@ int mcp_client_list_tools(
     *tools = NULL;
     *count = 0;
 
+    // Initialize thread-local arena for JSON parsing
+    if (!mcp_thread_cache_is_initialized()) {
+        mcp_thread_cache_init();
+    }
+    mcp_arena_t* current_arena = mcp_arena_get_current();
+    if (current_arena == NULL) {
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            return -1;
+        }
+    }
+
     // Send request
     char* result = NULL;
     mcp_error_code_t error_code;
@@ -882,8 +1055,26 @@ int mcp_client_list_tools(
         return -1;
     }
 
+    // Make sure the thread-local arena is initialized for parsing
+    void* arena_ptr = mcp_arena_get_current();
+    if (arena_ptr == NULL) {
+        mcp_log_debug("Initializing thread-local arena for tools parsing");
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            free(error_message);
+            free(result);
+            return -1;
+        }
+    }
+
     // Parse result
-    if (mcp_json_parse_tools(result, tools, count) != 0) {
+    int parse_result = mcp_json_parse_tools(result, tools, count);
+
+    // Reset the arena after parsing
+    mcp_log_debug("Resetting thread-local arena after tools parsing");
+    mcp_arena_reset_current_thread();
+
+    if (parse_result != 0) {
          mcp_log_error("Failed to parse list_tools response.");
         free(error_message);
         free(result);
@@ -916,6 +1107,18 @@ int mcp_client_call_tool(
     *count = 0;
     *is_error = false;
 
+    // Initialize thread-local arena for JSON parsing
+    if (!mcp_thread_cache_is_initialized()) {
+        mcp_thread_cache_init();
+    }
+    mcp_arena_t* current_arena = mcp_arena_get_current();
+    if (current_arena == NULL) {
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            return -1;
+        }
+    }
+
     // Create params
     char* params = mcp_json_format_call_tool_params(name, arguments);
     if (params == NULL) {
@@ -941,8 +1144,26 @@ int mcp_client_call_tool(
         return -1;
     }
 
+    // Make sure the thread-local arena is initialized for parsing
+    void* arena_ptr = mcp_arena_get_current();
+    if (arena_ptr == NULL) {
+        mcp_log_debug("Initializing thread-local arena for tool result parsing");
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            free(error_message);
+            free(result);
+            return -1;
+        }
+    }
+
     // Parse result
-    if (mcp_json_parse_tool_result(result, content, count, is_error) != 0) {
+    int parse_result = mcp_json_parse_tool_result(result, content, count, is_error);
+
+    // Reset the arena after parsing
+    mcp_log_debug("Resetting thread-local arena after tool result parsing");
+    mcp_arena_reset_current_thread();
+
+    if (parse_result != 0) {
          mcp_log_error("Failed to parse call_tool response for tool '%s'.", name);
         free(error_message);
         free(result);

@@ -1,15 +1,31 @@
 #include "internal/arena_internal.h"
 #include "mcp_thread_local.h"
+#include "mcp_memory_pool.h"
+#include "mcp_memory_constants.h"
+#include "mcp_thread_cache.h"
+#include "mcp_log.h"
 #include <stdlib.h>
 #include <string.h>
 
 static mcp_arena_block_t* create_block(size_t size) {
-    mcp_arena_block_t* block = (mcp_arena_block_t*)malloc(sizeof(mcp_arena_block_t));
-    if (!block) return NULL;
+    // Use thread cache for the block structure
+    mcp_arena_block_t* block = (mcp_arena_block_t*)mcp_thread_cache_alloc(sizeof(mcp_arena_block_t));
+    if (!block) {
+        // Fall back to malloc if thread cache allocation fails
+        block = (mcp_arena_block_t*)malloc(sizeof(mcp_arena_block_t));
+        if (!block) return NULL;
+    }
 
-    block->data = malloc(size);
+    // Use thread cache for the data buffer if it fits in one of our pools
+    if (size <= LARGE_BLOCK_SIZE) {
+        block->data = mcp_thread_cache_alloc(size);
+    } else {
+        // Fall back to malloc for large allocations
+        block->data = malloc(size);
+    }
+
     if (!block->data) {
-        free(block);
+        mcp_thread_cache_free(block, sizeof(mcp_arena_block_t));
         return NULL;
     }
 
@@ -22,8 +38,17 @@ static mcp_arena_block_t* create_block(size_t size) {
 static void destroy_block_chain(mcp_arena_block_t* block) {
     while (block) {
         mcp_arena_block_t* next = block->next;
-        free(block->data);
-        free(block);
+
+        // Free the data buffer
+        if (block->size <= LARGE_BLOCK_SIZE) {
+            mcp_thread_cache_free(block->data, block->size);
+        } else {
+            free(block->data);
+        }
+
+        // Free the block structure
+        mcp_thread_cache_free(block, sizeof(mcp_arena_block_t));
+
         block = next;
     }
 }

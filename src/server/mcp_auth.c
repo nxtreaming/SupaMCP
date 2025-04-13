@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <time.h>
+#include "internal/server_internal.h"
 
 /**
  * @brief Verifies client credentials. (Placeholder - Basic Functionality Only)
@@ -16,9 +17,6 @@
  *       A production implementation should replace this with secure credential storage
  *       and potentially more granular permission management.
  */
-// Include internal header for server config definition
-#include "internal/server_internal.h"
-
 int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char* credentials, mcp_auth_context_t** context_out) {
     if (!context_out || !server) return -1; // Added server check
     *context_out = NULL; // Ensure output is NULL on failure

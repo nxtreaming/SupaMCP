@@ -43,63 +43,69 @@ void* tcp_client_receive_thread_func(void* arg) {
 
     // Add initial connection health check
     mcp_log_debug("TCP Client receive thread started for socket %d", (int)data->sock);
-    
+
     // Wait before sending handshake to ensure server is ready
     mcp_sleep_ms(1000); // Add wait time to ensure server is ready
-    
+
     // Check if this is a thread startup during reconnection
     if (reconnection_in_progress) {
         mcp_log_info("Skipping initial ping due to reconnection");
         reconnection_in_progress = false; // Reset flag
-        
+
         // Only enter receive mode, do not send ping
         goto receive_loop;
     }
-    
+
     // Send ping on first connection
     mcp_log_info("Preparing client ping message...");
-    
+
     // Ensure connection is established
     if (!data->connected) {
         mcp_log_error("Cannot send ping, socket not connected");
         mcp_arena_destroy_current_thread(); // Clean up arena before exiting
         return NULL;
     }
-    
-    // 1. Define standard ping message
-    static const char ping_content[] = "{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":0}";
+
+    // 1. Define standard ping message (without authentication)
+    static const char ping_content_no_auth[] = "{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"params\":{},\"id\":0}";
+
+    // Alternative ping message with API key parameter
+    static const char ping_content_with_auth[] = "{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"params\":{\"apiKey\":\"TEST_API_KEY_123\"},\"id\":0}";
+
+    // Use the version without authentication for servers that don't require it
+    const char* ping_content = ping_content_no_auth;
     uint32_t ping_length = (uint32_t)strlen(ping_content);
-    
+
     // 2. Calculate message length (including NULL terminator)
     const uint32_t content_length = ping_length + 1; // +1 for terminator
-    
+
     // 3. Convert to network byte order (Big-Endian)
     const uint32_t length_network_order = htonl(content_length);
-    
+
     // 4. Create a single buffer containing length prefix and message content
     size_t total_send_len = 4 + content_length; // 4 byte length prefix + message content (including terminator)
     char* send_buffer = (char*)malloc(total_send_len);
-    
+
     if (!send_buffer) {
         mcp_log_error("Failed to allocate buffer for ping message");
         mcp_arena_destroy_current_thread(); // Clean up arena before exiting
         return NULL;
     }
-    
+
     // 5. Fill the buffer with length prefix and message content (including terminator)
     memcpy(send_buffer, &length_network_order, 4);
     memcpy(send_buffer + 4, ping_content, ping_length); // Copy content first
     send_buffer[4 + ping_length] = '\0'; // Explicitly add terminator
-    
+
     // 6. Detailed logging
     mcp_log_debug("Ping message content (%u bytes): '%s'", content_length, ping_content);
     mcp_log_debug("Preparing combined message (total %zu bytes)", total_send_len);
-    mcp_log_debug("Length prefix: %02X %02X %02X %02X", 
-                (unsigned char)send_buffer[0], 
+    mcp_log_debug("Length prefix: %02X %02X %02X %02X",
+                (unsigned char)send_buffer[0],
                 (unsigned char)send_buffer[1],
                 (unsigned char)send_buffer[2],
                 (unsigned char)send_buffer[3]);
-    
+
     // 7. Send complete message using framing function
     if (data->connected) {
         // Note: ping_content includes null terminator via strlen + 1 calculation for content_length
@@ -112,7 +118,7 @@ void* tcp_client_receive_thread_func(void* arg) {
             mcp_arena_destroy_current_thread(); // Clean up arena before exiting
             return NULL;
         }
-        
+
         mcp_log_info("Ping message sent successfully");
     } else {
         free(send_buffer); // Free buffer
@@ -166,19 +172,26 @@ receive_loop:
         mcp_log_debug("Received message from server (%u bytes): '%s'", message_length_host, message_buf);
 
         if (transport->message_callback != NULL) {
+            mcp_log_debug("Calling client message callback...");
             int callback_error_code = 0;
             char* unused_response = transport->message_callback(
-                transport->callback_user_data, 
-                message_buf, 
-                message_length_host, 
+                transport->callback_user_data,
+                message_buf,
+                message_length_host,
                 &callback_error_code
             );
 
+            mcp_log_debug("Client message callback returned: error_code=%d, response=%s",
+                         callback_error_code,
+                         unused_response ? "non-NULL" : "NULL");
+
             free(unused_response); // Client doesn't need this response
-              
+
             if (callback_error_code != 0) {
                 mcp_log_warn("Client message callback error: %d", callback_error_code);
             }
+        } else {
+            mcp_log_error("No client message callback registered! Cannot process message.");
         }
 
         // --- 3. Release message buffer ---

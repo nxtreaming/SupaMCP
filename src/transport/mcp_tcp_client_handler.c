@@ -169,15 +169,29 @@ void* tcp_client_handler_thread_func(void* arg) {
             }
         }
 
+        // Log the received message for debugging
+        mcp_log_debug("Received message from client: '%.*s'", (int)effective_length, message_buf);
+
         char* response_str = NULL;
         int callback_error_code = 0;
         if (transport->message_callback != NULL) {
+            mcp_log_debug("Calling message callback for processing...");
             response_str = transport->message_callback(transport->callback_user_data, message_buf, message_length_host, &callback_error_code);
+            mcp_log_debug("Message callback returned: error_code=%d, response=%s",
+                         callback_error_code,
+                         response_str ? "non-NULL" : "NULL");
+        } else {
+            mcp_log_error("No message callback registered! Cannot process message.");
         }
 
         // --- 4. Send Response (if any) ---
         if (response_str != NULL) {
             size_t response_len = strlen(response_str);
+            mcp_log_debug("Preparing to send response (length: %zu): '%.*s'",
+                         response_len,
+                         (int)(response_len > 200 ? 200 : response_len), // Limit log output
+                         response_str);
+
             if (response_len > 0 && response_len <= MAX_MCP_MESSAGE_SIZE) {
                 // Re-check state and socket validity before sending
                 if (client_conn->state != CLIENT_STATE_ACTIVE || client_conn->socket == MCP_INVALID_SOCKET) { // Use new macro

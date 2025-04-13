@@ -20,6 +20,17 @@ extern "C" {
 char* mcp_json_format_request(uint64_t id, const char* method, const char* params);
 
 /**
+ * Format a JSON-RPC request without using the thread-local arena.
+ * This is a direct implementation that uses malloc/free instead of the arena.
+ *
+ * @param id Request ID
+ * @param method Method name
+ * @param params Parameters (JSON string)
+ * @return JSON string or NULL on error (must be freed by the caller)
+ */
+char* mcp_json_format_request_direct(uint64_t id, const char* method, const char* params);
+
+/**
  * Format a JSON-RPC response
  *
  * @param id Response ID
@@ -79,6 +90,17 @@ char* mcp_json_format_call_tool_params(const char* name, const char* arguments);
  * @return 0 on success, non-zero on error
  */
 int mcp_json_parse_resources(const char* json, mcp_resource_t*** resources, size_t* count);
+
+/**
+ * Parse resources from a JSON-RPC response without using the thread-local arena.
+ * This is a direct implementation that uses a simple JSON parsing approach.
+ *
+ * @param json JSON string
+ * @param resources Output resources (must be freed by the caller)
+ * @param count Output resource count
+ * @return 0 on success, non-zero on error
+ */
+int mcp_json_parse_resources_direct(const char* json, mcp_resource_t*** resources, size_t* count);
 
 /**
  * Parse resource templates from a JSON-RPC response

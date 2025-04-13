@@ -8,6 +8,8 @@
 #include "gateway_pool.h"
 #include "mcp_arena.h"
 #include "mcp_object_pool.h"
+#include "mcp_memory_pool.h"
+#include "mcp_thread_cache.h"
 
 mcp_server_t* mcp_server_create(
     const mcp_server_config_t* config,
@@ -78,6 +80,23 @@ mcp_server_t* mcp_server_create(
     server->resource_templates_table = NULL;
     server->tools_table = NULL;
     server->content_item_pool = NULL; // Initialize pool pointer
+
+    // Initialize the memory pool system if not already initialized
+    static int memory_system_initialized = 0;
+    if (!memory_system_initialized) {
+        if (!mcp_memory_pool_system_init(64, 32, 16)) {
+            mcp_log_error("Failed to initialize memory pool system.");
+            goto create_error_cleanup;
+        }
+
+        // Initialize the thread cache
+        if (!mcp_thread_cache_init()) {
+            mcp_log_error("Failed to initialize thread cache.");
+            goto create_error_cleanup;
+        }
+
+        memory_system_initialized = 1;
+    }
 
     // Create the thread pool using the final determined values
     server->thread_pool = mcp_thread_pool_create(server->config.thread_pool_size, server->config.task_queue_size);
@@ -344,6 +363,9 @@ void mcp_server_destroy(mcp_server_t* server) {
         mcp_object_pool_destroy(server->content_item_pool);
         server->content_item_pool = NULL;
     }
+
+    // Note: We don't clean up the thread cache and memory pool system here
+    // because they might be used by other servers or clients
 
     // Finally, free the server struct itself
     free(server);

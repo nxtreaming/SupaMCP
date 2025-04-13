@@ -3,6 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 // Structure to hold data for a message processing task
 typedef struct message_task_data_t {
     mcp_server_t* server;
@@ -42,15 +46,32 @@ void process_message_task(void* arg) {
     // --- End Input Validation ---
 
     int error_code = 0;
-    
+
     // Verify if message has null terminator
     bool has_terminator = (size > 0 && ((const char*)data)[size-1] == '\0');
     if (!has_terminator) {
         mcp_log_warn("Task data missing terminator, this may cause JSON parsing errors");
     }
-    
+
     // Call handle_message from mcp_server_dispatch.c (declared in internal header)
-    char* response_json = handle_message(server, data, size, &error_code);
+    mcp_log_debug("Calling handle_message with data: '%.*s'", (int)size, (const char*)data);
+    char* response_json = NULL;
+
+    // Use try-catch to catch any exceptions on Windows
+#ifdef _WIN32
+    __try {
+#endif
+        response_json = handle_message(server, data, size, &error_code);
+        mcp_log_debug("handle_message returned: error_code=%d, response=%s",
+                     error_code,
+                     response_json ? "non-NULL" : "NULL");
+#ifdef _WIN32
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        mcp_log_error("EXCEPTION in handle_message: %d", GetExceptionCode());
+        error_code = MCP_ERROR_INTERNAL_ERROR;
+        response_json = NULL;
+    }
+#endif
 
     // Log and free the response
     if (response_json != NULL) {
@@ -91,22 +112,22 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
 
     // --- Rate Limiting Check (optional) ---
     // TODO: Implement rate limiting if needed
-    
+
     // --- Input validation ---
-    size_t max_size = server->config.max_message_size > 0 ? 
+    size_t max_size = server->config.max_message_size > 0 ?
                       server->config.max_message_size : DEFAULT_MAX_MESSAGE_SIZE;
-    
+
     if (size > max_size) {
         mcp_log_error("Received message size (%zu) exceeds limit (%zu)", size, max_size);
         *error_code = MCP_ERROR_INVALID_REQUEST;
         return NULL;
     }
-    
+
     // --- Prepare message data ---
     // Check if message has terminator
     bool has_terminator = (size > 0 && ((const char*)data)[size-1] == '\0');
     void* message_copy;
-    
+
     if (has_terminator) {
         // If already has terminator, just copy
         message_copy = malloc(size);
@@ -122,21 +143,39 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
             mcp_log_debug("Added NULL terminator to message data");
         }
     }
-    
+
     if (!message_copy) {
         mcp_log_error("Failed to allocate memory for message copy");
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         PROFILE_END("transport_message_callback");
         return NULL;
     }
-    
+
     // --- Direct message processing ---
     int handler_error_code = MCP_ERROR_NONE;
-    char* response_json = handle_message(server, message_copy, size, &handler_error_code);
-    
+    char* response_json = NULL;
+
+    mcp_log_debug("Transport callback: calling handle_message with data: '%.*s'", (int)size, (const char*)message_copy);
+
+    // Use try-catch to catch any exceptions on Windows
+#ifdef _WIN32
+    __try {
+#endif
+        response_json = handle_message(server, message_copy, size, &handler_error_code);
+        mcp_log_debug("Transport callback: handle_message returned: error_code=%d, response=%s",
+                     handler_error_code,
+                     response_json ? "non-NULL" : "NULL");
+#ifdef _WIN32
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        mcp_log_error("EXCEPTION in transport callback handle_message: %d", GetExceptionCode());
+        handler_error_code = MCP_ERROR_INTERNAL_ERROR;
+        response_json = NULL;
+    }
+#endif
+
     // Free message copy
     free(message_copy);
-    
+
     // --- Handle response ---
     if (response_json != NULL) {
         // Return response string to be sent via client socket
@@ -146,7 +185,7 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
         // Message processing failed but no error response was generated
         mcp_log_error("Failed to process message (error code: %d), no response generated", handler_error_code);
     }
-    
+
     PROFILE_END("transport_message_callback");
     return NULL; // No response
 }

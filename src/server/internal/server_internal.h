@@ -98,5 +98,8 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
 char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message);
 char* create_success_response(uint64_t id, char* result_str); // Takes ownership of result_str
 
+// From mcp_json_message.c
+char* mcp_json_create_response(uint64_t id, const char* result);
+
 
 #endif // MCP_SERVER_INTERNAL_H

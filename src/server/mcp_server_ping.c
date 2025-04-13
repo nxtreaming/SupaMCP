@@ -1,5 +1,8 @@
 #include "internal/server_internal.h"
 #include "mcp_auth.h"
+#include "mcp_json_message.h"
+#include "mcp_json_rpc.h"
+#include "mcp_log.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,39 +15,50 @@
  */
 char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request,
     const mcp_auth_context_t* auth_context, int* error_code) {
-    // No params needed, arena unused, auth_context unused for ping
+    // No params needed, arena unused, auth_context may be unused for ping
     (void)arena;
-    (void)auth_context; // Explicitly mark as unused for ping
+    (void)auth_context;
 
-    // Added auth_context check for consistency, though ping usually bypasses auth checks
-    if (server == NULL || request == NULL || auth_context == NULL || error_code == NULL) {
+    // Basic parameter validation
+    if (server == NULL || request == NULL || error_code == NULL) {
         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
-        return NULL; // Cannot proceed without auth context
+        return NULL; // Cannot proceed without basic parameters
     }
+
+    // For ping requests, we allow a NULL auth_context as ping is often used for initial connection testing
+    // This makes the ping handler more lenient than other handlers
     *error_code = MCP_ERROR_NONE;
 
-    mcp_log_debug("Received ping request (ID: %llu)", (unsigned long long)request->id);
+    mcp_log_debug("Received ping request (ID: %llu, params: %s)",
+                 (unsigned long long)request->id,
+                 request->params ? request->params : "NULL");
 
-    // Create simple response with pong message
-    mcp_json_t* result_obj = mcp_json_object_create(); // Use TLS arena
-    if (!result_obj || 
-        mcp_json_object_set_property(result_obj, "message", mcp_json_string_create("pong")) != 0) {
-        mcp_json_destroy(result_obj);
-        *error_code = MCP_ERROR_INTERNAL_ERROR;
-        char* response = create_error_response(request->id, *error_code, "Failed to create ping response");
-        return response;
+    // Log auth context info
+    if (auth_context) {
+        mcp_log_debug("Auth context: type=%d, identifier=%s",
+                     auth_context->type,
+                     auth_context->identifier ? auth_context->identifier : "NULL");
+    } else {
+        mcp_log_debug("Auth context is NULL");
     }
 
-    char* result_str = mcp_json_stringify(result_obj); // Malloc'd result content
-    mcp_json_destroy(result_obj);
-    if (!result_str) {
+    // Create a direct response without using the thread-local arena
+    mcp_log_debug("Creating direct ping response");
+
+    // Use mcp_json_format_response instead of mcp_json_create_response
+    // This doesn't use the thread-local arena
+    const char* pong_result = "{\"message\":\"pong\"}";
+    char* response = mcp_json_format_response(request->id, pong_result);
+
+    if (!response) {
+        mcp_log_error("Failed to create ping response");
         *error_code = MCP_ERROR_INTERNAL_ERROR;
-        char* response = create_error_response(request->id, *error_code, "Failed to stringify ping response");
-        return response;
+        return create_error_response(request->id, *error_code, "Failed to create ping response");
     }
 
-    char* response = create_success_response(request->id, result_str);
-    // free(result_str); // Removed double free - create_success_response takes ownership
-    mcp_log_debug("Sending pong response to ID %llu", (unsigned long long)request->id);
+    mcp_log_debug("Created ping response (ID: %llu): '%s'",
+                 (unsigned long long)request->id,
+                 response);
+
     return response;
 }

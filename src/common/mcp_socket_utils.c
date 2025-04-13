@@ -151,14 +151,14 @@ int mcp_socket_send_exact(socket_t sock, const char* buf, size_t len, volatile b
             int error_code = mcp_socket_get_last_error();
 #ifdef _WIN32
             if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
-                 mcp_log_warn("send_exact failed: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
-                 return -1; // Treat as error
+                mcp_log_warn("send_exact failed: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
+                return -1; // Treat as error
             }
             if (error_code == WSAEWOULDBLOCK) {
-                 // Should not happen with blocking sockets, but handle defensively
-                 mcp_log_warn("send_exact got WOULDBLOCK on blocking socket?");
-                 // Consider waiting or retrying if using non-blocking internally
-                 continue;
+                // Should not happen with blocking sockets, but handle defensively
+                mcp_log_warn("send_exact got WOULDBLOCK on blocking socket?");
+                // Consider waiting or retrying if using non-blocking internally
+                continue;
             }
 #else // POSIX
             if (error_code == EPIPE || error_code == ECONNRESET || error_code == ENOTCONN) {
@@ -170,8 +170,8 @@ int mcp_socket_send_exact(socket_t sock, const char* buf, size_t len, volatile b
                 continue; // Retry if interrupted by signal
             }
             if (error_code == EAGAIN || error_code == EWOULDBLOCK) {
-                 mcp_log_warn("send_exact got EAGAIN/EWOULDBLOCK on blocking socket?");
-                 continue;
+                mcp_log_warn("send_exact got EAGAIN/EWOULDBLOCK on blocking socket?");
+                continue;
             }
 #endif
             mcp_log_error("send_exact failed (socket %d, len %zu): Error %d", (int)sock, len, error_code);
@@ -180,8 +180,8 @@ int mcp_socket_send_exact(socket_t sock, const char* buf, size_t len, volatile b
 
         // send() can return 0, although docs say it shouldn't for TCP. Treat as error.
         if (bytes_sent == 0) {
-             mcp_log_error("send_exact sent 0 bytes unexpectedly (socket %d)", (int)sock);
-             return -1;
+            mcp_log_error("send_exact sent 0 bytes unexpectedly (socket %d)", (int)sock);
+            return -1;
         }
 
         total_sent += (size_t)bytes_sent;
@@ -211,25 +211,25 @@ int mcp_socket_recv_exact(socket_t sock, char* buf, size_t len, volatile bool* s
             int error_code = mcp_socket_get_last_error();
 #ifdef _WIN32
             if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
-                 mcp_log_warn("recv_exact failed: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
-                 return -1; // Connection closed/error
+                mcp_log_warn("recv_exact failed: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
+                return -1; // Connection closed/error
             }
-             if (error_code == WSAEWOULDBLOCK) {
-                 mcp_log_warn("recv_exact got WOULDBLOCK on blocking socket?");
-                 continue;
+            if (error_code == WSAEWOULDBLOCK) {
+                mcp_log_warn("recv_exact got WOULDBLOCK on blocking socket?");
+                continue;
             }
 #else // POSIX
             if (error_code == ECONNRESET || error_code == ENOTCONN) {
-                 mcp_log_warn("recv_exact failed: Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
-                 return -1; // Connection closed/error
+                mcp_log_warn("recv_exact failed: Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
+                return -1; // Connection closed/error
             }
             if (error_code == EINTR) {
                 mcp_log_debug("recv_exact interrupted, retrying...");
                 continue; // Retry if interrupted by signal
             }
-             if (error_code == EAGAIN || error_code == EWOULDBLOCK) {
-                 mcp_log_warn("recv_exact got EAGAIN/EWOULDBLOCK on blocking socket?");
-                 continue;
+            if (error_code == EAGAIN || error_code == EWOULDBLOCK) {
+                mcp_log_warn("recv_exact got EAGAIN/EWOULDBLOCK on blocking socket?");
+                continue;
             }
 #endif
             mcp_log_error("recv_exact failed (socket %d, len %zu): Error %d", (int)sock, len, error_code);
@@ -263,8 +263,8 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
     while (total_sent < total_to_send) {
         // Abort if stop_flag is provided and is true
         if (stop_flag && *stop_flag) {
-             mcp_log_debug("send_vectors (Win) aborted by stop flag");
-             return -1;
+            mcp_log_debug("send_vectors (Win) aborted by stop flag");
+            return -1;
         }
 
         // WSASend might modify the iov array, but we manage adjustments manually if needed
@@ -276,18 +276,18 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
                 mcp_log_warn("send_vectors (Win) failed: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
                 return -1;
             }
-             if (error_code == WSAEWOULDBLOCK) {
-                 mcp_log_warn("send_vectors (Win) got WOULDBLOCK?");
-                 // Need to wait/retry if non-blocking
-                 continue;
+            if (error_code == WSAEWOULDBLOCK) {
+                mcp_log_warn("send_vectors (Win) got WOULDBLOCK?");
+                // Need to wait/retry if non-blocking
+                continue;
             }
             mcp_log_error("send_vectors (Win) WSASend failed (socket %d): Error %d", (int)sock, error_code);
             return -1;
         }
 
         if (bytes_sent_this_call == 0) {
-             mcp_log_error("send_vectors (Win) sent 0 bytes unexpectedly (socket %d)", (int)sock);
-             return -1;
+            mcp_log_error("send_vectors (Win) sent 0 bytes unexpectedly (socket %d)", (int)sock);
+            return -1;
         }
 
         total_sent += bytes_sent_this_call;
@@ -334,17 +334,17 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
                 mcp_log_debug("send_vectors (POSIX) interrupted, retrying...");
                 continue; // Retry if interrupted
             }
-             if (error_code == EAGAIN || error_code == EWOULDBLOCK) {
-                 mcp_log_warn("send_vectors (POSIX) got EAGAIN/EWOULDBLOCK?");
-                 continue;
+            if (error_code == EAGAIN || error_code == EWOULDBLOCK) {
+                mcp_log_warn("send_vectors (POSIX) got EAGAIN/EWOULDBLOCK?");
+                continue;
             }
             mcp_log_error("send_vectors (POSIX) writev failed (socket %d): Error %d (%s)", (int)sock, error_code, strerror(error_code));
             return -1;
         }
 
         if (bytes_sent == 0) {
-             mcp_log_error("send_vectors (POSIX) sent 0 bytes unexpectedly (socket %d)", (int)sock);
-             return -1;
+            mcp_log_error("send_vectors (POSIX) sent 0 bytes unexpectedly (socket %d)", (int)sock);
+            return -1;
         }
 
         total_sent += (size_t)bytes_sent;
@@ -367,7 +367,7 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
             // Adjust pointers for the next writev call
             iov += current_iov;
             iovcnt -= current_iov;
-             if (iovcnt <= 0) break; // Should have sent everything
+            if (iovcnt <= 0) break; // Should have sent everything
         }
     } // end while
 #endif
@@ -428,24 +428,24 @@ int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_
         } else if (result == 0) {
             // Timeout occurred
             if (timeout_ms < 0) { // Infinite wait, continue polling
-                 current_tv = &interval_tv; // Reset interval timer
-                 continue;
+                current_tv = &interval_tv; // Reset interval timer
+                continue;
             } else if (timeout_ms == 0) { // Zero timeout (poll)
-                 return 0; // Timed out immediately
+                return 0; // Timed out immediately
             } else { // Finite timeout
-                 time_t current_time = time(NULL);
-                 if (difftime(current_time, start_time) * 1000 >= timeout_ms) {
-                     return 0; // Final timeout expired
-                 }
-                 // Adjust remaining time and continue with interval check
-                 long remaining_ms = timeout_ms - (long)(difftime(current_time, start_time) * 1000);
-                 if (remaining_ms <= 0) return 0; // Should be caught above, but safety check
-                 current_tv = &interval_tv;
-                 if (remaining_ms < check_interval_ms) {
-                     interval_tv.tv_sec = remaining_ms / 1000;
-                     interval_tv.tv_usec = (remaining_ms % 1000) * 1000;
-                 }
-                 continue;
+                time_t current_time = time(NULL);
+                if (difftime(current_time, start_time) * 1000 >= timeout_ms) {
+                    return 0; // Final timeout expired
+                }
+                // Adjust remaining time and continue with interval check
+                long remaining_ms = timeout_ms - (long)(difftime(current_time, start_time) * 1000);
+                if (remaining_ms <= 0) return 0; // Should be caught above, but safety check
+                current_tv = &interval_tv;
+                if (remaining_ms < check_interval_ms) {
+                    interval_tv.tv_sec = remaining_ms / 1000;
+                    interval_tv.tv_usec = (remaining_ms % 1000) * 1000;
+                }
+                continue;
             }
         } else {
             // Socket is readable
@@ -490,16 +490,16 @@ int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_
         } else if (result == 0) {
             // Timeout occurred
             if (current_timeout < 0) { // Infinite wait, continue polling
-                 continue;
+                continue;
             } else if (current_timeout == 0) { // Zero timeout (poll)
-                 return 0; // Timed out immediately
+                return 0; // Timed out immediately
             } else { // Finite timeout
-                 time_t current_time = time(NULL);
-                 if (difftime(current_time, start_time) * 1000 >= timeout_ms) {
-                     return 0; // Final timeout expired
-                 }
-                 // Continue polling with adjusted remaining time logic implicitly handled by loop
-                 continue;
+                time_t current_time = time(NULL);
+                if (difftime(current_time, start_time) * 1000 >= timeout_ms) {
+                    return 0; // Final timeout expired
+                }
+                // Continue polling with adjusted remaining time logic implicitly handled by loop
+                continue;
             }
         } else {
             // Socket has events
@@ -507,8 +507,8 @@ int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_
                 return 1; // Readable
             }
             if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-                 mcp_log_warn("poll reported error event %d on socket %d", pfd.revents, (int)sock);
-                 return -1; // Socket error indicated by poll
+                mcp_log_warn("poll reported error event %d on socket %d", pfd.revents, (int)sock);
+                return -1; // Socket error indicated by poll
             }
             // Should not happen if result > 0
             mcp_log_warn("poll returned > 0 but no POLLIN or error event?");
@@ -587,15 +587,15 @@ socket_t mcp_socket_accept(socket_t listen_sock, struct sockaddr* client_addr, s
         // Log common non-fatal errors at debug/warn level
 #ifdef _WIN32
         if (error_code != WSAEWOULDBLOCK && error_code != WSAEINTR && error_code != WSAECONNABORTED) {
-             mcp_log_error("accept() failed: %d", error_code);
+            mcp_log_error("accept() failed: %d", error_code);
         } else {
-             mcp_log_debug("accept() returned non-fatal error: %d", error_code);
+            mcp_log_debug("accept() returned non-fatal error: %d", error_code);
         }
 #else
         if (error_code != EWOULDBLOCK && error_code != EAGAIN && error_code != EINTR && error_code != ECONNABORTED) {
             mcp_log_error("accept() failed: %d (%s)", error_code, strerror(error_code));
         } else {
-             mcp_log_debug("accept() returned non-fatal error: %d (%s)", error_code, strerror(error_code));
+            mcp_log_debug("accept() returned non-fatal error: %d (%s)", error_code, strerror(error_code));
         }
 #endif
     }
