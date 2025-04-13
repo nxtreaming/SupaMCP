@@ -49,17 +49,27 @@ endif()
 add_executable(template_benchmark template_benchmark.c)
 target_link_libraries(template_benchmark PRIVATE mcp_common)
 
-# Advanced Template Benchmark
+# Template Benchmark Advanced
 add_executable(template_benchmark_advanced template_benchmark_advanced.c)
 target_link_libraries(template_benchmark_advanced PRIVATE mcp_common)
+
+# Template Debug
+add_executable(template_debug template_debug.c)
+target_link_libraries(template_debug PRIVATE mcp_common)
 
 # Template Examples
 add_executable(template_examples template_examples.c)
 target_link_libraries(template_examples PRIVATE mcp_common)
 
-# Template Debug
-add_executable(template_debug template_debug.c)
-target_link_libraries(template_debug PRIVATE mcp_common)
+# Template Client Test
+add_executable(template_client_test template_client_test.c)
+target_link_libraries(template_client_test PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(template_client_test PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(template_client_test PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
 
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark DESTINATION bin/examples)

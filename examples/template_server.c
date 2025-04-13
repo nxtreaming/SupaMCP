@@ -7,6 +7,7 @@
 #include <mcp_log.h>
 #include <mcp_json.h>
 #include <mcp_template.h>
+#include <mcp_template_optimized.h>
 #include <mcp_string_utils.h>
 
 // Handler for template-based resources
@@ -23,9 +24,9 @@ mcp_error_code_t template_resource_handler(
 
     printf("Template resource handler called for URI: %s\n", uri);
 
-    // Extract parameters from the URI
+    // Extract parameters from the URI using the optimized function
     const char* template_uri = (const char*)user_data;
-    mcp_json_t* params = mcp_template_extract_params(uri, template_uri);
+    mcp_json_t* params = mcp_template_extract_params_optimized(uri, template_uri);
     if (params == NULL) {
         if (error_message) {
             *error_message = mcp_strdup("Failed to extract parameters from URI");
