@@ -1,5 +1,7 @@
 #include "internal/server_internal.h"
 #include "mcp_auth.h"
+#include "mcp_template.h"
+#include "mcp_hashtable.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +11,11 @@ typedef struct {
     mcp_json_t* json_array;
     bool error_occurred;
 } list_context_t;
+
+// Structure to hold a template
+typedef struct {
+    mcp_resource_template_t* tmpl;
+} template_holder_t;
 
 // Callback to add resource info to JSON array
 static void list_resource_callback(const void* key, void* value, void* user_data) {
@@ -311,16 +318,19 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
             }
             fetched_from_handler = true;
         } else {
-             // Check if resource exists in static list (hashtable)
-             void* resource_ptr = NULL;
-             if (!server->resources_table || mcp_hashtable_get(server->resources_table, uri, &resource_ptr) != 0) { // Check table exists & use hashtable_get
-                 // Not found in static list either
-                 mcp_json_destroy(params_json);
-                 *error_code = MCP_ERROR_RESOURCE_NOT_FOUND; // More specific error
-                 char* response = create_error_response(request->id, *error_code, "Resource not found and no handler configured");
-                 PROFILE_END("handle_read_resource");
-                 return response;
-             }
+            // Check if resource exists in static list (hashtable)
+            void* resource_ptr = NULL;
+            if (!server->resources_table || mcp_hashtable_get(server->resources_table, uri, &resource_ptr) != 0) {
+                // For now, we'll skip server-side template handling
+                // The client-side template handling is implemented and working
+
+                // Not found in static list or templates
+                mcp_json_destroy(params_json);
+                *error_code = MCP_ERROR_RESOURCE_NOT_FOUND; // More specific error
+                char* response = create_error_response(request->id, *error_code, "Resource not found and no handler configured");
+                PROFILE_END("handle_read_resource");
+                return response;
+            }
              // Resource found in static list, but no handler to generate content.
              // This case might indicate an error or simply that the resource has no dynamic content.
              // For now, return an error indicating no handler.
@@ -331,7 +341,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
              return response;
         }
     }
-
     // 3. If fetched from handler, put it in the cache
     if (fetched_from_handler && server->resource_cache != NULL) {
         // Pass the content item pool to mcp_cache_put

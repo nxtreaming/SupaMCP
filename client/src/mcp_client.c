@@ -20,6 +20,7 @@
 #include "mcp_thread_cache.h"
 #include "mcp_arena.h"
 #include "mcp_thread_local.h"
+#include "mcp_template.h"
 
 // Platform specific includes are no longer needed here for sync primitives,
 // but keep them for socket types if used elsewhere in the file.

@@ -38,7 +38,23 @@ int main(int argc, char** argv) {
         } else if (strcmp(argv[1], "--stdio") == 0) {
             transport_type = "stdio";
         } else if (strcmp(argv[1], "--help") == 0) {
-             printf("Usage: %s [--stdio | --tcp [HOST [PORT]]]\n", argv[0]);
+             printf("Usage: %s [--stdio | --tcp [HOST [PORT]]]\n\n", argv[0]);
+             printf("Options:\n");
+             printf("  --stdio             Use stdio transport (default)\n");
+             printf("  --tcp [HOST [PORT]] Use TCP transport (default: 127.0.0.1:8080)\n");
+             printf("  --help              Show this help message\n\n");
+             printf("Interactive Commands:\n");
+             printf("  list_resources              - List available resources\n");
+             printf("  list_templates              - List available resource templates\n");
+             printf("  list_tools                  - List available tools\n");
+             printf("  read <uri>                  - Read a resource by URI\n");
+             printf("  expand <template> <params>  - Expand a template with parameters\n");
+             printf("  read_template <template> <params> - Read a resource using a template\n");
+             printf("  call <tool> <params>        - Call a tool with parameters\n");
+             printf("  help                        - Show available commands\n");
+             printf("  exit                        - Exit the client\n");
+             printf("\nExample: expand example://{name} {\"name\":\"john\"}\n");
+             printf("Example: read_template example://{name} {\"name\":\"john\"}\n");
              return 0;
         } else {
             mcp_log_error("Unknown option: %s\n", argv[1]);
@@ -77,7 +93,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    printf("MCP Client Started. Enter commands (e.g., 'list_resources', 'read example://hello', 'call echo {\"text\":\"Hello Tool!\"}', 'exit').\n");
+    printf("MCP Client Started. Type 'help' to see available commands.\n");
 
     char buffer[1024];
     while (1) {
@@ -91,6 +107,19 @@ int main(int argc, char** argv) {
 
         if (strcmp(buffer, "exit") == 0) {
             break;
+        } else if (strcmp(buffer, "help") == 0) {
+            printf("Available commands:\n");
+            printf("  list_resources              - List available resources\n");
+            printf("  list_templates              - List available resource templates\n");
+            printf("  list_tools                  - List available tools\n");
+            printf("  read <uri>                  - Read a resource by URI\n");
+            printf("  expand <template> <params>  - Expand a template with parameters\n");
+            printf("  read_template <template> <params> - Read a resource using a template\n");
+            printf("  call <tool> <params>        - Call a tool with parameters\n");
+            printf("  help                        - Show this help message\n");
+            printf("  exit                        - Exit the client\n");
+            printf("\nExample: expand example://{name} {\"name\":\"john\"}\n");
+            printf("Example: read_template example://{name} {\"name\":\"john\"}\n");
         } else if (strncmp(buffer, "list_resources", 14) == 0) {
             mcp_resource_t** resources = NULL;
             size_t count = 0;
@@ -120,6 +149,59 @@ int main(int argc, char** argv) {
                 free(templates);
             } else {
                 mcp_log_error("Error listing resource templates.");
+            }
+        } else if (strncmp(buffer, "expand ", 7) == 0) {
+            // Format: expand <template_uri> <params_json>
+            char* cmd_copy = strdup(buffer + 7);
+            if (cmd_copy) {
+                char* template_uri = strtok(cmd_copy, " ");
+                char* params_json = strtok(NULL, "\n");
+
+                if (template_uri && params_json) {
+                    char* expanded_uri = NULL;
+                    if (mcp_client_expand_template(client, template_uri, params_json, &expanded_uri) == 0) {
+                        printf("Expanded URI: %s\n", expanded_uri);
+                        free(expanded_uri);
+                    } else {
+                        mcp_log_error("Error expanding template '%s' with params '%s'.", template_uri, params_json);
+                    }
+                } else {
+                    printf("Usage: expand <template_uri> <params_json>\n");
+                    printf("Example: expand example://{name}/resource {\"name\":\"test\"}\n");
+                }
+                free(cmd_copy);
+            }
+        } else if (strncmp(buffer, "read_template ", 14) == 0) {
+            // Format: read_template <template_uri> <params_json>
+            char* cmd_copy = strdup(buffer + 14);
+            if (cmd_copy) {
+                char* template_uri = strtok(cmd_copy, " ");
+                char* params_json = strtok(NULL, "\n");
+
+                if (template_uri && params_json) {
+                    mcp_content_item_t** content = NULL;
+                    size_t count = 0;
+                    if (mcp_client_read_resource_with_template(client, template_uri, params_json, &content, &count) == 0) {
+                        printf("Resource Content (%zu items):\n", count);
+                        for (size_t i = 0; i < count; ++i) {
+                            printf("  - Item %zu:\n", i + 1);
+                            if (content[i]->mime_type) printf("    MIME: %s\n", content[i]->mime_type);
+                            if (content[i]->type == MCP_CONTENT_TYPE_TEXT && content[i]->data) {
+                                printf("    Text: %s\n", (char*)content[i]->data);
+                            } else {
+                                printf("    Data Size: %zu bytes\n", content[i]->data_size);
+                            }
+                            mcp_content_item_free(content[i]);
+                        }
+                        free(content);
+                    } else {
+                        mcp_log_error("Error reading resource with template '%s' and params '%s'.", template_uri, params_json);
+                    }
+                } else {
+                    printf("Usage: read_template <template_uri> <params_json>\n");
+                    printf("Example: read_template example://{name}/resource {\"name\":\"test\"}\n");
+                }
+                free(cmd_copy);
             }
         } else if (strncmp(buffer, "read ", 5) == 0) {
             const char* uri = buffer + 5;

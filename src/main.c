@@ -31,7 +31,7 @@
 #include "gateway.h"
 #include "mcp_thread_local.h"
 #include "mcp_connection_pool.h"
-#include "server/internal/server_internal.h" 
+#include "server/internal/server_internal.h"
 
 // Global server instance for signal handling
 static mcp_server_t* g_server = NULL;
@@ -90,10 +90,19 @@ static mcp_error_code_t example_resource_handler(
     } else if (strcmp(resource_name, "info") == 0) {
         data_copy = mcp_strdup("This is an example MCP server.");
     } else {
-        mcp_log_warn("Unknown resource name: %s", resource_name);
-        *error_message = mcp_strdup("Resource not found.");
-        err_code = MCP_ERROR_RESOURCE_NOT_FOUND;
-        goto cleanup;
+        // Check if this is a templated resource
+        // For example, if the URI is example://john, it would match the template example://{name}
+        // and we'd generate a personalized greeting
+        char greeting[256];
+        snprintf(greeting, sizeof(greeting), "Hello, %s!", resource_name);
+        data_copy = mcp_strdup(greeting);
+
+        if (!data_copy) {
+            mcp_log_warn("Unknown resource name: %s", resource_name);
+            *error_message = mcp_strdup("Resource not found.");
+            err_code = MCP_ERROR_RESOURCE_NOT_FOUND;
+            goto cleanup;
+        }
     }
 
     if (!data_copy) {
@@ -126,7 +135,7 @@ static mcp_error_code_t example_resource_handler(
     item->type = MCP_CONTENT_TYPE_TEXT;
     item->mime_type = mcp_strdup("text/plain");
     item->data = data_copy; // Transfer ownership
-    item->data_size = strlen(data_copy);
+    item->data_size = strlen(data_copy) + 1; // Include null terminator
     data_copy = NULL; // Avoid double free
 
     if (!item->mime_type) {
@@ -252,7 +261,7 @@ static mcp_error_code_t example_tool_handler(
     item->type = MCP_CONTENT_TYPE_TEXT;
     item->mime_type = mcp_strdup("text/plain");
     item->data = result_data; // Transfer ownership
-    item->data_size = strlen(result_data);
+    item->data_size = strlen(result_data) + 1; // Include null terminator
     result_data = NULL; // Avoid double free
 
     if (!item->mime_type) {

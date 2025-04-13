@@ -50,12 +50,14 @@ set(COMMON_SOURCES
     src/common/mcp_memory_pool.c
     src/common/mcp_thread_cache.c
     src/common/mcp_memory_tracker.c
+    src/common/mcp_template.c
     src/server/mcp_buffer_pool.c
     src/server/mcp_cache_optimized.c
     src/server/mcp_rate_limiter.c
     src/server/mcp_profiler.c
     src/common/mcp_hashtable.c
     client/src/mcp_client.c
+    client/src/mcp_client_template.c
     src/server/mcp_server.c
     src/server/mcp_server_dispatch.c
     src/server/mcp_server_handlers.c

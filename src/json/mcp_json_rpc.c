@@ -573,7 +573,7 @@ int mcp_json_parse_content(
         node = mcp_json_object_get_property(item_json, "text");
         if (node && mcp_json_get_type(node) == MCP_JSON_STRING) {
             if (mcp_json_get_string(node, &text) == 0 && text != NULL) {
-                text_size = strlen(text);
+                text_size = strlen(text) + 1; // Include null terminator
             }
         }
 
@@ -804,7 +804,7 @@ int mcp_json_parse_tool_result(
         node = mcp_json_object_get_property(item_json, "text"); // Assuming text for now
         if (node && mcp_json_get_type(node) == MCP_JSON_STRING) {
             if (mcp_json_get_string(node, &text) == 0 && text != NULL) {
-                text_size = strlen(text);
+                text_size = strlen(text) + 1; // Include null terminator
             }
         }
 

@@ -114,6 +114,34 @@ int mcp_client_list_tools(mcp_client_t* client, mcp_tool_t*** tools, size_t* cou
 int mcp_client_call_tool(mcp_client_t* client, const char* name, const char* arguments, mcp_content_item_t*** content, size_t* count, bool* is_error);
 
 /**
+ * @brief Expands a resource template with parameters.
+ *
+ * @param client The client instance.
+ * @param template_uri The URI template to expand (e.g., "example://{name}/resource").
+ * @param params_json A JSON string containing parameter values (e.g., {"name": "test"}).
+ * @param[out] expanded_uri Pointer to receive the malloc'd expanded URI string.
+ *                          The caller is responsible for freeing this string.
+ * @return 0 on success, -1 on failure.
+ */
+int mcp_client_expand_template(mcp_client_t* client, const char* template_uri, const char* params_json, char** expanded_uri);
+
+/**
+ * @brief Reads a resource using a template and parameters.
+ *
+ * This function expands the template with the provided parameters and then reads the resource.
+ *
+ * @param client The client instance.
+ * @param template_uri The URI template to expand (e.g., "example://{name}/resource").
+ * @param params_json A JSON string containing parameter values (e.g., {"name": "test"}).
+ * @param[out] content Pointer to receive an array of mcp_content_item_t pointers.
+ *                     The caller is responsible for freeing this array and its contents
+ *                     using mcp_free_content_list().
+ * @param[out] count Pointer to receive the number of content items in the array.
+ * @return 0 on success, -1 on failure.
+ */
+int mcp_client_read_resource_with_template(mcp_client_t* client, const char* template_uri, const char* params_json, mcp_content_item_t*** content, size_t* count);
+
+/**
  * @brief Sends a pre-formatted request and receives the raw response.
  *
  * This is useful for scenarios like gateways where the request JSON might already

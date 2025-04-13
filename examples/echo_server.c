@@ -97,7 +97,7 @@ static mcp_error_code_t echo_tool_handler(
     item->type = MCP_CONTENT_TYPE_TEXT;
     item->mime_type = mcp_strdup("text/plain");
     item->data = echo_text_copy; // Transfer ownership of the duplicated string
-    item->data_size = strlen(echo_text_copy);
+    item->data_size = strlen(echo_text_copy) + 1; // Include null terminator
     echo_text_copy = NULL; // Avoid double free in cleanup
 
     if (!item->mime_type) {
