@@ -25,5 +25,9 @@ else()
     target_link_libraries(echo_client PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# Template Demo
+add_executable(template_demo template_demo.c)
+target_link_libraries(template_demo PRIVATE mcp_common)
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_demo DESTINATION bin/examples)
