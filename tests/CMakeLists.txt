@@ -21,6 +21,8 @@ set(TEST_RUNNER_SOURCES
     test_mcp_tcp_client_transport.c
     test_memory_pool.c
     test_memory_pool_runner.c
+    test_mcp_template.c
+    test_mcp_template_security.c
     # Add other test_*.c files here
 )
 

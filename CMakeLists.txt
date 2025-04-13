@@ -25,6 +25,7 @@ set(COMMON_SOURCES
     src/json/mcp_json_parser.c
     src/json/mcp_json_stringifier.c
     src/json/mcp_json_utils.c
+    src/json/mcp_json_utils_impl.c
     src/json/mcp_json_message.c
     src/json/mcp_json_rpc.c
     src/json/mcp_json_format.c
@@ -51,7 +52,7 @@ set(COMMON_SOURCES
     src/common/mcp_thread_cache.c
     src/common/mcp_memory_tracker.c
     src/common/mcp_template.c
-    src/common/mcp_template_optimized.c
+    src/common/mcp_template_optimized_new.c
     src/server/mcp_buffer_pool.c
     src/server/mcp_cache_optimized.c
     src/server/mcp_rate_limiter.c

@@ -49,5 +49,17 @@ endif()
 add_executable(template_benchmark template_benchmark.c)
 target_link_libraries(template_benchmark PRIVATE mcp_common)
 
+# Advanced Template Benchmark
+add_executable(template_benchmark_advanced template_benchmark_advanced.c)
+target_link_libraries(template_benchmark_advanced PRIVATE mcp_common)
+
+# Template Examples
+add_executable(template_examples template_examples.c)
+target_link_libraries(template_examples PRIVATE mcp_common)
+
+# Template Debug
+add_executable(template_debug template_debug.c)
+target_link_libraries(template_debug PRIVATE mcp_common)
+
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark DESTINATION bin/examples)

@@ -2,6 +2,8 @@
 #define MCP_JSON_UTILS_H
 
 #include <stddef.h>
+#include "mcp_json.h"
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +34,97 @@ extern "C" {
  *         Returns -1 on error (e.g., input is NULL).
  */
 int mcp_json_escape_string(const char* input, char* output, size_t output_size);
+
+/**
+ * @brief Checks if a JSON value is a string.
+ *
+ * @param json Pointer to the JSON value to check.
+ * @return true if the JSON value is a string, false otherwise.
+ */
+bool mcp_json_is_string(const mcp_json_t* json);
+
+/**
+ * @brief Gets the string value from a JSON string.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_STRING.
+ * @return The string value, or NULL if the JSON value is not a string.
+ */
+const char* mcp_json_string_value(const mcp_json_t* json);
+
+/**
+ * @brief Checks if a JSON value is a number.
+ *
+ * @param json Pointer to the JSON value to check.
+ * @return true if the JSON value is a number, false otherwise.
+ */
+bool mcp_json_is_number(const mcp_json_t* json);
+
+/**
+ * @brief Gets the number value from a JSON number.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_NUMBER.
+ * @return The number value, or 0.0 if the JSON value is not a number.
+ */
+double mcp_json_number_value(const mcp_json_t* json);
+
+/**
+ * @brief Checks if a JSON value is a boolean.
+ *
+ * @param json Pointer to the JSON value to check.
+ * @return true if the JSON value is a boolean, false otherwise.
+ */
+bool mcp_json_is_boolean(const mcp_json_t* json);
+
+/**
+ * @brief Gets the boolean value from a JSON boolean.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_BOOLEAN.
+ * @return The boolean value, or false if the JSON value is not a boolean.
+ */
+bool mcp_json_boolean_value(const mcp_json_t* json);
+
+/**
+ * @brief Checks if a JSON value is null.
+ *
+ * @param json Pointer to the JSON value to check.
+ * @return true if the JSON value is null, false otherwise.
+ */
+bool mcp_json_is_null(const mcp_json_t* json);
+
+/**
+ * @brief Checks if a JSON value is an array.
+ *
+ * @param json Pointer to the JSON value to check.
+ * @return true if the JSON value is an array, false otherwise.
+ */
+bool mcp_json_is_array(const mcp_json_t* json);
+
+/**
+ * @brief Checks if a JSON value is an object.
+ *
+ * @param json Pointer to the JSON value to check.
+ * @return true if the JSON value is an object, false otherwise.
+ */
+bool mcp_json_is_object(const mcp_json_t* json);
+
+/**
+ * @brief Gets the size of a JSON object.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_OBJECT.
+ * @return The number of properties in the object, or 0 if the JSON value is not an object.
+ */
+size_t mcp_json_object_size(const mcp_json_t* json);
+
+/**
+ * @brief Gets a property from a JSON object by index.
+ *
+ * @param json Pointer to the JSON value. Must be of type MCP_JSON_OBJECT.
+ * @param index The index of the property to get.
+ * @param[out] name Pointer to a variable that will receive the property name.
+ * @param[out] value Pointer to a variable that will receive the property value.
+ * @return 0 on success, non-zero on error.
+ */
+int mcp_json_object_get_at(const mcp_json_t* json, size_t index, const char** name, mcp_json_t** value);
 
 
 #ifdef __cplusplus
