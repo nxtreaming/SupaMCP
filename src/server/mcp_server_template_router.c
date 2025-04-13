@@ -265,6 +265,33 @@ mcp_error_code_t mcp_server_handle_template_resource(
         return MCP_ERROR_RESOURCE_NOT_FOUND;
     }
 
+    // Check security if template security is enabled
+    if (server->template_security != NULL) {
+        // Get the auth context from the server
+        mcp_auth_context_t* auth_context = NULL;
+        // For now, we'll use a simple check without a full auth context
+        // In a real implementation, you would get the auth context from the request
+
+        // Check if the template has access control
+        if (!mcp_template_security_validate_params(server->template_security, route->template_uri, params)) {
+            if (error_message) {
+                *error_message = mcp_strdup("Parameter validation failed");
+            }
+            mcp_json_destroy(params);
+            return MCP_ERROR_INVALID_PARAMS;
+        }
+
+        // Check if the user has access to the template
+        const char* user_role = auth_context ? auth_context->identifier : NULL;
+        if (!mcp_template_security_check_access(server->template_security, route->template_uri, user_role, params)) {
+            if (error_message) {
+                *error_message = mcp_strdup("Access denied");
+            }
+            mcp_json_destroy(params);
+            return MCP_ERROR_UNAUTHORIZED;
+        }
+    }
+
     // Create a context for the template handler
     template_handler_context_t context = {
         .params = params,

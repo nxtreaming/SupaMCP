@@ -25,18 +25,24 @@ else()
     target_link_libraries(echo_client PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
-# Template Demo
-add_executable(template_demo template_demo.c)
-target_link_libraries(template_demo PRIVATE mcp_common)
-
 # Template Server Example
 add_executable(template_server template_server.c)
 target_link_libraries(template_server PRIVATE mcp_common)
 # Link platform-specific libraries needed by the transport
 if(WIN32)
-    target_link_libraries(template_server PRIVATE ws2_32)
+    target_link_libraries(template_server PRIVATE ws2_32) # Use PRIVATE keyword
 else()
-    target_link_libraries(template_server PRIVATE Threads::Threads)
+    target_link_libraries(template_server PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
+# Secure Template Server Example
+add_executable(secure_template_server secure_template_server.c)
+target_link_libraries(secure_template_server PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(secure_template_server PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(secure_template_server PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
 # Template Benchmark
@@ -44,4 +50,4 @@ add_executable(template_benchmark template_benchmark.c)
 target_link_libraries(template_benchmark PRIVATE mcp_common)
 
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_demo template_server template_benchmark DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark DESTINATION bin/examples)

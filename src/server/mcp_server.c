@@ -163,6 +163,13 @@ mcp_server_t* mcp_server_create(
         mcp_log_error("Failed to create template routes hash table.");
         goto create_error_cleanup;
     }
+
+    // Initialize template security
+    server->template_security = mcp_template_security_create();
+    if (server->template_security == NULL) {
+        mcp_log_error("Failed to create template security context.");
+        goto create_error_cleanup;
+    }
     // --- End Hash Table Creation ---
 
     // --- Create Content Item Pool ---
@@ -184,6 +191,7 @@ create_error_cleanup:
         if (server->content_item_pool) mcp_object_pool_destroy(server->content_item_pool); // Cleanup pool
         if (server->tools_table) mcp_hashtable_destroy(server->tools_table); // Cleanup tables
         if (server->template_routes_table) mcp_hashtable_destroy(server->template_routes_table);
+        if (server->template_security) mcp_template_security_destroy(server->template_security);
         if (server->resource_templates_table) mcp_hashtable_destroy(server->resource_templates_table);
         if (server->resources_table) mcp_hashtable_destroy(server->resources_table);
         if (server->pool_manager) gateway_pool_manager_destroy(server->pool_manager);
@@ -352,6 +360,12 @@ void mcp_server_destroy(mcp_server_t* server) {
     if (server->template_routes_table) {
         mcp_hashtable_destroy(server->template_routes_table);
         server->template_routes_table = NULL;
+    }
+
+    // Clean up template security
+    if (server->template_security) {
+        mcp_template_security_destroy(server->template_security);
+        server->template_security = NULL;
     }
 
     // Clean up the template cache

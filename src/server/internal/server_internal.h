@@ -20,8 +20,9 @@
 #include "gateway_pool.h"
 #include "mcp_auth.h"
 #include "mcp_hashtable.h"
-#include "mcp_server_template_router.h"
 #include "mcp_object_pool.h"
+#include "mcp_template_security.h"
+#include "mcp_server_template_router.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -57,6 +58,9 @@ struct mcp_server {
     mcp_hashtable_t* resource_templates_table; // Key: URI Template (string), Value: mcp_resource_template_t*
     mcp_hashtable_t* tools_table;             // Key: Tool Name (string), Value: mcp_tool_t*
     mcp_hashtable_t* template_routes_table;   // Key: URI Template (string), Value: template_route_t*
+
+    // Template security
+    mcp_template_security_t* template_security; // Template security context
 
     // Handlers
     mcp_server_resource_handler_t resource_handler;
