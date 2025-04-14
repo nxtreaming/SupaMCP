@@ -10,7 +10,8 @@
 #include <netinet/in.h>
 #endif
 
-int mcp_framing_send_message(socket_t sock, const char* message_data, uint32_t message_len, volatile bool* stop_flag) {
+int mcp_framing_send_message(socket_t sock, const char* message_data, uint32_t message_len, 
+    volatile bool* stop_flag) {
     if (message_data == NULL && message_len > 0) {
         mcp_log_error("mcp_framing_send_message: message_data is NULL but message_len > 0");
         return -1;
@@ -59,7 +60,8 @@ int mcp_framing_send_message(socket_t sock, const char* message_data, uint32_t m
     return 0; // Success
 }
 
-int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* message_len_out, uint32_t max_message_size, volatile bool* stop_flag) {
+int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* message_len_out,
+    uint32_t max_message_size, volatile bool* stop_flag) {
     if (message_data_out == NULL || message_len_out == NULL) {
         mcp_log_error("mcp_framing_recv_message: Output parameters cannot be NULL.");
         return -1;
@@ -74,11 +76,12 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     // 1. Read the 4-byte length prefix
     int read_result = mcp_socket_recv_exact(sock, length_buf, 4, stop_flag);
     if (read_result != 0) {
-        if (!stop_flag || !*stop_flag) { // Log error only if not stopped intentionally
-             mcp_log_error("mcp_framing_recv_message: Failed to read length prefix (result: %d, error: %d)",
+        if (!stop_flag || !*stop_flag) {
+            // it's the expected action, Log warn only if not stopped intentionally
+            mcp_log_warn("mcp_framing_recv_message: Failed to read length prefix (result: %d, error: %d)",
                            read_result, mcp_socket_get_last_error());
         } else {
-             mcp_log_debug("mcp_framing_recv_message: Aborted while reading length prefix.");
+            mcp_log_debug("mcp_framing_recv_message: Aborted while reading length prefix.");
         }
         return -1; // Error, connection closed, or aborted
     }
@@ -116,10 +119,11 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     read_result = mcp_socket_recv_exact(sock, message_buf, message_length_host, stop_flag);
     if (read_result != 0) {
         if (!stop_flag || !*stop_flag) {
-            mcp_log_error("mcp_framing_recv_message: Failed to read message body (length %u, result: %d, error: %d)",
+            // it's the normal expected action, not error logs.
+            mcp_log_warn("mcp_framing_recv_message: Failed to read message body (length %u, result: %d, error: %d)",
                           message_length_host, read_result, mcp_socket_get_last_error());
         } else {
-             mcp_log_debug("mcp_framing_recv_message: Aborted while reading message body.");
+            mcp_log_debug("mcp_framing_recv_message: Aborted while reading message body.");
         }
         free(message_buf); // Clean up allocated buffer on error
         return -1; // Error, connection closed, or aborted
