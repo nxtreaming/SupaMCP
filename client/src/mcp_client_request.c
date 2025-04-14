@@ -118,17 +118,17 @@ int mcp_client_send_and_wait(
         // Check for timeout using platform-specific or abstraction-defined value
 #ifdef ETIMEDOUT // Only check ETIMEDOUT if it's defined (i.e., on POSIX)
         if (wait_result == ETIMEDOUT) {
-             req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
+            req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
         } else if (wait_result != 0) {
-             mcp_log_error("mcp_cond_wait/timedwait failed with code: %d (%s)", wait_result, strerror(wait_result));
-             // Keep status as WAITING or whatever callback set if error occurred during wait
+            mcp_log_error("mcp_cond_wait/timedwait failed with code: %d (%s)", wait_result, strerror(wait_result));
+            // Keep status as WAITING or whatever callback set if error occurred during wait
         }
 #else // Windows or other systems where ETIMEDOUT isn't the timeout indicator
         // Assume the abstraction returns a specific value (e.g., 1) for timeout, 0 for success, -1 for error
         if (wait_result == 1) { // Assuming 1 indicates timeout from the abstraction
-             req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
+            req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
         } else if (wait_result != 0) {
-             mcp_log_error("mcp_cond_wait/timedwait failed with code: %d", wait_result);
+            mcp_log_error("mcp_cond_wait/timedwait failed with code: %d", wait_result);
         }
 #endif
         // If wait_result == 0, the request status should have been updated by the callback

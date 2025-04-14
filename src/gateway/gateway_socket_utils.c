@@ -64,9 +64,9 @@ static int send_exact(SOCKET sock, const char* buf, size_t len, int timeout_ms) 
             return -1; // Socket error
         }
         if (bytes_sent == 0) {
-             // This typically shouldn't happen with a ready socket, but indicates closure.
-             mcp_log_error("send() returned 0, connection likely closed.");
-             return -1;
+            // This typically shouldn't happen with a ready socket, but indicates closure.
+            mcp_log_error("send() returned 0, connection likely closed.");
+            return -1;
         }
         total_sent += bytes_sent;
     }

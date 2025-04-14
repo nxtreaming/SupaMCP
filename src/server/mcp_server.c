@@ -203,10 +203,10 @@ create_error_cleanup:
         free((void*)server->config.description);
         free((void*)server->config.api_key);
         if (server->config.prewarm_resource_uris) {
-             for (size_t i = 0; i < server->config.prewarm_count; ++i) {
-                 free(server->config.prewarm_resource_uris[i]);
-             }
-             free(server->config.prewarm_resource_uris);
+            for (size_t i = 0; i < server->config.prewarm_count; ++i) {
+                free(server->config.prewarm_resource_uris[i]);
+            }
+            free(server->config.prewarm_resource_uris);
         }
         free(server);
     }

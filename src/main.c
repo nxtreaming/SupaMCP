@@ -54,7 +54,7 @@ typedef struct {
 static void cleanup(void);
 static bool parse_tcp_address(const char* address, char* host_buf, size_t host_buf_size, int* port);
 
-// Example resource handler - Updated Signature
+// Example resource handler
 static mcp_error_code_t example_resource_handler(
     mcp_server_t* server,
     const char* uri,
@@ -169,7 +169,7 @@ cleanup:
     return err_code;
 }
 
-// Example tool handler - Updated Signature
+// Example tool handler
 static mcp_error_code_t example_tool_handler(
     mcp_server_t* server,
     const char* name,

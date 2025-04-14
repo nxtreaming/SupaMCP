@@ -35,10 +35,10 @@ pending_request_entry_t* mcp_client_find_pending_request_entry(mcp_client_t* cli
             // Found an empty slot, key is not in the table
             return find_empty_for_insert ? (first_deleted_slot ? first_deleted_slot : entry) : NULL;
         } else if (entry->request.status == PENDING_REQUEST_INVALID) {
-             // Found a deleted slot (marked as invalid), remember the first one
-             if (find_empty_for_insert && first_deleted_slot == NULL) {
-                 first_deleted_slot = entry;
-             }
+            // Found a deleted slot (marked as invalid), remember the first one
+            if (find_empty_for_insert && first_deleted_slot == NULL) {
+                first_deleted_slot = entry;
+            }
         }
         // else: Collision, continue probing
 
@@ -67,14 +67,14 @@ int mcp_client_add_pending_request_entry(mcp_client_t* client, uint64_t id, pend
     pending_request_entry_t* entry = mcp_client_find_pending_request_entry(client, id, true);
 
     if (entry == NULL) {
-         mcp_log_error("Hash table full or failed to find slot for insert (ID: %llu)\n", (unsigned long long)id);
-         return -1; // Should not happen if resizing is implemented or table not full
+        mcp_log_error("Hash table full or failed to find slot for insert (ID: %llu)\n", (unsigned long long)id);
+        return -1; // Should not happen if resizing is implemented or table not full
     }
 
     if (entry->id == id) {
-         mcp_log_error("Error: Duplicate request ID found in hash table: %llu\n", (unsigned long long)id);
-         // This indicates a logic error (ID reuse before completion) or hash collision issue not handled
-         return -1;
+        mcp_log_error("Error: Duplicate request ID found in hash table: %llu\n", (unsigned long long)id);
+        // This indicates a logic error (ID reuse before completion) or hash collision issue not handled
+        return -1;
     }
 
     // Found an empty or deleted slot
@@ -156,9 +156,9 @@ static int resize_pending_requests_table(mcp_client_t* client) {
 
     // Sanity check: ensure all original items were rehashed
     if (rehashed_count != client->pending_requests_count) {
-         mcp_log_error("Hash table resize warning: Rehashed count (%zu) does not match original count (%zu).\n", rehashed_count, client->pending_requests_count);
-         // This might indicate an issue with tracking pending_requests_count or the rehashing logic.
-         // Proceeding, but this warrants investigation.
+        mcp_log_error("Hash table resize warning: Rehashed count (%zu) does not match original count (%zu).\n", rehashed_count, client->pending_requests_count);
+        // This might indicate an issue with tracking pending_requests_count or the rehashing logic.
+        // Proceeding, but this warrants investigation.
     }
 
     // Replace old table with new one

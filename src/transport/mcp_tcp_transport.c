@@ -66,13 +66,13 @@ static int tcp_transport_start(
     // Set read end to non-blocking
     int flags = fcntl(data->stop_pipe[0], F_GETFL, 0);
     if (flags == -1 || fcntl(data->stop_pipe[0], F_SETFL, flags | O_NONBLOCK) == -1) {
-         mcp_log_error("Failed to set stop pipe read end non-blocking: %s", strerror(errno));
-         close_stop_pipe(data);
-         mcp_socket_close(data->listen_socket);
-         mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
-         data->running = false;
-         mcp_socket_cleanup();
-         return -1;
+        mcp_log_error("Failed to set stop pipe read end non-blocking: %s", strerror(errno));
+
+        mcp_socket_close(data->listen_socket);
+        mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
+        data->running = false;
+        mcp_socket_cleanup();
+        return -1;
     }
 #endif
 
@@ -81,9 +81,6 @@ static int tcp_transport_start(
         mcp_log_error("Failed to create accept thread.");
         mcp_socket_close(data->listen_socket);
         mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
-#ifndef _WIN32
-        close_stop_pipe(data);
-#endif
         data->running = false;
         mcp_socket_cleanup();
         return -1;
@@ -165,10 +162,6 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
     // Clean up mutex and stop pipe
     mcp_mutex_destroy(data->client_mutex);
     data->client_mutex = NULL;
-#ifndef _WIN32
-    close_stop_pipe(data); // Close pipe FDs
-#endif
-
     mcp_log_info("TCP Transport stopped.");
 
     // Cleanup socket library
@@ -234,47 +227,47 @@ mcp_transport_t* mcp_transport_tcp_create(
     if (tcp_data == NULL) {
         free(transport);
          return NULL;
-     }
+    }
 
-     tcp_data->host = mcp_strdup(host); // Use helper
-     if (tcp_data->host == NULL) {
-         free(tcp_data);
-         free(transport);
-         return NULL;
-     }
+    tcp_data->host = mcp_strdup(host); // Use helper
+    if (tcp_data->host == NULL) {
+        free(tcp_data);
+        free(transport);
+        return NULL;
+    }
 
-     tcp_data->port = port;
-     tcp_data->idle_timeout_ms = idle_timeout_ms; // Store timeout
-     tcp_data->listen_socket = MCP_INVALID_SOCKET;
-     tcp_data->running = false;
-     tcp_data->buffer_pool = NULL; // Initialize pool pointer
-     tcp_data->client_mutex = NULL; // Initialize mutex pointer
-     tcp_data->accept_thread = 0;   // Initialize thread handle
+    tcp_data->port = port;
+    tcp_data->idle_timeout_ms = idle_timeout_ms; // Store timeout
+    tcp_data->listen_socket = MCP_INVALID_SOCKET;
+    tcp_data->running = false;
+    tcp_data->buffer_pool = NULL; // Initialize pool pointer
+    tcp_data->client_mutex = NULL; // Initialize mutex pointer
+    tcp_data->accept_thread = 0;   // Initialize thread handle
 
-     // Explicitly initialize all client slots
-     for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
-         tcp_data->clients[i].state = CLIENT_STATE_INACTIVE; // Initialize state
-         tcp_data->clients[i].socket = MCP_INVALID_SOCKET;
-         tcp_data->clients[i].thread_handle = 0; // Initialize thread handle
-         // Other fields are zeroed by calloc
-     }
+    // Explicitly initialize all client slots
+    for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
+        tcp_data->clients[i].state = CLIENT_STATE_INACTIVE; // Initialize state
+        tcp_data->clients[i].socket = MCP_INVALID_SOCKET;
+        tcp_data->clients[i].thread_handle = 0; // Initialize thread handle
+        // Other fields are zeroed by calloc
+    }
 
  #ifndef _WIN32
-     tcp_data->stop_pipe[0] = -1; // Initialize pipe FDs
-     tcp_data->stop_pipe[1] = -1;
+    tcp_data->stop_pipe[0] = -1; // Initialize pipe FDs
+    tcp_data->stop_pipe[1] = -1;
  #endif
 
-     // Create the buffer pool
-     tcp_data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
-     if (tcp_data->buffer_pool == NULL) {
-         mcp_log_error("Failed to create buffer pool for TCP transport.");
-         free(tcp_data->host);
-         free(tcp_data);
-         free(transport);
-         return NULL;
-     }
+    // Create the buffer pool
+    tcp_data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
+    if (tcp_data->buffer_pool == NULL) {
+        mcp_log_error("Failed to create buffer pool for TCP transport.");
+        free(tcp_data->host);
+        free(tcp_data);
+        free(transport);
+        return NULL;
+    }
 
-     // Initialize function pointers
+    // Initialize function pointers
     transport->start = tcp_transport_start;
     transport->stop = tcp_transport_stop;
     transport->send = tcp_transport_send; // Keep stub send

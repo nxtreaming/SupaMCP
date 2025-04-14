@@ -9,7 +9,6 @@
 #include <mcp_thread_pool.h>
 
 // Thread function to accept incoming connections
-// Use the abstracted signature: void* func(void* arg)
 void* tcp_accept_thread_func(void* arg) {
     mcp_transport_t* transport = (mcp_transport_t*)arg;
     if (transport == NULL || transport->transport_data == NULL) {
@@ -77,7 +76,7 @@ void* tcp_accept_thread_func(void* arg) {
         if (client_socket == MCP_INVALID_SOCKET) {
             // Error logging is handled within mcp_socket_accept
             if (data->running) {
-                 mcp_log_debug("mcp_socket_accept returned invalid socket, continuing accept loop.");
+                mcp_log_debug("mcp_socket_accept returned invalid socket, continuing accept loop.");
             }
             continue; // Continue listening even if one accept fails
         }
@@ -106,7 +105,9 @@ void* tcp_accept_thread_func(void* arg) {
         }
 
         // Start a new thread to handle the client connection
-        if (mcp_thread_create(&data->clients[client_index].thread_handle, tcp_client_handler_thread_func, &data->clients[client_index]) != 0) {
+        int result = mcp_thread_create(&data->clients[client_index].thread_handle, 
+                                       tcp_client_handler_thread_func, &data->clients[client_index]);
+        if (result != 0) {
             mcp_log_error("Failed to create client handler thread for slot %d.", client_index);
             mcp_socket_close(client_socket);
             // Reset the slot state under lock
@@ -119,26 +120,26 @@ void* tcp_accept_thread_func(void* arg) {
             mcp_mutex_lock(data->client_mutex);
             // Check if state is still INITIALIZING (could have been changed by stop signal)
             if (data->clients[client_index].state == CLIENT_STATE_INITIALIZING) {
-                 data->clients[client_index].state = CLIENT_STATE_ACTIVE;
-                 char client_ip_str[INET_ADDRSTRLEN]; // Buffer for IP string
-                 inet_ntop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str));
-                 mcp_log_info("Accepted connection from %s:%d on socket %d (slot %d)",
+                data->clients[client_index].state = CLIENT_STATE_ACTIVE;
+                char client_ip_str[INET_ADDRSTRLEN]; // Buffer for IP string
+                inet_ntop(AF_INET, &client_addr.sin_addr, client_ip_str, sizeof(client_ip_str));
+                mcp_log_info("Accepted connection from %s:%d on socket %d (slot %d)",
                              client_ip_str, ntohs(client_addr.sin_port), (int)client_socket, client_index);
             } else {
-                 // State changed before we could mark active (likely stopped).
-                 // Do NOT close the socket here - the handler thread is responsible for it now.
-                 mcp_log_warn("Client slot %d state changed before activation. Handler thread will clean up.", client_index);
-                 // Ensure state is marked inactive so acceptor doesn't reuse slot prematurely.
-                 data->clients[client_index].state = CLIENT_STATE_INACTIVE;
-                 data->clients[client_index].socket = MCP_INVALID_SOCKET; // Mark socket as invalid *in the slot*
-                 // Thread handle might be dangling if create succeeded but state changed,
-                 // but we can't safely join it here. Assume thread will exit cleanly.
-                 data->clients[client_index].thread_handle = 0;
+                // State changed before we could mark active (likely stopped).
+                // Do NOT close the socket here - the handler thread is responsible for it now.
+                mcp_log_warn("Client slot %d state changed before activation. Handler thread will clean up.", client_index);
+                // Ensure state is marked inactive so acceptor doesn't reuse slot prematurely.
+                data->clients[client_index].state = CLIENT_STATE_INACTIVE;
+                data->clients[client_index].socket = MCP_INVALID_SOCKET; // Mark socket as invalid *in the slot*
+                // Thread handle might be dangling if create succeeded but state changed,
+                // but we can't safely join it here. Assume thread will exit cleanly.
+                data->clients[client_index].thread_handle = 0;
             }
             mcp_mutex_unlock(data->client_mutex);
         }
     } // End while(data->running)
 
     mcp_log_info("Accept thread finished.");
-    return NULL; // Return NULL for void* compatibility
+    return NULL;
 }

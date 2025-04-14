@@ -36,8 +36,8 @@ static char* parse_string(const char** json) {
     const char* p = *json;
     while (*p != '"' && *p != '\0') {
         if (*p < 32 && *p != '\t' && *p != '\n' && *p != '\r' && *p != '\b' && *p != '\f') {
-             fprintf(stderr, "Error: Invalid control character in JSON string.\n");
-             return NULL; // Invalid control character
+            fprintf(stderr, "Error: Invalid control character in JSON string.\n");
+            return NULL; // Invalid control character
         }
         if (*p == '\\') {
             p++; // Skip backslash
@@ -65,8 +65,8 @@ static char* parse_string(const char** json) {
             }
         } else {
             if (*p == '\0') { // Check for embedded null byte
-                 fprintf(stderr, "Error: Embedded null byte found in JSON string.\n");
-                 return NULL;
+                fprintf(stderr, "Error: Embedded null byte found in JSON string.\n");
+                return NULL;
             }
             required_len++;
             p++;
@@ -267,31 +267,31 @@ mcp_json_t* parse_value(const char** json, int depth) {
         case 'n':
             if (strncmp(*json, "null", 4) == 0) {
                 *json += 4;
-                 return mcp_json_null_create(); // Uses thread-local arena
-             }
-              mcp_log_error("JSON parse error: Expected 'null'.");
-             return NULL;
-         case 't':
+                return mcp_json_null_create(); // Uses thread-local arena
+            }
+            mcp_log_error("JSON parse error: Expected 'null'.");
+            return NULL;
+        case 't':
             if (strncmp(*json, "true", 4) == 0) {
-                *json += 4;
-                 return mcp_json_boolean_create(true); // Uses thread-local arena
-             }
-              mcp_log_error("JSON parse error: Expected 'true'.");
-             return NULL;
+               *json += 4;
+                return mcp_json_boolean_create(true); // Uses thread-local arena
+            }
+            mcp_log_error("JSON parse error: Expected 'true'.");
+            return NULL;
          case 'f':
             if (strncmp(*json, "false", 5) == 0) {
                 *json += 5;
-                 return mcp_json_boolean_create(false); // Uses thread-local arena
-             }
-              mcp_log_error("JSON parse error: Expected 'false'.");
-             return NULL;
-         case '-':
+                return mcp_json_boolean_create(false); // Uses thread-local arena
+            }
+            mcp_log_error("JSON parse error: Expected 'false'.");
+            return NULL;
+        case '-':
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
-             return parse_number(json);
-         default:
-              mcp_log_error("JSON parse error: Unexpected character '%c'.", **json);
-             return NULL; // Invalid character
+            return parse_number(json);
+        default:
+            mcp_log_error("JSON parse error: Unexpected character '%c'.", **json);
+            return NULL; // Invalid character
      }
 }
 

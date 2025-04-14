@@ -56,8 +56,8 @@ char* mcp_json_format_request(uint64_t id, const char* method, const char* param
     if (params != NULL) {
         mcp_json_t* params_json = mcp_json_parse(params);
         if (params_json == NULL) {
-             mcp_log_warn("Invalid JSON provided for request params, omitting params field: %s", params);
-             // Don't add params if parsing failed
+            mcp_log_warn("Invalid JSON provided for request params, omitting params field: %s", params);
+            // Don't add params if parsing failed
         } else {
             if (mcp_json_object_set_property(request, "params", params_json) != 0) {
                 mcp_json_destroy(request);
@@ -533,7 +533,7 @@ int mcp_json_parse_content(
 
     // Get count
     int array_size = mcp_json_array_get_size(contents_json);
-     if (array_size <= 0) {
+    if (array_size <= 0) {
         mcp_json_destroy(json);
         return 0; // Empty array is valid
     }

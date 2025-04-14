@@ -153,7 +153,7 @@ int mcp_client_list_resource_templates(
     mcp_arena_reset_current_thread();
 
     if (parse_result != 0) {
-         mcp_log_error("Failed to parse list_resource_templates response.");
+        mcp_log_error("Failed to parse list_resource_templates response.");
         free(error_message);
         free(result);
         return -1;
@@ -213,7 +213,7 @@ int mcp_client_read_resource(
 
     // Check for error
     if (error_code != MCP_ERROR_NONE) {
-         mcp_log_error("Server returned error for read_resource: %d (%s)", error_code, error_message ? error_message : "N/A");
+        mcp_log_error("Server returned error for read_resource: %d (%s)", error_code, error_message ? error_message : "N/A");
         free(error_message);
         free(result);
         return -1;
@@ -239,7 +239,7 @@ int mcp_client_read_resource(
     mcp_arena_reset_current_thread();
 
     if (parse_result != 0) {
-         mcp_log_error("Failed to parse read_resource response.");
+        mcp_log_error("Failed to parse read_resource response.");
         free(error_message);
         free(result);
         return -1;
@@ -290,7 +290,7 @@ int mcp_client_list_tools(
 
     // Check for error
     if (error_code != MCP_ERROR_NONE) {
-         mcp_log_error("Server returned error for list_tools: %d (%s)", error_code, error_message ? error_message : "N/A");
+        mcp_log_error("Server returned error for list_tools: %d (%s)", error_code, error_message ? error_message : "N/A");
         free(error_message);
         free(result);
         return -1;

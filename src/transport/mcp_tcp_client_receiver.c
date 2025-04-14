@@ -25,7 +25,6 @@ bool reconnection_in_progress = false;
  * @param arg Pointer to the mcp_transport_t handle.
  * @return NULL on exit.
  */
-// Use the abstracted signature: void* func(void* arg)
 void* tcp_client_receive_thread_func(void* arg) {
     // --- Initialize Thread-Local Arena for this receiver thread ---
     if (mcp_arena_init_current_thread(1024 * 1024) != 0) { // Using 1MB default

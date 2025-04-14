@@ -98,7 +98,6 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
         client->pending_requests_table[i].request.cv = NULL; // Initialize CV pointer
     }
 
-
     // Start the transport's receive mechanism with our internal callbacks
     if (mcp_transport_start(
             client->transport,
@@ -175,9 +174,9 @@ void mcp_client_transport_error_callback(void* user_data, int transport_error_co
             *(entry->request.error_code_ptr) = MCP_ERROR_TRANSPORT_ERROR; // Use a generic transport error
             // Avoid overwriting existing error message if one was somehow set
             if (*(entry->request.error_message_ptr) == NULL) {
-                 // Allocate error message using our helper
-                 *(entry->request.error_message_ptr) = mcp_strdup("Transport connection error");
-                 // If mcp_strdup fails, the message pointer remains NULL.
+                // Allocate error message using our helper
+                *(entry->request.error_message_ptr) = mcp_strdup("Transport connection error");
+                // If mcp_strdup fails, the message pointer remains NULL.
             }
 
             // Update status to ERROR

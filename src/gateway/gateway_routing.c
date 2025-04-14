@@ -85,7 +85,7 @@ const mcp_backend_info_t* find_backend_for_request(
             for (size_t j = 0; j < backend->routing.tool_name_count; j++) {
                 const char* tool_name = backend->routing.tool_names[j];
                 if (tool_name && strcmp(name_str, tool_name) == 0) {
-                     mcp_log_debug("Routing tool '%s' to backend '%s'", name_str, backend->name);
+                    mcp_log_debug("Routing tool '%s' to backend '%s'", name_str, backend->name);
                     return backend; // Found match
                 }
             }

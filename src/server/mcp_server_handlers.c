@@ -47,9 +47,9 @@ char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, co
     (void)arena; // Arena not used for this handler
 
     if (server == NULL || request == NULL || auth_context == NULL || error_code == NULL) {
-         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
-         PROFILE_END("handle_list_resources");
-         return NULL;
+        if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        PROFILE_END("handle_list_resources");
+        return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
@@ -140,29 +140,29 @@ char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* 
     (void)arena;
 
     if (server == NULL || request == NULL || auth_context == NULL || error_code == NULL) {
-         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
-         PROFILE_END("handle_list_resource_templates");
-         return NULL;
+        if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        PROFILE_END("handle_list_resource_templates");
+        return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
-     if (!server->capabilities.resources_supported) {
+    if (!server->capabilities.resources_supported) {
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;
         char* response = create_error_response(request->id, *error_code, "Resources not supported");
         PROFILE_END("handle_list_resource_templates");
-         return response;
+        return response;
     }
 
     // Permission Check (Optional for list)
     // if (!mcp_auth_check_general_permission(auth_context, "list_resource_templates")) { ... }
 
     mcp_json_t* templates_json = mcp_json_array_create();
-     if (!templates_json) {
-         *error_code = MCP_ERROR_INTERNAL_ERROR;
-         char* response = create_error_response(request->id, *error_code, "Failed to create templates array");
-         PROFILE_END("handle_list_resource_templates");
-         return response;
-     }
+    if (!templates_json) {
+        *error_code = MCP_ERROR_INTERNAL_ERROR;
+        char* response = create_error_response(request->id, *error_code, "Failed to create templates array");
+        PROFILE_END("handle_list_resource_templates");
+        return response;
+    }
 
     list_context_t context = { .json_array = templates_json, .error_occurred = false };
 
@@ -210,13 +210,13 @@ char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* 
 char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
     PROFILE_START("handle_read_resource");
     if (server == NULL || request == NULL || arena == NULL || auth_context == NULL || error_code == NULL) {
-         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
-         PROFILE_END("handle_read_resource");
-         return NULL;
+        if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        PROFILE_END("handle_read_resource");
+        return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
-     if (!server->capabilities.resources_supported) {
+    if (!server->capabilities.resources_supported) {
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;
         char* response = create_error_response(request->id, *error_code, "Resources not supported");
         PROFILE_END("handle_read_resource");
@@ -486,33 +486,34 @@ static void list_tool_callback(const void* key, void* value, void* user_data) {
             mcp_json_object_set_property(schema_obj, "type", mcp_json_string_create("object")) != 0 ||
             mcp_json_object_set_property(schema_obj, "properties", props_obj) != 0)
         {
-             json_build_error = true; goto tool_callback_cleanup;
+            json_build_error = true;
+            goto tool_callback_cleanup;
         }
 
         for (size_t j = 0; j < tool->input_schema_count; j++) {
             mcp_tool_param_schema_t* param = &tool->input_schema[j];
             mcp_json_t* param_obj = mcp_json_object_create();
-             if (!param_obj ||
+            if (!param_obj ||
                 mcp_json_object_set_property(param_obj, "type", mcp_json_string_create(param->type)) != 0 ||
                 (param->description && mcp_json_object_set_property(param_obj, "description", mcp_json_string_create(param->description)) != 0) ||
                 mcp_json_object_set_property(props_obj, param->name, param_obj) != 0)
-             {
-                 mcp_json_destroy(param_obj);
-                 json_build_error = true; goto tool_callback_cleanup;
-             }
+            {
+                mcp_json_destroy(param_obj);
+                json_build_error = true; goto tool_callback_cleanup;
+            }
 
-             if (param->required) {
-                 mcp_json_t* name_str = mcp_json_string_create(param->name);
-                 if (!name_str || mcp_json_array_add_item(req_arr, name_str) != 0) {
-                     mcp_json_destroy(name_str);
-                     json_build_error = true; goto tool_callback_cleanup;
-                 }
-             }
+            if (param->required) {
+                mcp_json_t* name_str = mcp_json_string_create(param->name);
+                if (!name_str || mcp_json_array_add_item(req_arr, name_str) != 0) {
+                    mcp_json_destroy(name_str);
+                    json_build_error = true; goto tool_callback_cleanup;
+                }
+            }
         }
 
         if (mcp_json_array_get_size(req_arr) > 0) {
             if (mcp_json_object_set_property(schema_obj, "required", req_arr) != 0) {
-                 json_build_error = true; goto tool_callback_cleanup;
+                json_build_error = true; goto tool_callback_cleanup;
             }
         } else {
             mcp_json_destroy(req_arr);
@@ -525,7 +526,7 @@ static void list_tool_callback(const void* key, void* value, void* user_data) {
     }
 
     if (mcp_json_array_add_item(ctx->json_array, tool_obj) != 0) {
-         json_build_error = true; goto tool_callback_cleanup;
+        json_build_error = true; goto tool_callback_cleanup;
     }
     return; // Success for this item
 
@@ -545,9 +546,9 @@ char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const 
     (void)arena;
 
     if (server == NULL || request == NULL || auth_context == NULL || error_code == NULL) {
-         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
-         PROFILE_END("handle_list_tools");
-         return NULL;
+        if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        PROFILE_END("handle_list_tools");
+        return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
@@ -615,9 +616,9 @@ char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const 
 char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
     PROFILE_START("handle_call_tool");
     if (server == NULL || request == NULL || arena == NULL || auth_context == NULL || error_code == NULL) {
-         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
-         PROFILE_END("handle_call_tool");
-         return NULL;
+        if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        PROFILE_END("handle_call_tool");
+        return NULL;
     }
     *error_code = MCP_ERROR_NONE;
 
@@ -754,7 +755,8 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     // Release handler-allocated content items back to pool after copying to JSON
     if (content_items) {
         for (size_t i = 0; i < content_count; i++) {
-             if (content_items[i]) mcp_object_pool_release(server->content_item_pool, content_items[i]);
+            if (content_items[i])
+                mcp_object_pool_release(server->content_item_pool, content_items[i]);
         }
         free(content_items); // Free the array itself
     }

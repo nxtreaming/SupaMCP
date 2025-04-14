@@ -228,13 +228,13 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
 
     // Create buffer pool
     data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
-     if (data->buffer_pool == NULL) {
-         mcp_log_error("Failed to create buffer pool for TCP client transport.");
-         free(data->host);
-         free(data);
-         free(transport);
-         return NULL;
-     }
+    if (data->buffer_pool == NULL) {
+        mcp_log_error("Failed to create buffer pool for TCP client transport.");
+        free(data->host);
+        free(data);
+        free(transport);
+        return NULL;
+    }
 
     // Assign function pointers
     transport->start = tcp_client_transport_start;

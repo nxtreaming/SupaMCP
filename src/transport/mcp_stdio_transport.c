@@ -95,9 +95,9 @@ static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, 
             mcp_log_error("Failed to read from stdin: %s (errno: %d)", err_buf, errno);
 #else
             if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-                 mcp_log_error("Failed to read from stdin: %s (errno: %d)", err_buf, errno);
+                mcp_log_error("Failed to read from stdin: %s (errno: %d)", err_buf, errno);
             } else {
-                 mcp_log_error("Failed to read from stdin: (errno: %d, strerror_r failed)", errno);
+                mcp_log_error("Failed to read from stdin: (errno: %d, strerror_r failed)", errno);
             }
 #endif
             return -1; // Read error
@@ -163,30 +163,30 @@ static void* stdio_read_thread_func(void* arg) {
         // 3. Sanity check length (using MAX_MCP_MESSAGE_SIZE from TCP transport for consistency)
         #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Re-define or include from common header
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
-             mcp_log_error("[MCP Stdio Transport] Invalid message length received: %u", message_length_host);
-             data->running = false; // Treat as fatal error
-             break;
+            mcp_log_error("[MCP Stdio Transport] Invalid message length received: %u", message_length_host);
+            data->running = false; // Treat as fatal error
+            break;
         }
 
         // 4. Allocate buffer for message body (+1 for null terminator)
         message_buf = (char*)malloc(message_length_host + 1);
         if (message_buf == NULL) {
-             mcp_log_error("[MCP Stdio Transport] Failed to allocate buffer for message size %u", message_length_host);
-             data->running = false; // Treat as fatal error
-             break;
+            mcp_log_error("[MCP Stdio Transport] Failed to allocate buffer for message size %u", message_length_host);
+            data->running = false; // Treat as fatal error
+            break;
         }
 
         // 5. Read the message body
         if (fread(message_buf, 1, message_length_host, stdin) != message_length_host) {
-             if (feof(stdin)) {
-                 mcp_log_info("[MCP Stdio Transport] EOF reached on stdin while reading body.");
-             } else {
-                 mcp_log_error("[MCP Stdio Transport] Error reading message body from stdin: %s", strerror(errno));
-             }
-             free(message_buf);
-             message_buf = NULL;
-             data->running = false; // Stop reading on EOF or error
-             break;
+            if (feof(stdin)) {
+                mcp_log_info("[MCP Stdio Transport] EOF reached on stdin while reading body.");
+            } else {
+                mcp_log_error("[MCP Stdio Transport] Error reading message body from stdin: %s", strerror(errno));
+            }
+            free(message_buf);
+            message_buf = NULL;
+            data->running = false; // Stop reading on EOF or error
+            break;
         }
 
         // 6. Null-terminate and process the message via callback
@@ -289,7 +289,7 @@ static int stdio_transport_start(
  * @return 0 on success, -1 on error.
  */
 static int stdio_transport_stop(mcp_transport_t* transport) {
-     if (transport == NULL || transport->transport_data == NULL) {
+    if (transport == NULL || transport->transport_data == NULL) {
         return -1; // Invalid arguments
     }
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;

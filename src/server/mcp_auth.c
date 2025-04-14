@@ -85,8 +85,8 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
 
             // Check allocations
             if (!context->identifier || !context->allowed_resources[0] || !context->allowed_tools[0]) {
-                 mcp_auth_context_free(context); // Cleanup partial allocation
-                 return -1;
+                mcp_auth_context_free(context); // Cleanup partial allocation
+                return -1;
             }
 
             *context_out = context;

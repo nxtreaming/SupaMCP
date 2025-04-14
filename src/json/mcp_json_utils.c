@@ -21,11 +21,11 @@ static inline bool write_safe(char* output, size_t output_size, size_t* out_idx,
         } else if (*out_idx < output_size) {
             // Write partial if possible, but indicate truncation by returning false later
             size_t remaining_space = output_size - *out_idx -1; // Leave space for null term
-             if (remaining_space > 0) {
-                 memcpy(output + *out_idx, str, remaining_space);
-             }
-             // Ensure null termination even if truncated
-             output[output_size - 1] = '\0';
+            if (remaining_space > 0) {
+                memcpy(output + *out_idx, str, remaining_space);
+            }
+            // Ensure null termination even if truncated
+            output[output_size - 1] = '\0';
         }
         // If output_size is 0 or 1, we can't write anything meaningful + null term
     }

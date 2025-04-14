@@ -96,7 +96,7 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
 
     // Ensure null termination, especially if vsnprintf truncated the output
     if (written >= (int)sizeof(message)) {
-         message[sizeof(message) - 1] = '\0'; // Manually null-terminate if truncated
+        message[sizeof(message) - 1] = '\0'; // Manually null-terminate if truncated
     } else if (written < 0) {
         // vsnprintf failed (e.g., encoding error in format string)
         // Write a fallback error message to indicate the issue
@@ -145,10 +145,10 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
                      timestamp, g_log_level_names[level], escaped_file, line, escaped_message);
              fflush(g_log_file);
         }
-         // Outputting to stderr might still interleave output from different threads,
-         // but the access to g_log_file and g_log_format is protected.
-         fprintf(stderr, json_fmt,
-                 timestamp, g_log_level_names[level], escaped_file, line, escaped_message);
+        // Outputting to stderr might still interleave output from different threads,
+        // but the access to g_log_file and g_log_format is protected.
+        fprintf(stderr, json_fmt,
+                timestamp, g_log_level_names[level], escaped_file, line, escaped_message);
 
     } else { // Default to TEXT format
         const char* text_fmt = "%s[%s] [%s:%d] [%s] %s%s\n";
@@ -255,14 +255,14 @@ static int create_log_directory(const char* log_file_path) {
     // Attempt to create the final, full directory path if no error occurred yet
     if (result == 0) {
 #ifdef _WIN32
-         if (CreateDirectory(path_copy, NULL) == 0) {
+        if (CreateDirectory(path_copy, NULL) == 0) {
             if (GetLastError() != ERROR_ALREADY_EXISTS) {
                 fprintf(stderr, "[ERROR] Failed to create final log directory: %s (Error: %lu)\n", path_copy, GetLastError());
                 result = -1;
             }
         }
 #else
-         if (mkdir(path_copy, 0755) != 0) {
+        if (mkdir(path_copy, 0755) != 0) {
             if (errno != EEXIST) {
                 fprintf(stderr, "[ERROR] Failed to create final log directory: %s (errno: %d - %s)\n", path_copy, errno, strerror(errno));
                 result = -1;
@@ -383,7 +383,7 @@ void mcp_log_set_format(mcp_log_format_t format) {
 }
 
 void mcp_log_set_level(mcp_log_level_t level) {
-     if (level >= MCP_LOG_LEVEL_TRACE && level <= MCP_LOG_LEVEL_FATAL) {
+    if (level >= MCP_LOG_LEVEL_TRACE && level <= MCP_LOG_LEVEL_FATAL) {
         mcp_mutex_lock(g_log_mutex);
         g_log_level = level;
         mcp_mutex_unlock(g_log_mutex);
@@ -448,7 +448,7 @@ void mcp_log_structured(
     // 4. Output based on format
     mcp_mutex_lock(g_log_mutex); // Lock before accessing shared resources
 
-     if (g_log_format == MCP_LOG_FORMAT_JSON) {
+    if (g_log_format == MCP_LOG_FORMAT_JSON) {
         char escaped_message[sizeof(base_message) * 2];
         char escaped_component[256]; // Assume max component/event length
         char escaped_event[256];
@@ -466,25 +466,24 @@ void mcp_log_structured(
                      timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
              fflush(g_log_file);
         }
-         // Outputting to stderr might still interleave, but file access is protected
-         fprintf(stderr, json_fmt,
-                 timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
-
+        // Outputting to stderr might still interleave, but file access is protected
+        fprintf(stderr, json_fmt,
+                timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
     } else { // Default to TEXT format
         const char* text_fmt = "[%s] [%s] [%s|%s] %s\n";
-         if (g_log_file != NULL) {
-             fprintf(g_log_file, text_fmt,
+        if (g_log_file != NULL) {
+            fprintf(g_log_file, text_fmt,
                      timestamp, g_log_level_names[level],
                      component ? component : "-",
                      event ? event : "-",
                      base_message);
-             fflush(g_log_file);
+            fflush(g_log_file);
         }
-         fprintf(stderr, text_fmt,
-                 timestamp, g_log_level_names[level],
-                 component ? component : "-",
-                 event ? event : "-",
-                 base_message);
+        fprintf(stderr, text_fmt,
+                timestamp, g_log_level_names[level],
+                component ? component : "-",
+                event ? event : "-",
+                base_message);
     }
 
     mcp_mutex_unlock(g_log_mutex); // Unlock after accessing shared resources

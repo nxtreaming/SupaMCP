@@ -20,7 +20,6 @@
 #include <string.h>
 #include <errno.h>
 
-
 // Constants
 #define MAX_TCP_CLIENTS 64 // Max concurrent client connections for the server
 #define POOL_BUFFER_SIZE (1024 * 64) // 64KB buffer size (Increased)
@@ -61,19 +60,12 @@ typedef struct {
 #endif
 } mcp_tcp_transport_data_t;
 
-
 // --- Internal Function Prototypes ---
 
-#ifndef _WIN32
-// Keep internal helper declaration if it's not moved to mcp_socket_utils.c
-// void close_stop_pipe(mcp_tcp_transport_data_t* data); // Example - decide if needed here or common utils
-#endif
-
 // From mcp_tcp_acceptor.c
-void* tcp_accept_thread_func(void* arg); // Use correct thread function signature
+void* tcp_accept_thread_func(void* arg);
 
 // From mcp_tcp_client_handler.c
-void* tcp_client_handler_thread_func(void* arg); // Use correct thread function signature
-
+void* tcp_client_handler_thread_func(void* arg);
 
 #endif // MCP_TCP_TRANSPORT_INTERNAL_H

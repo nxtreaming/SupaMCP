@@ -23,10 +23,9 @@ void tearDown_tcp(void) {
     // e.g., platform specific cleanup if needed
 }
 
-
 // --- Test Cases ---
 
-// Dummy callback for testing start - updated signature
+// Dummy callback for testing star
 static char* dummy_message_callback(void* user_data, const void* data, size_t size, int* error_code) {
     (void)user_data;
     (void)data;

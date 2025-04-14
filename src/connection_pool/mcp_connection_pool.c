@@ -179,8 +179,8 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, socket_handle_t con
     // For now, we just decrement the active count assuming the caller provides a valid active handle.
     // A more robust implementation would track active handles.
     if (pool->active_count == 0) {
-         mcp_log_warn("mcp_connection_pool_release: Releasing connection %d but active count is zero.", (int)connection);
-         // Proceeding anyway, but indicates a potential issue in usage or tracking.
+        mcp_log_warn("mcp_connection_pool_release: Releasing connection %d but active count is zero.", (int)connection);
+        // Proceeding anyway, but indicates a potential issue in usage or tracking.
     } else {
         pool->active_count--;
     }
@@ -210,11 +210,11 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, socket_handle_t con
             pool_signal(pool); // Use helper from sync
         } else {
             // Failed to allocate node, just close the connection
-             mcp_log_error("Failed to allocate node for idle connection %d, closing.", (int)connection);
-             close_connection(connection); // Use helper from socket utils
-             pool->total_count--;
-             // Signal potentially waiting getters that a slot might be free for creation
-             pool_signal(pool); // Use helper from sync
+            mcp_log_error("Failed to allocate node for idle connection %d, closing.", (int)connection);
+            close_connection(connection); // Use helper from socket utils
+            pool->total_count--;
+            // Signal potentially waiting getters that a slot might be free for creation
+            pool_signal(pool); // Use helper from sync
         }
     }
 

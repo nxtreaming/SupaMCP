@@ -331,9 +331,9 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
             // Found a backend to route to. Call the forwarding function.
             // Pass the pool manager from the server struct.
             if (server->pool_manager == NULL) {
-                 mcp_log_error("Gateway mode enabled but pool manager is NULL.");
-                 *error_code = MCP_ERROR_INTERNAL_ERROR;
-                 return create_error_response(request->id, *error_code, "Gateway configuration error.");
+                mcp_log_error("Gateway mode enabled but pool manager is NULL.");
+                *error_code = MCP_ERROR_INTERNAL_ERROR;
+                return create_error_response(request->id, *error_code, "Gateway configuration error.");
             }
             return gateway_forward_request(server->pool_manager, target_backend, request, error_code);
         }

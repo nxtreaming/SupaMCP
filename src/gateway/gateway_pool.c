@@ -241,8 +241,8 @@ void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_bac
     mcp_mutex_unlock(manager->manager_lock);
 
     if (!pool) {
-         mcp_log_error("Pool is unexpectedly NULL after get/create attempt for backend: %s", backend_info->name);
-         return NULL;
+        mcp_log_error("Pool is unexpectedly NULL after get/create attempt for backend: %s", backend_info->name);
+        return NULL;
     }
 
     mcp_mutex_lock(pool->pool_lock);
@@ -275,7 +275,7 @@ void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_bac
                 free(node_to_free);
                 mcp_mutex_lock(pool->pool_lock); // Relock
             } else {
-                 if (prev_idle_node) {
+                if (prev_idle_node) {
                     prev_idle_node->next = idle_node->next;
                 } else {
                     pool->idle_list = idle_node->next;

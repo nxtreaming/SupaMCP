@@ -144,7 +144,6 @@ void mcp_cache_destroy(mcp_resource_cache_t* cache) {
     free(cache);
 }
 
-// Updated signature to include pool
 int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_t* pool, mcp_content_item_t*** content, size_t* content_count) {
     if (!cache || !uri || !pool || !content || !content_count) return -1; // Added pool check
 
@@ -224,7 +223,6 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     return result;
 }
 
-// Updated signature to include pool
 int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_t* pool, mcp_content_item_t** content, size_t content_count, int ttl_seconds) {
     // Note: 'content' is now mcp_content_item_t** (array of pointers)
     if (!cache || !uri || !pool || !content || content_count == 0) return -1; // Added pool check

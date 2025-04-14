@@ -43,11 +43,11 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
     // Loop through all the results and connect to the first we can
     for(p = servinfo; p != NULL; p = p->ai_next) {
         if ((sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == INVALID_SOCKET_HANDLE) {
-            #ifdef _WIN32
-                mcp_log_warn("socket() failed: %d", WSAGetLastError());
-            #else
-                mcp_log_warn("socket() failed: %s", strerror(errno));
-            #endif
+        #ifdef _WIN32
+            mcp_log_warn("socket() failed: %d", WSAGetLastError());
+        #else
+            mcp_log_warn("socket() failed: %s", strerror(errno));
+        #endif
             continue;
         }
 
@@ -132,13 +132,13 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 
                 if (rv <= 0) { // Timeout (rv==0) or error (rv<0)
                     if (rv == 0) {
-                         mcp_log_warn("connect() timed out after %d ms.", connect_timeout_ms);
+                        mcp_log_warn("connect() timed out after %d ms.", connect_timeout_ms);
                     } else {
-                         #ifdef _WIN32
-                            mcp_log_error("select() failed during connect: %d", WSAGetLastError());
-                         #else
-                            mcp_log_error("poll() failed during connect: %s", strerror(errno));
-                         #endif
+                    #ifdef _WIN32
+                        mcp_log_error("select() failed during connect: %d", WSAGetLastError());
+                    #else
+                        mcp_log_error("poll() failed during connect: %s", strerror(errno));
+                    #endif
                     }
                     close_connection(sock);
                     sock = INVALID_SOCKET_HANDLE;
@@ -151,14 +151,14 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
             int optval = 0;
             socklen_t optlen = sizeof(optval);
             if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&optval, &optlen) == SOCKET_ERROR_HANDLE) {
-                 #ifdef _WIN32
-                    mcp_log_error("getsockopt(SO_ERROR) failed: %d", WSAGetLastError());
-                 #else
-                    mcp_log_error("getsockopt(SO_ERROR) failed: %s", strerror(errno));
-                 #endif
-                 close_connection(sock);
-                 sock = INVALID_SOCKET_HANDLE;
-                 continue; // Try next address
+            #ifdef _WIN32
+                mcp_log_error("getsockopt(SO_ERROR) failed: %d", WSAGetLastError());
+            #else
+                mcp_log_error("getsockopt(SO_ERROR) failed: %s", strerror(errno));
+            #endif
+                close_connection(sock);
+                sock = INVALID_SOCKET_HANDLE;
+                continue; // Try next address
             }
 
             if (optval != 0) { // Connect failed
@@ -173,13 +173,12 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
             }
             // Connection successful!
         } else {
-             // This case should not be reached if connect returned other errors handled above
-             mcp_log_error("Unexpected state after connect() call (rv=%d, err=%d)", rv, err);
-             close_connection(sock);
-             sock = INVALID_SOCKET_HANDLE;
-             continue;
+            // This case should not be reached if connect returned other errors handled above
+            mcp_log_error("Unexpected state after connect() call (rv=%d, err=%d)", rv, err);
+            close_connection(sock);
+            sock = INVALID_SOCKET_HANDLE;
+            continue;
         }
-
 
         // If we get here with a valid socket, connection succeeded.
         // Optionally, switch back to blocking mode if desired.
@@ -193,7 +192,7 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
     if (sock == INVALID_SOCKET_HANDLE) {
         mcp_log_error("Failed to connect to %s:%d after trying all addresses.", host, port);
     } else {
-         mcp_log_debug("Successfully connected socket %d to %s:%d.", (int)sock, host, port);
+        mcp_log_debug("Successfully connected socket %d to %s:%d.", (int)sock, host, port);
     }
 
     return sock;
@@ -201,12 +200,12 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 
 void close_connection(socket_handle_t socket_fd) {
     if (socket_fd != INVALID_SOCKET_HANDLE) {
-        #ifdef _WIN32
-            closesocket(socket_fd);
-            // Note: WSACleanup should be called once when the application exits,
-            // not after closing each socket.
-        #else
-            close(socket_fd);
-        #endif
+    #ifdef _WIN32
+        closesocket(socket_fd);
+        // Note: WSACleanup should be called once when the application exits,
+        // not after closing each socket.
+    #else
+        close(socket_fd);
+    #endif
     }
 }

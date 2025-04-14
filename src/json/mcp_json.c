@@ -368,7 +368,7 @@ int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names_out
         for (size_t j = 0; j < context.current_index; j++) {
             // Check if the pointer is not NULL before freeing, in case mcp_strdup failed on the last one
             if (context.names_array[j] != NULL) {
-                 free(context.names_array[j]);
+                free(context.names_array[j]);
             }
         }
         free(*names_out);

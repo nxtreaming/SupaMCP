@@ -306,13 +306,13 @@ mcp_error_code_t load_gateway_config(
 
         err = parse_string_array(prefixes_node, &current_backend->routing.resource_prefixes, &current_backend->routing.resource_prefix_count);
         if (err != MCP_ERROR_NONE) {
-             mcp_log_error("Gateway config: Failed to parse 'resource_prefixes' for backend '%s'.", name_str);
-             goto cleanup_error;
+            mcp_log_error("Gateway config: Failed to parse 'resource_prefixes' for backend '%s'.", name_str);
+            goto cleanup_error;
         }
         err = parse_string_array(tools_node, &current_backend->routing.tool_names, &current_backend->routing.tool_name_count);
         if (err != MCP_ERROR_NONE) {
-             mcp_log_error("Gateway config: Failed to parse 'tool_names' for backend '%s'.", name_str);
-             goto cleanup_error;
+            mcp_log_error("Gateway config: Failed to parse 'tool_names' for backend '%s'.", name_str);
+            goto cleanup_error;
         }
 
 #ifndef _WIN32
@@ -322,8 +322,8 @@ mcp_error_code_t load_gateway_config(
                                             &current_backend->routing.compiled_resource_regexes,
                                             &current_backend->routing.resource_regex_count);
         if (err != MCP_ERROR_NONE) {
-             mcp_log_error("Gateway config: Failed to parse or compile 'resource_regexes' for backend '%s'.", name_str);
-             goto cleanup_error;
+            mcp_log_error("Gateway config: Failed to parse or compile 'resource_regexes' for backend '%s'.", name_str);
+            goto cleanup_error;
         }
 #else
         // On Windows, ignore the regexes node but log if present

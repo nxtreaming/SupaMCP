@@ -15,7 +15,7 @@
 
 static mcp_server_t* g_echo_server = NULL;
 
-// Simple echo tool handler - Updated Signature
+// Simple echo tool handler
 static mcp_error_code_t echo_tool_handler(
     mcp_server_t* server,
     const char* name,

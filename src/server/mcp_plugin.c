@@ -65,9 +65,9 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
 
     plugin->path = mcp_strdup(path); // Store path copy
     if (!plugin->path) {
-         mcp_log_error("mcp_plugin_load: Failed to duplicate plugin path string for %s.", path);
-         free(plugin);
-         return NULL;
+        mcp_log_error("mcp_plugin_load: Failed to duplicate plugin path string for %s.", path);
+        free(plugin);
+        return NULL;
     }
 
     // --- Platform-specific library loading ---
@@ -129,28 +129,28 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
     // Call the function to get the descriptor
     plugin->descriptor = get_descriptor_func();
     if (!plugin->descriptor) {
-         mcp_log_error("mcp_plugin_load: Plugin '%s' returned a NULL descriptor.", path);
-         #ifdef _WIN32
-              FreeLibrary(plugin->library_handle);
-         #else
-             dlclose(plugin->library_handle);
-         #endif
-         free(plugin->path);
-         free(plugin);
-         return NULL;
+        mcp_log_error("mcp_plugin_load: Plugin '%s' returned a NULL descriptor.", path);
+    #ifdef _WIN32
+        FreeLibrary(plugin->library_handle);
+    #else
+        dlclose(plugin->library_handle);
+    #endif
+        free(plugin->path);
+        free(plugin);
+        return NULL;
     }
 
     // Validate essential descriptor fields
     if (!plugin->descriptor->name || !plugin->descriptor->version || !plugin->descriptor->initialize || !plugin->descriptor->finalize) {
-         mcp_log_error("mcp_plugin_load: Plugin '%s' descriptor is missing required fields (name, version, initialize, finalize).", path);
-         #ifdef _WIN32
-              FreeLibrary(plugin->library_handle);
-         #else
-             dlclose(plugin->library_handle);
-         #endif
-         free(plugin->path);
-         free(plugin);
-         return NULL;
+        mcp_log_error("mcp_plugin_load: Plugin '%s' descriptor is missing required fields (name, version, initialize, finalize).", path);
+    #ifdef _WIN32
+        FreeLibrary(plugin->library_handle);
+    #else
+        dlclose(plugin->library_handle);
+    #endif
+        free(plugin->path);
+        free(plugin);
+        return NULL;
     }
 
     mcp_log_info("Plugin '%s' version '%s' descriptor loaded.", plugin->descriptor->name, plugin->descriptor->version);
@@ -158,14 +158,14 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
     // Call the plugin's initialize function
     if (plugin->descriptor->initialize(server_context) != 0) {
         mcp_log_error("mcp_plugin_load: Plugin '%s' initialization failed.", plugin->descriptor->name);
-        #ifdef _WIN32
-             FreeLibrary(plugin->library_handle);
-        #else
-            dlclose(plugin->library_handle);
-        #endif
+    #ifdef _WIN32
+        FreeLibrary(plugin->library_handle);
+    #else
+        dlclose(plugin->library_handle);
+    #endif
         free(plugin->path);
         free(plugin);
-         return NULL;
+        return NULL;
     }
 
     mcp_log_info("Plugin '%s' initialized successfully.", plugin->descriptor->name);
@@ -215,7 +215,7 @@ int mcp_plugin_unload(mcp_plugin_t* plugin) {
     free(plugin);
 
     if (unload_status == 0) {
-         mcp_log_info("Plugin unloaded successfully.");
+        mcp_log_info("Plugin unloaded successfully.");
     }
 
     // Return finalize status if unload was ok, otherwise return unload error status
