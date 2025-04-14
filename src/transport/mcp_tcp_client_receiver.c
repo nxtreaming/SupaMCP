@@ -198,12 +198,12 @@ receive_loop:
         // Caller (this function) is responsible for freeing the buffer allocated by mcp_framing_recv_message
         free(message_buf);
         message_buf = NULL;
-      } // End of main loop
+    } // End of main loop
 
-      mcp_log_debug("TCP Client receive thread exiting for socket %d", (int)data->sock);
-      data->connected = false;
+    mcp_log_debug("TCP Client receive thread exiting for socket %d", (int)data->sock);
+    data->connected = false;
 
-      // Final check if buffer was released (should be NULL here)
+    // Final check if buffer was released (should be NULL here)
     if (message_buf != NULL) {
         mcp_log_warn("message_buf was not NULL at thread exit, freeing.");
         free(message_buf); // Free if somehow not freed earlier
