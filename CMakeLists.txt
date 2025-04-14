@@ -58,8 +58,11 @@ set(COMMON_SOURCES
     src/server/mcp_rate_limiter.c
     src/server/mcp_profiler.c
     src/common/mcp_hashtable.c
-    client/src/mcp_client.c
     client/src/mcp_client_template.c
+    client/src/mcp_client_core.c
+    client/src/mcp_client_hash_table.c
+    client/src/mcp_client_request.c
+    client/src/mcp_client_api.c
     src/server/mcp_server.c
     src/server/mcp_server_dispatch.c
     src/server/mcp_server_handlers.c
