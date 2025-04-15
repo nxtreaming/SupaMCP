@@ -125,5 +125,16 @@ else()
     target_link_libraries(graceful_shutdown_example PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# Batch Request Example
+add_executable(batch_request_example batch_request_example.c)
+target_include_directories(batch_request_example PRIVATE ../client/include) # Add client include path
+target_link_libraries(batch_request_example PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(batch_request_example PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(batch_request_example PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client DESTINATION bin/examples)

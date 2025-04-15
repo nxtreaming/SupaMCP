@@ -102,6 +102,7 @@ set(COMMON_SOURCES
     client/src/mcp_client_hash_table.c
     client/src/mcp_client_request.c
     client/src/mcp_client_api.c
+    client/src/mcp_client_batch.c
     src/server/mcp_server.c
     src/server/mcp_server_dispatch.c
     src/server/mcp_server_handlers.c

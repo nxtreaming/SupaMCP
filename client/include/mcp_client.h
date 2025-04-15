@@ -194,6 +194,54 @@ int mcp_client_send_raw_request(
     char** error_message
 );
 
+/**
+ * @brief Represents a single request in a batch.
+ */
+typedef struct {
+    const char* method;     /**< The method name to call. */
+    const char* params;     /**< The parameters as a JSON string (can be NULL). */
+    uint64_t id;            /**< The request ID. */
+} mcp_batch_request_t;
+
+/**
+ * @brief Represents a single response in a batch.
+ */
+typedef struct {
+    uint64_t id;                /**< The response ID (matches the request ID). */
+    char* result;               /**< The result as a JSON string (NULL if error). */
+    mcp_error_code_t error_code; /**< The error code (MCP_ERROR_NONE if success). */
+    char* error_message;        /**< The error message (NULL if success). */
+} mcp_batch_response_t;
+
+/**
+ * @brief Sends a batch of requests to the MCP server and receives responses.
+ *
+ * @param client The client instance.
+ * @param requests Array of batch request structures.
+ * @param request_count Number of requests in the array.
+ * @param[out] responses Pointer to receive an array of batch response structures.
+ *                      The caller is responsible for freeing this array and its contents
+ *                      using mcp_client_free_batch_responses().
+ * @param[out] response_count Pointer to receive the number of responses in the array.
+ * @return 0 on successful communication (check individual response error_codes),
+ *         -1 on failure (e.g., transport error, timeout, parse error).
+ */
+int mcp_client_send_batch_request(
+    mcp_client_t* client,
+    const mcp_batch_request_t* requests,
+    size_t request_count,
+    mcp_batch_response_t** responses,
+    size_t* response_count
+);
+
+/**
+ * @brief Frees an array of batch responses and their contents.
+ *
+ * @param responses Array of batch response structures.
+ * @param count Number of responses in the array.
+ */
+void mcp_client_free_batch_responses(mcp_batch_response_t* responses, size_t count);
+
 
 #ifdef __cplusplus
 }
