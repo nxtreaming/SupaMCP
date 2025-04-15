@@ -51,6 +51,7 @@ typedef enum {
     MCP_ERROR_TOOL_NOT_FOUND = -32102,      /**< Custom: The requested tool was not found. */
     MCP_ERROR_UNAUTHORIZED = -32103,        /**< Custom: The client is not authorized to access the resource. */
     MCP_ERROR_FORBIDDEN = -32104,           /**< Custom: Access to the requested resource or tool is forbidden. */
+    MCP_ERROR_SERVER_SHUTTING_DOWN = -32105,/**< Custom: The server is shutting down and not accepting new requests. */
     // Add other custom error codes here if needed
 } mcp_error_code_t;
 

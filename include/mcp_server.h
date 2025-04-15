@@ -29,6 +29,9 @@ typedef struct {
     const char* api_key;     /**< Optional API key required for requests. If NULL or empty, no key is required. */
     char** prewarm_resource_uris; /**< Optional array of resource URIs to pre-warm in the cache at startup. */
     size_t prewarm_count;         /**< Number of URIs in the prewarm_resource_uris array. */
+    // Graceful shutdown config
+    bool enable_graceful_shutdown; /**< Whether to enable graceful shutdown. Default: true. */
+    uint32_t graceful_shutdown_timeout_ms; /**< Timeout for graceful shutdown in milliseconds. Default: 5000 (5 seconds). */
 } mcp_server_config_t;
 
 /**

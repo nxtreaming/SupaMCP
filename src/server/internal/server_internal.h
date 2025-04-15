@@ -53,6 +53,12 @@ struct mcp_server {
     mcp_rate_limiter_t* rate_limiter;   // Rate limiter instance
     bool running;
 
+    // Graceful shutdown support
+    volatile int active_requests;       // Counter for active requests
+    volatile bool shutting_down;        // Flag indicating server is shutting down
+    mcp_mutex_t* shutdown_mutex;        // Mutex for shutdown synchronization
+    mcp_cond_t* shutdown_cond;          // Condition variable for shutdown waiting
+
     // Use hash tables for managing resources, templates, and tools
     mcp_hashtable_t* resources_table;         // Key: URI (string), Value: mcp_resource_t*
     mcp_hashtable_t* resource_templates_table; // Key: URI Template (string), Value: mcp_resource_template_t*

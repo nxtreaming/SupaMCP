@@ -114,5 +114,16 @@ else()
     target_link_libraries(pool_client_example PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# Graceful Shutdown Example
+add_executable(graceful_shutdown_example graceful_shutdown_example.c)
+target_include_directories(graceful_shutdown_example PRIVATE ../server/include) # Add server include path
+target_link_libraries(graceful_shutdown_example PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(graceful_shutdown_example PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(graceful_shutdown_example PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client DESTINATION bin/examples)

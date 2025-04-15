@@ -110,6 +110,20 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
     }
     *error_code = MCP_ERROR_NONE;
 
+    // Check if server is shutting down
+    if (server->shutting_down) {
+        mcp_log_warn("Server is shutting down, rejecting new request");
+        *error_code = MCP_ERROR_SERVER_SHUTTING_DOWN;
+        return NULL;
+    }
+
+    // Increment active request counter
+    #ifdef _WIN32
+    InterlockedIncrement((LONG*)&server->active_requests);
+    #else
+    __sync_fetch_and_add(&server->active_requests, 1);
+    #endif
+
     // --- Rate Limiting Check (optional) ---
     // TODO: Implement rate limiting if needed
 
@@ -177,15 +191,31 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
     free(message_copy);
 
     // --- Handle response ---
+    char* result = NULL;
     if (response_json != NULL) {
         // Return response string to be sent via client socket
-        PROFILE_END("transport_message_callback");
-        return response_json; // Caller is responsible for freeing
+        result = response_json; // Caller is responsible for freeing
     } else if (handler_error_code != MCP_ERROR_NONE) {
         // Message processing failed but no error response was generated
         mcp_log_error("Failed to process message (error code: %d), no response generated", handler_error_code);
     }
 
+    // Decrement active request counter
+    #ifdef _WIN32
+    LONG prev_count = InterlockedDecrement((LONG*)&server->active_requests);
+    #else
+    int prev_count = __sync_fetch_and_sub(&server->active_requests, 1);
+    #endif
+
+    // If this was the last request and server is shutting down, signal the condition variable
+    if (prev_count == 1 && server->shutting_down) {
+        if (mcp_mutex_lock(server->shutdown_mutex) == 0) {
+            mcp_cond_signal(server->shutdown_cond);
+            mcp_mutex_unlock(server->shutdown_mutex);
+            mcp_log_info("Last request completed, signaling shutdown condition");
+        }
+    }
+
     PROFILE_END("transport_message_callback");
-    return NULL; // No response
+    return result; // Return the response or NULL
 }

@@ -39,6 +39,11 @@ mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_ser
     server->config.rate_limit_window_seconds = config->rate_limit_window_seconds; // Keep 0 if user wants to disable
     server->config.rate_limit_max_requests = config->rate_limit_max_requests;   // Keep 0 if user wants to disable
 
+    // Set graceful shutdown config (default to enabled with 5 second timeout)
+    server->config.enable_graceful_shutdown = true; // Default to enabled
+    server->config.graceful_shutdown_timeout_ms = config->graceful_shutdown_timeout_ms > 0 ?
+                                                config->graceful_shutdown_timeout_ms : 5000;
+
     // Copy prewarm URIs if provided
     if (config->prewarm_resource_uris && config->prewarm_count > 0) {
         server->config.prewarm_count = config->prewarm_count;
@@ -78,6 +83,18 @@ mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_ser
     server->resource_templates_table = NULL;
     server->tools_table = NULL;
     server->content_item_pool = NULL; // Initialize pool pointer
+
+    // Initialize graceful shutdown support
+    server->active_requests = 0;
+    server->shutting_down = false;
+    server->shutdown_mutex = mcp_mutex_create();
+    server->shutdown_cond = mcp_cond_create();
+
+    // Check if mutex and condition variable creation succeeded
+    if (server->shutdown_mutex == NULL || server->shutdown_cond == NULL) {
+        mcp_log_error("Failed to create shutdown synchronization primitives.");
+        goto create_error_cleanup;
+    }
 
     // Initialize the memory pool system if not already initialized
     static int memory_system_initialized = 0;
@@ -195,6 +212,8 @@ create_error_cleanup:
         if (server->rate_limiter) mcp_rate_limiter_destroy(server->rate_limiter);
         if (server->resource_cache) mcp_cache_destroy(server->resource_cache);
         if (server->thread_pool) mcp_thread_pool_destroy(server->thread_pool);
+        if (server->shutdown_mutex) mcp_mutex_destroy(server->shutdown_mutex); // Cleanup shutdown mutex
+        if (server->shutdown_cond) mcp_cond_destroy(server->shutdown_cond); // Cleanup shutdown condition variable
         free((void*)server->config.name);
         free((void*)server->config.version);
         free((void*)server->config.description);
@@ -293,11 +312,67 @@ int mcp_server_stop(mcp_server_t* server) {
         return -1;
     }
 
-    server->running = false; // Signal threads to stop (though pool handles this)
+    server->running = false; // Signal threads to stop
+    server->shutting_down = true; // Signal that we're in shutdown mode
 
     if (server->transport != NULL) {
         // Stop the transport first (e.g., stop accepting connections)
         mcp_transport_stop(server->transport);
+    }
+
+    // If graceful shutdown is enabled, wait for active requests to complete
+    if (server->config.enable_graceful_shutdown) {
+        mcp_log_info("Graceful shutdown initiated, waiting for %d active requests to complete...",
+                    server->active_requests);
+
+        // Wait for active requests to complete or timeout
+        if (server->active_requests > 0) {
+            uint32_t timeout_ms = server->config.graceful_shutdown_timeout_ms > 0 ?
+                                server->config.graceful_shutdown_timeout_ms : 5000; // Default 5 seconds
+
+            // Calculate absolute timeout time
+            #ifdef _WIN32
+            DWORD start_time = GetTickCount();
+            DWORD end_time = start_time + timeout_ms;
+            #else
+            // For POSIX platforms, we'll use the timeout_ms directly in mcp_cond_timedwait
+            #endif
+
+            // Lock mutex and wait on condition variable
+            if (mcp_mutex_lock(server->shutdown_mutex) == 0) {
+                bool timed_out = false;
+
+                while (server->active_requests > 0 && !timed_out) {
+                    #ifdef _WIN32
+                    // On Windows, use our abstracted timed wait function
+                    int wait_result = mcp_cond_timedwait(server->shutdown_cond, server->shutdown_mutex, 100); // Wait 100ms at a time
+                    if (wait_result == -2) { // -2 indicates timeout
+                        DWORD current_time = GetTickCount();
+                        if (current_time >= end_time) {
+                            timed_out = true;
+                        }
+                    }
+                    #else
+                    // On POSIX, we can use timed wait
+                    int wait_result = mcp_cond_timedwait(server->shutdown_cond, server->shutdown_mutex, timeout_ms);
+                    if (wait_result == -2) { // -2 indicates timeout
+                        timed_out = true;
+                    }
+                    #endif
+                }
+
+                mcp_mutex_unlock(server->shutdown_mutex);
+
+                if (timed_out) {
+                    mcp_log_warn("Graceful shutdown timed out after %u ms with %d requests still active",
+                                timeout_ms, server->active_requests);
+                } else {
+                    mcp_log_info("All requests completed, proceeding with shutdown");
+                }
+            }
+        } else {
+            mcp_log_info("No active requests, proceeding with shutdown");
+        }
     }
 
     // Destroy the thread pool (waits for tasks and joins threads)
@@ -386,6 +461,16 @@ void mcp_server_destroy(mcp_server_t* server) {
     if (server->content_item_pool) { // Destroy object pool
         mcp_object_pool_destroy(server->content_item_pool);
         server->content_item_pool = NULL;
+    }
+
+    // Clean up graceful shutdown resources
+    if (server->shutdown_mutex) {
+        mcp_mutex_destroy(server->shutdown_mutex);
+        server->shutdown_mutex = NULL;
+    }
+    if (server->shutdown_cond) {
+        mcp_cond_destroy(server->shutdown_cond);
+        server->shutdown_cond = NULL;
     }
 
     // Note: We don't clean up the thread cache and memory pool system here
