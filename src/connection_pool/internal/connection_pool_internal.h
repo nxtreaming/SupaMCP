@@ -70,8 +70,8 @@ struct mcp_connection_pool {
 
     bool shutting_down;                 // Flag indicating pool destruction is in progress
 
-    // Optional: Thread for managing idle timeouts/min connections
-    // mcp_thread_t maintenance_thread; // Use abstracted type if implemented
+    // Thread for managing idle timeouts/min connections
+    mcp_thread_t maintenance_thread;     // Thread handle for maintenance thread
 };
 
 // --- Internal Function Prototypes ---
@@ -91,5 +91,11 @@ int pool_wait(mcp_connection_pool_t* pool, int timeout_ms);
 
 // From mcp_connection_pool_utils.c
 long long get_current_time_ms();
+
+// From mcp_connection_pool_maintenance.c
+int prepopulate_pool(mcp_connection_pool_t* pool);
+int start_maintenance_thread(mcp_connection_pool_t* pool);
+void stop_maintenance_thread(mcp_connection_pool_t* pool);
+void* pool_maintenance_thread_func(void* arg);
 
 #endif // MCP_CONNECTION_POOL_INTERNAL_H

@@ -1,4 +1,4 @@
-#include "internal/connection_pool_internal.h" 
+#include "internal/connection_pool_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -52,11 +52,24 @@ mcp_connection_pool_t* mcp_connection_pool_create(
         return NULL;
     }
 
-    // TODO: Pre-populate pool with min_connections (potentially in a background thread)
+    // Pre-populate pool with min_connections
+    if (pool->min_connections > 0) {
+        if (prepopulate_pool(pool) != 0) {
+            mcp_log_warn("Failed to pre-populate connection pool, but continuing.");
+            // Continue anyway, as the maintenance thread will try to establish connections
+        }
+    }
+
     mcp_log_info("Connection pool created for %s:%d (min:%zu, max:%zu).",
             pool->host, pool->port, pool->min_connections, pool->max_connections);
 
-    // TODO: Start maintenance thread if idle_timeout_ms > 0 or min_connections > 0
+    // Start maintenance thread if needed
+    if (pool->idle_timeout_ms > 0 || pool->min_connections > 0) {
+        if (start_maintenance_thread(pool) != 0) {
+            mcp_log_error("Failed to start maintenance thread.");
+            // This is not fatal, but log as error since maintenance functions won't work
+        }
+    }
 
     return pool;
 }
@@ -90,8 +103,26 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
             pool->active_count++;
             sock = pooled_conn->socket_fd;
 
-            // TODO: Implement idle timeout check more robustly if needed
-            // (Requires comparing pooled_conn->last_used_time with current time)
+            // Check if the connection has timed out
+            if (pool->idle_timeout_ms > 0) {
+                time_t current_time = time(NULL);
+                double idle_time_sec = difftime(current_time, pooled_conn->last_used_time);
+
+                if (idle_time_sec * 1000 > pool->idle_timeout_ms) {
+                    // Connection has timed out, close it and try to get another one
+                    mcp_log_debug("Idle connection %d timed out (idle for %.1f seconds), closing.",
+                                 (int)sock, idle_time_sec);
+                    close_connection(sock);
+                    free(pooled_conn);
+
+                    // Update counts but keep total the same
+                    pool->idle_count--;
+                    pool->total_count--;
+
+                    // Continue the loop to get another connection
+                    continue;
+                }
+            }
 
             free(pooled_conn); // Free the list node structure
             mcp_log_debug("Reusing idle connection %d.", (int)sock);
@@ -239,8 +270,8 @@ void mcp_connection_pool_destroy(mcp_connection_pool_t* pool) {
     pool_broadcast(pool); // Use helper from sync
     pool_unlock(pool); // Use helper from sync
 
-    // 2. Optional: Join maintenance thread if it exists
-    // TODO: Implement maintenance thread join logic if added
+    // 2. Stop and join maintenance thread if it exists
+    stop_maintenance_thread(pool);
 
     // 3. Close idle connections and free resources
     pool_lock(pool); // Use helper from sync

@@ -75,15 +75,16 @@ set(COMMON_SOURCES
     src/transport/mcp_tcp_client_transport.c
     src/transport/mcp_tcp_client_receiver.c
     src/transport/mcp_tcp_client_reconnect.c
+    src/transport/mcp_tcp_pool_transport.c
     src/transport/mcp_websocket_transport.c
     src/common/mcp_types.c
     src/common/mcp_arena.c
     src/common/mcp_log.c
     src/common/mcp_thread_local.c
+    src/common/mcp_string_utils.c
     src/common/mcp_sync.c
     src/common/mcp_socket_utils.c
     src/common/mcp_framing.c
-    src/common/mcp_string_utils.c
     src/common/mcp_thread_pool.c
     src/common/mcp_object_pool.c
     src/common/mcp_memory_pool.c
@@ -115,6 +116,7 @@ set(COMMON_SOURCES
     src/connection_pool/mcp_connection_pool_socket.c
     src/connection_pool/mcp_connection_pool_sync.c
     src/connection_pool/mcp_connection_pool_utils.c
+    src/connection_pool/mcp_connection_pool_maintenance.c
     src/server/mcp_plugin.c
     src/gateway/gateway_config.c
     src/gateway/gateway_routing.c
