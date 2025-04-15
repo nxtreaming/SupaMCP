@@ -2,25 +2,23 @@
 #define MCP_TRANSPORT_INTERNAL_H
 
 #include "mcp_transport.h"
+#include "transport_interfaces.h"
 
 // Define the internal structure for the transport handle
 // This is included by mcp_transport.c and specific implementations like mcp_stdio_transport.c
+#ifdef _MSC_VER
+#   pragma warning(push)
+#   pragma warning(disable : 4201) // Disable warning for nameless struct/union
+#endif
 struct mcp_transport {
+    // Transport type (server or client)
+    mcp_transport_type_enum_t type;
+
     // Function pointers for specific transport implementation
-    int (*start)(
-        mcp_transport_t* transport,
-        mcp_transport_message_callback_t message_callback,
-        void* user_data,
-        mcp_transport_error_callback_t error_callback
-    );
-    int (*stop)(mcp_transport_t* transport);
-    int (*send)(mcp_transport_t* transport, const void* data, size_t size); // Keep for compatibility? Or remove?
-    int (*sendv)(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count); // New vectored send
-    // Receive function pointer (primarily for synchronous client usage)
-    // Returns 0 on success, non-zero on error/timeout.
-    // Allocates buffer for data, caller must free.
-    int (*receive)(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms);
-    void (*destroy)(mcp_transport_t* transport); // Specific destroy logic
+    union {
+        mcp_server_transport_t server;
+        mcp_client_transport_t client;
+    };
 
     // User data specific to this transport instance (e.g., file handles, socket descriptors)
     void* transport_data;
@@ -31,5 +29,8 @@ struct mcp_transport {
     // The error callback
     mcp_transport_error_callback_t error_callback;
 };
+#ifdef _MSC_VER
+#   pragma warning(pop)
+#endif
 
 #endif // MCP_TRANSPORT_INTERNAL_H

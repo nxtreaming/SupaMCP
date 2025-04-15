@@ -170,34 +170,8 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
     return 0;
 }
 
-// Server transport send function - STUB
-// Actual sending happens in client handler thread
-static int tcp_transport_send(mcp_transport_t* transport, const void* data, size_t size) {
-    if (transport == NULL || transport->transport_data == NULL || data == NULL || size == 0) {
-        mcp_log_error("Invalid parameters in tcp_transport_send");
-        return -1;
-    }
-    mcp_log_debug("Server transport send function called (stub) with %zu bytes", size);
-    // This function is a stub because the server transport doesn't know which client to send to.
-    // The client handler thread is responsible for sending responses back to its specific client.
-    return 0; // Indicate success as no direct action is taken here.
-}
-
-// Server transport vectored send function - STUB
-// Actual sending happens in client handler thread
-static int tcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
-    if (transport == NULL || transport->transport_data == NULL || buffers == NULL || buffer_count == 0) {
-        mcp_log_error("Invalid parameters in tcp_transport_sendv");
-        return -1;
-    }
-    size_t total_size = 0;
-    for(size_t i = 0; i < buffer_count; ++i) {
-        total_size += buffers[i].size;
-    }
-    mcp_log_debug("Server transport sendv function called (stub) with %zu buffers, total size %zu bytes", buffer_count, total_size);
-    // This function is a stub for the same reason as tcp_transport_send.
-    return 0; // Indicate success as no direct action is taken here.
-}
+// Note: Server transport does not implement send or sendv functions
+// Responses are sent directly by the client handler threads
 
 static void tcp_transport_destroy(mcp_transport_t* transport) {
      if (transport == NULL || transport->transport_data == NULL) return;
@@ -267,17 +241,19 @@ mcp_transport_t* mcp_transport_tcp_create(
         return NULL;
     }
 
-    // Initialize function pointers
-    transport->start = tcp_transport_start;
-    transport->stop = tcp_transport_stop;
-    transport->send = tcp_transport_send; // Keep stub send
-    transport->sendv = tcp_transport_sendv; // Assign new stub sendv
-    transport->receive = NULL; // Set receive to NULL, not used by server transport
-    transport->destroy = tcp_transport_destroy;
+    // Set transport type to server
+    transport->type = MCP_TRANSPORT_TYPE_SERVER;
+
+    // Initialize server operations
+    transport->server.start = tcp_transport_start;
+    transport->server.stop = tcp_transport_stop;
+    transport->server.destroy = tcp_transport_destroy;
+
+    // Set transport data and initialize callbacks
     transport->transport_data = tcp_data;
     transport->message_callback = NULL;
     transport->callback_user_data = NULL;
-    transport->error_callback = NULL; // Initialize error callback
+    transport->error_callback = NULL;
 
     return transport;
 }

@@ -1,6 +1,7 @@
 #include "mock_transport.h"
 #include "../include/mcp_transport.h"
 #include "../src/transport/internal/transport_internal.h"
+#include "../src/transport/internal/transport_interfaces.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -91,11 +92,18 @@ mcp_transport_t* mock_transport_create(void) {
         return NULL;
     }
 
-    // Assign function pointers
-    transport->send = mock_send;
-    transport->start = mock_start;
-    transport->stop = mock_stop;
-    transport->destroy = mock_destroy;
+    // Set transport type to client (mock transport is treated as a client transport)
+    transport->type = MCP_TRANSPORT_TYPE_CLIENT;
+
+    // Initialize client operations
+    transport->client.start = mock_start;
+    transport->client.stop = mock_stop;
+    transport->client.destroy = mock_destroy;
+    transport->client.send = mock_send;
+    transport->client.sendv = NULL; // No vectored send implementation for mock
+    transport->client.receive = NULL; // No receive implementation for mock
+
+    // Set transport data
     transport->transport_data = mock_data; // Link mock-specific data
 
     return transport;

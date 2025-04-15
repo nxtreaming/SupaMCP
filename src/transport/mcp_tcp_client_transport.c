@@ -236,13 +236,18 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
         return NULL;
     }
 
-    // Assign function pointers
-    transport->start = tcp_client_transport_start;
-    transport->stop = tcp_client_transport_stop;
-    transport->send = tcp_client_transport_send; // Keep old send
-    transport->sendv = tcp_client_transport_sendv;
-    transport->receive = tcp_client_transport_receive;
-    transport->destroy = tcp_client_transport_destroy;
+    // Set transport type to client
+    transport->type = MCP_TRANSPORT_TYPE_CLIENT;
+
+    // Initialize client operations
+    transport->client.start = tcp_client_transport_start;
+    transport->client.stop = tcp_client_transport_stop;
+    transport->client.destroy = tcp_client_transport_destroy;
+    transport->client.send = tcp_client_transport_send;
+    transport->client.sendv = tcp_client_transport_sendv;
+    transport->client.receive = tcp_client_transport_receive;
+
+    // Set transport data and initialize callbacks
     transport->transport_data = data;
     transport->message_callback = NULL;
     transport->callback_user_data = NULL;

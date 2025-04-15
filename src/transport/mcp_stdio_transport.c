@@ -1,6 +1,6 @@
 #ifdef _WIN32
 #   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS 
+#       define _CRT_SECURE_NO_WARNINGS
 #   endif
 #endif
 
@@ -364,16 +364,21 @@ static int stdio_transport_send(mcp_transport_t* transport, const void* payload_
  * @param transport The transport handle.
  */
 static void stdio_transport_destroy(mcp_transport_t* transport) {
-    if (transport == NULL || transport->transport_data == NULL) {
+    if (transport == NULL) {
         return; // Nothing to do
     }
-    // Ensure transport is stopped first
-    stdio_transport_stop(transport);
 
-    // Free the specific stdio data
-    free(transport->transport_data);
-    transport->transport_data = NULL;
-    // The generic mcp_transport_destroy will free the main transport struct
+    if (transport->transport_data != NULL) {
+        // Ensure transport is stopped first
+        stdio_transport_stop(transport);
+
+        // Free the specific stdio data
+        free(transport->transport_data);
+        transport->transport_data = NULL;
+    }
+
+    // Free the main transport struct
+    free(transport);
 }
 
 mcp_transport_t* mcp_transport_stdio_create(void) {
@@ -399,16 +404,22 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     // pthread_t doesn't need explicit NULL initialization
 #endif
 
-    // Initialize the generic transport struct
-    transport->start = stdio_transport_start;
-    transport->stop = stdio_transport_stop;
-    transport->send = stdio_transport_send;
-    transport->receive = stdio_transport_receive; // Assign receive function
-    transport->destroy = stdio_transport_destroy;
+    // Set transport type to client (stdio transport is treated as a client transport)
+    transport->type = MCP_TRANSPORT_TYPE_CLIENT;
+
+    // Initialize client operations
+    transport->client.start = stdio_transport_start;
+    transport->client.stop = stdio_transport_stop;
+    transport->client.destroy = stdio_transport_destroy;
+    transport->client.send = stdio_transport_send;
+    transport->client.sendv = NULL; // No vectored send implementation for stdio
+    transport->client.receive = stdio_transport_receive;
+
+    // Set transport data and initialize callbacks
     transport->transport_data = stdio_data; // Store specific data
     transport->message_callback = NULL;     // Will be set by mcp_transport_start
-    transport->callback_user_data = NULL; // Will be set by mcp_transport_start
-    transport->error_callback = NULL;     // Will be set by mcp_transport_start
+    transport->callback_user_data = NULL;   // Will be set by mcp_transport_start
+    transport->error_callback = NULL;       // Will be set by mcp_transport_start
 
     return transport;
 }
