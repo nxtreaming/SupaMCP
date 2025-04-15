@@ -12,15 +12,16 @@ extern "C" {
  * @brief Enumeration of supported transport types.
  */
 typedef enum mcp_transport_type {
-    MCP_TRANSPORT_STDIO,  /**< Standard input/output transport */
-    MCP_TRANSPORT_TCP,    /**< TCP server transport */
-    MCP_TRANSPORT_TCP_CLIENT /**< TCP client transport */
-    // Add future transport types here (e.g., WebSocket, etc.)
+    MCP_TRANSPORT_STDIO,       /**< Standard input/output transport */
+    MCP_TRANSPORT_TCP,         /**< TCP server transport */
+    MCP_TRANSPORT_TCP_CLIENT,  /**< TCP client transport */
+    MCP_TRANSPORT_WS_SERVER,   /**< WebSocket server transport */
+    MCP_TRANSPORT_WS_CLIENT    /**< WebSocket client transport */
 } mcp_transport_type_t;
 
 /**
  * @brief Configuration options for transports.
- * 
+ *
  * This union contains configuration options for all transport types.
  * Only the fields relevant to the chosen transport type should be used.
  */
@@ -30,9 +31,18 @@ typedef union mcp_transport_config {
         uint16_t port;            /**< Port number */
         uint32_t idle_timeout_ms; /**< Idle connection timeout in milliseconds (0 to disable, TCP server only) */
     } tcp;
-    
-    // Add configurations for other transport types as needed
-    
+
+    struct {
+        const char* host;         /**< Hostname or IP address to bind to (for server) or connect to (for client) */
+        uint16_t port;            /**< Port number */
+        const char* path;         /**< WebSocket endpoint path (e.g., "/ws") */
+        const char* origin;       /**< Origin header for client (optional) */
+        const char* protocol;     /**< WebSocket protocol name (optional) */
+        int use_ssl;              /**< Whether to use SSL/TLS (1 for true, 0 for false) */
+        const char* cert_path;    /**< Path to SSL certificate (if use_ssl is true) */
+        const char* key_path;     /**< Path to SSL private key (if use_ssl is true) */
+    } ws;
+
 } mcp_transport_config_t;
 
 /**

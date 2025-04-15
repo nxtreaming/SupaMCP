@@ -71,5 +71,26 @@ else()
     target_link_libraries(template_client_test PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# WebSocket Server Example
+add_executable(websocket_server websocket_server.c)
+target_link_libraries(websocket_server PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(websocket_server PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(websocket_server PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
+# WebSocket Client Example
+add_executable(websocket_client websocket_client.c)
+target_include_directories(websocket_client PRIVATE ../client/include) # Add client include path
+target_link_libraries(websocket_client PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(websocket_client PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(websocket_client PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client DESTINATION bin/examples)

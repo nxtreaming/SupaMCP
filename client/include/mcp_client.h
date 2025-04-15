@@ -46,6 +46,28 @@ mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport
  */
 void mcp_client_destroy(mcp_client_t* client);
 
+/**
+ * @brief Send a request to the MCP server and receive a response.
+ *
+ * @param client The client instance.
+ * @param method The method name.
+ * @param params The parameters as a JSON string (can be NULL).
+ * @param[out] result Pointer to receive the response string (must be freed by the caller).
+ * @param[out] error_code Pointer to receive the error code if the server returns a JSON-RPC error.
+ * @param[out] error_message Pointer to receive the error message string if the server returns an error.
+ *                           The caller is responsible for freeing this string.
+ * @return 0 on successful communication (check error_code for JSON-RPC errors),
+ *         -1 on failure (e.g., transport error, timeout, parse error).
+ */
+int mcp_client_send_request(
+    mcp_client_t* client,
+    const char* method,
+    const char* params,
+    char** result,
+    mcp_error_code_t* error_code,
+    char** error_message
+);
+
 // --- Standard MCP Client API ---
 
 /**

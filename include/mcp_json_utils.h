@@ -126,6 +126,16 @@ size_t mcp_json_object_size(const mcp_json_t* json);
  */
 int mcp_json_object_get_at(const mcp_json_t* json, size_t index, const char** name, mcp_json_t** value);
 
+/**
+ * @brief Format a C string as a JSON string value.
+ *
+ * This function takes a C string and formats it as a JSON string value,
+ * properly escaping special characters and adding quotes.
+ *
+ * @param str The C string to format
+ * @return A newly allocated JSON string or NULL on error (must be freed by the caller)
+ */
+char* mcp_json_format_string(const char* str);
 
 #ifdef __cplusplus
 }

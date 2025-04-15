@@ -19,6 +19,43 @@ if(NOT WIN32)
     find_package(Threads REQUIRED)
 endif()
 
+# Use manually installed libwebsockets
+message(STATUS "Using manually installed libwebsockets")
+
+# Set paths to the manually installed libwebsockets
+set(LIBWEBSOCKETS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
+set(LIBWEBSOCKETS_LIBRARY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/libwebsockets)
+
+# Check if the library files exist
+if(WIN32)
+    set(LIBWEBSOCKETS_LIBRARY ${LIBWEBSOCKETS_LIBRARY_DIR}/websockets.lib)
+    if(NOT EXISTS ${LIBWEBSOCKETS_LIBRARY})
+        message(FATAL_ERROR "Could not find libwebsockets library at ${LIBWEBSOCKETS_LIBRARY}")
+    endif()
+else()
+    set(LIBWEBSOCKETS_LIBRARY ${LIBWEBSOCKETS_LIBRARY_DIR}/libwebsockets.a)
+    if(NOT EXISTS ${LIBWEBSOCKETS_LIBRARY})
+        message(FATAL_ERROR "Could not find libwebsockets library at ${LIBWEBSOCKETS_LIBRARY}")
+    endif()
+endif()
+
+# Create an imported target for libwebsockets
+add_library(websockets STATIC IMPORTED)
+set_target_properties(websockets PROPERTIES
+    IMPORTED_LOCATION ${LIBWEBSOCKETS_LIBRARY}
+    INTERFACE_INCLUDE_DIRECTORIES "${LIBWEBSOCKETS_INCLUDE_DIR};${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+# Add include directory to system include paths for OpenSSL headers
+include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# Check if we need to link against additional dependencies
+if(WIN32)
+    # On Windows, libwebsockets might need ws2_32 and other libraries
+    set_property(TARGET websockets PROPERTY
+        INTERFACE_LINK_LIBRARIES ws2_32 crypt32 secur32)
+endif()
+
 # Common library source files
 set(COMMON_SOURCES
     src/json/mcp_json.c
@@ -30,6 +67,7 @@ set(COMMON_SOURCES
     src/json/mcp_json_rpc.c
     src/json/mcp_json_format.c
     src/json/mcp_json_parse_direct.c
+    src/json/mcp_json_string_utils.c
     src/transport/mcp_transport.c
     src/transport/mcp_transport_factory.c
     src/transport/mcp_stdio_transport.c
@@ -38,6 +76,7 @@ set(COMMON_SOURCES
     src/transport/mcp_tcp_acceptor.c
     src/transport/mcp_tcp_client_transport.c
     src/transport/mcp_tcp_client_receiver.c
+    src/transport/mcp_websocket_transport.c
     src/common/mcp_types.c
     src/common/mcp_arena.c
     src/common/mcp_log.c
@@ -135,6 +174,9 @@ else()
     # Link pthreads and dl (for dynamic loading) on non-Windows
     target_link_libraries(mcp_common INTERFACE Threads::Threads dl) # Use modern Threads target and INTERFACE
 endif()
+
+# Link libwebsockets
+target_link_libraries(mcp_common PUBLIC websockets)
 
 # Install
 install(TARGETS mcp_server mcp_client DESTINATION bin)
