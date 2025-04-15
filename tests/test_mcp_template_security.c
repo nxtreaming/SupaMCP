@@ -4,7 +4,6 @@
 #include "mcp_json.h"
 #include "mcp_json_utils.h"
 #include "mcp_server.h"
-#include "internal/mcp_template_security.h"
 #include <string.h>
 #include <stdlib.h>
 

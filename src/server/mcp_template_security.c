@@ -1,4 +1,4 @@
-#include "internal/mcp_template_security.h"
+#include "mcp_template_security.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
 #include <string.h>
@@ -51,12 +51,12 @@ static void template_acl_entry_free(template_acl_entry_t* entry) {
     }
 
     free(entry->template_uri);
-    
+
     for (size_t i = 0; i < entry->allowed_roles_count; i++) {
         free(entry->allowed_roles[i]);
     }
     free(entry->allowed_roles);
-    
+
     free(entry);
 }
 
@@ -113,7 +113,7 @@ int mcp_template_security_add_acl(
         size_t new_capacity = security->entries_capacity == 0 ? 8 : security->entries_capacity * 2;
         template_acl_entry_t** new_entries = (template_acl_entry_t**)realloc(
             security->entries, new_capacity * sizeof(template_acl_entry_t*));
-        
+
         if (new_entries == NULL) {
             return -1;
         }
@@ -178,7 +178,7 @@ int mcp_template_security_set_validator(
             size_t new_capacity = security->entries_capacity == 0 ? 8 : security->entries_capacity * 2;
             template_acl_entry_t** new_entries = (template_acl_entry_t**)realloc(
                 security->entries, new_capacity * sizeof(template_acl_entry_t*));
-            
+
             if (new_entries == NULL) {
                 return -1;
             }
@@ -245,7 +245,7 @@ bool mcp_template_security_check_access(
     if (user_role != NULL && entry->allowed_roles_count > 0) {
         bool role_match = false;
         for (size_t i = 0; i < entry->allowed_roles_count; i++) {
-            if (strcmp(entry->allowed_roles[i], user_role) == 0 || 
+            if (strcmp(entry->allowed_roles[i], user_role) == 0 ||
                 strcmp(entry->allowed_roles[i], "*") == 0) {
                 role_match = true;
                 break;
@@ -253,7 +253,7 @@ bool mcp_template_security_check_access(
         }
 
         if (!role_match) {
-            mcp_log_info("Access denied for role '%s' to template '%s'", 
+            mcp_log_info("Access denied for role '%s' to template '%s'",
                          user_role, template_uri);
             return false;
         }
@@ -262,14 +262,14 @@ bool mcp_template_security_check_access(
     // Check custom validator if present
     if (entry->validator != NULL) {
         if (!entry->validator(template_uri, params, entry->validator_data)) {
-            mcp_log_info("Access denied by custom validator for template '%s'", 
+            mcp_log_info("Access denied by custom validator for template '%s'",
                          template_uri);
             return false;
         }
     } else if (security->default_validator != NULL) {
         // Use default validator if no custom validator is set
         if (!security->default_validator(template_uri, params, security->default_validator_data)) {
-            mcp_log_info("Access denied by default validator for template '%s'", 
+            mcp_log_info("Access denied by default validator for template '%s'",
                          template_uri);
             return false;
         }

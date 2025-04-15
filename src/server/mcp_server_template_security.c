@@ -1,7 +1,6 @@
 #include <mcp_server.h>
 #include <mcp_template_security.h>
 #include "internal/server_internal.h"
-#include "internal/mcp_template_security.h"
 #include "mcp_log.h"
 
 /**
