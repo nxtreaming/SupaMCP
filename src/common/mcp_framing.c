@@ -10,7 +10,7 @@
 #include <netinet/in.h>
 #endif
 
-int mcp_framing_send_message(socket_t sock, const char* message_data, uint32_t message_len, 
+int mcp_framing_send_message(socket_t sock, const char* message_data, uint32_t message_len,
     volatile bool* stop_flag) {
     if (message_data == NULL && message_len > 0) {
         mcp_log_error("mcp_framing_send_message: message_data is NULL but message_len > 0");
@@ -87,7 +87,8 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     }
 
     // 2. Decode length (Network to Host Byte Order)
-    memcpy(&message_length_net, length_buf, 4);
+    // Avoid memcpy by directly reading from the buffer
+    message_length_net = *((uint32_t*)length_buf);
     message_length_host = ntohl(message_length_net);
 
     // 3. Sanity Check Length

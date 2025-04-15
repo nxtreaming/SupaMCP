@@ -9,15 +9,31 @@
 /**
  * Format a JSON-RPC request without using the thread-local arena.
  * This is a direct implementation that uses malloc/free instead of the arena.
+ * Optimized to avoid unnecessary memory allocations and copies.
  */
 char* mcp_json_format_request_direct(uint64_t id, const char* method, const char* params) {
     if (method == NULL) {
         return NULL;
     }
 
-    // Allocate a buffer for the JSON string
-    // Start with a reasonable size and we'll realloc if needed
-    size_t buffer_size = 256;
+    // Calculate the required buffer size more accurately to avoid reallocations
+    size_t method_len = strlen(method);
+    size_t params_len = (params != NULL) ? strlen(params) : 0;
+
+    // Base size: {"jsonrpc":"2.0","id":ID,"method":"METHOD"} + null terminator
+    // 32 bytes for the fixed parts + method length + 2 for quotes around method
+    size_t buffer_size = 32 + method_len + 2;
+
+    // Add space for params if provided: ,"params":PARAMS
+    // 11 bytes for ,"params": + params length
+    if (params != NULL) {
+        buffer_size += 11 + params_len;
+    }
+
+    // Add space for closing brace and null terminator
+    buffer_size += 2;
+
+    // Allocate the buffer with the calculated size
     char* buffer = (char*)malloc(buffer_size);
     if (!buffer) {
         return NULL;
@@ -36,45 +52,26 @@ char* mcp_json_format_request_direct(uint64_t id, const char* method, const char
 
     // Add params if provided
     if (params != NULL) {
-        // Check if we need to resize the buffer
-        size_t params_len = strlen(params);
-        size_t needed_size = written + params_len + 20; // Extra for ",\"params\":" and closing brace
-
-        if (needed_size > buffer_size) {
-            char* new_buffer = (char*)realloc(buffer, needed_size);
-            if (!new_buffer) {
-                free(buffer);
-                return NULL;
-            }
-            buffer = new_buffer;
-            buffer_size = needed_size;
-        }
-
         // Append the params
         written += snprintf(buffer + written, buffer_size - written,
                            ",\"params\":%s", params);
 
         if (written < 0 || (size_t)written >= buffer_size) {
-            // Buffer too small or error
+            // Buffer calculation error or snprintf error
             free(buffer);
             return NULL;
         }
     }
 
     // Add closing brace
-    if ((size_t)written + 2 > buffer_size) {
-        // Need to resize for closing brace
-        char* new_buffer = (char*)realloc(buffer, written + 2);
-        if (!new_buffer) {
-            free(buffer);
-            return NULL;
-        }
-        buffer = new_buffer;
-        buffer_size = written + 2;
+    if ((size_t)written + 2 <= buffer_size) {
+        buffer[written] = '}';
+        buffer[written + 1] = '\0';
+    } else {
+        // This should never happen with our buffer size calculation
+        free(buffer);
+        return NULL;
     }
-
-    buffer[written] = '}';
-    buffer[written + 1] = '\0';
 
     return buffer;
 }

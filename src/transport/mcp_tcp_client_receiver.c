@@ -1,5 +1,6 @@
 #include "internal/tcp_client_transport_internal.h"
 #include "mcp_framing.h"
+#include "mcp_socket_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,46 +82,48 @@ void* tcp_client_receive_thread_func(void* arg) {
     // 3. Convert to network byte order (Big-Endian)
     const uint32_t length_network_order = htonl(content_length);
 
-    // 4. Create a single buffer containing length prefix and message content
-    size_t total_send_len = 4 + content_length; // 4 byte length prefix + message content (including terminator)
-    char* send_buffer = (char*)malloc(total_send_len);
-
-    if (!send_buffer) {
-        mcp_log_error("Failed to allocate buffer for ping message");
-        mcp_arena_destroy_current_thread(); // Clean up arena before exiting
-        return NULL;
-    }
-
-    // 5. Fill the buffer with length prefix and message content (including terminator)
-    memcpy(send_buffer, &length_network_order, 4);
-    memcpy(send_buffer + 4, ping_content, ping_length); // Copy content first
-    send_buffer[4 + ping_length] = '\0'; // Explicitly add terminator
-
-    // 6. Detailed logging
+    // 4. Detailed logging
     mcp_log_debug("Ping message content (%u bytes): '%s'", content_length, ping_content);
-    mcp_log_debug("Preparing combined message (total %zu bytes)", total_send_len);
+    mcp_log_debug("Preparing message with length prefix");
     mcp_log_debug("Length prefix: %02X %02X %02X %02X",
-                (unsigned char)send_buffer[0],
-                (unsigned char)send_buffer[1],
-                (unsigned char)send_buffer[2],
-                (unsigned char)send_buffer[3]);
+                (unsigned char)((char*)&length_network_order)[0],
+                (unsigned char)((char*)&length_network_order)[1],
+                (unsigned char)((char*)&length_network_order)[2],
+                (unsigned char)((char*)&length_network_order)[3]);
 
-    // 7. Send complete message using framing function
+    // 5. Send message using vectored I/O to avoid creating a temporary buffer
     if (data->connected) {
-        // Note: ping_content includes null terminator via strlen + 1 calculation for content_length
-        // Pass NULL for stop_flag as the outer loop checks data->running
-        int send_status = mcp_framing_send_message(data->sock, ping_content, content_length, NULL);
-        free(send_buffer); // Free the temporary combined buffer
+        // Prepare buffers for vectored send
+        mcp_iovec_t iov[2];
+        int iovcnt = 0;
+
+#ifdef _WIN32
+        iov[iovcnt].buf = (char*)&length_network_order;
+        iov[iovcnt].len = (ULONG)sizeof(length_network_order);
+        iovcnt++;
+        iov[iovcnt].buf = (char*)ping_content;
+        iov[iovcnt].len = (ULONG)content_length;
+        iovcnt++;
+#else // POSIX
+        iov[iovcnt].iov_base = (char*)&length_network_order;
+        iov[iovcnt].iov_len = sizeof(length_network_order);
+        iovcnt++;
+        iov[iovcnt].iov_base = (char*)ping_content;
+        iov[iovcnt].iov_len = content_length;
+        iovcnt++;
+#endif
+
+        // Send using the socket utility function
+        int send_status = mcp_socket_send_vectors(data->sock, iov, iovcnt, NULL);
 
         if (send_status != 0) {
-            mcp_log_error("Failed to send ping message using framing (status: %d)", send_status);
+            mcp_log_error("Failed to send ping message (status: %d)", send_status);
             mcp_arena_destroy_current_thread(); // Clean up arena before exiting
             return NULL;
         }
 
         mcp_log_info("Ping message sent successfully");
     } else {
-        free(send_buffer); // Free buffer
         mcp_log_error("Cannot send ping, connection already closed");
         mcp_arena_destroy_current_thread(); // Clean up arena before exiting
         return NULL;
