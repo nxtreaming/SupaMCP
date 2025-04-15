@@ -92,5 +92,16 @@ else()
     target_link_libraries(websocket_client PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# Reconnect Client Example
+add_executable(reconnect_client_example reconnect_client_example.c)
+target_include_directories(reconnect_client_example PRIVATE ../client/include) # Add client include path
+target_link_libraries(reconnect_client_example PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(reconnect_client_example PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(reconnect_client_example PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client DESTINATION bin/examples)

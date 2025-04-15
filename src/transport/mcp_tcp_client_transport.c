@@ -31,15 +31,31 @@ static int tcp_client_transport_start(
         return -1;
     }
 
+    // Update connection state
+    mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_CONNECTING);
+
     // Establish connection using the new utility function (e.g., 5 second timeout)
     data->sock = mcp_socket_connect(data->host, data->port, 5000);
     if (data->sock == MCP_INVALID_SOCKET) {
         mcp_log_error("Failed to connect to server %s:%u", data->host, data->port);
+
+        // If reconnection is enabled, start reconnection process
+        if (data->reconnect_enabled) {
+            mcp_log_info("Starting reconnection process");
+            start_reconnection_process(transport);
+            data->running = true; // Mark as running even though not connected yet
+            return 0; // Return success, reconnection will happen in background
+        }
+
+        // Otherwise, fail
+        mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_FAILED);
         mcp_socket_cleanup();
         return -1;
     }
+
     data->connected = true; // Mark as connected after successful mcp_socket_connect
     data->running = true;
+    mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_CONNECTED);
 
     // Start receiver thread
     if (mcp_thread_create(&data->receive_thread, tcp_client_receive_thread_func, transport) != 0) {
@@ -48,6 +64,7 @@ static int tcp_client_transport_start(
         data->sock = MCP_INVALID_SOCKET;
         data->connected = false;
         data->running = false;
+        mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_FAILED);
         mcp_socket_cleanup();
         return -1;
     }
@@ -62,8 +79,12 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
 
     if (!data->running) return 0;
 
+    // Stop reconnection process if active
+    stop_reconnection_process(transport);
+
     mcp_log_info("Stopping TCP Client Transport...");
     data->running = false; // Signal receiver thread to stop
+    data->reconnect_enabled = false; // Disable reconnection
 
     // Shutdown the socket to potentially unblock the receiver thread
     if (data->sock != MCP_INVALID_SOCKET) {
@@ -80,6 +101,9 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
         mcp_thread_join(data->receive_thread, NULL);
         data->receive_thread = 0; // Reset handle
     }
+
+    // Update connection state
+    mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
 
     // Close socket if not already closed by receiver
     if (data->sock != MCP_INVALID_SOCKET) {
@@ -100,6 +124,13 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* dat
 
     if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) { // Use new invalid socket macro
         mcp_log_error("Client transport not running or connected for send.");
+
+        // If reconnection is enabled and we're not already reconnecting, start reconnection
+        if (data->reconnect_enabled && data->connection_state != MCP_CONNECTION_STATE_RECONNECTING) {
+            mcp_log_info("Starting reconnection process before send");
+            start_reconnection_process(transport);
+        }
+
         return -1;
     }
 
@@ -108,10 +139,21 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* dat
     if (result != 0) { // mcp_socket_send_exact returns 0 on success, -1 on error/abort
         mcp_log_error("mcp_socket_send_exact failed (result: %d).", result);
         data->connected = false; // Mark as disconnected on send error
+
+        // Update connection state
+        mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
+
         if(transport->error_callback) {
             // Pass the last error code obtained via the utility function
             transport->error_callback(transport->callback_user_data, mcp_socket_get_last_error());
         }
+
+        // If reconnection is enabled, start reconnection process
+        if (data->reconnect_enabled) {
+            mcp_log_info("Starting reconnection process after send failure");
+            start_reconnection_process(transport);
+        }
+
         return -1;
     }
     // Note: The old function returned -2 for stop signal, the new one returns -1.
@@ -126,6 +168,13 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
 
     if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) { // Use new invalid socket macro
         mcp_log_error("Client transport not running or connected for sendv.");
+
+        // If reconnection is enabled and we're not already reconnecting, start reconnection
+        if (data->reconnect_enabled && data->connection_state != MCP_CONNECTION_STATE_RECONNECTING) {
+            mcp_log_info("Starting reconnection process before sendv");
+            start_reconnection_process(transport);
+        }
+
         return -1;
     }
 
@@ -154,9 +203,20 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
     if (result != 0) { // mcp_socket_send_vectors returns 0 on success, -1 on error/abort
         mcp_log_error("mcp_socket_send_vectors failed (result: %d).", result);
         data->connected = false; // Mark as disconnected on send error
+
+        // Update connection state
+        mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
+
         if(transport->error_callback) {
             transport->error_callback(transport->callback_user_data, mcp_socket_get_last_error());
         }
+
+        // If reconnection is enabled, start reconnection process
+        if (data->reconnect_enabled) {
+            mcp_log_info("Starting reconnection process after sendv failure");
+            start_reconnection_process(transport);
+        }
+
         return -1;
     }
     // Note: The old function returned -2 for stop signal, the new one returns -1.
@@ -196,12 +256,27 @@ static void tcp_client_transport_destroy(mcp_transport_t* transport) {
     free(data->host);
     // Destroy buffer pool
     mcp_buffer_pool_destroy(data->buffer_pool);
+
+    // Destroy reconnection mutex
+    if (data->reconnect_mutex) {
+        mcp_mutex_destroy(data->reconnect_mutex);
+        data->reconnect_mutex = NULL;
+    }
+
     free(data);
     transport->transport_data = NULL;
     free(transport); // Free the main transport struct
 }
 
 mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port) {
+    return mcp_tcp_client_create_reconnect(host, port, NULL);
+}
+
+mcp_transport_t* mcp_tcp_client_create_reconnect(
+    const char* host,
+    uint16_t port,
+    const mcp_reconnect_config_t* reconnect_config
+) {
     if (!host) return NULL;
 
     mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
@@ -226,10 +301,39 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
     data->receive_thread = 0;
     data->buffer_pool = NULL;
 
+    // Initialize reconnection fields
+    if (reconnect_config) {
+        data->reconnect_config = *reconnect_config;
+        data->reconnect_enabled = reconnect_config->enable_reconnect;
+    } else {
+        data->reconnect_config = MCP_DEFAULT_RECONNECT_CONFIG;
+        data->reconnect_enabled = MCP_DEFAULT_RECONNECT_CONFIG.enable_reconnect;
+    }
+    data->reconnect_attempt = 0;
+    data->reconnect_thread = 0;
+    data->reconnect_thread_running = false;
+    data->connection_state = MCP_CONNECTION_STATE_DISCONNECTED;
+    data->state_callback = NULL;
+    data->state_callback_user_data = NULL;
+
+    // Initialize mutex
+    data->reconnect_mutex = mcp_mutex_create();
+    if (data->reconnect_mutex == NULL) {
+        mcp_log_error("Failed to create reconnection mutex.");
+        free(data->host);
+        free(data);
+        free(transport);
+        return NULL;
+    }
+
     // Create buffer pool
     data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
     if (data->buffer_pool == NULL) {
         mcp_log_error("Failed to create buffer pool for TCP client transport.");
+        if (data->reconnect_mutex) {
+            mcp_mutex_destroy(data->reconnect_mutex);
+            data->reconnect_mutex = NULL;
+        }
         free(data->host);
         free(data);
         free(transport);

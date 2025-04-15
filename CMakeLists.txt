@@ -74,6 +74,7 @@ set(COMMON_SOURCES
     src/transport/mcp_tcp_acceptor.c
     src/transport/mcp_tcp_client_transport.c
     src/transport/mcp_tcp_client_receiver.c
+    src/transport/mcp_tcp_client_reconnect.c
     src/transport/mcp_websocket_transport.c
     src/common/mcp_types.c
     src/common/mcp_arena.c
