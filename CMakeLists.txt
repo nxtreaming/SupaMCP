@@ -62,12 +62,10 @@ set(COMMON_SOURCES
     src/json/mcp_json_parser.c
     src/json/mcp_json_stringifier.c
     src/json/mcp_json_utils.c
-    src/json/mcp_json_utils_impl.c
     src/json/mcp_json_message.c
     src/json/mcp_json_rpc.c
     src/json/mcp_json_format.c
     src/json/mcp_json_parse_direct.c
-    src/json/mcp_json_string_utils.c
     src/transport/mcp_transport.c
     src/transport/mcp_transport_factory.c
     src/transport/mcp_stdio_transport.c
