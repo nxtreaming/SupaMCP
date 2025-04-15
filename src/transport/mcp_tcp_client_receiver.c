@@ -1,6 +1,5 @@
 #include "internal/tcp_client_transport_internal.h"
 #include "mcp_framing.h"
-#include "mcp_socket_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,9 +42,6 @@ void* tcp_client_receive_thread_func(void* arg) {
 
     // Add initial connection health check
     mcp_log_debug("TCP Client receive thread started for socket %d", (int)data->sock);
-
-    // Wait before sending handshake to ensure server is ready
-    mcp_sleep_ms(1000); // Add wait time to ensure server is ready
 
     // Check if this is a thread startup during reconnection
     if (reconnection_in_progress) {

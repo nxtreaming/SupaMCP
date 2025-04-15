@@ -57,9 +57,9 @@ int main(int argc, char** argv) {
     size_t arg_len_estimate = strlen(text_to_echo) + 15;
     char* echo_args = (char*)malloc(arg_len_estimate);
     if (!echo_args) {
-         mcp_log_error("Failed to allocate memory for echo arguments");
-         mcp_client_destroy(client);
-         return 1;
+        mcp_log_error("Failed to allocate memory for echo arguments");
+        mcp_client_destroy(client);
+        return 1;
     }
     // Use snprintf for safe formatting
     snprintf(echo_args, arg_len_estimate, "{\"text\": \"%s\"}", text_to_echo);
@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
         mcp_log_error("Tool 'echo' returned an error.");
         // Print error content if available
         if (result_count > 0 && result_content && result_content[0] && result_content[0]->type == MCP_CONTENT_TYPE_TEXT) {
-             mcp_log_error("Error details: %s", (const char*)result_content[0]->data);
+            mcp_log_error("Error details: %s", (const char*)result_content[0]->data);
         }
     } else if (result_count > 0 && result_content && result_content[0] && result_content[0]->type == MCP_CONTENT_TYPE_TEXT) {
         mcp_log_info("Server echoed: %s", (const char*)result_content[0]->data);

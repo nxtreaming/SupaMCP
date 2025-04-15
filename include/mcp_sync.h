@@ -126,15 +126,6 @@ int mcp_thread_join(mcp_thread_t thread_handle, void** retval);
  */
 void mcp_thread_yield(void);
 
-// --- Sleep ---
-
-/**
- * @brief Suspends the execution of the current thread for a specified time.
- * @param milliseconds The sleep duration in milliseconds.
- */
-void mcp_sleep_ms(uint32_t milliseconds);
-
-
 #ifdef __cplusplus
 }
 #endif
