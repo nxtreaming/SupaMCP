@@ -42,7 +42,8 @@ static void list_resource_callback(const void* key, void* value, void* user_data
  * @internal
  * @brief Handles the 'list_resources' request.
  */
-char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
+char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request,
+    const mcp_auth_context_t* auth_context, int* error_code) {
     PROFILE_START("handle_list_resources");
     (void)arena; // Arena not used for this handler
 
@@ -135,7 +136,8 @@ static void list_template_callback(const void* key, void* value, void* user_data
  * @internal
  * @brief Handles the 'list_resource_templates' request.
  */
-char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
+char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request,
+    const mcp_auth_context_t* auth_context, int* error_code) {
     PROFILE_START("handle_list_resource_templates");
     (void)arena;
 
@@ -207,7 +209,8 @@ char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* 
  * @internal
  * @brief Handles the 'read_resource' request.
  */
-char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
+char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request,
+    const mcp_auth_context_t* auth_context, int* error_code) {
     PROFILE_START("handle_read_resource");
     if (server == NULL || request == NULL || arena == NULL || auth_context == NULL || error_code == NULL) {
         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -541,7 +544,8 @@ tool_callback_cleanup:
  * @internal
  * @brief Handles the 'list_tools' request.
  */
-char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
+char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request,
+    const mcp_auth_context_t* auth_context, int* error_code) {
     PROFILE_START("handle_list_tools");
     (void)arena;
 
@@ -613,7 +617,8 @@ char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const 
  * @internal
  * @brief Handles the 'call_tool' request.
  */
-char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
+char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request,
+    const mcp_auth_context_t* auth_context, int* error_code) {
     PROFILE_START("handle_call_tool");
     if (server == NULL || request == NULL || arena == NULL || auth_context == NULL || error_code == NULL) {
         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;

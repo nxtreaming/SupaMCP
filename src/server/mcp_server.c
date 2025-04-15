@@ -12,10 +12,7 @@
 #include "mcp_memory_pool.h"
 #include "mcp_thread_cache.h"
 
-mcp_server_t* mcp_server_create(
-    const mcp_server_config_t* config,
-    const mcp_server_capabilities_t* capabilities
-) {
+mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_server_capabilities_t* capabilities) {
     if (config == NULL || capabilities == NULL) {
         return NULL;
     }
@@ -213,10 +210,7 @@ create_error_cleanup:
     return NULL;
 }
 
-int mcp_server_start(
-    mcp_server_t* server,
-    mcp_transport_t* transport
-) {
+int mcp_server_start(mcp_server_t* server, mcp_transport_t* transport) {
     if (server == NULL || transport == NULL) {
         return -1;
     }
@@ -401,11 +395,7 @@ void mcp_server_destroy(mcp_server_t* server) {
     free(server);
 }
 
-int mcp_server_set_resource_handler(
-    mcp_server_t* server,
-    mcp_server_resource_handler_t handler,
-    void* user_data
-) {
+int mcp_server_set_resource_handler(mcp_server_t* server, mcp_server_resource_handler_t handler, void* user_data) {
     if (server == NULL) {
         return -1;
     }
@@ -414,12 +404,8 @@ int mcp_server_set_resource_handler(
     return 0;
 }
 
-int mcp_server_register_template_handler(
-    mcp_server_t* server,
-    const char* template_uri,
-    mcp_server_resource_handler_t handler,
-    void* user_data
-) {
+int mcp_server_register_template_handler(mcp_server_t* server, const char* template_uri,
+    mcp_server_resource_handler_t handler, void* user_data) {
     if (server == NULL || template_uri == NULL || handler == NULL) {
         return -1;
     }
@@ -436,11 +422,7 @@ int mcp_server_register_template_handler(
     return mcp_server_register_template_handler_internal(server, template_uri, handler, user_data);
 }
 
-int mcp_server_set_tool_handler(
-    mcp_server_t* server,
-    mcp_server_tool_handler_t handler,
-    void* user_data
-) {
+int mcp_server_set_tool_handler(mcp_server_t* server, mcp_server_tool_handler_t handler, void* user_data) {
     if (server == NULL) {
         return -1;
     }
@@ -450,10 +432,7 @@ int mcp_server_set_tool_handler(
 }
 
 // Uses malloc for resource copy
-int mcp_server_add_resource(
-    mcp_server_t* server,
-    const mcp_resource_t* resource
-) {
+int mcp_server_add_resource(mcp_server_t* server, const mcp_resource_t* resource) {
     if (server == NULL || resource == NULL || resource->uri == NULL || !server->capabilities.resources_supported) {
         return -1;
     }
@@ -474,10 +453,7 @@ int mcp_server_add_resource(
 }
 
 // Uses malloc for template copy
-int mcp_server_add_resource_template(
-    mcp_server_t* server,
-    const mcp_resource_template_t* tmpl
-) {
+int mcp_server_add_resource_template(mcp_server_t* server, const mcp_resource_template_t* tmpl) {
     if (server == NULL || tmpl == NULL || tmpl->uri_template == NULL || !server->capabilities.resources_supported) {
         return -1;
     }
@@ -497,10 +473,7 @@ int mcp_server_add_resource_template(
 }
 
 // Uses malloc for tool copy
-int mcp_server_add_tool(
-    mcp_server_t* server,
-    const mcp_tool_t* tool
-) {
+int mcp_server_add_tool(mcp_server_t* server, const mcp_tool_t* tool) {
     if (server == NULL || tool == NULL || tool->name == NULL || !server->capabilities.tools_supported) {
         return -1;
     }
@@ -530,11 +503,7 @@ int mcp_server_add_tool(
 
 // This function is likely unused now, as messages come via the transport callback.
 // Keep it for potential direct injection testing, but it's not part of the main flow.
-int mcp_server_process_message(
-    mcp_server_t* server,
-    const void* data,
-    size_t size
-) {
+int mcp_server_process_message(mcp_server_t* server, const void* data, size_t size) {
     if (server == NULL || data == NULL || size == 0) {
         return -1;
     }
