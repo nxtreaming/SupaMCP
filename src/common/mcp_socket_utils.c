@@ -9,12 +9,14 @@
 
 #ifdef _WIN32
     #include <windows.h>
+    #include <mstcpip.h>
 #else // POSIX
     #include <sys/time.h>
     #include <poll.h>
     #include <unistd.h>
     #include <fcntl.h>
     #include <netdb.h>
+    #include <netinet/tcp.h>
 #endif
 
 void mcp_sleep_ms(uint32_t milliseconds) {
@@ -80,6 +82,26 @@ int mcp_socket_set_non_blocking(socket_t sock) {
     return 0;
 }
 
+/**
+ * @brief Sets the TCP_NODELAY option on a socket to disable Nagle's algorithm.
+ *
+ * This function disables Nagle's algorithm, which buffers small packets and
+ * waits for more data before sending, to reduce latency for small packets.
+ *
+ * @param sock The socket to set the option on.
+ * @return 0 on success, -1 on error.
+ */
+int mcp_socket_set_nodelay(socket_t sock) {
+    int flag = 1;
+    int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char*)&flag, sizeof(flag));
+    if (result == MCP_SOCKET_ERROR) {
+        mcp_log_error("setsockopt(TCP_NODELAY) failed: %d", mcp_socket_get_last_error());
+        return -1;
+    }
+    mcp_log_debug("TCP_NODELAY enabled on socket %d", (int)sock);
+    return 0;
+}
+
 // Basic blocking connect implementation (similar to original client)
 // TODO: Implement non-blocking connect with timeout as per header comment if needed.
 socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms) {
@@ -113,6 +135,12 @@ socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms
             mcp_socket_close(sock);
             sock = MCP_INVALID_SOCKET;
             continue;
+        }
+
+        // Set TCP_NODELAY to disable Nagle's algorithm and reduce latency
+        if (mcp_socket_set_nodelay(sock) != 0) {
+            mcp_log_warn("Failed to set TCP_NODELAY on socket %d, continuing anyway", (int)sock);
+            // We don't fail the connection just because TCP_NODELAY failed
         }
 
         break; // Success
@@ -551,6 +579,12 @@ socket_t mcp_socket_create_listener(const char* host, uint16_t port, int backlog
             continue;
         }
 
+        // Set TCP_NODELAY to disable Nagle's algorithm and reduce latency
+        if (mcp_socket_set_nodelay(listen_sock) != 0) {
+            mcp_log_warn("Failed to set TCP_NODELAY on listener socket %d, continuing anyway", (int)listen_sock);
+            // We don't fail just because TCP_NODELAY failed
+        }
+
         if (bind(listen_sock, p->ai_addr, (int)p->ai_addrlen) == MCP_SOCKET_ERROR) {
             mcp_log_warn("Listener bind() to %s:%u failed: %d", host, port, mcp_socket_get_last_error());
             mcp_socket_close(listen_sock);
@@ -581,6 +615,14 @@ socket_t mcp_socket_create_listener(const char* host, uint16_t port, int backlog
 socket_t mcp_socket_accept(socket_t listen_sock, struct sockaddr* client_addr, socklen_t* addr_len) {
     // Note: accept() is typically blocking. Non-blocking accept requires extra handling.
     socket_t client_sock = accept(listen_sock, client_addr, addr_len);
+
+    if (client_sock != MCP_INVALID_SOCKET) {
+        // Set TCP_NODELAY to disable Nagle's algorithm and reduce latency
+        if (mcp_socket_set_nodelay(client_sock) != 0) {
+            mcp_log_warn("Failed to set TCP_NODELAY on accepted socket %d, continuing anyway", (int)client_sock);
+            // We don't close the socket just because TCP_NODELAY failed
+        }
+    }
 
     if (client_sock == MCP_INVALID_SOCKET) {
         int error_code = mcp_socket_get_last_error();

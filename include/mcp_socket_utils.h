@@ -93,6 +93,17 @@ int mcp_socket_get_last_error(void);
 int mcp_socket_set_non_blocking(socket_t sock);
 
 /**
+ * @brief Sets the TCP_NODELAY option on a socket to disable Nagle's algorithm.
+ *
+ * This function disables Nagle's algorithm, which buffers small packets and
+ * waits for more data before sending, to reduce latency for small packets.
+ *
+ * @param sock The socket to set the option on.
+ * @return 0 on success, -1 on error.
+ */
+int mcp_socket_set_nodelay(socket_t sock);
+
+/**
  * @brief Connects to a server address. Handles non-blocking connect internally.
  * This is a blocking call from the perspective of the caller, but uses non-blocking internally.
  * @param host The hostname or IP address of the server.
