@@ -16,6 +16,8 @@
 #include <mcp_rate_limiter.h>
 #include <mcp_profiler.h>
 #include <mcp_transport.h>
+#include <mcp_performance_metrics.h>
+#include <mcp_performance_collector.h>
 #include "gateway.h"
 #include "gateway_pool.h"
 #include "mcp_auth.h"
@@ -100,6 +102,10 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
 // From mcp_server_ping.c
 // Note: Ping might not need auth context, but keep signature consistent for now
 char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
+
+// From mcp_performance_collector.c
+char* handle_get_performance_metrics_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
+char* handle_reset_performance_metrics_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 
 // From mcp_server_task.c
 typedef struct message_task_data_t message_task_data_t; // Forward declare task data struct

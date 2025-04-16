@@ -101,6 +101,8 @@ set(COMMON_SOURCES
     src/server/mcp_rate_limiter.c
     src/server/mcp_profiler.c
     src/common/mcp_hashtable.c
+    src/common/mcp_performance_metrics.c
+    src/server/mcp_performance_collector.c
     client/src/mcp_client_template.c
     client/src/mcp_client_core.c
     client/src/mcp_client_hash_table.c
@@ -117,6 +119,7 @@ set(COMMON_SOURCES
     src/server/mcp_template_security.c
     src/server/mcp_server_template_security.c
     src/server/mcp_auth.c
+    src/server/mcp_performance_metrics_handlers.c
     src/connection_pool/mcp_connection_pool.c
     src/connection_pool/mcp_connection_pool_socket.c
     src/connection_pool/mcp_connection_pool_sync.c

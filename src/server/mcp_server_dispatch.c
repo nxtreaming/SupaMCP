@@ -7,6 +7,7 @@
 #include "mcp_json_message.h"
 #include "mcp_log.h"
 #include "mcp_profiler.h"
+#include "mcp_performance_collector.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +41,10 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
 #ifdef MCP_ENABLE_PROFILING
     PROFILE_BEGIN("handle_message");
 #endif
+
+    // Start performance metrics collection
+    mcp_performance_timer_t perf_timer = mcp_performance_timer_create();
+    mcp_performance_collect_request_start(&perf_timer);
 
     if (server == NULL || data == NULL || size == 0 || error_code == NULL) {
         if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -279,6 +284,11 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     PROFILE_END("handle_message");
 #endif
 
+    // End performance metrics collection
+    bool success = (*error_code == MCP_ERROR_NONE);
+    size_t response_size = final_response_str ? strlen(final_response_str) : 0;
+    mcp_performance_collect_request_end(&perf_timer, success, response_size, size);
+
     return final_response_str; // Return malloc'd response string (single object or array, or NULL)
 }
 
@@ -359,6 +369,10 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
         return handle_list_tools_request(server, arena, request, auth_context, error_code);
     } else if (strcmp(request->method, "call_tool") == 0) {
         return handle_call_tool_request(server, arena, request, auth_context, error_code);
+    } else if (strcmp(request->method, "get_performance_metrics") == 0) {
+        return handle_get_performance_metrics_request(server, arena, request, auth_context, error_code);
+    } else if (strcmp(request->method, "reset_performance_metrics") == 0) {
+        return handle_reset_performance_metrics_request(server, arena, request, auth_context, error_code);
     } else {
         // Unknown method - Create and return error response string
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;
