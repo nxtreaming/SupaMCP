@@ -82,6 +82,7 @@
             return false;
         }
 
+        #pragma warning(suppress: 26110)
         ReleaseSRWLockShared(&rwlock->srwlock);
         return true;
     }
@@ -111,6 +112,7 @@
             return false;
         }
 
+        #pragma warning(suppress: 26110)
         ReleaseSRWLockExclusive(&rwlock->srwlock);
         return true;
     }
