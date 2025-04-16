@@ -1,5 +1,6 @@
 #include "mcp_thread_local.h"
 #include "internal/arena_internal.h"
+#include "mcp_log.h"
 #include <stdlib.h>
 
 #ifdef _WIN32
@@ -97,3 +98,64 @@ static void make_key(void) {
     pthread_key_create(&arena_key, cleanup_arena);
 }
 #endif
+
+/* Thread-local object cache implementation */
+
+bool mcp_thread_cache_init_current_thread(void) {
+    return mcp_object_cache_system_init();
+}
+
+bool mcp_thread_cache_init_type(mcp_object_cache_type_t type, const mcp_object_cache_config_t* config) {
+    if (!mcp_object_cache_system_is_initialized()) {
+        if (!mcp_thread_cache_init_current_thread()) {
+            return false;
+        }
+    }
+
+    return mcp_object_cache_init(type, config);
+}
+
+void* mcp_thread_cache_alloc_object(mcp_object_cache_type_t type, size_t size) {
+    if (!mcp_object_cache_system_is_initialized()) {
+        mcp_log_warn("Thread-local object cache system not initialized");
+        return NULL;
+    }
+
+    return mcp_object_cache_alloc(type, size);
+}
+
+void mcp_thread_cache_free_object(mcp_object_cache_type_t type, void* ptr, size_t size) {
+    if (!ptr) return;
+
+    if (!mcp_object_cache_system_is_initialized()) {
+        mcp_log_warn("Thread-local object cache system not initialized");
+        free(ptr); // Fall back to free to avoid memory leaks
+        return;
+    }
+
+    mcp_object_cache_free(type, ptr, size);
+}
+
+bool mcp_thread_cache_get_object_stats(mcp_object_cache_type_t type, mcp_object_cache_stats_t* stats) {
+    if (!mcp_object_cache_system_is_initialized()) {
+        return false;
+    }
+
+    return mcp_object_cache_get_stats(type, stats);
+}
+
+void mcp_thread_cache_flush_object_cache(mcp_object_cache_type_t type) {
+    if (!mcp_object_cache_system_is_initialized()) {
+        return;
+    }
+
+    mcp_object_cache_flush(type);
+}
+
+void mcp_thread_cache_cleanup_current_thread(void) {
+    if (!mcp_object_cache_system_is_initialized()) {
+        return;
+    }
+
+    mcp_object_cache_system_shutdown();
+}

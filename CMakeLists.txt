@@ -103,6 +103,7 @@ set(COMMON_SOURCES
     src/common/mcp_hashtable.c
     src/common/mcp_performance_metrics.c
     src/server/mcp_performance_collector.c
+    src/common/mcp_object_cache.c
     client/src/mcp_client_template.c
     client/src/mcp_client_core.c
     client/src/mcp_client_hash_table.c

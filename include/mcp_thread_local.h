@@ -2,7 +2,9 @@
 #define MCP_THREAD_LOCAL_H
 
 #include "mcp_arena.h"
+#include "mcp_object_cache.h"
 #include <stddef.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,6 +49,67 @@ void mcp_arena_reset_current_thread(void);
  * memory leaks.
  */
 void mcp_arena_destroy_current_thread(void);
+
+/**
+ * @brief Initialize the thread-local object cache system.
+ *
+ * This function should be called once per thread that needs to use the
+ * thread-local object cache system.
+ *
+ * @return true on success, false on failure.
+ */
+bool mcp_thread_cache_init_current_thread(void);
+
+/**
+ * @brief Initialize a specific object cache type for the current thread.
+ *
+ * @param type The type of objects to cache.
+ * @param config Configuration for the cache, or NULL for default configuration.
+ * @return true on success, false on failure.
+ */
+bool mcp_thread_cache_init_type(mcp_object_cache_type_t type, const mcp_object_cache_config_t* config);
+
+/**
+ * @brief Allocate an object from the thread-local cache.
+ *
+ * @param type The type of object to allocate.
+ * @param size Size of the object to allocate.
+ * @return Pointer to the allocated object, or NULL if allocation failed.
+ */
+void* mcp_thread_cache_alloc_object(mcp_object_cache_type_t type, size_t size);
+
+/**
+ * @brief Free an object to the thread-local cache.
+ *
+ * @param type The type of object to free.
+ * @param ptr Pointer to the object to free.
+ * @param size Size of the object (optional, can be 0 if unknown).
+ */
+void mcp_thread_cache_free_object(mcp_object_cache_type_t type, void* ptr, size_t size);
+
+/**
+ * @brief Get statistics for a thread-local object cache.
+ *
+ * @param type The type of object cache to get statistics for.
+ * @param stats Pointer to a statistics structure to fill.
+ * @return true if statistics were successfully retrieved, false otherwise.
+ */
+bool mcp_thread_cache_get_object_stats(mcp_object_cache_type_t type, mcp_object_cache_stats_t* stats);
+
+/**
+ * @brief Flush a thread-local object cache.
+ *
+ * @param type The type of object cache to flush.
+ */
+void mcp_thread_cache_flush_object_cache(mcp_object_cache_type_t type);
+
+/**
+ * @brief Clean up all thread-local object caches for the current thread.
+ *
+ * This should be called when the thread is exiting or no longer needs the
+ * thread-local object caches to prevent memory leaks.
+ */
+void mcp_thread_cache_cleanup_current_thread(void);
 
 #ifdef __cplusplus
 }
