@@ -69,7 +69,9 @@ static int tcp_pool_transport_start(
             data->min_connections,
             data->max_connections,
             data->idle_timeout_ms,
-            data->connect_timeout_ms
+            data->connect_timeout_ms,
+            30000,  // Health check interval: 30 seconds
+            5000    // Health check timeout: 5 seconds
         );
 
         if (!data->connection_pool) {

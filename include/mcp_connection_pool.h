@@ -40,6 +40,10 @@ typedef struct mcp_connection_pool mcp_connection_pool_t;
  * @param idle_timeout_ms The maximum time (in milliseconds) an idle connection can remain
  *                        in the pool before being potentially closed. 0 means no timeout.
  * @param connect_timeout_ms Timeout (in milliseconds) for establishing a single new connection.
+ * @param health_check_interval_ms Interval (in milliseconds) between health checks for idle connections.
+ *                                 0 means health checks are disabled.
+ * @param health_check_timeout_ms Timeout (in milliseconds) for health check operations.
+ *                                If health_check_interval_ms is 0, this parameter is ignored.
  * @return Pointer to the created connection pool instance, or NULL on failure (e.g., allocation error, invalid arguments).
  */
 mcp_connection_pool_t* mcp_connection_pool_create(
@@ -48,7 +52,9 @@ mcp_connection_pool_t* mcp_connection_pool_create(
     size_t min_connections,
     size_t max_connections,
     int idle_timeout_ms,
-    int connect_timeout_ms);
+    int connect_timeout_ms,
+    int health_check_interval_ms,
+    int health_check_timeout_ms);
 
 /**
  * @brief Retrieves a connection handle from the pool.
@@ -94,15 +100,17 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, SOCKET connection, 
 void mcp_connection_pool_destroy(mcp_connection_pool_t* pool);
 
 /**
- * @brief Gets statistics about the connection pool. (Optional enhancement)
+ * @brief Gets statistics about the connection pool.
  *
  * @param pool The connection pool instance.
  * @param[out] total_connections Pointer to store the total number of connections (active + idle).
  * @param[out] idle_connections Pointer to store the number of idle connections available.
  * @param[out] active_connections Pointer to store the number of connections currently in use.
- * @return 0 on success, -1 on failure (e.g., NULL pointers provided).
+ * @param[out] health_checks_performed Pointer to store the total number of health checks performed (can be NULL).
+ * @param[out] failed_health_checks Pointer to store the number of failed health checks (can be NULL).
+ * @return 0 on success, -1 on failure (e.g., NULL pool pointer provided).
  */
-int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_connections, size_t* idle_connections, size_t* active_connections);
+int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_connections, size_t* idle_connections, size_t* active_connections, size_t* health_checks_performed, size_t* failed_health_checks);
 
 
 #ifdef __cplusplus

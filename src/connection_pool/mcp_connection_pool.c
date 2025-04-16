@@ -11,7 +11,9 @@ mcp_connection_pool_t* mcp_connection_pool_create(
     size_t min_connections,
     size_t max_connections,
     int idle_timeout_ms,
-    int connect_timeout_ms)
+    int connect_timeout_ms,
+    int health_check_interval_ms,
+    int health_check_timeout_ms)
 {
     // Use fprintf for initial checks as logging might not be ready
     if (!host || port <= 0 || max_connections == 0 || min_connections > max_connections) {
@@ -38,11 +40,15 @@ mcp_connection_pool_t* mcp_connection_pool_create(
     pool->max_connections = max_connections;
     pool->idle_timeout_ms = idle_timeout_ms;
     pool->connect_timeout_ms = connect_timeout_ms;
+    pool->health_check_interval_ms = health_check_interval_ms;
+    pool->health_check_timeout_ms = health_check_timeout_ms > 0 ? health_check_timeout_ms : 2000; // Default to 2 seconds if not specified
     pool->shutting_down = false;
     pool->idle_list = NULL;
     pool->idle_count = 0;
     pool->active_count = 0;
     pool->total_count = 0;
+    pool->health_checks_performed = 0;
+    pool->failed_health_checks = 0;
 
     // Call helper from mcp_connection_pool_sync.c
     if (init_sync_primitives(pool) != 0) {
@@ -118,6 +124,36 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
                     // Update counts but keep total the same
                     pool->idle_count--;
                     pool->total_count--;
+
+                    // Continue the loop to get another connection
+                    continue;
+                }
+            }
+
+            // Perform a quick health check if enabled
+            if (pool->health_check_interval_ms > 0) {
+                // Temporarily unlock the pool while checking connection health
+                pool_unlock(pool);
+
+                // Check connection health
+                bool is_healthy = check_connection_health(sock, pool->health_check_timeout_ms);
+
+                // Re-lock the pool
+                pool_lock(pool);
+
+                // Update health check statistics
+                pool->health_checks_performed++;
+
+                if (!is_healthy) {
+                    // Connection is unhealthy, close it and try to get another one
+                    mcp_log_warn("Connection %d failed health check, closing.", (int)sock);
+                    close_connection(sock);
+                    free(pooled_conn);
+
+                    // Update counts and statistics
+                    pool->idle_count--;
+                    pool->total_count--;
+                    pool->failed_health_checks++;
 
                     // Continue the loop to get another connection
                     continue;
@@ -233,6 +269,8 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, socket_handle_t con
         if (pooled_conn) {
             pooled_conn->socket_fd = connection;
             pooled_conn->last_used_time = time(NULL); // Record return time
+            // Initialize health check fields
+            init_connection_health(pooled_conn);
             pooled_conn->next = pool->idle_list;
             pool->idle_list = pooled_conn;
             pool->idle_count++;
@@ -301,7 +339,7 @@ void mcp_connection_pool_destroy(mcp_connection_pool_t* pool) {
     mcp_log_info("Connection pool destroyed.");
 }
 
-int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_connections, size_t* idle_connections, size_t* active_connections) {
+int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_connections, size_t* idle_connections, size_t* active_connections, size_t* health_checks_performed, size_t* failed_health_checks) {
     if (!pool || !total_connections || !idle_connections || !active_connections) {
         mcp_log_error("mcp_connection_pool_get_stats: Received NULL pointer argument.");
         return -1;
@@ -312,6 +350,15 @@ int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_con
     *total_connections = pool->total_count;
     *idle_connections = pool->idle_count;
     *active_connections = pool->active_count;
+
+    // Health check statistics are optional
+    if (health_checks_performed) {
+        *health_checks_performed = pool->health_checks_performed;
+    }
+
+    if (failed_health_checks) {
+        *failed_health_checks = pool->failed_health_checks;
+    }
 
     pool_unlock(pool); // Use helper from sync
 

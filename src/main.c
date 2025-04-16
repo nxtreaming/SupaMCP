@@ -532,8 +532,13 @@ int main(int argc, char** argv) {
                         size_t max_conn = 4;
                         int idle_timeout = 60000; // 60 seconds
                         int connect_timeout = 5000; // 5 seconds
-                        mcp_log_info("Creating connection pool for backend '%s' (%s:%d)...", backend->name, host_buf, port);
-                        backend->pool = mcp_connection_pool_create(host_buf, port, min_conn, max_conn, idle_timeout, connect_timeout);
+                        int health_check_interval = 30000; // 30 seconds
+                        int health_check_timeout = 2000; // 2 seconds
+                        mcp_log_info("Creating connection pool for backend '%s' (%s:%d) with health checks every %d ms...",
+                                    backend->name, host_buf, port, health_check_interval);
+                        backend->pool = mcp_connection_pool_create(host_buf, port, min_conn, max_conn,
+                                                                 idle_timeout, connect_timeout,
+                                                                 health_check_interval, health_check_timeout);
                         if (backend->pool == NULL) {
                             mcp_log_error("Failed to create connection pool for backend '%s'. Gateway routing for this backend will fail.", backend->name);
                         }
