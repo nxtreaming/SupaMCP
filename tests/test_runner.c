@@ -16,6 +16,7 @@ void run_mcp_buffer_pool_tests(void);
 void run_mcp_client_async_tests(void);
 void run_mcp_hashtable_tests(void);
 void run_cache_tests(void);
+void run_cache_lru_tests(void);
 void run_mcp_transport_factory_tests(void);
 void run_test_mcp_server_handlers(void);
 void run_mcp_log_tests(void);
@@ -75,6 +76,7 @@ int main(void) {
     run_mcp_client_async_tests();
     run_mcp_hashtable_tests();
     run_cache_tests();
+    run_cache_lru_tests();
     run_mcp_transport_factory_tests();
     run_test_mcp_server_handlers();
     run_mcp_log_tests();
