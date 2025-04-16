@@ -26,6 +26,10 @@ typedef struct {
     size_t rate_limit_capacity; /**< Approx max clients to track for rate limiting. Default: 1024 if 0. */
     size_t rate_limit_window_seconds; /**< Time window for rate limit checks. Default: 60 if 0. */
     size_t rate_limit_max_requests; /**< Max requests per client per window. Default: 100 if 0. */
+    bool use_advanced_rate_limiter; /**< Whether to use the advanced rate limiter. Default: false. */
+    bool enable_token_bucket; /**< Whether to use token bucket algorithm for rate limiting. Default: false. */
+    double tokens_per_second; /**< Token refill rate for token bucket algorithm. Default: 1.0. */
+    size_t max_tokens; /**< Maximum token capacity for token bucket algorithm. Default: 60. */
     const char* api_key;     /**< Optional API key required for requests. If NULL or empty, no key is required. */
     char** prewarm_resource_uris; /**< Optional array of resource URIs to pre-warm in the cache at startup. */
     size_t prewarm_count;         /**< Number of URIs in the prewarm_resource_uris array. */

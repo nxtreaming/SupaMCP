@@ -139,6 +139,19 @@ int mcp_transport_receive(
     uint32_t timeout_ms
 );
 
+/**
+ * @brief Gets the IP address of the connected client.
+ *
+ * This function returns the IP address of the client connected to the transport.
+ * For server-side transports, this is the remote client's IP address.
+ * For client-side transports, this might be the local IP address or NULL.
+ *
+ * @param transport The transport handle.
+ * @return A string containing the client's IP address, or NULL if not available.
+ *         The returned string is owned by the transport and should not be freed by the caller.
+ */
+const char* mcp_transport_get_client_ip(mcp_transport_t* transport);
+
 
 // --- Concrete Transport Creation Function Declarations ---
 // These functions are declared in separate headers (e.g., mcp_stdio_transport.h)

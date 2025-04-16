@@ -52,6 +52,7 @@ typedef enum {
     MCP_ERROR_UNAUTHORIZED = -32103,        /**< Custom: The client is not authorized to access the resource. */
     MCP_ERROR_FORBIDDEN = -32104,           /**< Custom: Access to the requested resource or tool is forbidden. */
     MCP_ERROR_SERVER_SHUTTING_DOWN = -32105,/**< Custom: The server is shutting down and not accepting new requests. */
+    MCP_ERROR_TOO_MANY_REQUESTS = -32106,   /**< Custom: The client has sent too many requests in a given amount of time (rate limiting). */
     // Add other custom error codes here if needed
 } mcp_error_code_t;
 

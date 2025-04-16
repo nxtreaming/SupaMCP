@@ -124,8 +124,53 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
     __sync_fetch_and_add(&server->active_requests, 1);
     #endif
 
-    // --- Rate Limiting Check (optional) ---
-    // TODO: Implement rate limiting if needed
+    // --- Rate Limiting Check ---
+    // Get client IP address from transport (or use default if not available)
+    const char* client_ip = mcp_transport_get_client_ip(server->transport);
+    if (!client_ip) {
+        client_ip = "unknown";
+    }
+
+    // Check if rate limiting is enabled
+    if (server->config.rate_limit_window_seconds > 0 && server->config.rate_limit_max_requests > 0) {
+        bool allowed = true;
+
+        if (server->config.use_advanced_rate_limiter && server->advanced_rate_limiter) {
+            // Use advanced rate limiter
+            allowed = mcp_advanced_rate_limiter_check(server->advanced_rate_limiter, client_ip, NULL, NULL, NULL);
+            if (!allowed) {
+                mcp_log_warn("Advanced rate limit exceeded for client IP: %s", client_ip ? client_ip : "unknown");
+                *error_code = MCP_ERROR_TOO_MANY_REQUESTS;
+
+                // Decrement active request counter since we're rejecting this request
+                #ifdef _WIN32
+                InterlockedDecrement((LONG*)&server->active_requests);
+                #else
+                __sync_fetch_and_sub(&server->active_requests, 1);
+                #endif
+
+                PROFILE_END("transport_message_callback");
+                return NULL;
+            }
+        } else if (server->rate_limiter) {
+            // Use basic rate limiter
+            allowed = mcp_rate_limiter_check(server->rate_limiter, client_ip ? client_ip : "unknown");
+            if (!allowed) {
+                mcp_log_warn("Rate limit exceeded for client IP: %s", client_ip ? client_ip : "unknown");
+                *error_code = MCP_ERROR_TOO_MANY_REQUESTS;
+
+                // Decrement active request counter since we're rejecting this request
+                #ifdef _WIN32
+                InterlockedDecrement((LONG*)&server->active_requests);
+                #else
+                __sync_fetch_and_sub(&server->active_requests, 1);
+                #endif
+
+                PROFILE_END("transport_message_callback");
+                return NULL;
+            }
+        }
+    }
 
     // --- Input validation ---
     size_t max_size = server->config.max_message_size > 0 ?

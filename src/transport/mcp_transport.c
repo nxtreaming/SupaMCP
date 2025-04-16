@@ -161,3 +161,15 @@ int mcp_transport_receive(
     // Call the client transport's receive function
     return transport->client.receive(transport, data, size, timeout_ms);
 }
+
+const char* mcp_transport_get_client_ip(mcp_transport_t* transport) {
+    if (!transport) {
+        return NULL; // Invalid transport
+    }
+
+    // For now, just return a default IP address
+    // In a real implementation, this would be extracted from the transport data
+    // based on the specific transport type (TCP, WebSocket, etc.)
+    static const char* default_ip = "127.0.0.1";
+    return default_ip;
+}

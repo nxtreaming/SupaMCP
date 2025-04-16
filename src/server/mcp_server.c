@@ -39,6 +39,12 @@ mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_ser
     server->config.rate_limit_window_seconds = config->rate_limit_window_seconds; // Keep 0 if user wants to disable
     server->config.rate_limit_max_requests = config->rate_limit_max_requests;   // Keep 0 if user wants to disable
 
+    // Default to using advanced rate limiter with token bucket algorithm
+    server->config.use_advanced_rate_limiter = config->use_advanced_rate_limiter || true; // Default to true
+    server->config.enable_token_bucket = config->enable_token_bucket || true;   // Default to true
+    server->config.tokens_per_second = config->tokens_per_second > 0 ? config->tokens_per_second : 5.0; // 5 tokens/sec
+    server->config.max_tokens = config->max_tokens > 0 ? config->max_tokens : 20; // Burst capacity of 20
+
     // Set graceful shutdown config (default to enabled with 5 second timeout)
     server->config.enable_graceful_shutdown = true; // Default to enabled
     server->config.graceful_shutdown_timeout_ms = config->graceful_shutdown_timeout_ms > 0 ?
@@ -131,15 +137,65 @@ mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_ser
 
     // Create the rate limiter using final determined values (if enabled)
     if (server->config.rate_limit_window_seconds > 0 && server->config.rate_limit_max_requests > 0) {
-         server->rate_limiter = mcp_rate_limiter_create(
-             server->config.rate_limit_capacity,
-             server->config.rate_limit_window_seconds,
-             server->config.rate_limit_max_requests
-         );
-         if (server->rate_limiter == NULL) {
-             mcp_log_error("Failed to create server rate limiter.");
-             goto create_error_cleanup;
-         }
+        if (server->config.use_advanced_rate_limiter) {
+            // Create advanced rate limiter
+            mcp_advanced_rate_limiter_config_t adv_config = {
+                .capacity_hint = server->config.rate_limit_capacity,
+                .enable_burst_handling = true,
+                .burst_multiplier = 2,
+                .burst_window_seconds = 10,
+                .enable_dynamic_rules = false,
+                .threshold_for_tightening = 0.9,
+                .threshold_for_relaxing = 0.3
+            };
+
+            server->advanced_rate_limiter = mcp_advanced_rate_limiter_create(&adv_config);
+            if (server->advanced_rate_limiter == NULL) {
+                mcp_log_error("Failed to create advanced rate limiter.");
+                goto create_error_cleanup;
+            }
+
+            // Add default rules based on configuration
+            mcp_rate_limit_rule_t rule;
+
+            if (server->config.enable_token_bucket) {
+                // Use token bucket algorithm
+                rule = mcp_advanced_rate_limiter_create_token_bucket_rule(
+                    MCP_RATE_LIMIT_KEY_IP,
+                    server->config.tokens_per_second,
+                    server->config.max_tokens
+                );
+            } else {
+                // Use fixed window algorithm
+                rule = mcp_advanced_rate_limiter_create_default_rule(
+                    MCP_RATE_LIMIT_KEY_IP,
+                    MCP_RATE_LIMIT_FIXED_WINDOW,
+                    server->config.rate_limit_window_seconds,
+                    server->config.rate_limit_max_requests
+                );
+            }
+
+            // Add the rule
+            if (!mcp_advanced_rate_limiter_add_rule(server->advanced_rate_limiter, &rule)) {
+                mcp_log_error("Failed to add default rate limit rule.");
+                goto create_error_cleanup;
+            }
+
+            mcp_log_info("Advanced rate limiter created with %s algorithm.",
+                        server->config.enable_token_bucket ? "token bucket" : "fixed window");
+        } else {
+            // Create basic rate limiter
+            server->rate_limiter = mcp_rate_limiter_create(
+                server->config.rate_limit_capacity,
+                server->config.rate_limit_window_seconds,
+                server->config.rate_limit_max_requests
+            );
+            if (server->rate_limiter == NULL) {
+                mcp_log_error("Failed to create server rate limiter.");
+                goto create_error_cleanup;
+            }
+            mcp_log_info("Basic rate limiter created with fixed window algorithm.");
+        }
     }
 
     // Create the gateway pool manager (always create it, needed for destroy and dispatch logic)
@@ -209,6 +265,7 @@ create_error_cleanup:
         if (server->resource_templates_table) mcp_hashtable_destroy(server->resource_templates_table);
         if (server->resources_table) mcp_hashtable_destroy(server->resources_table);
         if (server->pool_manager) gateway_pool_manager_destroy(server->pool_manager);
+        if (server->advanced_rate_limiter) mcp_advanced_rate_limiter_destroy(server->advanced_rate_limiter);
         if (server->rate_limiter) mcp_rate_limiter_destroy(server->rate_limiter);
         if (server->resource_cache) mcp_cache_destroy(server->resource_cache);
         if (server->thread_pool) mcp_thread_pool_destroy(server->thread_pool);
@@ -444,6 +501,10 @@ void mcp_server_destroy(mcp_server_t* server) {
     if (server->pool_manager) {
         gateway_pool_manager_destroy(server->pool_manager);
         server->pool_manager = NULL;
+    }
+    if (server->advanced_rate_limiter) {
+        mcp_advanced_rate_limiter_destroy(server->advanced_rate_limiter);
+        server->advanced_rate_limiter = NULL;
     }
     if (server->rate_limiter) {
         mcp_rate_limiter_destroy(server->rate_limiter);

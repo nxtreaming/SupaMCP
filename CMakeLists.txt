@@ -104,6 +104,7 @@ set(COMMON_SOURCES
     src/common/mcp_performance_metrics.c
     src/server/mcp_performance_collector.c
     src/common/mcp_object_cache.c
+    src/server/mcp_advanced_rate_limiter.c
     client/src/mcp_client_template.c
     client/src/mcp_client_core.c
     client/src/mcp_client_hash_table.c

@@ -14,6 +14,7 @@
 #include <mcp_thread_pool.h>
 #include <mcp_cache.h>
 #include <mcp_rate_limiter.h>
+#include <mcp_advanced_rate_limiter.h>
 #include <mcp_profiler.h>
 #include <mcp_transport.h>
 #include <mcp_performance_metrics.h>
@@ -52,7 +53,8 @@ struct mcp_server {
     mcp_transport_t* transport;         // Transport associated via start()
     mcp_thread_pool_t* thread_pool;     // Thread pool for request handling
     mcp_resource_cache_t* resource_cache; // Resource cache
-    mcp_rate_limiter_t* rate_limiter;   // Rate limiter instance
+    mcp_rate_limiter_t* rate_limiter;   // Basic rate limiter instance
+    mcp_advanced_rate_limiter_t* advanced_rate_limiter; // Advanced rate limiter instance
     bool running;
 
     // Graceful shutdown support

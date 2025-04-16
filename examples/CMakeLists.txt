@@ -196,5 +196,15 @@ else()
     target_link_libraries(thread_cache_test PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# Advanced Rate Limiter Demo
+add_executable(advanced_rate_limiter_demo advanced_rate_limiter_demo.c)
+target_link_libraries(advanced_rate_limiter_demo PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(advanced_rate_limiter_demo PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(advanced_rate_limiter_demo PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client DESTINATION bin/examples)

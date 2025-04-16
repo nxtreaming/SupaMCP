@@ -25,6 +25,7 @@ set(TEST_RUNNER_SOURCES
     test_mcp_template.c
     test_mcp_template_security.c
     test_json_schema_cache.c
+    test_mcp_advanced_rate_limiter.c
     # Add other test_*.c files here
 )
 
