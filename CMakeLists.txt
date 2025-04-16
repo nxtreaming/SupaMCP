@@ -92,6 +92,7 @@ set(COMMON_SOURCES
     src/common/mcp_memory_tracker.c
     src/common/mcp_template.c
     src/common/mcp_template_optimized.c
+    src/common/mcp_rwlock.c
     src/server/mcp_buffer_pool.c
     src/server/mcp_cache.c
     src/server/mcp_rate_limiter.c
@@ -122,6 +123,7 @@ set(COMMON_SOURCES
     src/gateway/gateway_config.c
     src/gateway/gateway_routing.c
     src/gateway/gateway_pool.c
+    src/gateway/gateway_config_manager.c
     src/gateway/gateway_socket_utils.c
 )
 

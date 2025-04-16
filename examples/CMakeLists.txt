@@ -156,5 +156,15 @@ else()
     target_link_libraries(memory_pool_stats_demo PRIVATE Threads::Threads m) # Use PRIVATE keyword, add math library
 endif()
 
+# Read-Write Lock Demo
+add_executable(rwlock_demo rwlock_demo.c)
+target_link_libraries(rwlock_demo PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(rwlock_demo PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(rwlock_demo PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client DESTINATION bin/examples)

@@ -6,7 +6,7 @@
 
 #include "mcp_log.h"
 #include "mcp_json_utils.h"
-#include "mcp_sync.h"
+#include "mcp_rwlock.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,8 +40,8 @@ static mcp_log_format_t g_log_format = MCP_LOG_FORMAT_TEXT; // Default format
 static bool g_log_quiet = false;
 /** @internal Flag to enable/disable colored output. */
 static bool g_log_use_color = false; // Default to no color
-/** @internal Mutex for thread safety. */
-static mcp_mutex_t* g_log_mutex = NULL;
+/** @internal Read-write lock for thread safety. */
+static mcp_rwlock_t* g_log_rwlock = NULL;
 
 // Core logging function
 void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* format, ...) {
@@ -104,8 +104,10 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
     }
     // If written is non-negative and less than buffer size, vsnprintf added null terminator.
 
-    // 4. Lock mutex before accessing shared resources
-    mcp_mutex_lock(g_log_mutex);
+    // 4. Acquire read lock before accessing shared resources
+    // We only need a read lock here because we're just reading configuration
+    // and writing to external resources (file/stderr), not modifying shared state
+    mcp_rwlock_read_lock(g_log_rwlock);
 
     // 5. Output the formatted message based on g_log_format
     // Extract filename from path
@@ -164,7 +166,7 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
                  color_end); // End color
     }
 
-    mcp_mutex_unlock(g_log_mutex); // Unlock after accessing shared resources
+    mcp_rwlock_read_unlock(g_log_rwlock); // Release read lock after accessing shared resources
 }
 
 /**
@@ -283,11 +285,11 @@ int mcp_log_init(const char* log_file_path, mcp_log_level_t level) {
     }
     g_log_level = level;
 
-    // Initialize mutex if not already done
-    if (!g_log_mutex) {
-        g_log_mutex = mcp_mutex_create();
-        if (!g_log_mutex) {
-            fprintf(stderr, "[ERROR] Failed to initialize log mutex.\n");
+    // Initialize read-write lock if not already done
+    if (!g_log_rwlock) {
+        g_log_rwlock = mcp_rwlock_create();
+        if (!g_log_rwlock) {
+            fprintf(stderr, "[ERROR] Failed to initialize log read-write lock.\n");
             return -1;
         }
     }
@@ -295,13 +297,14 @@ int mcp_log_init(const char* log_file_path, mcp_log_level_t level) {
     // 2. Close any previously opened log file (needs lock)
     mcp_log_close(); // Use the renamed function
 
-    // 3. If a log file path is provided, attempt to open it (needs lock)
-    mcp_mutex_lock(g_log_mutex);
+    // 3. If a log file path is provided, attempt to open it (needs write lock)
+    // We need a write lock here because we're modifying shared state (g_log_file)
+    mcp_rwlock_write_lock(g_log_rwlock);
     if (log_file_path != NULL && strlen(log_file_path) > 0) {
         // 3a. Ensure the directory exists
         if (create_log_directory(log_file_path) != 0) {
             // Error message already printed by create_log_directory
-            mcp_mutex_unlock(g_log_mutex);
+            mcp_rwlock_write_unlock(g_log_rwlock);
             return -1; // Failed to create directory
         }
 
@@ -326,14 +329,14 @@ int mcp_log_init(const char* log_file_path, mcp_log_level_t level) {
                  fprintf(stderr, "[ERROR] Failed to open log file '%s': (errno: %d, strerror_r failed)\n", log_file_path, errno);
              }
 #endif
-             mcp_mutex_unlock(g_log_mutex);
+             mcp_rwlock_write_unlock(g_log_rwlock);
              return -1; // File open failed
         }
-        mcp_mutex_unlock(g_log_mutex); // Unlock after successful open or if no file path
+        mcp_rwlock_write_unlock(g_log_rwlock); // Unlock after successful open
         // Log successful file opening (will go to stderr and the file itself)
         mcp_log_info("Logging initialized to file: %s (Level: %s)", log_file_path, g_log_level_names[g_log_level]);
     } else {
-         mcp_mutex_unlock(g_log_mutex); // Unlock if no file path
+         mcp_rwlock_write_unlock(g_log_rwlock); // Unlock if no file path
          // Log that file logging is disabled (will go to stderr only)
          mcp_log_info("File logging disabled. Logging to stderr only. (Level: %s)", g_log_level_names[g_log_level]);
     }
@@ -342,21 +345,22 @@ int mcp_log_init(const char* log_file_path, mcp_log_level_t level) {
 }
 
 void mcp_log_close(void) {
-    if (!g_log_mutex) return; // Nothing to close or destroy if not initialized
+    if (!g_log_rwlock) return; // Nothing to close or destroy if not initialized
 
-    mcp_mutex_lock(g_log_mutex);
+    // Acquire write lock - we need exclusive access to modify g_log_file
+    mcp_rwlock_write_lock(g_log_rwlock);
     // Check if a log file is currently open
     if (g_log_file != NULL) {
         // Log the closing event (will go to stderr and the file)
         // Temporarily unlock to allow log_message to lock
-        mcp_mutex_unlock(g_log_mutex);
+        mcp_rwlock_write_unlock(g_log_rwlock);
         mcp_log_info("Closing log file.");
-        mcp_mutex_lock(g_log_mutex); // Re-lock
+        mcp_rwlock_write_lock(g_log_rwlock); // Re-lock
 
         fclose(g_log_file);
         g_log_file = NULL;
     }
-    mcp_mutex_unlock(g_log_mutex);
+    mcp_rwlock_write_unlock(g_log_rwlock);
 
     // TODO:
     // Destroy mutex - should ideally happen only once at application exit
@@ -371,9 +375,10 @@ void mcp_log_close(void) {
  */
 void mcp_log_set_format(mcp_log_format_t format) {
     if (format == MCP_LOG_FORMAT_TEXT || format == MCP_LOG_FORMAT_JSON) {
-        mcp_mutex_lock(g_log_mutex);
+        // Acquire write lock - we're modifying shared state
+        mcp_rwlock_write_lock(g_log_rwlock);
         g_log_format = format;
-        mcp_mutex_unlock(g_log_mutex);
+        mcp_rwlock_write_unlock(g_log_rwlock);
 
         mcp_log_info("Log format set to %s.",
                     (format == MCP_LOG_FORMAT_JSON) ? "JSON" : "TEXT");
@@ -384,24 +389,27 @@ void mcp_log_set_format(mcp_log_format_t format) {
 
 void mcp_log_set_level(mcp_log_level_t level) {
     if (level >= MCP_LOG_LEVEL_TRACE && level <= MCP_LOG_LEVEL_FATAL) {
-        mcp_mutex_lock(g_log_mutex);
+        // Acquire write lock - we're modifying shared state
+        mcp_rwlock_write_lock(g_log_rwlock);
         g_log_level = level;
-        mcp_mutex_unlock(g_log_mutex);
+        mcp_rwlock_write_unlock(g_log_rwlock);
     } else {
          mcp_log_warn("Attempted to set invalid log level (%d).", level);
     }
 }
 
 void mcp_log_set_quiet(bool quiet) {
-    mcp_mutex_lock(g_log_mutex);
+    // Acquire write lock - we're modifying shared state
+    mcp_rwlock_write_lock(g_log_rwlock);
     g_log_quiet = quiet;
-    mcp_mutex_unlock(g_log_mutex);
+    mcp_rwlock_write_unlock(g_log_rwlock);
 }
 
 void mcp_log_set_color(bool use_color) {
-    mcp_mutex_lock(g_log_mutex);
+    // Acquire write lock - we're modifying shared state
+    mcp_rwlock_write_lock(g_log_rwlock);
     g_log_use_color = use_color;
-    mcp_mutex_unlock(g_log_mutex);
+    mcp_rwlock_write_unlock(g_log_rwlock);
 }
 
 /**
@@ -446,7 +454,8 @@ void mcp_log_structured(
     base_message[sizeof(base_message) - 1] = '\0'; // Ensure null termination
 
     // 4. Output based on format
-    mcp_mutex_lock(g_log_mutex); // Lock before accessing shared resources
+    // Acquire read lock - we're only reading configuration
+    mcp_rwlock_read_lock(g_log_rwlock); // Lock before accessing shared resources
 
     if (g_log_format == MCP_LOG_FORMAT_JSON) {
         char escaped_message[sizeof(base_message) * 2];
@@ -486,5 +495,5 @@ void mcp_log_structured(
                 base_message);
     }
 
-    mcp_mutex_unlock(g_log_mutex); // Unlock after accessing shared resources
+    mcp_rwlock_read_unlock(g_log_rwlock); // Release read lock after accessing shared resources
 }

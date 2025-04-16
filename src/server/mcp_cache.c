@@ -4,7 +4,7 @@
 #include "mcp_log.h"
 #include "mcp_profiler.h"
 #include "mcp_hashtable.h"
-#include "mcp_sync.h"
+#include "mcp_rwlock.h"
 #include "mcp_object_pool.h"
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +22,7 @@ typedef struct {
 
 // Internal cache structure
 struct mcp_resource_cache {
-    mcp_mutex_t* lock;              // Mutex for thread safety (using abstracted type)
+    mcp_rwlock_t* rwlock;           // Read-write lock for thread safety
     mcp_hashtable_t* table;         // Hash table for cache entries
     size_t capacity;                // Max number of entries
     time_t default_ttl_seconds;     // Default TTL for new entries
@@ -52,9 +52,9 @@ mcp_resource_cache_t* mcp_cache_create(size_t capacity, time_t default_ttl_secon
     mcp_resource_cache_t* cache = (mcp_resource_cache_t*)malloc(sizeof(mcp_resource_cache_t));
     if (!cache) return NULL;
 
-    // Initialize mutex using abstraction
-    cache->lock = mcp_mutex_create();
-    if (!cache->lock) {
+    // Initialize read-write lock
+    cache->rwlock = mcp_rwlock_create();
+    if (!cache->rwlock) {
         free(cache);
         return NULL;
     }
@@ -71,7 +71,7 @@ mcp_resource_cache_t* mcp_cache_create(size_t capacity, time_t default_ttl_secon
     );
 
     if (!cache->table) {
-        mcp_mutex_destroy(cache->lock); // Use abstracted destroy
+        mcp_rwlock_free(cache->rwlock);
         free(cache);
         return NULL;
     }
@@ -139,8 +139,8 @@ void mcp_cache_destroy(mcp_resource_cache_t* cache) {
         mcp_hashtable_destroy(cache->table);
     }
 
-    // Destroy mutex and free cache structure using abstraction
-    mcp_mutex_destroy(cache->lock);
+    // Destroy read-write lock and free cache structure
+    mcp_rwlock_free(cache->rwlock);
     free(cache);
 }
 
@@ -155,7 +155,8 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     int result = -1; // Default to not found/expired
     PROFILE_START("mcp_cache_get");
 
-    mcp_mutex_lock(cache->lock); // Use abstracted lock
+    // Acquire write lock - exclusive access needed as we may update cache metadata
+    mcp_rwlock_write_lock(cache->rwlock);
 
     // Try to get the entry from the hash table
     mcp_cache_entry_t* entry = NULL;
@@ -218,7 +219,8 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     }
     // else: entry not found, result remains -1
 
-    mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+    // Release write lock
+    mcp_rwlock_write_unlock(cache->rwlock);
     PROFILE_END("mcp_cache_get");
     return result;
 }
@@ -237,7 +239,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
 
     PROFILE_START("mcp_cache_put");
 
-    mcp_mutex_lock(cache->lock); // Use abstracted lock
+    // Acquire write lock - exclusive access for writing
+    mcp_rwlock_write_lock(cache->rwlock);
 
     // --- Eviction Logic: Evict First Found strategy ---
     if (mcp_hashtable_size(cache->table) >= cache->capacity && !mcp_hashtable_contains(cache->table, uri)) {
@@ -261,7 +264,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
         if (!evicted) {
             // Should not happen if size >= capacity > 0, but handle defensively
             mcp_log_error("Cache full but failed to find an entry to evict.");
-            mcp_mutex_unlock(cache->lock);
+            mcp_rwlock_write_unlock(cache->rwlock);
             PROFILE_END("mcp_cache_put");
             return -1;
         }
@@ -274,7 +277,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     // Create a new cache entry
     mcp_cache_entry_t* entry = (mcp_cache_entry_t*)malloc(sizeof(mcp_cache_entry_t));
     if (!entry) {
-        mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+        mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
         return -1; // Allocation failure
     }
@@ -283,7 +286,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     entry->content = (mcp_content_item_t**)malloc(content_count * sizeof(mcp_content_item_t*));
     if (!entry->content) {
         free(entry);
-        mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+        mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
         return -1; // Allocation failure
     }
@@ -328,7 +331,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     if (copy_error) {
         free(entry->content); // Free the array of pointers
         free(entry);          // Free the entry struct
-        mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+        mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
         return -1; // Allocation failure during content copy
     }
@@ -354,7 +357,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
         free(entry);          // Free the entry struct
     }
 
-    mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+    // Release write lock
+    mcp_rwlock_write_unlock(cache->rwlock);
     PROFILE_END("mcp_cache_put");
     return result;
 }
@@ -362,7 +366,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
 int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
     if (!cache || !uri) return -1;
 
-    mcp_mutex_lock(cache->lock); // Use abstracted lock
+    // Acquire write lock - exclusive access for invalidation
+    mcp_rwlock_write_lock(cache->rwlock);
 
     // Get the entry first so we can clean it up properly
     mcp_cache_entry_t* entry = NULL;
@@ -373,11 +378,12 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
         // Now remove it from the hash table
         // mcp_hashtable_remove calls the value free function (free_cache_entry)
         int result = mcp_hashtable_remove(cache->table, uri);
-        mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+        mcp_rwlock_write_unlock(cache->rwlock);
         return result;
     }
 
-    mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+    // Release write lock
+    mcp_rwlock_write_unlock(cache->rwlock);
     return -1; // Entry not found
 }
 
@@ -429,7 +435,8 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
 size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     if (!cache) return 0;
 
-    mcp_mutex_lock(cache->lock); // Use abstracted lock
+    // Acquire write lock - exclusive access for pruning
+    mcp_rwlock_write_lock(cache->rwlock);
 
     size_t removed_count = 0;
     time_t now = time(NULL);
@@ -443,7 +450,7 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     keys_to_remove = (char**)malloc(keys_capacity * sizeof(char*));
     if (!keys_to_remove) {
         mcp_log_error("Failed to allocate initial keys_to_remove in prune_expired");
-        mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+        mcp_rwlock_write_unlock(cache->rwlock);
         return 0;
     }
 
@@ -451,7 +458,7 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     if (!entries_to_cleanup) {
         mcp_log_error("Failed to allocate entries_to_cleanup in prune_expired");
         free(keys_to_remove);
-        mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+        mcp_rwlock_write_unlock(cache->rwlock);
         return 0;
     }
 
@@ -489,6 +496,7 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     free(keys_to_remove);
     free(entries_to_cleanup);
 
-    mcp_mutex_unlock(cache->lock); // Use abstracted unlock
+    // Release write lock
+    mcp_rwlock_write_unlock(cache->rwlock);
     return removed_count;
 }

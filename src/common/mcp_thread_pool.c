@@ -1,6 +1,7 @@
 #include "mcp_thread_pool.h"
 #include "mcp_profiler.h"
 #include "mcp_sync.h"
+#include "mcp_rwlock.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
@@ -42,7 +43,8 @@ typedef struct {
  * @brief Internal structure for the thread pool using work-stealing deques.
  */
 struct mcp_thread_pool {
-    mcp_mutex_t* lock;          /**< Mutex primarily for shutdown signaling and thread management. */
+    mcp_rwlock_t* rwlock;       /**< Read-write lock for thread pool state. */
+    mcp_mutex_t* cond_mutex;    /**< Mutex for condition variable (cannot use rwlock with condition variables). */
     mcp_cond_t* notify;         /**< Condition variable to signal waiting threads (mainly for shutdown). */
     mcp_thread_t* threads;      /**< Array of worker thread handles. */
     work_stealing_deque_t* deques; /**< Array of work-stealing deques, one per thread. */
@@ -241,7 +243,8 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
     pool->thread_count = 0; // Set later after threads start
     pool->shutdown = 0;
     pool->started = 0;
-    pool->lock = NULL;
+    pool->rwlock = NULL;
+    pool->cond_mutex = NULL;
     pool->notify = NULL;
     pool->threads = NULL;
     pool->deques = NULL;
@@ -258,7 +261,8 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
     // Allocate memory for threads, deques array, and sync primitives
     pool->threads = (mcp_thread_t*)malloc(sizeof(mcp_thread_t) * thread_count);
     pool->deques = (work_stealing_deque_t*)malloc(sizeof(work_stealing_deque_t) * thread_count);
-    pool->lock = mcp_mutex_create();
+    pool->rwlock = mcp_rwlock_create();
+    pool->cond_mutex = mcp_mutex_create();
     pool->notify = mcp_cond_create();
 
     // Allocate buffers for each deque
@@ -296,7 +300,7 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
         allocation_failed = true;
     }
 
-    if (pool->lock == NULL || pool->notify == NULL || pool->threads == NULL || allocation_failed) {
+    if (pool->rwlock == NULL || pool->cond_mutex == NULL || pool->notify == NULL || pool->threads == NULL || allocation_failed) {
         mcp_log_error("Thread pool creation failed: Failed to initialize sync primitives or allocate memory for deques.");
         if (pool->threads) free(pool->threads);
         if (pool->deques) {
@@ -311,7 +315,8 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
              }
              free(pool->deques);
         }
-        mcp_mutex_destroy(pool->lock);
+        mcp_rwlock_free(pool->rwlock);
+        mcp_mutex_destroy(pool->cond_mutex);
         mcp_cond_destroy(pool->notify);
         free(pool);
         return NULL;
@@ -342,9 +347,9 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
     // If any allocation or thread creation failed after partial success
     if (allocation_failed) {
          store_int(&pool->shutdown, 1);
-         if (mcp_mutex_lock(pool->lock) == 0) {
+         if (mcp_mutex_lock(pool->cond_mutex) == 0) {
              mcp_cond_broadcast(pool->notify);
-             mcp_mutex_unlock(pool->lock);
+             mcp_mutex_unlock(pool->cond_mutex);
          }
          for (size_t i = 0; i < pool->started; ++i) {
               mcp_thread_join(pool->threads[i], NULL);
@@ -364,7 +369,8 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
               }
               free(pool->deques);
          }
-         mcp_mutex_destroy(pool->lock);
+         mcp_rwlock_free(pool->rwlock);
+         mcp_mutex_destroy(pool->cond_mutex);
          mcp_cond_destroy(pool->notify);
          free(pool);
          return NULL;
@@ -382,7 +388,12 @@ int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), v
     }
     PROFILE_START("mcp_thread_pool_add_task");
 
-    if (load_int(&pool->shutdown) != 0) {
+    // Use read lock to check shutdown state - allows multiple threads to check concurrently
+    mcp_rwlock_read_lock(pool->rwlock);
+    int shutdown_state = pool->shutdown;
+    mcp_rwlock_read_unlock(pool->rwlock);
+
+    if (shutdown_state != 0) {
         PROFILE_END("mcp_thread_pool_add_task");
         return -1;
     }
@@ -415,6 +426,69 @@ int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), v
 }
 
 /**
+ * @brief Waits for all currently queued tasks to complete.
+ *
+ * This function blocks until all tasks in the queue at the time of the call
+ * have been processed, or until the specified timeout is reached.
+ *
+ * @param pool The thread pool instance.
+ * @param timeout_ms Maximum time to wait in milliseconds. Use 0 for no timeout.
+ * @return 0 on success, -1 on failure or timeout.
+ */
+int mcp_thread_pool_wait(mcp_thread_pool_t* pool, unsigned int timeout_ms) {
+    if (pool == NULL) {
+        return -1;
+    }
+
+    // Use read lock to check shutdown state - allows multiple threads to check concurrently
+    mcp_rwlock_read_lock(pool->rwlock);
+    int shutdown_state = pool->shutdown;
+    mcp_rwlock_read_unlock(pool->rwlock);
+
+    if (shutdown_state != 0) {
+        return -1; // Pool is shutting down
+    }
+
+    // Check if all deques are empty
+    bool all_empty = true;
+    unsigned int wait_time = 0;
+    unsigned int sleep_interval = 10; // 10ms sleep interval
+
+    while (wait_time < timeout_ms || timeout_ms == 0) {
+        all_empty = true;
+
+        // Check all deques
+        for (size_t i = 0; i < pool->thread_count; i++) {
+            size_t bottom = load_size(&pool->deques[i].bottom);
+            size_t top = load_size(&pool->deques[i].top);
+
+            if (bottom > top) {
+                all_empty = false;
+                break;
+            }
+        }
+
+        if (all_empty) {
+            return 0; // All tasks completed
+        }
+
+        // Sleep for a short interval
+        #ifdef _WIN32
+            Sleep(sleep_interval);
+        #else
+            struct timespec ts;
+            ts.tv_sec = sleep_interval / 1000;
+            ts.tv_nsec = (sleep_interval % 1000) * 1000000;
+            nanosleep(&ts, NULL);
+        #endif
+
+        wait_time += sleep_interval;
+    }
+
+    return -1; // Timeout
+}
+
+/**
  * @brief Destroys the thread pool using work-stealing deques.
  */
 int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
@@ -423,30 +497,35 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
     }
 
     int err = 0;
-    int current_shutdown_state = load_int(&pool->shutdown);
+    // Use read lock to check current shutdown state
+    mcp_rwlock_read_lock(pool->rwlock);
+    int current_shutdown_state = pool->shutdown;
+    mcp_rwlock_read_unlock(pool->rwlock);
 
     if (current_shutdown_state != 0) {
         return -1; // Already shutting down
     }
 
-    // Initiate graceful shutdown atomically
-#ifdef _WIN32
-    if (InterlockedCompareExchange((volatile LONG*)&pool->shutdown, 2, 0) != 0) {
+    // Use write lock to set shutdown state - ensures exclusive access
+    mcp_rwlock_write_lock(pool->rwlock);
+
+    // Double-check shutdown state after acquiring lock
+    if (pool->shutdown != 0) {
+        mcp_rwlock_write_unlock(pool->rwlock);
         return -1; // Another thread initiated shutdown
     }
-#else
-    if (!__sync_bool_compare_and_swap(&pool->shutdown, 0, 2)) {
-        return -1; // Another thread initiated shutdown
-    }
-#endif
+
+    // Set shutdown state to graceful shutdown (2)
+    pool->shutdown = 2;
+    mcp_rwlock_write_unlock(pool->rwlock);
 
     // Wake up worker threads
-    if (mcp_mutex_lock(pool->lock) == 0) {
+    if (mcp_mutex_lock(pool->cond_mutex) == 0) {
         if (mcp_cond_broadcast(pool->notify) != 0) {
             err = -1;
             mcp_log_warn("Warning: Failed to broadcast shutdown signal");
         }
-        mcp_mutex_unlock(pool->lock);
+        mcp_mutex_unlock(pool->cond_mutex);
     } else {
         err = -1;
         mcp_log_error("Error: Failed to lock mutex for shutdown broadcast.");
@@ -462,7 +541,8 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
     }
 
     // Cleanup
-    mcp_mutex_destroy(pool->lock);
+    mcp_rwlock_free(pool->rwlock);
+    mcp_mutex_destroy(pool->cond_mutex);
     mcp_cond_destroy(pool->notify);
     if (pool->threads) free(pool->threads);
     if (pool->deques) {
@@ -507,7 +587,11 @@ static void* thread_pool_worker(void* arg) {
         }
 
         // 2. Own deque is empty, check for shutdown
-        int shutdown_status = load_int(&pool->shutdown);
+        // Use read lock to check shutdown state - allows multiple threads to check concurrently
+        mcp_rwlock_read_lock(pool->rwlock);
+        int shutdown_status = pool->shutdown;
+        mcp_rwlock_read_unlock(pool->rwlock);
+
         if (shutdown_status != 0) {
              // Simplified exit: If shutdown signaled and own deque empty, exit.
              // A more robust graceful shutdown would check if *all* deques are empty.
@@ -540,13 +624,18 @@ static void* thread_pool_worker(void* arg) {
              mcp_thread_yield();
         } else {
              // Longer wait using mutex/condvar for shutdown signal
-             if (mcp_mutex_lock(pool->lock) == 0) {
-                 if (load_int(&pool->shutdown) != 0) {
-                     mcp_mutex_unlock(pool->lock);
+             if (mcp_mutex_lock(pool->cond_mutex) == 0) {
+                 // Use read lock to check shutdown state - allows multiple threads to check concurrently
+                 mcp_rwlock_read_lock(pool->rwlock);
+                 int current_shutdown = pool->shutdown;
+                 mcp_rwlock_read_unlock(pool->rwlock);
+
+                 if (current_shutdown != 0) {
+                     mcp_mutex_unlock(pool->cond_mutex);
                      return NULL;
                  }
-                 mcp_cond_timedwait(pool->notify, pool->lock, 100); // Wait 100ms
-                 mcp_mutex_unlock(pool->lock);
+                 mcp_cond_timedwait(pool->notify, pool->cond_mutex, 100); // Wait 100ms
+                 mcp_mutex_unlock(pool->cond_mutex);
              }
              steal_attempts = 0;
         }

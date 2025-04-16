@@ -44,6 +44,18 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
 int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), void* argument);
 
 /**
+ * @brief Waits for all currently queued tasks to complete.
+ *
+ * This function blocks until all tasks in the queue at the time of the call
+ * have been processed, or until the specified timeout is reached.
+ *
+ * @param pool The thread pool instance.
+ * @param timeout_ms Maximum time to wait in milliseconds. Use 0 for no timeout.
+ * @return 0 on success, -1 on failure or timeout.
+ */
+int mcp_thread_pool_wait(mcp_thread_pool_t* pool, unsigned int timeout_ms);
+
+/**
  * @brief Destroys the thread pool.
  *
  * Waits for all queued tasks to complete and joins all worker threads
