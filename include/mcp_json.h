@@ -291,6 +291,55 @@ char* mcp_json_stringify_message(const mcp_message_t* message);
 int mcp_json_validate_schema(const char* json_str, const char* schema_str);
 
 /**
+ * @brief JSON Schema cache handle.
+ */
+typedef struct mcp_json_schema_cache mcp_json_schema_cache_t;
+
+/**
+ * @brief Create a new JSON Schema cache.
+ *
+ * @param capacity Maximum number of schemas to store in the cache (0 for unlimited).
+ * @return Pointer to the created cache, or NULL on failure.
+ */
+mcp_json_schema_cache_t* mcp_json_schema_cache_create(size_t capacity);
+
+/**
+ * @brief Destroy a JSON Schema cache.
+ *
+ * @param cache The cache to destroy.
+ */
+void mcp_json_schema_cache_destroy(mcp_json_schema_cache_t* cache);
+
+/**
+ * @brief Validate JSON against a schema, using the cache.
+ *
+ * @param cache The schema cache.
+ * @param json_str The JSON string to validate.
+ * @param schema_str The schema string.
+ * @return 0 for validation success, -1 for validation failure or error.
+ */
+int mcp_json_schema_validate_cached(mcp_json_schema_cache_t* cache, const char* json_str, const char* schema_str);
+
+/**
+ * @brief Get cache statistics.
+ *
+ * @param cache The cache to get statistics for.
+ * @param size Pointer to store the current cache size.
+ * @param capacity Pointer to store the cache capacity.
+ * @param hits Pointer to store the number of cache hits.
+ * @param misses Pointer to store the number of cache misses.
+ * @return 0 on success, -1 on failure.
+ */
+int mcp_json_schema_cache_get_stats(mcp_json_schema_cache_t* cache, size_t* size, size_t* capacity, size_t* hits, size_t* misses);
+
+/**
+ * @brief Clear all schemas from the cache.
+ *
+ * @param cache The cache to clear.
+ */
+void mcp_json_schema_cache_clear(mcp_json_schema_cache_t* cache);
+
+/**
  * @brief Set maximum depth and size limits for JSON parsing.
  * @param max_depth Maximum nesting depth allowed during parsing.
  * @param max_size Maximum JSON string size (in bytes) allowed for parsing.

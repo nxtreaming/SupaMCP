@@ -384,26 +384,6 @@ int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names_out
 }
 
 /**
- * @brief Validate if a JSON message conforms to a specified schema. (Placeholder)
- * @note Requires integration with a JSON schema validation library. This function
- *       cannot be fully implemented without adding such a dependency (e.g., jsonschema-c).
- */
-int mcp_json_validate_schema(const char* json_str, const char* schema_str) {
-    // Placeholder implementation: Returns success without validation.
-    // A real implementation requires integrating an external library.
-    (void)json_str;   // Mark as unused
-    (void)schema_str; // Mark as unused
-    mcp_log_warn("mcp_json_validate_schema: Function not implemented (requires external JSON schema library). Assuming valid.");
-    // Example steps if using a library 'libjsonschema':
-    // 1. schema = libjsonschema_parse(schema_str); if (!schema) return -1;
-    // 2. json_doc = libjsonschema_parse_json(json_str); if (!json_doc) { libjsonschema_free(schema); return -1; }
-    // 3. result = libjsonschema_validate(schema, json_doc);
-    // 4. libjsonschema_free(schema); libjsonschema_free(json_doc);
-    // 5. return (result == VALID) ? 0 : -1;
-    return 0; // Placeholder: Assume valid
-}
-
-/**
  * @brief Set maximum depth and size limits for JSON parsing. (Placeholder)
  * @note The current custom parser only supports a hardcoded depth limit.
  *       Implementing a size limit requires modifying the parser itself.
