@@ -134,6 +134,14 @@ void mcp_pool_free(void* ptr);
  */
 bool mcp_pool_get_stats(mcp_pool_size_class_t size_class, mcp_memory_pool_stats_t* stats);
 
+/**
+ * @brief Gets the size of a memory block allocated from a pool
+ *
+ * @param ptr Pointer to the memory block
+ * @return Size of the memory block in bytes, or 0 if not a pool-allocated block
+ */
+size_t mcp_pool_get_block_size(void* ptr);
+
 #ifdef __cplusplus
 }
 #endif

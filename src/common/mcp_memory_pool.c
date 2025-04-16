@@ -305,20 +305,8 @@ void mcp_pool_free(void* ptr) {
     // Get the pool from the header
     mcp_memory_pool_t* pool = header->pool;
 
-    // Get the size from the pool
-    size_t size = pool->user_block_size;
-
-    // Check if thread cache is initialized to avoid circular dependency
-    extern bool mcp_thread_cache_is_initialized(void);
-
-    // Only use thread cache if it's already initialized
-    if (mcp_thread_cache_is_initialized()) {
-        // Return to thread cache
-        mcp_thread_cache_free(ptr, size);
-    } else {
-        // Return directly to the pool
-        return_to_pool(pool, ptr);
-    }
+    // Return directly to the pool - no thread cache dependency
+    return_to_pool(pool, ptr);
 }
 
 bool mcp_pool_get_stats(mcp_pool_size_class_t size_class, mcp_memory_pool_stats_t* stats) {
@@ -438,4 +426,22 @@ static size_t get_block_size_for_class(mcp_pool_size_class_t size_class) {
         default:
             return 0;
     }
+}
+
+size_t mcp_pool_get_block_size(void* ptr) {
+    if (!ptr) return 0;
+
+    // Check if this is a pool-allocated block by looking at the header
+    mcp_block_header_t* header = (mcp_block_header_t*)((char*)ptr - sizeof(mcp_block_header_t));
+
+    // If the magic value doesn't match, it's not a pool-allocated block
+    if (header->magic != MCP_POOL_MAGIC) {
+        return 0;
+    }
+
+    // Get the pool from the header
+    mcp_memory_pool_t* pool = header->pool;
+
+    // Return the user block size
+    return pool->user_block_size;
 }

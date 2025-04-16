@@ -113,10 +113,28 @@ void* mcp_thread_cache_alloc(size_t size) {
 void mcp_thread_cache_free(void* ptr, size_t size) {
     if (!ptr) return;
 
-    // If thread cache is not initialized, fall back to direct free to avoid circular dependency
+    // If thread cache is not initialized, determine if this is a pool block
     if (!tls_cache_initialized) {
-        free(ptr);
+        // Check if this is a pool-allocated block
+        size_t block_size = mcp_pool_get_block_size(ptr);
+        if (block_size > 0) {
+            // It's a pool-allocated block, return it to the pool
+            mcp_pool_free(ptr);
+        } else {
+            // It's a malloc-allocated block, use free
+            free(ptr);
+        }
         return;
+    }
+
+    // If size is 0, try to determine it from the block
+    if (size == 0) {
+        size = mcp_pool_get_block_size(ptr);
+        // If we still don't know the size, we can't cache it
+        if (size == 0) {
+            free(ptr);
+            return;
+        }
     }
 
     // Determine which cache to use based on size
@@ -137,11 +155,13 @@ void mcp_thread_cache_free(void* ptr, size_t size) {
         }
     }
 
-    // Cache is full or size is too large, return to the pool if initialized, otherwise use free
-    if (mcp_memory_pool_system_is_initialized()) {
+    // Cache is full or size is too large, determine if this is a pool block
+    size_t block_size = mcp_pool_get_block_size(ptr);
+    if (block_size > 0) {
+        // It's a pool-allocated block, return it to the pool
         mcp_pool_free(ptr);
     } else {
-        // Fall back to free if memory pool system is not initialized
+        // It's a malloc-allocated block, use free
         free(ptr);
     }
 }
@@ -168,21 +188,45 @@ void mcp_thread_cache_flush(void) {
 
     // Flush small cache
     for (size_t i = 0; i < tls_small_count; i++) {
-        mcp_pool_free(tls_small_cache[i]);
+        // Check if this is a pool-allocated block
+        size_t block_size = mcp_pool_get_block_size(tls_small_cache[i]);
+        if (block_size > 0) {
+            // It's a pool-allocated block, return it to the pool
+            mcp_pool_free(tls_small_cache[i]);
+        } else {
+            // It's a malloc-allocated block, use free
+            free(tls_small_cache[i]);
+        }
         tls_small_cache[i] = NULL;
     }
     tls_small_count = 0;
 
     // Flush medium cache
     for (size_t i = 0; i < tls_medium_count; i++) {
-        mcp_pool_free(tls_medium_cache[i]);
+        // Check if this is a pool-allocated block
+        size_t block_size = mcp_pool_get_block_size(tls_medium_cache[i]);
+        if (block_size > 0) {
+            // It's a pool-allocated block, return it to the pool
+            mcp_pool_free(tls_medium_cache[i]);
+        } else {
+            // It's a malloc-allocated block, use free
+            free(tls_medium_cache[i]);
+        }
         tls_medium_cache[i] = NULL;
     }
     tls_medium_count = 0;
 
     // Flush large cache
     for (size_t i = 0; i < tls_large_count; i++) {
-        mcp_pool_free(tls_large_cache[i]);
+        // Check if this is a pool-allocated block
+        size_t block_size = mcp_pool_get_block_size(tls_large_cache[i]);
+        if (block_size > 0) {
+            // It's a pool-allocated block, return it to the pool
+            mcp_pool_free(tls_large_cache[i]);
+        } else {
+            // It's a malloc-allocated block, use free
+            free(tls_large_cache[i]);
+        }
         tls_large_cache[i] = NULL;
     }
     tls_large_count = 0;

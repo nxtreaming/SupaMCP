@@ -45,8 +45,9 @@ void* mcp_thread_cache_alloc(size_t size);
  * @brief Frees memory to the thread-local cache
  *
  * @param ptr Pointer to the memory to free
- * @param size Size of the memory block (needed to determine the appropriate cache)
+ * @param size Size of the memory block (optional, can be 0 if unknown)
  * @note Safe to call with NULL
+ * @note If size is 0, the function will try to determine the size from the block header
  */
 void mcp_thread_cache_free(void* ptr, size_t size);
 
