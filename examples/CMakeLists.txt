@@ -136,5 +136,25 @@ else()
     target_link_libraries(batch_request_example PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# Thread Cache Demo
+add_executable(thread_cache_demo thread_cache_demo.c)
+target_link_libraries(thread_cache_demo PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(thread_cache_demo PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(thread_cache_demo PRIVATE Threads::Threads m) # Use PRIVATE keyword, add math library
+endif()
+
+# Memory Pool Statistics Demo
+add_executable(memory_pool_stats_demo memory_pool_stats_demo.c)
+target_link_libraries(memory_pool_stats_demo PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(memory_pool_stats_demo PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(memory_pool_stats_demo PRIVATE Threads::Threads m) # Use PRIVATE keyword, add math library
+endif()
+
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client DESTINATION bin/examples)
