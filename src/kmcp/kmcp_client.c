@@ -167,7 +167,7 @@ int kmcp_client_call_tool(
 
     // Check connection status
     if (!connection->is_connected || !connection->client) {
-        mcp_log_error("Server is not connected");
+        mcp_log_error("Server is not connected or client is not available");
         return -1;
     }
 
@@ -230,7 +230,7 @@ int kmcp_client_get_resource(
 
     // Check connection status
     if (!connection->is_connected || !connection->client) {
-        mcp_log_error("Server is not connected");
+        mcp_log_error("Server is not connected or client is not available");
         return -1;
     }
 

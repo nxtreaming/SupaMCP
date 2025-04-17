@@ -65,7 +65,7 @@ kmcp_config_parser_t* kmcp_config_parser_create(const char* file_path) {
         return NULL;
     }
 
-    // Read file content
+    // Read file content in text mode for JSON parsing
     FILE* file = fopen(file_path, "r");
     if (!file) {
         mcp_log_error("Failed to open config file: %s", file_path);
@@ -100,7 +100,7 @@ kmcp_config_parser_t* kmcp_config_parser_create(const char* file_path) {
     size_t read_size = fread(buffer, 1, file_size, file);
     fclose(file);
 
-    if (read_size != (size_t)file_size) {
+    if (read_size == 0) {
         mcp_log_error("Failed to read config file: %s", file_path);
         free(buffer);
         free(parser->file_path);
@@ -108,7 +108,10 @@ kmcp_config_parser_t* kmcp_config_parser_create(const char* file_path) {
         return NULL;
     }
 
-    buffer[file_size] = '\0';
+    // Log the actual read size vs file size (for debugging)
+    mcp_log_debug("Read %zu bytes from config file (file size: %ld bytes)", read_size, file_size);
+
+    buffer[read_size] = '\0';
 
     // Parse JSON
     parser->json = mcp_json_parse(buffer);

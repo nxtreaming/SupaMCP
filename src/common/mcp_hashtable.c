@@ -295,7 +295,8 @@ void mcp_hashtable_clear(mcp_hashtable_t* table) {
             // Free key and value
             table->key_free(entry->key);
             if (table->value_free) {
-                table->value_free(entry->value);
+                // Add explicit cast to avoid warnings on Windows
+                ((void (*)(void*))table->value_free)(entry->value);
             }
 
             // Free entry

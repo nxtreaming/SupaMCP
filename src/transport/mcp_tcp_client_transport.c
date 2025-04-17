@@ -56,6 +56,7 @@ static int tcp_client_transport_start(
     data->connected = true; // Mark as connected after successful mcp_socket_connect
     data->running = true;
     mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_CONNECTED);
+    mcp_log_info("TCP Client Transport connected to %s:%u (socket %d, connected=%d)", data->host, data->port, (int)data->sock, data->connected);
 
     // Start receiver thread
     if (mcp_thread_create(&data->receive_thread, tcp_client_receive_thread_func, transport) != 0) {
@@ -167,7 +168,8 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
     if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) { // Use new invalid socket macro
-        mcp_log_error("Client transport not running or connected for sendv.");
+        mcp_log_error("Client transport not running or connected for sendv. running=%d, connected=%d, sock=%d",
+                     data->running, data->connected, (int)data->sock);
 
         // If reconnection is enabled and we're not already reconnecting, start reconnection
         if (data->reconnect_enabled && data->connection_state != MCP_CONNECTION_STATE_RECONNECTING) {

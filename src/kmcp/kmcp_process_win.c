@@ -278,9 +278,16 @@ bool kmcp_process_is_running(kmcp_process_t* process) {
  * @brief Terminate a process
  */
 int kmcp_process_terminate(kmcp_process_t* process) {
-    if (!process || !process->handle_valid) {
-        mcp_log_error("Invalid parameters or process handle is not valid");
+    if (!process) {
+        mcp_log_error("Invalid parameter: process is NULL");
         return -1;
+    }
+
+    // If handle is not valid, just mark as not running and return success
+    if (!process->handle_valid) {
+        mcp_log_warn("Process handle is not valid, marking as not running");
+        process->is_running = false;
+        return 0;
     }
 
     // If the process is not running, return success immediately
@@ -387,8 +394,12 @@ void kmcp_process_close(kmcp_process_t* process) {
 
     // If the process is still running, terminate it
     if (process->is_running) {
+        mcp_log_debug("Process is still running, terminating it");
         kmcp_process_terminate(process);
     }
+
+    // Ensure is_running is set to false
+    process->is_running = false;
 
     // Close handles
     if (process->handle_valid) {

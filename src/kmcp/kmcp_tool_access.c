@@ -138,9 +138,13 @@ void kmcp_tool_access_destroy(kmcp_tool_access_t* access) {
 
     // Free hash table
     if (access->tool_map) {
-        // Free values in hash table (integer pointers)
+        // Option 1: Free values manually and then set value_free to NULL
         mcp_hashtable_foreach(access->tool_map, free_hash_value, NULL);
+        access->tool_map->value_free = NULL; // Prevent double-free in mcp_hashtable_destroy
         mcp_hashtable_destroy(access->tool_map);
+
+        // Option 2: Let mcp_hashtable_destroy handle freeing values
+        // mcp_hashtable_destroy(access->tool_map);
     }
 
     free(access);

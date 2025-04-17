@@ -1,8 +1,23 @@
+#ifdef _WIN32
+#   ifndef _CRT_SECURE_NO_WARNINGS
+#       define _CRT_SECURE_NO_WARNINGS
+#   endif
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "kmcp.h"
 #include "mcp_log.h"
+#include "mcp_thread_local.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <limits.h>
+#define MAX_PATH PATH_MAX
+#endif
 
 /**
  * @brief Example configuration file content
@@ -18,7 +33,7 @@ const char* example_config =
 "  \"mcpServers\": {\n"
 "    \"local\": {\n"
 "      \"command\": \"mcp_server\",\n"
-"      \"args\": [\"--port\", \"8080\"],\n"
+"      \"args\": [\"--tcp\", \"--port\", \"8080\"],\n"
 "      \"env\": {\n"
 "        \"MCP_DEBUG\": \"1\"\n"
 "      }\n"
@@ -40,13 +55,33 @@ const char* example_config =
  * @return int Returns 0 on success, non-zero error code on failure
  */
 int create_example_config(const char* file_path) {
+    // Open file in text mode for JSON
     FILE* file = fopen(file_path, "w");
     if (!file) {
         mcp_log_error("Failed to create config file: %s", file_path);
         return -1;
     }
 
-    fprintf(file, "%s", example_config);
+    // Write the configuration
+    size_t written = fprintf(file, "%s", example_config);
+
+    // Flush and close the file
+    fflush(file);
+    fclose(file);
+
+    // Verify the file was written correctly
+    if (written != strlen(example_config)) {
+        mcp_log_error("Failed to write complete config file: %s (wrote %zu of %zu bytes)",
+                     file_path, written, strlen(example_config));
+        return -1;
+    }
+
+    // Verify the file exists and can be read
+    file = fopen(file_path, "r");
+    if (!file) {
+        mcp_log_error("Failed to verify config file: %s", file_path);
+        return -1;
+    }
     fclose(file);
 
     return 0;
@@ -58,10 +93,37 @@ int main(int argc, char* argv[]) {
     // Initialize logging
     mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG);
 
+    // Initialize thread-local arena for JSON allocation
+    if (mcp_arena_init_current_thread(0) != 0) {
+        mcp_log_error("Failed to initialize thread-local arena");
+        return 1;
+    }
+
     mcp_log_info("KMCP Example");
 
-    // Create example configuration file
-    const char* config_file = "kmcp_example.json";
+    // Create example configuration file with full path
+    char config_file[MAX_PATH];
+
+#ifdef _WIN32
+    if (GetCurrentDirectoryA(MAX_PATH, config_file) == 0) {
+        mcp_log_error("Failed to get current directory");
+        return 1;
+    }
+
+    // Append file name to path
+    strcat(config_file, "\\kmcp_example.json");
+#else
+    if (getcwd(config_file, MAX_PATH) == NULL) {
+        mcp_log_error("Failed to get current directory");
+        return 1;
+    }
+
+    // Append file name to path
+    strcat(config_file, "/kmcp_example.json");
+#endif
+
+    mcp_log_info("Using config file path: %s", config_file);
+
     if (create_example_config(config_file) != 0) {
         mcp_log_error("Failed to create example config file");
         return 1;
@@ -92,7 +154,7 @@ int main(int argc, char* argv[]) {
 
     // Try to call a tool
     char* result = NULL;
-    int ret = kmcp_client_call_tool(client, "echo", "{\"message\":\"Hello, World!\"}", &result);
+    int ret = kmcp_client_call_tool(client, "echo", "{\"text\":\"Hello, World!\"}", &result);
     if (ret == 0 && result) {
         mcp_log_info("Tool call result: %s", result);
         free(result);
@@ -114,6 +176,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Close client
+    mcp_log_info("Closing client...");
     kmcp_client_close(client);
     mcp_log_info("Client closed");
 
