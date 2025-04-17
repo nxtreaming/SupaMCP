@@ -1,3 +1,9 @@
+#ifdef _WIN32
+#   ifndef _CRT_SECURE_NO_WARNINGS
+#       define _CRT_SECURE_NO_WARNINGS
+#   endif
+#endif
+
 #include "kmcp_http_client.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
@@ -227,7 +233,11 @@ int kmcp_http_client_send(
     }
 #endif
 
+#ifdef _WIN32
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+#else
     int sock = socket(AF_INET, SOCK_STREAM, 0);
+#endif
     if (sock < 0) {
         mcp_log_error("Failed to create socket");
         free(full_path);
@@ -255,7 +265,7 @@ int kmcp_http_client_send(
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(client->port);
+    server_addr.sin_port = htons((u_short)client->port);
     memcpy(&server_addr.sin_addr, host->h_addr, host->h_length);
 
     if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {

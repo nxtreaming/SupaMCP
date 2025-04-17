@@ -118,6 +118,17 @@ int kmcp_tool_access_load(kmcp_tool_access_t* access, const char* config_file) {
 }
 
 /**
+ * @brief Helper function to free hash table values
+ */
+static void free_hash_value(const void* key, void* value, void* user_data) {
+    (void)key;       // Unused parameter
+    (void)user_data; // Unused parameter
+    if (value) {
+        free(value);
+    }
+}
+
+/**
  * @brief Destroy tool access control
  */
 void kmcp_tool_access_destroy(kmcp_tool_access_t* access) {
@@ -128,7 +139,7 @@ void kmcp_tool_access_destroy(kmcp_tool_access_t* access) {
     // Free hash table
     if (access->tool_map) {
         // Free values in hash table (integer pointers)
-        mcp_hashtable_foreach(access->tool_map, NULL, (void (*)(const void*, void*, void*))free);
+        mcp_hashtable_foreach(access->tool_map, free_hash_value, NULL);
         mcp_hashtable_destroy(access->tool_map);
     }
 

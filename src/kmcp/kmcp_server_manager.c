@@ -440,6 +440,17 @@ size_t kmcp_server_manager_get_count(kmcp_server_manager_t* manager) {
 }
 
 /**
+ * @brief Helper function to free hash table values
+ */
+static void free_hash_value(const void* key, void* value, void* user_data) {
+    (void)key;       // Unused parameter
+    (void)user_data; // Unused parameter
+    if (value) {
+        free(value);
+    }
+}
+
+/**
  * @brief Destroy the server manager
  */
 void kmcp_server_manager_destroy(kmcp_server_manager_t* manager) {
@@ -499,13 +510,13 @@ void kmcp_server_manager_destroy(kmcp_server_manager_t* manager) {
     // Free hash tables
     if (manager->tool_map) {
         // Free values in hash table (integer pointers)
-        mcp_hashtable_foreach(manager->tool_map, NULL, (void (*)(const void*, void*, void*))free);
+        mcp_hashtable_foreach(manager->tool_map, free_hash_value, NULL);
         mcp_hashtable_destroy(manager->tool_map);
     }
 
     if (manager->resource_map) {
         // Free values in hash table (integer pointers)
-        mcp_hashtable_foreach(manager->resource_map, NULL, (void (*)(const void*, void*, void*))free);
+        mcp_hashtable_foreach(manager->resource_map, free_hash_value, NULL);
         mcp_hashtable_destroy(manager->resource_map);
     }
 
