@@ -211,6 +211,40 @@ add_subdirectory(tests)
 # Add examples subdirectory (optional, if examples exist)
 add_subdirectory(examples)
 
+# --- KMCP Module Setup ---
+# Define KMCP sources
+set(KMCP_SOURCES
+    src/kmcp/kmcp_server_manager.c
+    src/kmcp/kmcp_client.c
+    src/kmcp/kmcp_tool_access.c
+    src/kmcp/kmcp_config_parser.c
+    src/kmcp/kmcp_http_client.c
+)
+
+# Add platform-specific process implementation
+if(WIN32)
+    list(APPEND KMCP_SOURCES src/kmcp/kmcp_process_win.c)
+else()
+    list(APPEND KMCP_SOURCES src/kmcp/kmcp_process_posix.c)
+endif()
+
+# Create KMCP library
+add_library(kmcp STATIC ${KMCP_SOURCES})
+target_link_libraries(kmcp PUBLIC mcp_common)
+
+# Make KMCP headers available
+target_include_directories(kmcp PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/kmcp
+)
+
+# Add KMCP example
+add_executable(kmcp_example examples/kmcp_example.c)
+target_link_libraries(kmcp_example PRIVATE kmcp mcp_common)
+
+# Install KMCP library and headers
+install(TARGETS kmcp DESTINATION lib)
+install(DIRECTORY include/kmcp/ DESTINATION include/kmcp)
+
 # --- Benchmark Setup ---
 # Define benchmark sources
 set(BENCHMARK_SOURCES

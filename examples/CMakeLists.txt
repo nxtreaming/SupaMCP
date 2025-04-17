@@ -206,5 +206,16 @@ else()
     target_link_libraries(advanced_rate_limiter_demo PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# KMCP Example
+add_executable(kmcp_example kmcp_example.c)
+target_include_directories(kmcp_example PRIVATE ../src/kmcp) # Add KMCP include path
+target_link_libraries(kmcp_example PRIVATE mcp_common kmcp)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(kmcp_example PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(kmcp_example PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client kmcp_example DESTINATION bin/examples)
