@@ -237,9 +237,7 @@ target_include_directories(kmcp PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include/kmcp
 )
 
-# Add KMCP example
-add_executable(kmcp_example examples/kmcp_example.c)
-target_link_libraries(kmcp_example PRIVATE kmcp mcp_common)
+# KMCP example is now defined in examples/CMakeLists.txt
 
 # Install KMCP library and headers
 install(TARGETS kmcp DESTINATION lib)
