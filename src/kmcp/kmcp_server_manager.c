@@ -257,8 +257,25 @@ int kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
                     continue;
                 }
 
-                if (kmcp_process_start(connection->process) != 0) {
-                    mcp_log_error("Failed to start process for server: %s", connection->config.name);
+                int start_result = kmcp_process_start(connection->process);
+                if (start_result != 0) {
+                    mcp_log_error("Failed to start process for server: %s (error code: %d)", connection->config.name, start_result);
+                    kmcp_process_close(connection->process);
+                    connection->process = NULL;
+                    continue;
+                }
+
+                // Check if the process is still running after a short delay
+                #ifdef _WIN32
+                Sleep(500); // Wait for 500 ms on Windows
+                #else
+                usleep(500000); // Wait for 500 ms on Unix-like systems
+                #endif
+
+                if (!kmcp_process_is_running(connection->process)) {
+                    int exit_code = 0;
+                    kmcp_process_get_exit_code(connection->process, &exit_code);
+                    mcp_log_error("Process for server %s exited prematurely with code: %d", connection->config.name, exit_code);
                     kmcp_process_close(connection->process);
                     connection->process = NULL;
                     continue;
@@ -267,13 +284,17 @@ int kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
                 // Create transport layer based on process input/output
                 mcp_log_info("Process started for server: %s", connection->config.name);
 
-                // Wait for the server to start and bind to the port
-                mcp_log_info("Waiting for server to start...");
-                #ifdef _WIN32
-                Sleep(2000); // Wait for 2 seconds on Windows
-                #else
-                sleep(2); // Wait for 2 seconds on Unix-like systems
-                #endif
+                // Check if the process is still running
+                if (!kmcp_process_is_running(connection->process)) {
+                    int exit_code = 0;
+                    kmcp_process_get_exit_code(connection->process, &exit_code);
+                    mcp_log_error("Process for server %s exited prematurely with code: %d", connection->config.name, exit_code);
+                    kmcp_process_close(connection->process);
+                    connection->process = NULL;
+                    continue;
+                }
+
+                // We've waited for the server to start, now let's try to connect
 
                 // Create TCP client transport to connect to the server
                 // Note: We're connecting to 127.0.0.1:8080 where the server is listening

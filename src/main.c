@@ -337,14 +337,17 @@ static void cleanup(void) {
 static void signal_handler(int sig) {
     mcp_log_info("Received signal %d, initiating shutdown...", sig);
     // Setting g_server to NULL might be used by the main loop to exit,
+    mcp_log_info("Signal handler called, g_server=%p", g_server);
     // but atexit(cleanup) is the primary cleanup mechanism.
     // A more robust approach might use a dedicated shutdown flag.
     if (g_server) {
+         mcp_log_info("Calling mcp_server_stop");
          mcp_server_stop(g_server); // Attempt graceful stop
     }
     // Let atexit handle the rest, or call cleanup() directly if atexit is unreliable.
     // cleanup(); // Optional direct call
     // exit(0); // Exit might be too abrupt, let main loop exit if possible
+    mcp_log_info("Setting g_server to NULL to signal main loop to exit");
     g_server = NULL; // Signal main loop to exit
 }
 
