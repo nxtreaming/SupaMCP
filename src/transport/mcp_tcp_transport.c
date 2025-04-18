@@ -58,7 +58,7 @@ static int tcp_transport_start(
     data->stop_pipe[1] = -1;
     if (pipe(data->stop_pipe) != 0) {
         mcp_log_error("Stop pipe creation failed: %s", strerror(errno));
-        close_socket(data->listen_socket);
+        mcp_socket_close(data->listen_socket);
         mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
         data->running = false;
         return -1;

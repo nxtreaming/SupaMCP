@@ -44,31 +44,34 @@ static mcp_error_code_t echo_handler(
 
     // Check if this is an echo request
     if (strncmp(uri, "echo://", 7) == 0) {
-        // Extract the message from the URI
-        const char* message = uri + 7;
-
-        // Create a content item for the echo response
+        // Allocate resources for error message
         *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
-        if (*content == NULL) {
-            *error_message = _strdup("Memory allocation failed");
+        if (!*content) {
+            *error_message = strdup("Memory allocation failed");
             return MCP_ERROR_INTERNAL_ERROR;
         }
 
-        // Create a content item with the echo message
-        (*content)[0] = mcp_content_item_create(MCP_CONTENT_TYPE_TEXT, "text/plain", message, strlen(message) + 1);
-        if ((*content)[0] == NULL) {
+        // Create a content item for this URI
+        mcp_content_item_t* item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+        if (!item) {
             free(*content);
             *content = NULL;
-            *error_message = _strdup("Failed to create content item");
+            *error_message = strdup("Failed to create content item");
             return MCP_ERROR_INTERNAL_ERROR;
         }
-
+        
+        // Fill in the content item
+        item->type = MCP_CONTENT_TYPE_TEXT;
+        item->mime_type = strdup("text/plain");
+        item->data = strdup("Hello from WebSocket server!");
+        item->data_size = strlen((char*)item->data);
+        
+        (*content)[0] = item;
         *content_count = 1;
         return MCP_ERROR_NONE;
     }
 
-    // Resource not found
-    *error_message = _strdup("Resource not found");
+    *error_message = strdup("Resource not found");
     return MCP_ERROR_RESOURCE_NOT_FOUND;
 }
 

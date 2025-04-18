@@ -1,6 +1,7 @@
 #include "unity.h"
 #include "mcp_thread_pool.h"
 #include <stdbool.h>
+#include <stdlib.h> // For rand()
 
 #ifdef _WIN32
 #include <windows.h>

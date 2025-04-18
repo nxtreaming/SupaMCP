@@ -20,27 +20,51 @@ if(NOT WIN32)
 endif()
 
 # Use manually installed libwebsockets
-message(STATUS "Using manually installed libwebsockets")
+message(STATUS "Using libwebsockets")
 
-# Set paths to the manually installed libwebsockets
-set(LIBWEBSOCKETS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
-set(LIBWEBSOCKETS_LIBRARY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/libwebsockets)
-
-# Check if the library files exist
-if(WIN32)
-    set(LIBWEBSOCKETS_LIBRARY ${LIBWEBSOCKETS_LIBRARY_DIR}/websockets.lib)
-    if(NOT EXISTS ${LIBWEBSOCKETS_LIBRARY})
-        message(FATAL_ERROR "Could not find libwebsockets library at ${LIBWEBSOCKETS_LIBRARY}")
+# Set paths to libwebsockets
+if(APPLE)
+    # On macOS, try to use Homebrew installed libwebsockets
+    execute_process(
+        COMMAND brew --prefix libwebsockets
+        OUTPUT_VARIABLE BREW_LIBWEBSOCKETS_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    
+    if(BREW_LIBWEBSOCKETS_PREFIX)
+        message(STATUS "Using Homebrew libwebsockets at ${BREW_LIBWEBSOCKETS_PREFIX}")
+        set(LIBWEBSOCKETS_INCLUDE_DIR "${BREW_LIBWEBSOCKETS_PREFIX}/include")
+        set(LIBWEBSOCKETS_LIBRARY "${BREW_LIBWEBSOCKETS_PREFIX}/lib/libwebsockets.dylib")
+    else()
+        # Fallback to manually installed
+        set(LIBWEBSOCKETS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        set(LIBWEBSOCKETS_LIBRARY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/libwebsockets)
+        set(LIBWEBSOCKETS_LIBRARY ${LIBWEBSOCKETS_LIBRARY_DIR}/libwebsockets.a)
     endif()
 else()
-    set(LIBWEBSOCKETS_LIBRARY ${LIBWEBSOCKETS_LIBRARY_DIR}/libwebsockets.a)
-    if(NOT EXISTS ${LIBWEBSOCKETS_LIBRARY})
-        message(FATAL_ERROR "Could not find libwebsockets library at ${LIBWEBSOCKETS_LIBRARY}")
+    # Original path for other platforms
+    set(LIBWEBSOCKETS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    set(LIBWEBSOCKETS_LIBRARY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/libwebsockets)
+    
+    # Check if the library files exist
+    if(WIN32)
+        set(LIBWEBSOCKETS_LIBRARY ${LIBWEBSOCKETS_LIBRARY_DIR}/websockets.lib)
+    else()
+        set(LIBWEBSOCKETS_LIBRARY ${LIBWEBSOCKETS_LIBRARY_DIR}/libwebsockets.a)
     endif()
 endif()
 
+# Check if the library files exist
+if(NOT EXISTS ${LIBWEBSOCKETS_LIBRARY})
+    message(FATAL_ERROR "Could not find libwebsockets library at ${LIBWEBSOCKETS_LIBRARY}")
+endif()
+
 # Create an imported target for libwebsockets
-add_library(websockets STATIC IMPORTED)
+if(APPLE AND BREW_LIBWEBSOCKETS_PREFIX)
+    add_library(websockets SHARED IMPORTED)
+else()
+    add_library(websockets STATIC IMPORTED)
+endif()
 set_target_properties(websockets PROPERTIES
     IMPORTED_LOCATION ${LIBWEBSOCKETS_LIBRARY}
     INTERFACE_INCLUDE_DIRECTORIES "${LIBWEBSOCKETS_INCLUDE_DIR};${CMAKE_CURRENT_SOURCE_DIR}/include"

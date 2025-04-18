@@ -109,7 +109,11 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 #endif
 
         // If connect returned 0 (immediate success) or EINPROGRESS/WSAEWOULDBLOCK (in progress)
-        if (rv == 0 || err == EINPROGRESS || err == WSAEWOULDBLOCK) {
+#ifdef _WIN32
+        if (rv == 0 || err == WSAEWOULDBLOCK) {
+#else
+        if (rv == 0 || err == EINPROGRESS) {
+#endif
             // If connect succeeded immediately (rv == 0), skip waiting
             if (rv != 0) {
                 struct pollfd pfd;
