@@ -30,7 +30,7 @@ if(APPLE)
         OUTPUT_VARIABLE BREW_LIBWEBSOCKETS_PREFIX
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
-    
+
     if(BREW_LIBWEBSOCKETS_PREFIX)
         message(STATUS "Using Homebrew libwebsockets at ${BREW_LIBWEBSOCKETS_PREFIX}")
         set(LIBWEBSOCKETS_INCLUDE_DIR "${BREW_LIBWEBSOCKETS_PREFIX}/include")
@@ -45,7 +45,7 @@ else()
     # Original path for other platforms
     set(LIBWEBSOCKETS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
     set(LIBWEBSOCKETS_LIBRARY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/libwebsockets)
-    
+
     # Check if the library files exist
     if(WIN32)
         set(LIBWEBSOCKETS_LIBRARY ${LIBWEBSOCKETS_LIBRARY_DIR}/websockets.lib)
@@ -243,6 +243,7 @@ set(KMCP_SOURCES
     src/kmcp/kmcp_tool_access.c
     src/kmcp/kmcp_config_parser.c
     src/kmcp/kmcp_http_client.c
+    src/kmcp/kmcp_error.c
 )
 
 # Add platform-specific process implementation

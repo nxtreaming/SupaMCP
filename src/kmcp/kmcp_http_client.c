@@ -5,6 +5,7 @@
 #endif
 
 #include "kmcp_http_client.h"
+#include "kmcp_error.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
 #include <stdlib.h>
@@ -43,11 +44,11 @@ struct kmcp_http_client {
  * @param path Pointer to path, memory allocated by function, caller responsible for freeing
  * @param port Pointer to port
  * @param use_ssl Pointer to whether to use SSL
- * @return int Returns 0 on success, non-zero error code on failure
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-static int parse_url(const char* url, char** host, char** path, int* port, bool* use_ssl) {
+static kmcp_error_t parse_url(const char* url, char** host, char** path, int* port, bool* use_ssl) {
     if (!url || !host || !path || !port || !use_ssl) {
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     // Initialize output parameters
@@ -67,7 +68,7 @@ static int parse_url(const char* url, char** host, char** path, int* port, bool*
         *port = 443;
     } else {
         // Not a valid URL
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     // Find separator between host name and path
@@ -81,7 +82,7 @@ static int parse_url(const char* url, char** host, char** path, int* port, bool*
         size_t host_len = path_start - url;
         *host = (char*)malloc(host_len + 1);
         if (!*host) {
-            return -1;
+            return KMCP_ERROR_MEMORY_ALLOCATION;
         }
         strncpy(*host, url, host_len);
         (*host)[host_len] = '\0';
@@ -97,7 +98,7 @@ static int parse_url(const char* url, char** host, char** path, int* port, bool*
         *port = atoi(port_start + 1);
     }
 
-    return 0;
+    return KMCP_SUCCESS;
 }
 
 /**
@@ -139,7 +140,7 @@ kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* ap
  * Note: This is a simple HTTP client implementation that does not support SSL, redirects, compression, or other advanced features.
  * In a real project, it is recommended to use a mature HTTP client library such as libcurl.
  */
-int kmcp_http_client_send(
+kmcp_error_t kmcp_http_client_send(
     kmcp_http_client_t* client,
     const char* method,
     const char* path,
@@ -150,7 +151,7 @@ int kmcp_http_client_send(
 ) {
     if (!client || !method || !path || !response || !status) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     // Initialize output parameters
@@ -169,7 +170,7 @@ int kmcp_http_client_send(
         full_path = (char*)malloc(base_path_len + path_len + 2); // +2 for '/' and '\0'
         if (!full_path) {
             mcp_log_error("Failed to allocate memory for full path");
-            return -1;
+            return KMCP_ERROR_MEMORY_ALLOCATION;
         }
 
         strcpy(full_path, client->path);
@@ -229,7 +230,7 @@ int kmcp_http_client_send(
     if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
         mcp_log_error("Failed to initialize Winsock");
         free(full_path);
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 #endif
 
@@ -244,7 +245,7 @@ int kmcp_http_client_send(
 #ifdef _WIN32
         WSACleanup();
 #endif
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // Resolve host name
@@ -258,7 +259,7 @@ int kmcp_http_client_send(
 #else
         close(sock);
 #endif
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // Connect to server
@@ -277,7 +278,7 @@ int kmcp_http_client_send(
 #else
         close(sock);
 #endif
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // Send request
@@ -290,7 +291,7 @@ int kmcp_http_client_send(
 #else
         close(sock);
 #endif
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // Receive response
@@ -319,7 +320,7 @@ int kmcp_http_client_send(
     if (total_received == 0) {
         mcp_log_error("No response received");
         free(full_path);
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // Parse status code
@@ -328,7 +329,7 @@ int kmcp_http_client_send(
     if (!status_code_str) {
         mcp_log_error("Invalid response format");
         free(full_path);
-        return -1;
+        return KMCP_ERROR_INTERNAL;
     }
 
     *status = atoi(status_code_str + 1);
@@ -338,7 +339,7 @@ int kmcp_http_client_send(
     if (!body_start) {
         mcp_log_error("Invalid response format");
         free(full_path);
-        return -1;
+        return KMCP_ERROR_INTERNAL;
     }
 
     body_start += 4; // Skip \r\n\r\n
@@ -348,11 +349,131 @@ int kmcp_http_client_send(
     if (!*response) {
         mcp_log_error("Failed to allocate memory for response");
         free(full_path);
-        return -1;
+        return KMCP_ERROR_MEMORY_ALLOCATION;
     }
 
     free(full_path);
-    return 0;
+    return KMCP_SUCCESS;
+}
+
+/**
+ * @brief Call a tool
+ */
+kmcp_error_t kmcp_http_client_call_tool(
+    kmcp_http_client_t* client,
+    const char* tool_name,
+    const char* params_json,
+    char** result_json
+) {
+    if (!client || !tool_name || !params_json || !result_json) {
+        mcp_log_error("Invalid parameters");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Initialize output parameter
+    *result_json = NULL;
+
+    // Build path
+    char path[256] = {0};
+    snprintf(path, sizeof(path), "tools/%s", tool_name);
+
+    // Build request body
+    const char* content_type = "application/json";
+
+    // Send request
+    int status = 0;
+    char* response = NULL;
+    kmcp_error_t result = kmcp_http_client_send(
+        client,
+        "POST",
+        path,
+        content_type,
+        params_json,
+        &response,
+        &status
+    );
+
+    if (result != KMCP_SUCCESS) {
+        mcp_log_error("Failed to call tool: %s", tool_name);
+        return result;
+    }
+
+    // Check status code
+    if (status != 200) {
+        mcp_log_error("Tool call failed with status code: %d", status);
+        free(response);
+        return KMCP_ERROR_INTERNAL;
+    }
+
+    // Return response
+    *result_json = response;
+    return KMCP_SUCCESS;
+}
+
+/**
+ * @brief Get a resource
+ */
+kmcp_error_t kmcp_http_client_get_resource(
+    kmcp_http_client_t* client,
+    const char* resource_uri,
+    char** content,
+    char** content_type
+) {
+    if (!client || !resource_uri || !content || !content_type) {
+        mcp_log_error("Invalid parameters");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Initialize output parameters
+    *content = NULL;
+    *content_type = NULL;
+
+    // Build path
+    char path[256] = {0};
+    snprintf(path, sizeof(path), "resources/%s", resource_uri);
+
+    // Send request
+    int status = 0;
+    char* response = NULL;
+    kmcp_error_t result = kmcp_http_client_send(
+        client,
+        "GET",
+        path,
+        NULL,
+        NULL,
+        &response,
+        &status
+    );
+
+    if (result != KMCP_SUCCESS) {
+        mcp_log_error("Failed to get resource: %s", resource_uri);
+        return result;
+    }
+
+    // Check status code
+    if (status == 404) {
+        mcp_log_error("Resource not found: %s", resource_uri);
+        free(response);
+        return KMCP_ERROR_RESOURCE_NOT_FOUND;
+    } else if (status != 200) {
+        mcp_log_error("Resource request failed with status code: %d", status);
+        free(response);
+        return KMCP_ERROR_INTERNAL;
+    }
+
+    // Set content
+    *content = response;
+
+    // Set content type (default to text/plain)
+    *content_type = mcp_strdup("text/plain");
+    if (!*content_type) {
+        mcp_log_error("Failed to allocate memory for content type");
+        free(response);
+        *content = NULL;
+        return KMCP_ERROR_MEMORY_ALLOCATION;
+    }
+
+    return KMCP_SUCCESS;
 }
 
 /**

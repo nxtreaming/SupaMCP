@@ -1,4 +1,5 @@
 #include "kmcp_config_parser.h"
+#include "kmcp_error.h"
 #include "mcp_log.h"
 #include "mcp_json.h"
 #include "mcp_json_utils.h"
@@ -216,14 +217,14 @@ kmcp_config_parser_t* kmcp_config_parser_create(const char* file_path) {
 /**
  * @brief Parse server configurations
  */
-int kmcp_config_parser_get_servers(
+kmcp_error_t kmcp_config_parser_get_servers(
     kmcp_config_parser_t* parser,
     kmcp_server_config_t*** servers,
     size_t* server_count
 ) {
     if (!parser || !servers || !server_count) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     // Initialize output parameters
@@ -234,7 +235,7 @@ int kmcp_config_parser_get_servers(
     mcp_json_t* mcp_servers = mcp_json_object_get_property(parser->json, "mcpServers");
     if (!mcp_servers) {
         mcp_log_error("mcpServers not found in config file");
-        return -1;
+        return KMCP_ERROR_PARSE_FAILED;
     }
 
     // Get all keys of mcpServers object
@@ -242,7 +243,7 @@ int kmcp_config_parser_get_servers(
     size_t key_count = 0;
     if (mcp_json_object_get_property_names(mcp_servers, &keys, &key_count) != 0 || key_count == 0) {
         mcp_log_error("Failed to get server keys or no servers defined");
-        return -1;
+        return KMCP_ERROR_PARSE_FAILED;
     }
 
     // Allocate server configuration array
@@ -254,7 +255,7 @@ int kmcp_config_parser_get_servers(
             free(keys[i]);
         }
         free(keys);
-        return -1;
+        return KMCP_ERROR_MEMORY_ALLOCATION;
     }
 
     // Parse each server configuration
@@ -360,19 +361,19 @@ int kmcp_config_parser_get_servers(
     // Update server count
     *server_count = valid_count;
 
-    return 0;
+    return KMCP_SUCCESS;
 }
 
 /**
  * @brief Parse client configuration
  */
-int kmcp_config_parser_get_client(
+kmcp_error_t kmcp_config_parser_get_client(
     kmcp_config_parser_t* parser,
     kmcp_client_config_t* config
 ) {
     if (!parser || !config) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     // Initialize configuration
@@ -428,19 +429,19 @@ int kmcp_config_parser_get_client(
         }
     }
 
-    return 0;
+    return KMCP_SUCCESS;
 }
 
 /**
  * @brief Parse tool access control configuration
  */
-int kmcp_config_parser_get_access(
+kmcp_error_t kmcp_config_parser_get_access(
     kmcp_config_parser_t* parser,
     kmcp_tool_access_t* access
 ) {
     if (!parser || !access) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     // Get toolAccessControl object
@@ -484,7 +485,7 @@ int kmcp_config_parser_get_access(
         }
     }
 
-    return 0;
+    return KMCP_SUCCESS;
 }
 
 /**

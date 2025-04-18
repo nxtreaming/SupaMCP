@@ -7,6 +7,7 @@
 #define KMCP_CONFIG_PARSER_H
 
 #include <stddef.h>
+#include "kmcp_error.h"
 #include "kmcp_server_manager.h"
 #include "kmcp_client.h"
 #include "kmcp_tool_access.h"
@@ -23,20 +24,34 @@ typedef struct kmcp_config_parser kmcp_config_parser_t;
 /**
  * @brief Create a configuration parser
  *
- * @param file_path Configuration file path
+ * Creates a configuration parser for parsing a JSON configuration file.
+ * The parser can be used to extract client, server, and tool access control configurations.
+ *
+ * @param file_path Configuration file path (must not be NULL)
  * @return kmcp_config_parser_t* Returns configuration parser pointer on success, NULL on failure
+ *
+ * @note The caller is responsible for freeing the parser using kmcp_config_parser_close()
+ * @see kmcp_config_parser_close()
  */
 kmcp_config_parser_t* kmcp_config_parser_create(const char* file_path);
 
 /**
  * @brief Parse server configurations
  *
- * @param parser Configuration parser
+ * Parses server configurations from the configuration file.
+ * The configuration file should contain a "servers" array with server configurations.
+ *
+ * @param parser Configuration parser (must not be NULL)
  * @param servers Pointer to server configuration array, memory allocated by function, caller responsible for freeing
- * @param server_count Pointer to server count
- * @return int Returns 0 on success, non-zero error code on failure
+ * @param server_count Pointer to server count (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
+ *         - KMCP_ERROR_INVALID_PARAMETER if any parameter is NULL
+ *         - KMCP_ERROR_PARSE_FAILED if the configuration file cannot be parsed
+ *         - Other error codes for specific failures
+ *
+ * @note The caller is responsible for freeing the server configurations
  */
-int kmcp_config_parser_get_servers(
+kmcp_error_t kmcp_config_parser_get_servers(
     kmcp_config_parser_t* parser,
     kmcp_server_config_t*** servers,
     size_t* server_count
@@ -45,11 +60,17 @@ int kmcp_config_parser_get_servers(
 /**
  * @brief Parse client configuration
  *
- * @param parser Configuration parser
- * @param config Client configuration
- * @return int Returns 0 on success, non-zero error code on failure
+ * Parses client configuration from the configuration file.
+ * The configuration file should contain a "client" object with client settings.
+ *
+ * @param parser Configuration parser (must not be NULL)
+ * @param config Client configuration (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
+ *         - KMCP_ERROR_INVALID_PARAMETER if any parameter is NULL
+ *         - KMCP_ERROR_PARSE_FAILED if the configuration file cannot be parsed
+ *         - Other error codes for specific failures
  */
-int kmcp_config_parser_get_client(
+kmcp_error_t kmcp_config_parser_get_client(
     kmcp_config_parser_t* parser,
     kmcp_client_config_t* config
 );
@@ -57,11 +78,18 @@ int kmcp_config_parser_get_client(
 /**
  * @brief Parse tool access control configuration
  *
- * @param parser Configuration parser
- * @param access Tool access control
- * @return int Returns 0 on success, non-zero error code on failure
+ * Parses tool access control configuration from the configuration file.
+ * The configuration file should contain a "toolAccessControl" object
+ * with "allowedTools" and "disallowedTools" arrays.
+ *
+ * @param parser Configuration parser (must not be NULL)
+ * @param access Tool access control (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
+ *         - KMCP_ERROR_INVALID_PARAMETER if any parameter is NULL
+ *         - KMCP_ERROR_PARSE_FAILED if the configuration file cannot be parsed
+ *         - Other error codes for specific failures
  */
-int kmcp_config_parser_get_access(
+kmcp_error_t kmcp_config_parser_get_access(
     kmcp_config_parser_t* parser,
     kmcp_tool_access_t* access
 );
@@ -69,7 +97,11 @@ int kmcp_config_parser_get_access(
 /**
  * @brief Close the configuration parser
  *
- * @param parser Configuration parser
+ * Closes the configuration parser and frees all associated resources.
+ *
+ * @param parser Configuration parser (can be NULL, in which case this function does nothing)
+ *
+ * @note After calling this function, the parser pointer is no longer valid and should not be used.
  */
 void kmcp_config_parser_close(kmcp_config_parser_t* parser);
 

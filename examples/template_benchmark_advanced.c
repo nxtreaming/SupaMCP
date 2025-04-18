@@ -11,6 +11,7 @@
 #include <mcp_thread_local.h>
 #include <mcp_memory_pool.h>
 #include <mcp_memory_constants.h>
+#include <mcp_string_utils.h>
 
 // Number of iterations for each benchmark
 #define ITERATIONS 100000
@@ -243,21 +244,21 @@ void get_template_and_uri(template_complexity_t complexity, char** template_uri,
 
     switch (complexity) {
         case TEMPLATE_SIMPLE:
-            *template_uri = strdup("example://{name}");
-            *uri = strdup("example://john");
+            *template_uri = mcp_strdup("example://{name}");
+            *uri = mcp_strdup("example://john");
             mcp_json_object_set_property(*params, "name", mcp_json_string_create("john"));
             break;
 
         case TEMPLATE_MEDIUM:
-            *template_uri = strdup("example://{user}/posts/{post_id}");
-            *uri = strdup("example://john/posts/42");
+            *template_uri = mcp_strdup("example://{user}/posts/{post_id}");
+            *uri = mcp_strdup("example://john/posts/42");
             mcp_json_object_set_property(*params, "user", mcp_json_string_create("john"));
             mcp_json_object_set_property(*params, "post_id", mcp_json_string_create("42"));
             break;
 
         case TEMPLATE_COMPLEX:
-            *template_uri = strdup("example://{user}/posts/{post_id:int}/comments/{comment_id:int}/{reply_id:int?}");
-            *uri = strdup("example://john/posts/42/comments/123/456");
+            *template_uri = mcp_strdup("example://{user}/posts/{post_id:int}/comments/{comment_id:int}/{reply_id:int?}");
+            *uri = mcp_strdup("example://john/posts/42/comments/123/456");
             mcp_json_object_set_property(*params, "user", mcp_json_string_create("john"));
             mcp_json_object_set_property(*params, "post_id", mcp_json_string_create("42"));
             mcp_json_object_set_property(*params, "comment_id", mcp_json_string_create("123"));
@@ -265,8 +266,8 @@ void get_template_and_uri(template_complexity_t complexity, char** template_uri,
             break;
 
         case TEMPLATE_VERY_COMPLEX:
-            *template_uri = strdup("example://{user}/posts/{post_id:int}/comments/{comment_id:int}/{reply_id:int?}/{sort:pattern:date*}/{filter:pattern:all*}/{page:int=1}/{limit:int=10}");
-            *uri = strdup("example://john/posts/42/comments/123/456/date-desc/all-active/2/20");
+            *template_uri = mcp_strdup("example://{user}/posts/{post_id:int}/comments/{comment_id:int}/{reply_id:int?}/{sort:pattern:date*}/{filter:pattern:all*}/{page:int=1}/{limit:int=10}");
+            *uri = mcp_strdup("example://john/posts/42/comments/123/456/date-desc/all-active/2/20");
             mcp_json_object_set_property(*params, "user", mcp_json_string_create("john"));
             mcp_json_object_set_property(*params, "post_id", mcp_json_string_create("42"));
             mcp_json_object_set_property(*params, "comment_id", mcp_json_string_create("123"));

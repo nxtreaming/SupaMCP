@@ -1,5 +1,6 @@
 #include "kmcp_tool_access.h"
 #include "kmcp_config_parser.h"
+#include "kmcp_error.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
 #include "mcp_hashtable.h"
@@ -49,17 +50,17 @@ kmcp_tool_access_t* kmcp_tool_access_create(bool default_allow) {
 /**
  * @brief Add a tool to the access control list
  */
-int kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_name, bool allow) {
+kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_name, bool allow) {
     if (!access || !tool_name) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     // Create value (1 means allow, 0 means deny)
     int* value = (int*)malloc(sizeof(int));
     if (!value) {
         mcp_log_error("Failed to allocate memory for tool access value");
-        return -1;
+        return KMCP_ERROR_MEMORY_ALLOCATION;
     }
 
     *value = allow ? 1 : 0;
@@ -70,10 +71,10 @@ int kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_name, bool
     if (mcp_hashtable_put(access->tool_map, tool_name, value) != 0) {
         mcp_log_error("Failed to add tool to access control: %s", tool_name);
         free(value);
-        return -1;
+        return KMCP_ERROR_INTERNAL;
     }
 
-    return 0;
+    return KMCP_SUCCESS;
 }
 
 /**
@@ -99,22 +100,22 @@ bool kmcp_tool_access_check(kmcp_tool_access_t* access, const char* tool_name) {
 /**
  * @brief Load access control list from a configuration file
  */
-int kmcp_tool_access_load(kmcp_tool_access_t* access, const char* config_file) {
+kmcp_error_t kmcp_tool_access_load(kmcp_tool_access_t* access, const char* config_file) {
     if (!access || !config_file) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     kmcp_config_parser_t* parser = kmcp_config_parser_create(config_file);
     if (!parser) {
         mcp_log_error("Failed to create config parser");
-        return -1;
+        return KMCP_ERROR_FILE_NOT_FOUND;
     }
 
     int result = kmcp_config_parser_get_access(parser, access);
     kmcp_config_parser_close(parser);
 
-    return result;
+    return result == 0 ? KMCP_SUCCESS : KMCP_ERROR_PARSE_FAILED;
 }
 
 /**

@@ -8,6 +8,7 @@
 #include "kmcp_config_parser.h"
 #include "kmcp_tool_access.h"
 #include "kmcp_server_connection.h"
+#include "kmcp_error.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
 #include "mcp_client.h"
@@ -158,7 +159,7 @@ kmcp_client_t* kmcp_client_create_from_file(const char* config_file) {
 /**
  * @brief Call a tool
  */
-int kmcp_client_call_tool(
+kmcp_error_t kmcp_client_call_tool(
     kmcp_client_t* client,
     const char* tool_name,
     const char* params_json,
@@ -166,33 +167,33 @@ int kmcp_client_call_tool(
 ) {
     if (!client || !tool_name || !params_json || !result_json) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     // Check tool access permission
     if (!kmcp_tool_access_check(client->tool_access, tool_name)) {
         mcp_log_error("Tool access denied: %s", tool_name);
-        return -1;
+        return KMCP_ERROR_PERMISSION_DENIED;
     }
 
     // Select appropriate server
     int server_index = kmcp_server_manager_select_tool(client->manager, tool_name);
     if (server_index < 0) {
         mcp_log_error("No server found for tool: %s", tool_name);
-        return -1;
+        return KMCP_ERROR_TOOL_NOT_FOUND;
     }
 
     // Get server connection
     kmcp_server_connection_t* connection = kmcp_server_manager_get_connection(client->manager, server_index);
     if (!connection) {
         mcp_log_error("Failed to get server connection");
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // Check connection status
     if (!connection->is_connected || !connection->client) {
         mcp_log_error("Server is not connected or client is not available");
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // Call the tool
@@ -208,7 +209,7 @@ int kmcp_client_call_tool(
     // Check for errors
     if (result != 0) {
         mcp_log_error("Failed to call tool '%s': error code %d", tool_name, result);
-        return result;
+        return KMCP_ERROR_INTERNAL;
     }
 
     if (is_error) {
@@ -245,20 +246,18 @@ int kmcp_client_call_tool(
         }
         free(content);
 
-        result = 0;
+        return KMCP_SUCCESS;
     } else {
         // No content returned
         *result_json = mcp_strdup("{\"result\": \"success\", \"count\": 0}");
-        result = 0;
+        return KMCP_SUCCESS;
     }
-
-    return result;
 }
 
 /**
  * @brief Get a resource
  */
-int kmcp_client_get_resource(
+kmcp_error_t kmcp_client_get_resource(
     kmcp_client_t* client,
     const char* resource_uri,
     char** content,
@@ -266,27 +265,27 @@ int kmcp_client_get_resource(
 ) {
     if (!client || !resource_uri || !content || !content_type) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     // Select appropriate server
     int server_index = kmcp_server_manager_select_resource(client->manager, resource_uri);
     if (server_index < 0) {
         mcp_log_error("No server found for resource: %s", resource_uri);
-        return -1;
+        return KMCP_ERROR_RESOURCE_NOT_FOUND;
     }
 
     // Get server connection
     kmcp_server_connection_t* connection = kmcp_server_manager_get_connection(client->manager, server_index);
     if (!connection) {
         mcp_log_error("Failed to get server connection");
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // Check connection status
     if (!connection->is_connected || !connection->client) {
         mcp_log_error("Server is not connected or client is not available");
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // Get the resource
@@ -301,7 +300,7 @@ int kmcp_client_get_resource(
     // Check for errors
     if (result != 0) {
         mcp_log_error("Failed to get resource '%s': error code %d", resource_uri, result);
-        return result;
+        return KMCP_ERROR_INTERNAL;
     }
 
     // If successful, extract the content and content type
@@ -334,16 +333,14 @@ int kmcp_client_get_resource(
         }
         free(content_items);
 
-        result = 0;
+        return KMCP_SUCCESS;
     } else {
         // No content returned
         mcp_log_warn("No content returned for resource '%s'", resource_uri);
         *content = mcp_strdup("");
         *content_type = mcp_strdup("application/octet-stream");
-        result = 0;
+        return KMCP_SUCCESS;
     }
-
-    return result;
 }
 
 /**

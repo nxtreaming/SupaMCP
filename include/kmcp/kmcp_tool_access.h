@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include "kmcp_error.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,12 +30,17 @@ kmcp_tool_access_t* kmcp_tool_access_create(bool default_allow);
 /**
  * @brief Add a tool to the access control list
  *
- * @param access Tool access control
- * @param tool_name Tool name
+ * Adds a tool to the access control list with the specified permission.
+ * If the tool already exists in the list, its permission will be updated.
+ *
+ * @param access Tool access control (must not be NULL)
+ * @param tool_name Tool name (must not be NULL)
  * @param allow Whether to allow, true means allow, false means deny
- * @return int Returns 0 on success, non-zero error code on failure
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
+ *         - KMCP_ERROR_INVALID_PARAMETER if any parameter is NULL
+ *         - KMCP_ERROR_MEMORY_ALLOCATION if memory allocation fails
  */
-int kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_name, bool allow);
+kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_name, bool allow);
 
 /**
  * @brief Check if a tool is allowed to access
@@ -48,11 +54,19 @@ bool kmcp_tool_access_check(kmcp_tool_access_t* access, const char* tool_name);
 /**
  * @brief Load access control list from a configuration file
  *
- * @param access Tool access control
- * @param config_file Configuration file path
- * @return int Returns 0 on success, non-zero error code on failure
+ * Loads tool access control settings from a JSON configuration file.
+ * The configuration file should contain a "toolAccessControl" object
+ * with "allowedTools" and "disallowedTools" arrays.
+ *
+ * @param access Tool access control (must not be NULL)
+ * @param config_file Configuration file path (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
+ *         - KMCP_ERROR_INVALID_PARAMETER if any parameter is NULL
+ *         - KMCP_ERROR_FILE_NOT_FOUND if the configuration file is not found
+ *         - KMCP_ERROR_PARSE_FAILED if the configuration file cannot be parsed
+ *         - Other error codes for specific failures
  */
-int kmcp_tool_access_load(kmcp_tool_access_t* access, const char* config_file);
+kmcp_error_t kmcp_tool_access_load(kmcp_tool_access_t* access, const char* config_file);
 
 /**
  * @brief Destroy tool access control

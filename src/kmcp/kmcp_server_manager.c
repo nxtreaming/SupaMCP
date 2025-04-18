@@ -2,6 +2,7 @@
 #include "kmcp_server_connection.h"
 #include "kmcp_config_parser.h"
 #include "kmcp_process.h"
+#include "kmcp_error.h"
 #include "mcp_log.h"
 #include "mcp_hashtable.h"
 #include "mcp_sync.h"
@@ -132,10 +133,10 @@ static void kmcp_server_config_free(kmcp_server_config_t* config) {
 /**
  * @brief Load server configurations from a config file
  */
-int kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_file) {
+kmcp_error_t kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_file) {
     if (!manager || !config_file) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     mcp_log_info("Loading server configurations from file: %s", config_file);
@@ -143,7 +144,7 @@ int kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_
     kmcp_config_parser_t* parser = kmcp_config_parser_create(config_file);
     if (!parser) {
         mcp_log_error("Failed to create config parser");
-        return -1;
+        return KMCP_ERROR_FILE_NOT_FOUND;
     }
 
     kmcp_server_config_t** servers = NULL;
@@ -152,7 +153,7 @@ int kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_
     if (result != 0) {
         mcp_log_error("Failed to parse server configurations");
         kmcp_config_parser_close(parser);
-        return -1;
+        return KMCP_ERROR_PARSE_FAILED;
     }
 
     mcp_log_info("Found %zu server configurations", server_count);
@@ -184,16 +185,16 @@ int kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_
     kmcp_config_parser_close(parser);
 
     mcp_log_info("Successfully added %d out of %zu server configurations", success_count, server_count);
-    return success_count > 0 ? 0 : -1;
+    return success_count > 0 ? KMCP_SUCCESS : KMCP_ERROR_SERVER_NOT_FOUND;
 }
 
 /**
  * @brief Add a server
  */
-int kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server_config_t* config) {
+kmcp_error_t kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server_config_t* config) {
     if (!manager || !config) {
         mcp_log_error("Invalid parameters");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     mcp_mutex_lock(manager->mutex);
@@ -209,7 +210,7 @@ int kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server_config_t
         if (!new_servers) {
             mcp_log_error("Failed to reallocate server array");
             mcp_mutex_unlock(manager->mutex);
-            return -1;
+            return KMCP_ERROR_MEMORY_ALLOCATION;
         }
 
         manager->servers = new_servers;
@@ -221,7 +222,7 @@ int kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server_config_t
     if (!connection) {
         mcp_log_error("Failed to allocate memory for server connection");
         mcp_mutex_unlock(manager->mutex);
-        return -1;
+        return KMCP_ERROR_MEMORY_ALLOCATION;
     }
 
     // Initialize connection
@@ -260,16 +261,16 @@ int kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server_config_t
     manager->server_count++;
 
     mcp_mutex_unlock(manager->mutex);
-    return 0;
+    return KMCP_SUCCESS;
 }
 
 /**
  * @brief Connect to all servers
  */
-int kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
+kmcp_error_t kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
     if (!manager) {
         mcp_log_error("Invalid parameter");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     mcp_log_info("Connecting to all servers");
@@ -483,20 +484,20 @@ int kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
     // If no servers were successfully connected, return error
     if (success_count == 0 && manager->server_count > 0) {
         mcp_log_error("Failed to connect to any server");
-        return -1;
+        return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     mcp_log_info("Successfully connected to %d out of %zu servers", success_count, manager->server_count);
-    return 0;
+    return KMCP_SUCCESS;
 }
 
 /**
  * @brief Disconnect from all servers
  */
-int kmcp_server_manager_disconnect(kmcp_server_manager_t* manager) {
+kmcp_error_t kmcp_server_manager_disconnect(kmcp_server_manager_t* manager) {
     if (!manager) {
         mcp_log_error("Invalid parameter");
-        return -1;
+        return KMCP_ERROR_INVALID_PARAMETER;
     }
 
     mcp_log_info("Disconnecting from all servers");
@@ -549,7 +550,7 @@ int kmcp_server_manager_disconnect(kmcp_server_manager_t* manager) {
 
     mcp_mutex_unlock(manager->mutex);
     mcp_log_info("Disconnected from %d servers", disconnect_count);
-    return 0;
+    return KMCP_SUCCESS;
 }
 
 /**
