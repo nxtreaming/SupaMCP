@@ -9,26 +9,112 @@
 
 // Helper functions for JSON operations
 
-// Get a string from a JSON object property
-static int get_string_from_property(const mcp_json_t* json, const char* name, const char** result) {
+/**
+ * @brief Get a string from a JSON object property
+ *
+ * @param json The JSON object
+ * @param name The property name
+ * @param result Pointer to receive the string value
+ * @param required Whether the property is required
+ * @return int 0 on success, -1 on failure
+ */
+static int get_string_from_property(const mcp_json_t* json, const char* name, const char** result, bool required) {
     if (!json || !name || !result) return -1;
     *result = NULL;
 
     mcp_json_t* value = mcp_json_object_get_property(json, name);
-    if (!value || !mcp_json_is_string(value)) return -1;
+    if (!value) {
+        if (required) {
+            mcp_log_error("Required property '%s' not found", name);
+            return -1;
+        }
+        return 0; // Not found but not required
+    }
+
+    if (!mcp_json_is_string(value)) {
+        mcp_log_error("Property '%s' is not a string", name);
+        return -1;
+    }
 
     return mcp_json_get_string(value, result);
 }
 
-// Get a string from a JSON array item
+/**
+ * @brief Get a string from a JSON array item
+ *
+ * @param json The JSON array
+ * @param index The array index
+ * @param result Pointer to receive the string value
+ * @return int 0 on success, -1 on failure
+ */
 static int get_string_from_array_item(const mcp_json_t* json, int index, const char** result) {
     if (!json || index < 0 || !result) return -1;
     *result = NULL;
 
     mcp_json_t* item = mcp_json_array_get_item(json, index);
-    if (!item || !mcp_json_is_string(item)) return -1;
+    if (!item) {
+        mcp_log_error("Array item at index %d not found", index);
+        return -1;
+    }
+
+    if (!mcp_json_is_string(item)) {
+        mcp_log_error("Array item at index %d is not a string", index);
+        return -1;
+    }
 
     return mcp_json_get_string(item, result);
+}
+
+/**
+ * @brief Get a boolean from a JSON object property
+ *
+ * @param json The JSON object
+ * @param name The property name
+ * @param result Pointer to receive the boolean value
+ * @param default_value Default value to use if property is not found
+ * @return int 0 on success, -1 on failure
+ */
+static int get_boolean_from_property(const mcp_json_t* json, const char* name, bool* result, bool default_value) {
+    if (!json || !name || !result) return -1;
+    *result = default_value;
+
+    mcp_json_t* value = mcp_json_object_get_property(json, name);
+    if (!value) {
+        return 0; // Use default value
+    }
+
+    if (!mcp_json_is_boolean(value)) {
+        mcp_log_error("Property '%s' is not a boolean", name);
+        return -1;
+    }
+
+    return mcp_json_get_boolean(value, result);
+}
+
+/**
+ * @brief Get a number from a JSON object property
+ *
+ * @param json The JSON object
+ * @param name The property name
+ * @param result Pointer to receive the number value
+ * @param default_value Default value to use if property is not found
+ * @return int 0 on success, -1 on failure
+ */
+static int get_number_from_property(const mcp_json_t* json, const char* name, double* result, double default_value) {
+    if (!json || !name || !result) return -1;
+    *result = default_value;
+
+    mcp_json_t* value = mcp_json_object_get_property(json, name);
+    if (!value) {
+        return 0; // Use default value
+    }
+
+    if (!mcp_json_is_number(value)) {
+        mcp_log_error("Property '%s' is not a number", name);
+        return -1;
+    }
+
+    return mcp_json_get_number(value, result);
 }
 
 /**
@@ -194,16 +280,16 @@ int kmcp_config_parser_get_servers(
 
         // Check if it's an HTTP server
         const char* url = NULL;
-        get_string_from_property(server_json, "url", &url);
-        if (url) {
+        if (get_string_from_property(server_json, "url", &url, false) == 0 && url) {
             config->url = mcp_strdup(url);
             config->is_http = true;
+            mcp_log_info("Server '%s' configured as HTTP server with URL: %s", server_name, url);
         } else {
             // Local process server
             const char* command = NULL;
-            get_string_from_property(server_json, "command", &command);
-            if (command) {
+            if (get_string_from_property(server_json, "command", &command, true) == 0 && command) {
                 config->command = mcp_strdup(command);
+                mcp_log_info("Server '%s' configured as local process with command: %s", server_name, command);
 
                 // Parse arguments array
                 mcp_json_t* args_json = mcp_json_object_get_property(server_json, "args");
@@ -216,6 +302,7 @@ int kmcp_config_parser_get_servers(
                             for (size_t j = 0; j < args_count; j++) {
                                 const char* arg = NULL;
                                 if (get_string_from_array_item(args_json, (int)j, &arg) == 0 && arg) {
+                                    mcp_log_debug("Server '%s' arg[%zu]: %s", server_name, j, arg);
                                     config->args[config->args_count] = mcp_strdup(arg);
                                     config->args_count++;
                                 }
@@ -236,7 +323,7 @@ int kmcp_config_parser_get_servers(
                             for (size_t j = 0; j < env_key_count; j++) {
                                 const char* key = env_keys[j];
                                 const char* value = NULL;
-                                if (key && get_string_from_property(env_json, key, &value) == 0 && value) {
+                                if (key && get_string_from_property(env_json, key, &value, false) == 0 && value) {
                                     // Format: KEY=VALUE
                                     size_t env_len = strlen(key) + strlen(value) + 2; // +2 for '=' and '\0'
                                     char* env_var = (char*)malloc(env_len);
@@ -304,35 +391,40 @@ int kmcp_config_parser_get_client(
 
     // Parse client name
     const char* name = NULL;
-    if (get_string_from_property(client_config, "clientName", &name) == 0 && name) {
+    if (get_string_from_property(client_config, "clientName", &name, false) == 0 && name) {
         config->name = mcp_strdup(name);
+        mcp_log_info("Client name: %s", name);
     } else {
         config->name = mcp_strdup("kmcp-client");
+        mcp_log_info("Using default client name: %s", config->name);
     }
 
     // Parse client version
     const char* version = NULL;
-    if (get_string_from_property(client_config, "clientVersion", &version) == 0 && version) {
+    if (get_string_from_property(client_config, "clientVersion", &version, false) == 0 && version) {
         config->version = mcp_strdup(version);
+        mcp_log_info("Client version: %s", version);
     } else {
         config->version = mcp_strdup("1.0.0");
+        mcp_log_info("Using default client version: %s", config->version);
     }
 
     // Parse whether to use server manager
-    mcp_json_t* use_manager_json = mcp_json_object_get_property(client_config, "useServerManager");
-    if (use_manager_json && mcp_json_is_boolean(use_manager_json)) {
-        bool value = false;
-        if (mcp_json_get_boolean(use_manager_json, &value) == 0) {
-            config->use_manager = value;
-        }
+    bool use_manager = config->use_manager;
+    if (get_boolean_from_property(client_config, "useServerManager", &use_manager, true) == 0) {
+        config->use_manager = use_manager;
+        mcp_log_info("Server manager %s", use_manager ? "enabled" : "disabled");
     }
 
     // Parse request timeout
-    mcp_json_t* timeout_json = mcp_json_object_get_property(client_config, "requestTimeoutMs");
-    if (timeout_json && mcp_json_is_number(timeout_json)) {
-        double value = 0.0;
-        if (mcp_json_get_number(timeout_json, &value) == 0) {
-            config->timeout_ms = (uint32_t)value;
+    double timeout_ms = (double)config->timeout_ms;
+    if (get_number_from_property(client_config, "requestTimeoutMs", &timeout_ms, (double)config->timeout_ms) == 0) {
+        // Validate timeout value (must be positive)
+        if (timeout_ms <= 0) {
+            mcp_log_warn("Invalid request timeout value: %.0f ms, using default: %u ms", timeout_ms, config->timeout_ms);
+        } else {
+            config->timeout_ms = (uint32_t)timeout_ms;
+            mcp_log_info("Request timeout: %u ms", config->timeout_ms);
         }
     }
 
@@ -359,13 +451,9 @@ int kmcp_config_parser_get_access(
     }
 
     // Parse default allow policy
-    mcp_json_t* default_allow_json = mcp_json_object_get_property(access_config, "defaultAllow");
     bool default_allow = true; // Default is true
-    if (default_allow_json && mcp_json_is_boolean(default_allow_json)) {
-        bool value = false;
-        if (mcp_json_get_boolean(default_allow_json, &value) == 0) {
-            default_allow = value;
-        }
+    if (get_boolean_from_property(access_config, "defaultAllow", &default_allow, true) == 0) {
+        mcp_log_info("Tool access control default policy: %s", default_allow ? "allow" : "deny");
     }
 
     // Create tool access control

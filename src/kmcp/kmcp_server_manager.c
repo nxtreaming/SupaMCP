@@ -95,6 +95,41 @@ kmcp_server_manager_t* kmcp_server_manager_create() {
 }
 
 /**
+ * @brief Free a server configuration
+ *
+ * @param config Server configuration to free
+ */
+static void kmcp_server_config_free(kmcp_server_config_t* config) {
+    if (!config) {
+        return;
+    }
+
+    // Free strings
+    free(config->name);
+    free(config->command);
+    free(config->url);
+
+    // Free arguments array
+    if (config->args) {
+        for (size_t i = 0; i < config->args_count; i++) {
+            free(config->args[i]);
+        }
+        free(config->args);
+    }
+
+    // Free environment variables array
+    if (config->env) {
+        for (size_t i = 0; i < config->env_count; i++) {
+            free(config->env[i]);
+        }
+        free(config->env);
+    }
+
+    // Free the structure itself
+    free(config);
+}
+
+/**
  * @brief Load server configurations from a config file
  */
 int kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_file) {
@@ -102,6 +137,8 @@ int kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_
         mcp_log_error("Invalid parameters");
         return -1;
     }
+
+    mcp_log_info("Loading server configurations from file: %s", config_file);
 
     kmcp_config_parser_t* parser = kmcp_config_parser_create(config_file);
     if (!parser) {
@@ -118,24 +155,36 @@ int kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_
         return -1;
     }
 
+    mcp_log_info("Found %zu server configurations", server_count);
+
     // Add servers
+    int success_count = 0;
     for (size_t i = 0; i < server_count; i++) {
+        if (!servers[i]) {
+            mcp_log_warn("Server configuration at index %zu is NULL", i);
+            continue;
+        }
+
+        mcp_log_info("Adding server: %s", servers[i]->name ? servers[i]->name : "(unnamed)");
         result = kmcp_server_manager_add(manager, servers[i]);
         if (result != 0) {
-            mcp_log_error("Failed to add server: %s", servers[i]->name);
+            mcp_log_error("Failed to add server: %s", servers[i]->name ? servers[i]->name : "(unnamed)");
             // Continue adding other servers
+        } else {
+            success_count++;
         }
 
         // Free server configuration
         // Note: kmcp_server_manager_add copies the configuration, so it's safe to free here
-        // TODO: Implement a function to free server configuration
+        kmcp_server_config_free(servers[i]);
     }
 
     // Free server configuration array
     free(servers);
     kmcp_config_parser_close(parser);
 
-    return 0;
+    mcp_log_info("Successfully added %d out of %zu server configurations", success_count, server_count);
+    return success_count > 0 ? 0 : -1;
 }
 
 /**
@@ -223,17 +272,28 @@ int kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
         return -1;
     }
 
+    mcp_log_info("Connecting to all servers");
+
     mcp_mutex_lock(manager->mutex);
 
     int success_count = 0;
     for (size_t i = 0; i < manager->server_count; i++) {
         kmcp_server_connection_t* connection = manager->servers[i];
+        if (!connection) {
+            mcp_log_error("Server connection at index %zu is NULL", i);
+            continue;
+        }
 
         // If already connected, skip
         if (connection->is_connected) {
+            mcp_log_info("Server '%s' is already connected, skipping",
+                       connection->config.name ? connection->config.name : "(unnamed)");
             success_count++;
             continue;
         }
+
+        mcp_log_info("Connecting to server '%s'",
+                   connection->config.name ? connection->config.name : "(unnamed)");
 
         // Connect server based on configuration type
         if (connection->config.is_http) {
@@ -426,6 +486,7 @@ int kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
         return -1;
     }
 
+    mcp_log_info("Successfully connected to %d out of %zu servers", success_count, manager->server_count);
     return 0;
 }
 
@@ -438,15 +499,27 @@ int kmcp_server_manager_disconnect(kmcp_server_manager_t* manager) {
         return -1;
     }
 
+    mcp_log_info("Disconnecting from all servers");
+
     mcp_mutex_lock(manager->mutex);
 
+    int disconnect_count = 0;
     for (size_t i = 0; i < manager->server_count; i++) {
         kmcp_server_connection_t* connection = manager->servers[i];
+        if (!connection) {
+            mcp_log_error("Server connection at index %zu is NULL", i);
+            continue;
+        }
 
         // If not connected, skip
         if (!connection->is_connected) {
+            mcp_log_debug("Server '%s' is not connected, skipping",
+                        connection->config.name ? connection->config.name : "(unnamed)");
             continue;
         }
+
+        mcp_log_info("Disconnecting from server '%s'",
+                   connection->config.name ? connection->config.name : "(unnamed)");
 
         // Close client
         if (connection->client) {
@@ -471,9 +544,11 @@ int kmcp_server_manager_disconnect(kmcp_server_manager_t* manager) {
 
         // Mark as not connected
         connection->is_connected = false;
+        disconnect_count++;
     }
 
     mcp_mutex_unlock(manager->mutex);
+    mcp_log_info("Disconnected from %d servers", disconnect_count);
     return 0;
 }
 
@@ -611,6 +686,8 @@ void kmcp_server_manager_destroy(kmcp_server_manager_t* manager) {
         return;
     }
 
+    mcp_log_info("Destroying server manager");
+
     // Disconnect all servers
     kmcp_server_manager_disconnect(manager);
 
@@ -681,4 +758,5 @@ void kmcp_server_manager_destroy(kmcp_server_manager_t* manager) {
     }
 
     free(manager);
+    mcp_log_info("Server manager destroyed");
 }

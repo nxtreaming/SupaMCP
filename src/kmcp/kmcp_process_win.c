@@ -20,8 +20,8 @@ struct kmcp_process {
     size_t args_count;     // Number of arguments
     char** env;            // Environment variables array
     size_t env_count;      // Number of environment variables
-    PROCESS_INFORMATION process_info; // Windows process information
-    HANDLE job_handle;     // Windows job object handle, used to terminate child processes
+    HANDLE process_handle; // Windows process handle
+    DWORD process_id;      // Windows process ID
     int exit_code;         // Exit code
     bool is_running;       // Whether the process is running
     bool handle_valid;     // Whether the handle is valid
@@ -193,27 +193,6 @@ int kmcp_process_start(kmcp_process_t* process) {
     // Build environment block
     LPVOID env_block = build_environment_block(process->env, process->env_count);
 
-    // We don't use job objects for server processes, as we want them to continue running
-    // even after the client process exits
-    process->job_handle = NULL;
-    mcp_log_info("Not using job object for server process");
-
-    // Do NOT set JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE flag, as we want the server process to continue running
-    // even after the client process exits
-    mcp_log_info("Not setting JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE flag to allow server to continue running");
-
-    // Create process
-    STARTUPINFO startup_info = {0};
-    startup_info.cb = sizeof(STARTUPINFO);
-
-    // Don't create pipes for stdout and stderr, let the process use its own console
-    HANDLE stdout_read = NULL;
-    HANDLE stdout_write = NULL;
-    HANDLE stderr_read = NULL;
-    HANDLE stderr_write = NULL;
-
-    mcp_log_info("Not redirecting stdout/stderr, letting process use its own console");
-
     // Get the directory part of the command
     char working_dir[MAX_PATH] = {0};
     strncpy(working_dir, process->command, MAX_PATH - 1);
@@ -236,7 +215,7 @@ int kmcp_process_start(kmcp_process_t* process) {
     char params[MAX_PATH * 2] = {0};
     for (size_t i = 0; i < process->args_count; i++) {
         if (process->args[i]) {
-            if (i > 0) {
+            if (i > 0 || params[0] != '\0') {
                 strcat(params, " ");
             }
 
@@ -251,36 +230,34 @@ int kmcp_process_start(kmcp_process_t* process) {
         }
     }
 
-    mcp_log_info("Using ShellExecute to start process: %s with params: %s", process->command, params);
+    mcp_log_info("Using ShellExecuteEx to start process: %s with params: %s", process->command, params);
 
-    // Use ShellExecute to start the process
-    HINSTANCE result = ShellExecute(
-        NULL,               // Parent window
-        "open",            // Operation
-        process->command,   // File to execute
-        params,             // Parameters
-        working_dir[0] != '\0' ? working_dir : NULL, // Working directory
-        SW_SHOW             // Show command (SW_SHOW = show window, SW_HIDE = hide window)
-    );
+    // Use ShellExecuteEx to start the process and get a handle
+    SHELLEXECUTEINFO sei = {0};
+    sei.cbSize = sizeof(SHELLEXECUTEINFO);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS; // Get process handle
+    sei.hwnd = NULL;
+    sei.lpVerb = "open";
+    sei.lpFile = process->command;
+    sei.lpParameters = params[0] != '\0' ? params : NULL;
+    sei.lpDirectory = working_dir[0] != '\0' ? working_dir : NULL;
+    sei.nShow = SW_SHOW;
 
-    // Check result
-    if ((INT_PTR)result <= 32) {
-        // ShellExecute failed
+    // Execute the process
+    if (!ShellExecuteEx(&sei)) {
         DWORD error = GetLastError();
-        mcp_log_error("ShellExecute failed with code: %d (error code: %lu)", (int)(INT_PTR)result, error);
+        mcp_log_error("ShellExecuteEx failed with error code: %lu", error);
         free(cmd_line);
         free(env_block);
         return -1;
     }
 
-    // ShellExecute doesn't return process information, so we need to create a dummy process info
-    memset(&process->process_info, 0, sizeof(PROCESS_INFORMATION));
+    // Store process handle and ID
+    process->process_handle = sei.hProcess;
+    process->process_id = GetProcessId(sei.hProcess);
+    process->handle_valid = true;
 
-    // We can't get the actual process ID, so we'll use a dummy value
-    process->process_info.dwProcessId = GetCurrentProcessId(); // Just a placeholder
-
-    // We don't use job objects for server processes
-    mcp_log_info("Process created without job object");
+    mcp_log_info("Process created with handle: %p and PID: %lu", process->process_handle, process->process_id);
 
     // Free resources
     free(cmd_line);
@@ -296,17 +273,7 @@ int kmcp_process_start(kmcp_process_t* process) {
         return -1;
     }
 
-    // Close pipe handles if they were created
-    if (stdout_read != NULL) {
-        CloseHandle(stdout_read);
-        CloseHandle(stdout_write);
-    }
-    if (stderr_read != NULL) {
-        CloseHandle(stderr_read);
-        CloseHandle(stderr_write);
-    }
-
-    mcp_log_info("Process started successfully with PID: %lu", process->process_info.dwProcessId);
+    mcp_log_info("Process started successfully with PID: %lu", process->process_id);
     return 0;
 }
 
@@ -314,16 +281,28 @@ int kmcp_process_start(kmcp_process_t* process) {
  * @brief Check if a process is running
  */
 bool kmcp_process_is_running(kmcp_process_t* process) {
-    if (!process) {
+    if (!process || !process->handle_valid) {
         return false;
     }
 
-    // Since we're using ShellExecute, we don't have a process handle
-    // We'll assume the process is running for a while after we start it
-    // This is not ideal, but it's the best we can do without a process handle
-
-    // For now, just return the current value of is_running
-    return process->is_running;
+    // Check if the process is still running
+    DWORD exit_code = 0;
+    if (GetExitCodeProcess(process->process_handle, &exit_code)) {
+        if (exit_code == STILL_ACTIVE) {
+            return true;
+        } else {
+            // Process has exited
+            process->is_running = false;
+            process->exit_code = (int)exit_code;
+            return false;
+        }
+    } else {
+        // Failed to get exit code, assume process is not running
+        DWORD error = GetLastError();
+        mcp_log_error("Failed to get process exit code: %lu", error);
+        process->is_running = false;
+        return false;
+    }
 }
 
 /**
@@ -335,14 +314,23 @@ int kmcp_process_terminate(kmcp_process_t* process) {
         return -1;
     }
 
-    // Since we're using ShellExecute, we don't have a process handle
-    // We can't terminate the process directly
-    // We'll just mark it as not running
+    // If the process is not running or handle is invalid, return success
+    if (!process->is_running || !process->handle_valid) {
+        process->is_running = false;
+        return 0;
+    }
 
-    mcp_log_warn("Cannot terminate process started with ShellExecute, marking as not running");
-    process->is_running = false;
-
-    return 0;
+    // Terminate the process
+    if (TerminateProcess(process->process_handle, 1)) {
+        mcp_log_info("Process terminated successfully");
+        process->is_running = false;
+        process->exit_code = 1; // Forced termination
+        return 0;
+    } else {
+        DWORD error = GetLastError();
+        mcp_log_error("Failed to terminate process: %lu", error);
+        return -1;
+    }
 }
 
 /**
@@ -354,23 +342,31 @@ int kmcp_process_wait(kmcp_process_t* process, int timeout_ms) {
         return -1;
     }
 
-    // If the process is not running, return success immediately
-    if (!process->is_running) {
+    // If the process is not running or handle is invalid, return success immediately
+    if (!process->is_running || !process->handle_valid) {
         return 0;
     }
 
-    // Since we're using ShellExecute, we don't have a process handle
-    // We can't wait for the process to terminate
-    // We'll just sleep for the specified timeout
+    // Wait for the process to terminate
+    DWORD wait_result = WaitForSingleObject(process->process_handle, timeout_ms > 0 ? (DWORD)timeout_ms : INFINITE);
 
-    mcp_log_warn("Cannot wait for process started with ShellExecute, sleeping instead");
-
-    if (timeout_ms > 0) {
-        Sleep((DWORD)timeout_ms);
-        return 1; // Timeout
+    if (wait_result == WAIT_OBJECT_0) {
+        // Process has terminated
+        DWORD exit_code = 0;
+        if (GetExitCodeProcess(process->process_handle, &exit_code)) {
+            process->exit_code = (int)exit_code;
+        }
+        process->is_running = false;
+        return 0;
+    } else if (wait_result == WAIT_TIMEOUT) {
+        // Timeout occurred
+        return 1;
+    } else {
+        // Error occurred
+        DWORD error = GetLastError();
+        mcp_log_error("Failed to wait for process: %lu", error);
+        return -1;
     }
-
-    return 0;
 }
 
 /**
@@ -382,19 +378,34 @@ int kmcp_process_get_exit_code(kmcp_process_t* process, int* exit_code) {
         return -1;
     }
 
-    // If the process is still running, return an error
+    // If the process is still running, check its status
     if (process->is_running) {
-        mcp_log_error("Process is still running");
-        return -1;
+        // Update the running status
+        if (kmcp_process_is_running(process)) {
+            mcp_log_error("Process is still running");
+            return -1;
+        }
+        // If we get here, the process has exited but our state wasn't updated
     }
 
-    // Since we're using ShellExecute, we don't have a process handle
-    // We can't get the actual exit code
-    // We'll just return a dummy value
+    // If we have a valid handle, get the actual exit code
+    if (process->handle_valid) {
+        DWORD win_exit_code = 0;
+        if (GetExitCodeProcess(process->process_handle, &win_exit_code)) {
+            if (win_exit_code == STILL_ACTIVE) {
+                mcp_log_error("Process is still running");
+                return -1;
+            }
+            process->exit_code = (int)win_exit_code;
+        } else {
+            DWORD error = GetLastError();
+            mcp_log_error("Failed to get process exit code: %lu", error);
+            return -1;
+        }
+    }
 
-    mcp_log_warn("Cannot get exit code for process started with ShellExecute, returning 0");
-    *exit_code = 0;
-
+    // Return the stored exit code
+    *exit_code = process->exit_code;
     return 0;
 }
 
@@ -413,10 +424,14 @@ void kmcp_process_close(kmcp_process_t* process) {
         // Don't call kmcp_process_terminate(process);
     }
 
-    // Ensure is_running is set to false
-    process->is_running = false;
+    // Close process handle if valid
+    if (process->handle_valid && process->process_handle != NULL) {
+        CloseHandle(process->process_handle);
+        process->process_handle = NULL;
+    }
 
-    // Since we're using ShellExecute, we don't have process handles to close
+    // Ensure is_running is set to false and handle_valid is false
+    process->is_running = false;
     process->handle_valid = false;
 
     // Free resources
