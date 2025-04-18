@@ -97,7 +97,10 @@ int mcp_cond_broadcast(mcp_cond_t* cond);
 #ifdef _WIN32
 typedef void* mcp_thread_t; // Use HANDLE (void*)
 #else
-typedef unsigned long mcp_thread_t; // Use pthread_t (typically unsigned long)
+// 在 macOS 上，pthread_t 是一个指针类型，而不是 unsigned long
+// 使用直接的 pthread_t 类型可以避免类型转换问题
+#include <pthread.h>
+typedef pthread_t mcp_thread_t; // 直接使用 pthread_t 类型
 #endif
 
 /** @brief Thread function signature. */

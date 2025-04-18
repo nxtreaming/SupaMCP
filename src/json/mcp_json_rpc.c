@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <limits.h>
 #include "mcp_json.h"
 #include "mcp_json_rpc.h"
 #include "mcp_profiler.h"

@@ -11,7 +11,7 @@
 #include <errno.h>
 
 // Forward declare helper if needed (assuming it's in utils or similar)
-extern long long get_current_time_ms();
+extern long long get_current_time_ms(void);
 
 // Default pool settings (can be made configurable later)
 #define DEFAULT_MIN_CONNECTIONS 1
@@ -111,7 +111,7 @@ gateway_pool_manager_t* gateway_pool_manager_create(void) {
         0.75f,  // load_factor_threshold
         address_hash_func,
         address_key_compare,
-        mcp_strdup, // key_dup function
+        mcp_hashtable_string_dup, // key_dup function
         free,       // key_free function
         backend_pool_free_func // value_free function
     );

@@ -107,6 +107,13 @@ static void free_compiled_schema_struct(mcp_compiled_schema_t* schema) {
     }
 }
 
+// Adapter function for mcp_list_destroy to convert from void* to mcp_compiled_schema_t*
+static void free_compiled_schema_void_adapter(void* data) {
+    if (data) {
+        free_compiled_schema_struct((mcp_compiled_schema_t*)data);
+    }
+}
+
 // Helper function for freeing schemas in hashtable_foreach
 static void free_schema_callback(const void* key, void* value, void* user_data) {
     (void)key; // Unused
@@ -202,7 +209,7 @@ void mcp_json_schema_cache_destroy(mcp_json_schema_cache_t* cache) {
     mcp_json_schema_cache_clear(cache);
 
     // Destroy the LRU list
-    mcp_list_destroy(cache->lru_list, free_compiled_schema_struct);
+    mcp_list_destroy(cache->lru_list, free_compiled_schema_void_adapter);
 
     // Destroy the read-write lock
     mcp_rwlock_destroy(cache->cache_lock);

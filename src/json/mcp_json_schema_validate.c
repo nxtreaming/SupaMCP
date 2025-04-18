@@ -6,7 +6,7 @@
 static mcp_json_schema_cache_t* g_schema_cache = NULL;
 
 // Initialize the global schema cache
-static void init_global_schema_cache() {
+static void init_global_schema_cache(void) {
     if (g_schema_cache == NULL) {
         g_schema_cache = mcp_json_schema_cache_create(100); // Default capacity
         if (g_schema_cache == NULL) {

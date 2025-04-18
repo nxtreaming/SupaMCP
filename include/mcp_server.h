@@ -5,6 +5,7 @@
 #include <mcp_string_utils.h>
 #include <mcp_transport.h>
 #include <mcp_json.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {

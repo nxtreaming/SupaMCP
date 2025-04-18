@@ -113,6 +113,7 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
     // Get the descriptor function pointer
     // Note: Casting function pointer from void* is technically undefined behavior in C standard,
     // but required by dlsym and generally works on POSIX systems.
+    mcp_plugin_get_descriptor_func_t get_descriptor_func = NULL;
     *(void**)(&get_descriptor_func) = dlsym(plugin->library_handle, MCP_PLUGIN_DESCRIPTOR_FUNC_NAME);
     const char* dlsym_error = dlerror();
     if (dlsym_error != NULL || !get_descriptor_func) {
