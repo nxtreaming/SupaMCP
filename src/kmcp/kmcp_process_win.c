@@ -52,14 +52,40 @@ kmcp_process_t* kmcp_process_create(
     // Initialize fields
     memset(process, 0, sizeof(kmcp_process_t));
     process->command = mcp_strdup(command);
+    if (!process->command) {
+        mcp_log_error("Failed to duplicate command string");
+        free(process);
+        return NULL;
+    }
 
     // Copy arguments array
     if (args && args_count > 0) {
         process->args = (char**)malloc(args_count * sizeof(char*));
-        if (process->args) {
-            process->args_count = args_count;
-            for (size_t i = 0; i < args_count; i++) {
-                process->args[i] = args[i] ? mcp_strdup(args[i]) : NULL;
+        if (!process->args) {
+            mcp_log_error("Failed to allocate memory for arguments array");
+            free(process->command);
+            free(process);
+            return NULL;
+        }
+
+        // Initialize all pointers to NULL for proper cleanup in case of error
+        memset(process->args, 0, args_count * sizeof(char*));
+        process->args_count = args_count;
+
+        for (size_t i = 0; i < args_count; i++) {
+            if (args[i]) {
+                process->args[i] = mcp_strdup(args[i]);
+                if (!process->args[i]) {
+                    mcp_log_error("Failed to duplicate argument string");
+                    // Clean up already allocated strings
+                    for (size_t j = 0; j < i; j++) {
+                        free(process->args[j]);
+                    }
+                    free(process->args);
+                    free(process->command);
+                    free(process);
+                    return NULL;
+                }
             }
         }
     }
@@ -67,10 +93,45 @@ kmcp_process_t* kmcp_process_create(
     // Copy environment variables array
     if (env && env_count > 0) {
         process->env = (char**)malloc(env_count * sizeof(char*));
-        if (process->env) {
-            process->env_count = env_count;
-            for (size_t i = 0; i < env_count; i++) {
-                process->env[i] = env[i] ? mcp_strdup(env[i]) : NULL;
+        if (!process->env) {
+            mcp_log_error("Failed to allocate memory for environment variables array");
+            // Clean up arguments
+            if (process->args) {
+                for (size_t i = 0; i < process->args_count; i++) {
+                    free(process->args[i]);
+                }
+                free(process->args);
+            }
+            free(process->command);
+            free(process);
+            return NULL;
+        }
+
+        // Initialize all pointers to NULL for proper cleanup in case of error
+        memset(process->env, 0, env_count * sizeof(char*));
+        process->env_count = env_count;
+
+        for (size_t i = 0; i < env_count; i++) {
+            if (env[i]) {
+                process->env[i] = mcp_strdup(env[i]);
+                if (!process->env[i]) {
+                    mcp_log_error("Failed to duplicate environment variable string");
+                    // Clean up already allocated strings
+                    for (size_t j = 0; j < i; j++) {
+                        free(process->env[j]);
+                    }
+                    free(process->env);
+                    // Clean up arguments
+                    if (process->args) {
+                        for (size_t j = 0; j < process->args_count; j++) {
+                            free(process->args[j]);
+                        }
+                        free(process->args);
+                    }
+                    free(process->command);
+                    free(process);
+                    return NULL;
+                }
             }
         }
     }
@@ -187,15 +248,32 @@ int kmcp_process_start(kmcp_process_t* process) {
         return -1;
     }
 
+    // Initialize environment block to NULL
+    LPVOID env_block = NULL;
+
     // Log the command line for debugging
     mcp_log_info("Starting process with command line: %s", cmd_line);
 
-    // Build environment block
-    LPVOID env_block = build_environment_block(process->env, process->env_count);
+    // Build environment block if needed
+    if (process->env && process->env_count > 0) {
+        env_block = build_environment_block(process->env, process->env_count);
+        if (!env_block) {
+            mcp_log_error("Failed to build environment block");
+            free(cmd_line);
+            return -1;
+        }
+    }
 
     // Get the directory part of the command
     char working_dir[MAX_PATH] = {0};
+    if (strlen(process->command) >= MAX_PATH) {
+        mcp_log_error("Command path too long");
+        free(cmd_line);
+        free(env_block);
+        return -1;
+    }
     strncpy(working_dir, process->command, MAX_PATH - 1);
+    working_dir[MAX_PATH - 1] = '\0'; // Ensure null termination
 
     // Find the last backslash or forward slash
     char* last_slash = strrchr(working_dir, '\\');
@@ -211,21 +289,66 @@ int kmcp_process_start(kmcp_process_t* process) {
         working_dir[0] = '\0';
     }
 
+    // Calculate required size for parameters string
+    size_t params_size = 1; // Start with 1 for null terminator
+    for (size_t i = 0; i < process->args_count; i++) {
+        if (process->args[i]) {
+            params_size += strlen(process->args[i]) + 3; // +3 for space and quotes
+        }
+    }
+
+    // Allocate memory for parameters string
+    char* params = (char*)malloc(params_size);
+    if (!params) {
+        mcp_log_error("Failed to allocate memory for parameters string");
+        free(cmd_line);
+        free(env_block);
+        return -1;
+    }
+
+    // Initialize parameters string
+    params[0] = '\0';
+
     // Build parameters string (all arguments combined)
-    char params[MAX_PATH * 2] = {0};
     for (size_t i = 0; i < process->args_count; i++) {
         if (process->args[i]) {
             if (i > 0 || params[0] != '\0') {
-                strcat(params, " ");
+                if (strlen(params) + 1 < params_size) {
+                    strcat(params, " ");
+                } else {
+                    mcp_log_error("Parameters string buffer overflow");
+                    free(params);
+                    free(cmd_line);
+                    free(env_block);
+                    return -1;
+                }
             }
 
             // Add quotes if the argument contains spaces
             if (strchr(process->args[i], ' ') != NULL) {
-                strcat(params, "\"");
-                strcat(params, process->args[i]);
-                strcat(params, "\"");
+                size_t required_len = strlen(params) + strlen(process->args[i]) + 3; // +3 for quotes and null terminator
+                if (required_len <= params_size) {
+                    strcat(params, "\"");
+                    strcat(params, process->args[i]);
+                    strcat(params, "\"");
+                } else {
+                    mcp_log_error("Parameters string buffer overflow");
+                    free(params);
+                    free(cmd_line);
+                    free(env_block);
+                    return -1;
+                }
             } else {
-                strcat(params, process->args[i]);
+                size_t required_len = strlen(params) + strlen(process->args[i]) + 1; // +1 for null terminator
+                if (required_len <= params_size) {
+                    strcat(params, process->args[i]);
+                } else {
+                    mcp_log_error("Parameters string buffer overflow");
+                    free(params);
+                    free(cmd_line);
+                    free(env_block);
+                    return -1;
+                }
             }
         }
     }
@@ -262,6 +385,7 @@ int kmcp_process_start(kmcp_process_t* process) {
     // Free resources
     free(cmd_line);
     free(env_block);
+    free(params);
 
     // Mark as running
     process->is_running = true;
