@@ -28,6 +28,16 @@ typedef struct kmcp_tool_access kmcp_tool_access_t;
 kmcp_tool_access_t* kmcp_tool_access_create(bool default_allow);
 
 /**
+ * @brief Set the default allow policy
+ *
+ * @param access Tool access control (must not be NULL)
+ * @param default_allow Default allow policy, true means allow by default, false means deny by default
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
+ *         - KMCP_ERROR_INVALID_PARAMETER if access is NULL
+ */
+kmcp_error_t kmcp_tool_access_set_default_policy(kmcp_tool_access_t* access, bool default_allow);
+
+/**
  * @brief Add a tool to the access control list
  *
  * Adds a tool to the access control list with the specified permission.

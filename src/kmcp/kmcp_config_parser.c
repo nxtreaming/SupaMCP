@@ -455,6 +455,9 @@ kmcp_error_t kmcp_config_parser_get_access(
     bool default_allow = true; // Default is true
     if (get_boolean_from_property(access_config, "defaultAllow", &default_allow, true) == 0) {
         mcp_log_info("Tool access control default policy: %s", default_allow ? "allow" : "deny");
+
+        // Update the default allow policy in the access object
+        kmcp_tool_access_set_default_policy(access, default_allow);
     }
 
     // Create tool access control
@@ -477,12 +480,21 @@ kmcp_error_t kmcp_config_parser_get_access(
     mcp_json_t* disallowed_tools = mcp_json_object_get_property(access_config, "disallowedTools");
     if (disallowed_tools && mcp_json_is_array(disallowed_tools)) {
         size_t count = mcp_json_array_get_size(disallowed_tools);
+        mcp_log_info("Found %zu disallowed tools", count);
         for (size_t i = 0; i < count; i++) {
             const char* tool = NULL;
             if (get_string_from_array_item(disallowed_tools, (int)i, &tool) == 0 && tool) {
-                kmcp_tool_access_add(access, tool, false);
+                mcp_log_info("Adding disallowed tool: %s", tool);
+                kmcp_error_t result = kmcp_tool_access_add(access, tool, false);
+                if (result != KMCP_SUCCESS) {
+                    mcp_log_error("Failed to add disallowed tool: %s, error: %d", tool, result);
+                }
+            } else {
+                mcp_log_error("Failed to get disallowed tool at index %zu", i);
             }
         }
+    } else {
+        mcp_log_warn("disallowedTools not found or not an array");
     }
 
     return KMCP_SUCCESS;

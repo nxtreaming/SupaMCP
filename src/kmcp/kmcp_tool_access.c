@@ -48,6 +48,19 @@ kmcp_tool_access_t* kmcp_tool_access_create(bool default_allow) {
 }
 
 /**
+ * @brief Set the default allow policy
+ */
+kmcp_error_t kmcp_tool_access_set_default_policy(kmcp_tool_access_t* access, bool default_allow) {
+    if (!access) {
+        mcp_log_error("Invalid parameters");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    access->default_allow = default_allow;
+    return KMCP_SUCCESS;
+}
+
+/**
  * @brief Add a tool to the access control list
  */
 kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_name, bool allow) {
@@ -55,6 +68,8 @@ kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_n
         mcp_log_error("Invalid parameters");
         return KMCP_ERROR_INVALID_PARAMETER;
     }
+
+    mcp_log_debug("Adding tool to access control: %s, allow: %s", tool_name, allow ? "true" : "false");
 
     // Create value (1 means allow, 0 means deny)
     int* value = (int*)malloc(sizeof(int));
@@ -64,14 +79,33 @@ kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_n
     }
 
     *value = allow ? 1 : 0;
+    mcp_log_debug("Created value for tool %s: %d", tool_name, *value);
+
+    // Check if the tool already exists
+    void* old_value = NULL;
+    int result = mcp_hashtable_get(access->tool_map, tool_name, &old_value);
+    bool found = (result == 0); // 0 means success, -1 means failure
+    if (found && old_value) {
+        mcp_log_debug("Tool %s already exists with value: %d", tool_name, *((int*)old_value));
+    }
 
     // Add to hash table
     // Note: If the tool already exists, this will replace the existing value
     // The old value will be freed by mcp_hashtable_put
-    if (mcp_hashtable_put(access->tool_map, tool_name, value) != 0) {
-        mcp_log_error("Failed to add tool to access control: %s", tool_name);
+    result = mcp_hashtable_put(access->tool_map, tool_name, value);
+    if (result != 0) {
+        mcp_log_error("Failed to add tool to access control: %s, result: %d", tool_name, result);
         free(value);
         return KMCP_ERROR_INTERNAL;
+    }
+
+    // Verify the tool was added correctly
+    void* check_value = NULL;
+    found = mcp_hashtable_get(access->tool_map, tool_name, &check_value);
+    if (found && check_value) {
+        mcp_log_debug("Verified tool %s was added with value: %d", tool_name, *((int*)check_value));
+    } else {
+        mcp_log_warn("Failed to verify tool %s was added", tool_name);
     }
 
     return KMCP_SUCCESS;
@@ -83,17 +117,26 @@ kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_n
 bool kmcp_tool_access_check(kmcp_tool_access_t* access, const char* tool_name) {
     if (!access || !tool_name) {
         // Default deny
+        mcp_log_debug("Tool access check: NULL access or tool_name, denying access");
         return false;
     }
 
     // Look up the tool
     void* value = NULL;
-    if (mcp_hashtable_get(access->tool_map, tool_name, &value) && value) {
+    int result = mcp_hashtable_get(access->tool_map, tool_name, &value);
+    bool found = (result == 0); // 0 means success, -1 means failure
+    mcp_log_debug("Tool access check: %s, found in hashtable: %s (result: %d)", tool_name, found ? "yes" : "no", result);
+
+    if (found && value) {
         // Found the tool, return its access permission
-        return *((int*)value) == 1;
+        int permission = *((int*)value);
+        mcp_log_debug("Tool access check: %s, permission value: %d", tool_name, permission);
+        return permission == 1;
     }
 
     // Tool not found, return default policy
+    mcp_log_debug("Tool access check: %s not found, using default policy: %s",
+                 tool_name, access->default_allow ? "allow" : "deny");
     return access->default_allow;
 }
 
