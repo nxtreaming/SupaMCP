@@ -29,6 +29,11 @@
 #include <strings.h>
 #endif
 
+// Include OpenSSL headers
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/crypto.h>
+
 /**
  * @brief Case-insensitive string search (like strstr but case-insensitive)
  *
@@ -72,6 +77,11 @@ struct kmcp_http_client {
     int port;              // Port
     bool use_ssl;          // Whether to use SSL
     char* api_key;         // API key
+
+    // SSL/TLS related fields
+    SSL_CTX* ssl_ctx;      // SSL context
+    SSL* ssl;              // SSL connection
+    bool ssl_initialized;  // Whether SSL is initialized
 };
 
 /**
@@ -205,6 +215,9 @@ kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* ap
     memset(client, 0, sizeof(kmcp_http_client_t));
     client->base_url = mcp_strdup(base_url);
     client->api_key = api_key ? mcp_strdup(api_key) : NULL;
+    client->ssl_ctx = NULL;
+    client->ssl = NULL;
+    client->ssl_initialized = false;
 
     // Parse URL
     if (parse_url(base_url, &client->host, &client->path, &client->port, &client->use_ssl) != 0) {
@@ -213,6 +226,33 @@ kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* ap
         free(client->api_key);
         free(client);
         return NULL;
+    }
+
+    // Initialize OpenSSL if needed
+    if (client->use_ssl) {
+        // Initialize OpenSSL
+        SSL_library_init();
+        SSL_load_error_strings();
+        OpenSSL_add_all_algorithms();
+
+        // Create SSL context
+        client->ssl_ctx = SSL_CTX_new(TLS_client_method());
+        if (!client->ssl_ctx) {
+            mcp_log_error("Failed to create SSL context");
+            ERR_print_errors_fp(stderr);
+            free(client->base_url);
+            free(client->api_key);
+            free(client->host);
+            free(client->path);
+            free(client);
+            return NULL;
+        }
+
+        // Set SSL options
+        SSL_CTX_set_options(client->ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
+
+        client->ssl_initialized = true;
+        mcp_log_info("SSL initialized for HTTPS connection to %s", client->host);
     }
 
     return client;
@@ -473,28 +513,82 @@ kmcp_error_t kmcp_http_client_send(
         return KMCP_ERROR_CONNECTION_FAILED;
     }
 
-    // For HTTPS connections, we should establish SSL/TLS connection
-    // This is a placeholder for SSL/TLS implementation
-    // In a real implementation, you would use OpenSSL or another SSL library
+    // For HTTPS connections, establish SSL/TLS connection
     if (client->use_ssl) {
-        mcp_log_warn("HTTPS connections are not fully supported in this implementation");
-        mcp_log_warn("For secure connections, use a mature HTTP client library such as libcurl");
-        // Here you would initialize SSL context, create SSL connection, etc.
-        // For example with OpenSSL:
-        // SSL_CTX* ctx = SSL_CTX_new(SSLv23_client_method());
-        // SSL* ssl = SSL_new(ctx);
-        // SSL_set_fd(ssl, sock);
-        // SSL_connect(ssl);
+        if (!client->ssl_initialized) {
+            mcp_log_error("SSL not initialized for HTTPS connection");
+            free(full_path);
+#ifdef _WIN32
+            closesocket(sock);
+            WSACleanup();
+#else
+            close(sock);
+#endif
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        // Create new SSL connection
+        client->ssl = SSL_new(client->ssl_ctx);
+        if (!client->ssl) {
+            mcp_log_error("Failed to create SSL connection");
+            ERR_print_errors_fp(stderr);
+            free(full_path);
+#ifdef _WIN32
+            closesocket(sock);
+            WSACleanup();
+#else
+            close(sock);
+#endif
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        // Set socket for SSL connection
+        if (SSL_set_fd(client->ssl, (int)sock) != 1) {
+            mcp_log_error("Failed to set socket for SSL connection");
+            ERR_print_errors_fp(stderr);
+            SSL_free(client->ssl);
+            client->ssl = NULL;
+            free(full_path);
+#ifdef _WIN32
+            closesocket(sock);
+            WSACleanup();
+#else
+            close(sock);
+#endif
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        // Establish SSL connection
+        int ssl_connect_result = SSL_connect(client->ssl);
+        if (ssl_connect_result != 1) {
+            int ssl_error = SSL_get_error(client->ssl, ssl_connect_result);
+            mcp_log_error("Failed to establish SSL connection: error %d", ssl_error);
+            ERR_print_errors_fp(stderr);
+            SSL_free(client->ssl);
+            client->ssl = NULL;
+            free(full_path);
+#ifdef _WIN32
+            closesocket(sock);
+            WSACleanup();
+#else
+            close(sock);
+#endif
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        mcp_log_info("SSL connection established with %s", client->host);
     }
 
     // Send request
     int send_result;
     if (client->use_ssl) {
-        // For SSL connections, you would use SSL_write instead of send
-        // For example: send_result = SSL_write(ssl, request, request_len);
-        // This is a placeholder for SSL/TLS implementation
-        mcp_log_warn("HTTPS send not fully implemented, falling back to unencrypted send");
-        send_result = send(sock, request, request_len, 0);
+        // For SSL connections, use SSL_write
+        send_result = SSL_write(client->ssl, request, request_len);
+        if (send_result <= 0) {
+            int ssl_error = SSL_get_error(client->ssl, send_result);
+            mcp_log_error("SSL_write failed with error %d", ssl_error);
+            ERR_print_errors_fp(stderr);
+        }
     } else {
         send_result = send(sock, request, request_len, 0);
     }
@@ -535,10 +629,22 @@ kmcp_error_t kmcp_http_client_send(
 
     while (1) {
         if (client->use_ssl) {
-            // For SSL connections, you would use SSL_read instead of recv
-            // For example: bytes_received = SSL_read(ssl, buffer + total_received, buffer_size - total_received - 1);
-            // This is a placeholder for SSL/TLS implementation
-            bytes_received = recv(sock, buffer + total_received, (int)buffer_size - total_received - 1, 0);
+            // For SSL connections, use SSL_read
+            bytes_received = SSL_read(client->ssl, buffer + total_received, (int)buffer_size - total_received - 1);
+            if (bytes_received <= 0) {
+                int ssl_error = SSL_get_error(client->ssl, bytes_received);
+                if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+                    // Connection closed cleanly
+                    mcp_log_debug("SSL connection closed cleanly");
+                } else if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
+                    // Need to retry
+                    continue;
+                } else {
+                    // Error
+                    mcp_log_error("SSL_read failed with error %d", ssl_error);
+                    ERR_print_errors_fp(stderr);
+                }
+            }
         } else {
             bytes_received = recv(sock, buffer + total_received, (int)buffer_size - total_received - 1, 0);
         }
@@ -573,13 +679,13 @@ kmcp_error_t kmcp_http_client_send(
 
     buffer[total_received] = '\0';
 
+    // SSL connection is closed below
+
     // Close SSL connection if used
-    if (client->use_ssl) {
-        // For SSL connections, you would clean up SSL resources
-        // For example:
-        // SSL_shutdown(ssl);
-        // SSL_free(ssl);
-        // SSL_CTX_free(ctx);
+    if (client->use_ssl && client->ssl) {
+        SSL_shutdown(client->ssl);
+        SSL_free(client->ssl);
+        client->ssl = NULL;
     }
 
     // Close socket
@@ -1016,6 +1122,23 @@ kmcp_error_t kmcp_http_client_get_resource(
 void kmcp_http_client_close(kmcp_http_client_t* client) {
     if (!client) {
         return;
+    }
+
+    // Free SSL resources
+    if (client->ssl_initialized) {
+        if (client->ssl) {
+            SSL_shutdown(client->ssl);
+            SSL_free(client->ssl);
+        }
+
+        if (client->ssl_ctx) {
+            SSL_CTX_free(client->ssl_ctx);
+        }
+
+        // Cleanup OpenSSL
+        ERR_free_strings();
+        EVP_cleanup();
+        CRYPTO_cleanup_all_ex_data();
     }
 
     // Free resources

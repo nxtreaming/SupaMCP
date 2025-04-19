@@ -73,6 +73,24 @@ set_target_properties(websockets PROPERTIES
 # Add include directory to system include paths for OpenSSL headers
 include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# Set up OpenSSL
+set(OPENSSL_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/OpenSSL)
+set(OPENSSL_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/openssl)
+set(OPENSSL_LIBRARIES ${OPENSSL_ROOT_DIR}/libssl.lib ${OPENSSL_ROOT_DIR}/libcrypto.lib)
+
+# Create imported targets for OpenSSL
+add_library(ssl STATIC IMPORTED)
+set_target_properties(ssl PROPERTIES
+    IMPORTED_LOCATION ${OPENSSL_ROOT_DIR}/libssl.lib
+    INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_INCLUDE_DIR}
+)
+
+add_library(crypto STATIC IMPORTED)
+set_target_properties(crypto PROPERTIES
+    IMPORTED_LOCATION ${OPENSSL_ROOT_DIR}/libcrypto.lib
+    INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_INCLUDE_DIR}
+)
+
 # Check if we need to link against additional dependencies
 if(WIN32)
     # On Windows, libwebsockets might need ws2_32 and other libraries
@@ -255,7 +273,7 @@ endif()
 
 # Create KMCP library
 add_library(kmcp STATIC ${KMCP_SOURCES})
-target_link_libraries(kmcp PUBLIC mcp_common)
+target_link_libraries(kmcp PUBLIC mcp_common ssl crypto)
 
 # Make KMCP headers available
 target_include_directories(kmcp PUBLIC
