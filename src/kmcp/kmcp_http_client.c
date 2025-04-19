@@ -1149,3 +1149,216 @@ void kmcp_http_client_close(kmcp_http_client_t* client) {
 
     free(client);
 }
+
+/**
+ * @brief Parse JSON array of strings
+ *
+ * Helper function to parse a JSON array of strings into a C array of strings.
+ *
+ * @param json_str JSON string containing an array of strings
+ * @param items Pointer to array of strings, memory allocated by function, caller responsible for freeing
+ * @param count Pointer to number of items
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
+ */
+static kmcp_error_t parse_json_string_array(const char* json_str, char*** items, size_t* count) {
+    if (!json_str || !items || !count) {
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Initialize output parameters
+    *items = NULL;
+    *count = 0;
+
+    // Find the start of the array
+    const char* array_start = strchr(json_str, '[');
+    if (!array_start) {
+        mcp_log_error("JSON string does not contain an array");
+        return KMCP_ERROR_PARSE_FAILED;
+    }
+
+    // Find the end of the array
+    const char* array_end = strrchr(json_str, ']');
+    if (!array_end || array_end <= array_start) {
+        mcp_log_error("JSON string does not contain a valid array");
+        return KMCP_ERROR_PARSE_FAILED;
+    }
+
+    // Count the number of items (strings) in the array
+    // This is a simple implementation that counts the number of double quotes
+    // and divides by 2 to get the number of strings
+    size_t num_quotes = 0;
+    for (const char* p = array_start; p <= array_end; p++) {
+        if (*p == '"') {
+            num_quotes++;
+        }
+    }
+
+    // Each string has two quotes, so divide by 2
+    size_t num_items = num_quotes / 2;
+    if (num_items == 0) {
+        // Empty array
+        *items = NULL;
+        *count = 0;
+        return KMCP_SUCCESS;
+    }
+
+    // Allocate memory for the array of strings
+    char** result = (char**)malloc(num_items * sizeof(char*));
+    if (!result) {
+        mcp_log_error("Failed to allocate memory for string array");
+        return KMCP_ERROR_MEMORY_ALLOCATION;
+    }
+
+    // Initialize all pointers to NULL
+    memset(result, 0, num_items * sizeof(char*));
+
+    // Parse each string in the array
+    size_t item_index = 0;
+    const char* p = array_start;
+
+    while (p < array_end && item_index < num_items) {
+        // Find the start of the string
+        p = strchr(p, '"');
+        if (!p || p >= array_end) {
+            break;
+        }
+        p++; // Skip the opening quote
+
+        // Find the end of the string
+        const char* str_end = strchr(p, '"');
+        if (!str_end || str_end >= array_end) {
+            break;
+        }
+
+        // Calculate the length of the string
+        size_t str_len = str_end - p;
+
+        // Allocate memory for the string
+        result[item_index] = (char*)malloc(str_len + 1);
+        if (!result[item_index]) {
+            mcp_log_error("Failed to allocate memory for string");
+            // Free previously allocated strings
+            for (size_t i = 0; i < item_index; i++) {
+                free(result[i]);
+            }
+            free(result);
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
+
+        // Copy the string
+        strncpy(result[item_index], p, str_len);
+        result[item_index][str_len] = '\0';
+
+        // Move to the next string
+        p = str_end + 1;
+        item_index++;
+    }
+
+    // Set the output parameters
+    *items = result;
+    *count = item_index;
+
+    return KMCP_SUCCESS;
+}
+
+/**
+ * @brief Get supported tools
+ */
+kmcp_error_t kmcp_http_get_tools(
+    kmcp_http_client_t* client,
+    char*** tools,
+    size_t* count
+) {
+    if (!client || !tools || !count) {
+        mcp_log_error("Invalid parameters");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Initialize output parameters
+    *tools = NULL;
+    *count = 0;
+
+    // Send request to get tools
+    int status = 0;
+    char* response = NULL;
+    kmcp_error_t result = kmcp_http_client_send(
+        client,
+        "GET",
+        "tools",
+        NULL,
+        NULL,
+        &response,
+        &status
+    );
+
+    if (result != KMCP_SUCCESS) {
+        mcp_log_error("Failed to get tools list");
+        return result;
+    }
+
+    // Check status code
+    if (status != 200) {
+        mcp_log_error("Tools request failed with status code: %d", status);
+        free(response);
+        return KMCP_ERROR_INTERNAL;
+    }
+
+    // Parse the response
+    result = parse_json_string_array(response, tools, count);
+
+    // Free the response
+    free(response);
+
+    return result;
+}
+
+/**
+ * @brief Get supported resources
+ */
+kmcp_error_t kmcp_http_get_resources(
+    kmcp_http_client_t* client,
+    char*** resources,
+    size_t* count
+) {
+    if (!client || !resources || !count) {
+        mcp_log_error("Invalid parameters");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Initialize output parameters
+    *resources = NULL;
+    *count = 0;
+
+    // Send request to get resources
+    int status = 0;
+    char* response = NULL;
+    kmcp_error_t result = kmcp_http_client_send(
+        client,
+        "GET",
+        "resources",
+        NULL,
+        NULL,
+        &response,
+        &status
+    );
+
+    if (result != KMCP_SUCCESS) {
+        mcp_log_error("Failed to get resources list");
+        return result;
+    }
+
+    // Check status code
+    if (status != 200) {
+        mcp_log_error("Resources request failed with status code: %d", status);
+        free(response);
+        return KMCP_ERROR_INTERNAL;
+    }
+
+    // Parse the response
+    result = parse_json_string_array(response, resources, count);
+
+    // Free the response
+    free(response);
+
+    return result;
+}

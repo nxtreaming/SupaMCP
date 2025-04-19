@@ -312,28 +312,79 @@ kmcp_error_t kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
 
             mcp_log_info("Created HTTP client for server: %s", connection->config.name);
 
-            // For HTTP connections, we don't have a way to query supported tools and resources
-            // directly. We could implement this by making HTTP requests to the server's
-            // /tools and /resources endpoints, but for now we'll just use default values.
+            // Query supported tools from the server
+            kmcp_error_t result = kmcp_http_get_tools(
+                connection->http_client,
+                &connection->supported_tools,
+                &connection->supported_tools_count
+            );
 
-            // Add some default supported tools
-            connection->supported_tools = (char**)malloc(3 * sizeof(char*));
-            if (connection->supported_tools) {
-                connection->supported_tools[0] = mcp_strdup("echo");
-                connection->supported_tools[1] = mcp_strdup("ping");
-                connection->supported_tools[2] = mcp_strdup("http_tool");
-                connection->supported_tools_count = 3;
-                mcp_log_info("Added default supported tools for HTTP server: echo, ping, http_tool");
+            if (result != KMCP_SUCCESS) {
+                mcp_log_warn("Failed to query supported tools from HTTP server: %s", connection->config.name);
+                mcp_log_warn("Using default tools list");
+
+                // Use default tools if query fails
+                connection->supported_tools = (char**)malloc(3 * sizeof(char*));
+                if (connection->supported_tools) {
+                    connection->supported_tools[0] = mcp_strdup("echo");
+                    connection->supported_tools[1] = mcp_strdup("ping");
+                    connection->supported_tools[2] = mcp_strdup("http_tool");
+                    connection->supported_tools_count = 3;
+                    mcp_log_info("Added default supported tools for HTTP server: echo, ping, http_tool");
+                }
+            } else {
+                mcp_log_info("Successfully queried %zu tools from HTTP server: %s",
+                             connection->supported_tools_count, connection->config.name);
             }
 
-            // Add some default supported resources
-            connection->supported_resources = (char**)malloc(3 * sizeof(char*));
-            if (connection->supported_resources) {
-                connection->supported_resources[0] = mcp_strdup("http://example");
-                connection->supported_resources[1] = mcp_strdup("http://data");
-                connection->supported_resources[2] = mcp_strdup("http://image");
-                connection->supported_resources_count = 3;
-                mcp_log_info("Added default supported resources for HTTP server: http://example, http://data, http://image");
+            // Query supported resources from the server
+            result = kmcp_http_get_resources(
+                connection->http_client,
+                &connection->supported_resources,
+                &connection->supported_resources_count
+            );
+
+            if (result != KMCP_SUCCESS) {
+                mcp_log_warn("Failed to query supported resources from HTTP server: %s", connection->config.name);
+                mcp_log_warn("Using default resources list");
+
+                // Use default resources if query fails
+                connection->supported_resources = (char**)malloc(3 * sizeof(char*));
+                if (connection->supported_resources) {
+                    connection->supported_resources[0] = mcp_strdup("http://example");
+                    connection->supported_resources[1] = mcp_strdup("http://data");
+                    connection->supported_resources[2] = mcp_strdup("http://image");
+                    connection->supported_resources_count = 3;
+                    mcp_log_info("Added default supported resources for HTTP server: http://example, http://data, http://image");
+                }
+            } else {
+                mcp_log_info("Successfully queried %zu resources from HTTP server: %s",
+                             connection->supported_resources_count, connection->config.name);
+            }
+
+            // Log the results
+            if (connection->supported_tools_count > 0) {
+                mcp_log_info("Server %s supports %zu tools:", connection->config.name, connection->supported_tools_count);
+                for (size_t tool_idx = 0; tool_idx < connection->supported_tools_count && tool_idx < 10; tool_idx++) {
+                    mcp_log_info("  - %s", connection->supported_tools[tool_idx]);
+                }
+                if (connection->supported_tools_count > 10) {
+                    mcp_log_info("  ... and %zu more", connection->supported_tools_count - 10);
+                }
+            } else {
+                mcp_log_warn("Server %s does not support any tools", connection->config.name);
+            }
+
+            if (connection->supported_resources_count > 0) {
+                mcp_log_info("Server %s supports %zu resources:", connection->config.name, connection->supported_resources_count);
+                for (size_t res_idx = 0; res_idx < connection->supported_resources_count && res_idx < 10; res_idx++) {
+                    mcp_log_info("  - %s", connection->supported_resources[res_idx]);
+                }
+                if (connection->supported_resources_count > 10) {
+                    mcp_log_info("  ... and %zu more", connection->supported_resources_count - 10);
+                }
+            } else {
+                mcp_log_warn("Server %s does not support any resources", connection->config.name);
             }
 
             // Mark as connected

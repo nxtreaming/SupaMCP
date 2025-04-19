@@ -109,6 +109,48 @@ kmcp_error_t kmcp_http_client_get_resource(
 );
 
 /**
+ * @brief Get supported tools
+ *
+ * Retrieves a list of tools supported by the HTTP server.
+ *
+ * @param client HTTP client (must not be NULL)
+ * @param tools Pointer to array of tool names, memory allocated by function, caller responsible for freeing
+ * @param count Pointer to number of tools
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
+ *         - KMCP_ERROR_INVALID_PARAMETER if any parameter is NULL
+ *         - KMCP_ERROR_CONNECTION_FAILED if connection to server fails
+ *         - Other error codes for specific failures
+ *
+ * @note The caller is responsible for freeing the tools array and each tool name using free()
+ */
+kmcp_error_t kmcp_http_get_tools(
+    kmcp_http_client_t* client,
+    char*** tools,
+    size_t* count
+);
+
+/**
+ * @brief Get supported resources
+ *
+ * Retrieves a list of resources supported by the HTTP server.
+ *
+ * @param client HTTP client (must not be NULL)
+ * @param resources Pointer to array of resource URIs, memory allocated by function, caller responsible for freeing
+ * @param count Pointer to number of resources
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
+ *         - KMCP_ERROR_INVALID_PARAMETER if any parameter is NULL
+ *         - KMCP_ERROR_CONNECTION_FAILED if connection to server fails
+ *         - Other error codes for specific failures
+ *
+ * @note The caller is responsible for freeing the resources array and each resource URI using free()
+ */
+kmcp_error_t kmcp_http_get_resources(
+    kmcp_http_client_t* client,
+    char*** resources,
+    size_t* count
+);
+
+/**
  * @brief Close the HTTP client
  *
  * Closes the HTTP client and frees all associated resources.
