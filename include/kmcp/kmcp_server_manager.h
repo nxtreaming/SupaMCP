@@ -200,6 +200,70 @@ kmcp_error_t kmcp_server_reconnect_all(
 );
 
 /**
+ * @brief Check the health of all server connections
+ *
+ * Checks the health of all server connections and attempts to reconnect to any
+ * disconnected servers. This function can be called periodically to ensure that
+ * all servers are connected and healthy.
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param max_attempts Maximum number of reconnection attempts per server (0 for unlimited)
+ * @param retry_interval_ms Interval between reconnection attempts in milliseconds
+ * @return kmcp_error_t Returns KMCP_SUCCESS if all servers are healthy, or an error code on failure
+ */
+kmcp_error_t kmcp_server_check_health(
+    kmcp_server_manager_t* manager,
+    int max_attempts,
+    int retry_interval_ms
+);
+
+/**
+ * @brief Start a background health check thread
+ *
+ * Starts a background thread that periodically checks the health of all server connections
+ * and attempts to reconnect to any disconnected servers.
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param interval_ms Interval between health checks in milliseconds
+ * @param max_attempts Maximum number of reconnection attempts per server (0 for unlimited)
+ * @param retry_interval_ms Interval between reconnection attempts in milliseconds
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
+ */
+kmcp_error_t kmcp_server_start_health_check(
+    kmcp_server_manager_t* manager,
+    int interval_ms,
+    int max_attempts,
+    int retry_interval_ms
+);
+
+/**
+ * @brief Stop the background health check thread
+ *
+ * Stops the background health check thread if it is running.
+ *
+ * @param manager Server manager (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
+ */
+kmcp_error_t kmcp_server_stop_health_check(kmcp_server_manager_t* manager);
+
+/**
+ * @brief Check the health of all server connections
+ *
+ * Checks the health of all server connections and attempts to reconnect to any
+ * disconnected servers.
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param max_attempts Maximum number of reconnection attempts per server (0 for unlimited)
+ * @param retry_interval_ms Interval between reconnection attempts in milliseconds
+ * @return kmcp_error_t Returns KMCP_SUCCESS if all servers are healthy, or an error code on failure
+ */
+kmcp_error_t kmcp_server_check_health(
+    kmcp_server_manager_t* manager,
+    int max_attempts,
+    int retry_interval_ms
+);
+
+/**
  * @brief Destroy the server manager
  *
  * Destroys the server manager and frees all associated resources.

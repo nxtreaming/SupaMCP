@@ -12,6 +12,8 @@
 #include <mcp_transport_factory.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <stdint.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -858,6 +860,202 @@ void kmcp_server_destroy(kmcp_server_manager_t* manager) {
 
     free(manager);
     mcp_log_info("Server manager destroyed");
+}
+
+/**
+ * @brief Get current timestamp in milliseconds
+ */
+static int64_t get_current_time_ms() {
+#ifdef _WIN32
+    FILETIME ft;
+    ULARGE_INTEGER li;
+    GetSystemTimeAsFileTime(&ft);
+    li.LowPart = ft.dwLowDateTime;
+    li.HighPart = ft.dwHighDateTime;
+    // Convert from 100-nanosecond intervals to milliseconds
+    // Windows epoch starts at January 1, 1601 (UTC)
+    // Need to subtract the difference to get Unix epoch (January 1, 1970)
+    return (int64_t)((li.QuadPart - 116444736000000000LL) / 10000);
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+#endif
+}
+
+/**
+ * @brief Check if a server is healthy
+ */
+static kmcp_error_t check_server_health(kmcp_server_connection_t* connection) {
+    if (!connection) {
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // If not connected, server is not healthy
+    if (!connection->is_connected) {
+        connection->is_healthy = false;
+        return KMCP_ERROR_CONNECTION_FAILED;
+    }
+
+    // Check if server is responsive
+    if (connection->config.is_http) {
+        // For HTTP connections, check if HTTP client is valid
+        if (!connection->http_client) {
+            connection->is_healthy = false;
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        // Send a simple ping request to check if server is responsive
+        int status = 0;
+        char* response = NULL;
+        kmcp_error_t result = kmcp_http_client_send(
+            connection->http_client,
+            "GET",
+            "ping",
+            NULL,
+            NULL,
+            &response,
+            &status
+        );
+
+        // Free response
+        if (response) {
+            free(response);
+        }
+
+        // Check result
+        if (result != KMCP_SUCCESS || status != 200) {
+            connection->is_healthy = false;
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+    } else {
+        // For local connections, check if client is valid
+        if (!connection->client) {
+            connection->is_healthy = false;
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        // Send a simple ping request to check if server is responsive
+        mcp_content_item_t** response_items = NULL;
+        size_t response_count = 0;
+        int result = mcp_client_call_tool(
+            connection->client,
+            "ping",
+            NULL,
+            &response_items,
+            &response_count,
+            NULL  // No need for async flag
+        );
+
+        // Free response
+        if (response_items) {
+            // Just free the array, assuming the client API takes care of freeing the items
+            // or they are freed elsewhere
+            free(response_items);
+        }
+
+        // Check result
+        if (result != 0) {
+            connection->is_healthy = false;
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+    }
+
+    // Server is healthy
+    connection->is_healthy = true;
+    connection->health_check_failures = 0;
+    connection->last_health_check_time = get_current_time_ms();
+    return KMCP_SUCCESS;
+}
+
+/**
+ * @brief Check the health of all server connections
+ */
+kmcp_error_t kmcp_server_check_health(
+    kmcp_server_manager_t* manager,
+    int max_attempts,
+    int retry_interval_ms
+) {
+    if (!manager) {
+        mcp_log_error("Invalid parameter");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    mcp_log_info("Checking health of all server connections");
+
+    mcp_mutex_lock(manager->mutex);
+
+    int success_count = 0;
+    int total_count = 0;
+
+    for (size_t i = 0; i < manager->server_count; i++) {
+        kmcp_server_connection_t* connection = manager->servers[i];
+        if (!connection) {
+            mcp_log_error("Server connection at index %zu is NULL", i);
+            continue;
+        }
+
+        total_count++;
+
+        // Check if server is healthy
+        kmcp_error_t result = check_server_health(connection);
+        if (result == KMCP_SUCCESS) {
+            mcp_log_info("Server '%s' is healthy",
+                       connection->config.name ? connection->config.name : "(unnamed)");
+            success_count++;
+            continue;
+        }
+
+        // Server is not healthy, increment failure count
+        connection->health_check_failures++;
+        mcp_log_warn("Server '%s' is not healthy (failure count: %d)",
+                   connection->config.name ? connection->config.name : "(unnamed)",
+                   connection->health_check_failures);
+
+        // If server is not connected, try to reconnect
+        if (!connection->is_connected) {
+            mcp_log_info("Attempting to reconnect to server '%s'",
+                       connection->config.name ? connection->config.name : "(unnamed)");
+
+            // Unlock mutex before calling reconnect to avoid deadlock
+            mcp_mutex_unlock(manager->mutex);
+
+            // Attempt to reconnect
+            result = kmcp_server_reconnect(manager, (int)i, max_attempts, retry_interval_ms);
+
+            // Lock mutex again
+            mcp_mutex_lock(manager->mutex);
+
+            if (result == KMCP_SUCCESS) {
+                mcp_log_info("Successfully reconnected to server '%s'",
+                           connection->config.name ? connection->config.name : "(unnamed)");
+                success_count++;
+            } else {
+                mcp_log_error("Failed to reconnect to server '%s'",
+                            connection->config.name ? connection->config.name : "(unnamed)");
+            }
+        }
+    }
+
+    mcp_mutex_unlock(manager->mutex);
+
+    if (total_count == 0) {
+        mcp_log_info("No servers to check");
+        return KMCP_SUCCESS;
+    }
+
+    if (success_count == 0) {
+        mcp_log_error("All servers are unhealthy");
+        return KMCP_ERROR_CONNECTION_FAILED;
+    }
+
+    if (success_count < total_count) {
+        mcp_log_warn("%d out of %d servers are healthy", success_count, total_count);
+        return KMCP_ERROR_CONNECTION_FAILED;
+    }
+
+    mcp_log_info("All %d servers are healthy", total_count);
+    return KMCP_SUCCESS;
 }
 
 /**

@@ -33,6 +33,8 @@ const char* kmcp_error_message(kmcp_error_t error_code) {
             return "Resource not found";
         case KMCP_ERROR_TOOL_EXECUTION:
             return "Tool execution failed";
+        case KMCP_ERROR_THREAD_CREATION:
+            return "Thread creation failed";
         case KMCP_ERROR_INTERNAL:
             return "Internal error";
         default:

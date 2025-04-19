@@ -28,6 +28,7 @@ typedef enum {
     KMCP_ERROR_TOOL_NOT_FOUND = -11,   /**< Tool not found */
     KMCP_ERROR_RESOURCE_NOT_FOUND = -12, /**< Resource not found */
     KMCP_ERROR_TOOL_EXECUTION = -13,   /**< Tool execution failed */
+    KMCP_ERROR_THREAD_CREATION = -14,  /**< Thread creation failed */
     KMCP_ERROR_INTERNAL = -99          /**< Internal error */
 } kmcp_error_t;
 

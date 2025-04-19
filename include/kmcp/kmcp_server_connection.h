@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "mcp_types.h"
 #include "mcp_transport.h"
 #include "mcp_client.h"
@@ -38,6 +39,9 @@ struct kmcp_server_connection {
     mcp_client_t* client;          /**< MCP client */
     kmcp_http_client_t* http_client; /**< HTTP client (for HTTP connections) */
     bool is_connected;             /**< Connection status */
+    bool is_healthy;               /**< Health status */
+    int health_check_failures;     /**< Number of consecutive health check failures */
+    int64_t last_health_check_time; /**< Timestamp of last health check */
     char** supported_tools;        /**< List of supported tools */
     size_t supported_tools_count;  /**< Number of tools */
     char** supported_resources;    /**< List of supported resources */
