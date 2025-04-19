@@ -33,6 +33,13 @@ struct kmcp_server_manager {
     mcp_hashtable_t* tool_map;           // Mapping from tool name to server index
     mcp_hashtable_t* resource_map;       // Mapping from resource prefix to server index
     mcp_mutex_t* mutex;                  // Thread safety lock
+
+    // Health check thread
+    volatile bool health_check_running;   // Whether health check thread is running
+    mcp_thread_t health_check_thread;    // Health check thread handle
+    int health_check_interval_ms;        // Interval between health checks
+    int health_check_max_attempts;       // Maximum reconnection attempts
+    int health_check_retry_interval_ms;  // Interval between reconnection attempts
 };
 
 /**
@@ -52,6 +59,13 @@ kmcp_server_manager_t* kmcp_server_create() {
     manager->tool_map = NULL;
     manager->resource_map = NULL;
     manager->mutex = NULL;
+
+    // Initialize health check fields
+    manager->health_check_running = false;
+    memset(&manager->health_check_thread, 0, sizeof(mcp_thread_t));
+    manager->health_check_interval_ms = 0;
+    manager->health_check_max_attempts = 0;
+    manager->health_check_retry_interval_ms = 0;
 
     // Create hash tables
     manager->tool_map = mcp_hashtable_create(
@@ -853,6 +867,11 @@ void kmcp_server_destroy(kmcp_server_manager_t* manager) {
         mcp_hashtable_destroy(manager->resource_map);
     }
 
+    // Stop health check thread if running
+    if (manager->health_check_running) {
+        kmcp_server_stop_health_check(manager);
+    }
+
     // Free mutex
     if (manager->mutex) {
         mcp_mutex_destroy(manager->mutex);
@@ -860,6 +879,37 @@ void kmcp_server_destroy(kmcp_server_manager_t* manager) {
 
     free(manager);
     mcp_log_info("Server manager destroyed");
+}
+
+/**
+ * @brief Health check thread function
+ */
+static void* health_check_thread_func(void* arg) {
+    kmcp_server_manager_t* manager = (kmcp_server_manager_t*)arg;
+    if (!manager) {
+        return NULL;
+    }
+
+    mcp_log_info("Health check thread started");
+
+    while (manager->health_check_running) {
+        // Check health of all servers
+        kmcp_server_check_health(
+            manager,
+            manager->health_check_max_attempts,
+            manager->health_check_retry_interval_ms
+        );
+
+        // Sleep for the specified interval
+#ifdef _WIN32
+        Sleep(manager->health_check_interval_ms);
+#else
+        usleep(manager->health_check_interval_ms * 1000);
+#endif
+    }
+
+    mcp_log_info("Health check thread stopped");
+    return NULL;
 }
 
 /**
@@ -1055,6 +1105,91 @@ kmcp_error_t kmcp_server_check_health(
     }
 
     mcp_log_info("All %d servers are healthy", total_count);
+    return KMCP_SUCCESS;
+}
+
+/**
+ * @brief Start a background health check thread
+ */
+kmcp_error_t kmcp_server_start_health_check(
+    kmcp_server_manager_t* manager,
+    int interval_ms,
+    int max_attempts,
+    int retry_interval_ms
+) {
+    if (!manager) {
+        mcp_log_error("Invalid parameter");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    if (interval_ms <= 0) {
+        mcp_log_error("Invalid interval: %d", interval_ms);
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    mcp_mutex_lock(manager->mutex);
+
+    // Check if health check thread is already running
+    if (manager->health_check_running) {
+        mcp_log_warn("Health check thread is already running");
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_SUCCESS;
+    }
+
+    // Set health check parameters
+    manager->health_check_interval_ms = interval_ms;
+    manager->health_check_max_attempts = max_attempts;
+    manager->health_check_retry_interval_ms = retry_interval_ms;
+
+    // Set running flag before creating thread
+    manager->health_check_running = true;
+
+    // Create and start health check thread
+    int result = mcp_thread_create(&manager->health_check_thread, health_check_thread_func, manager);
+    if (result != 0) {
+        mcp_log_error("Failed to create health check thread");
+        manager->health_check_running = false;
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_ERROR_THREAD_CREATION;
+    }
+
+    mcp_log_info("Health check thread started with interval %d ms", interval_ms);
+    mcp_mutex_unlock(manager->mutex);
+    return KMCP_SUCCESS;
+}
+
+/**
+ * @brief Stop the background health check thread
+ */
+kmcp_error_t kmcp_server_stop_health_check(kmcp_server_manager_t* manager) {
+    if (!manager) {
+        mcp_log_error("Invalid parameter");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    mcp_mutex_lock(manager->mutex);
+
+    // Check if health check thread is running
+    if (!manager->health_check_running) {
+        mcp_log_warn("Health check thread is not running");
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_SUCCESS;
+    }
+
+    // Signal thread to stop
+    manager->health_check_running = false;
+
+    // Release mutex while waiting for thread to finish
+    mcp_mutex_unlock(manager->mutex);
+
+    // Wait for thread to finish
+    int result = mcp_thread_join(manager->health_check_thread, NULL);
+    if (result != 0) {
+        mcp_log_error("Failed to join health check thread");
+        return KMCP_ERROR_INTERNAL;
+    }
+
+    mcp_log_info("Health check thread stopped");
     return KMCP_SUCCESS;
 }
 
