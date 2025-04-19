@@ -9,7 +9,7 @@ A cross-platform implementation of the Model Context Protocol (MCP) server/clien
 - Resource and tool support
 - **MCP Gateway Mode:** Can act as a gateway to route requests to downstream MCP servers.
 - Extensible architecture
-- WebSocket transport placeholder (not implemented yet)
+- WebSocket transport
 
 ## Requirements
 
