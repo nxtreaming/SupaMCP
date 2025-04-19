@@ -27,12 +27,13 @@ typedef enum {
     KMCP_ERROR_SERVER_NOT_FOUND = -10, /**< Server not found */
     KMCP_ERROR_TOOL_NOT_FOUND = -11,   /**< Tool not found */
     KMCP_ERROR_RESOURCE_NOT_FOUND = -12, /**< Resource not found */
+    KMCP_ERROR_TOOL_EXECUTION = -13,   /**< Tool execution failed */
     KMCP_ERROR_INTERNAL = -99          /**< Internal error */
 } kmcp_error_t;
 
 /**
  * @brief Get error message for a KMCP error code
- * 
+ *
  * @param error_code Error code
  * @return const char* Error message
  */

@@ -109,6 +109,7 @@ static void kmcp_server_config_free(kmcp_server_config_t* config) {
     free(config->name);
     free(config->command);
     free(config->url);
+    free(config->api_key);
 
     // Free arguments array
     if (config->args) {
@@ -232,6 +233,7 @@ kmcp_error_t kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server
     connection->config.name = mcp_strdup(config->name);
     connection->config.command = config->command ? mcp_strdup(config->command) : NULL;
     connection->config.url = config->url ? mcp_strdup(config->url) : NULL;
+    connection->config.api_key = config->api_key ? mcp_strdup(config->api_key) : NULL;
     connection->config.is_http = config->is_http;
 
     // Copy arguments array
@@ -299,8 +301,44 @@ kmcp_error_t kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
         // Connect server based on configuration type
         if (connection->config.is_http) {
             // HTTP connection
-            // TODO: Implement HTTP connection
-            mcp_log_info("HTTP connection not implemented yet");
+            mcp_log_info("Connecting to HTTP server: %s", connection->config.name);
+
+            // Create HTTP client
+            connection->http_client = kmcp_http_client_create(connection->config.url, connection->config.api_key);
+            if (!connection->http_client) {
+                mcp_log_error("Failed to create HTTP client for server: %s", connection->config.name);
+                continue;
+            }
+
+            mcp_log_info("Created HTTP client for server: %s", connection->config.name);
+
+            // For HTTP connections, we don't have a way to query supported tools and resources
+            // directly. We could implement this by making HTTP requests to the server's
+            // /tools and /resources endpoints, but for now we'll just use default values.
+
+            // Add some default supported tools
+            connection->supported_tools = (char**)malloc(3 * sizeof(char*));
+            if (connection->supported_tools) {
+                connection->supported_tools[0] = mcp_strdup("echo");
+                connection->supported_tools[1] = mcp_strdup("ping");
+                connection->supported_tools[2] = mcp_strdup("http_tool");
+                connection->supported_tools_count = 3;
+                mcp_log_info("Added default supported tools for HTTP server: echo, ping, http_tool");
+            }
+
+            // Add some default supported resources
+            connection->supported_resources = (char**)malloc(3 * sizeof(char*));
+            if (connection->supported_resources) {
+                connection->supported_resources[0] = mcp_strdup("http://example");
+                connection->supported_resources[1] = mcp_strdup("http://data");
+                connection->supported_resources[2] = mcp_strdup("http://image");
+                connection->supported_resources_count = 3;
+                mcp_log_info("Added default supported resources for HTTP server: http://example, http://data, http://image");
+            }
+
+            // Mark as connected
+            connection->is_connected = true;
+            success_count++;
         } else {
             // Local process connection
             if (connection->config.command) {
@@ -529,6 +567,13 @@ kmcp_error_t kmcp_server_manager_disconnect(kmcp_server_manager_t* manager) {
             connection->client = NULL;
         }
 
+        // Close HTTP client
+        if (connection->http_client) {
+            mcp_log_debug("Destroying HTTP client for server: %s", connection->config.name);
+            kmcp_http_client_close(connection->http_client);
+            connection->http_client = NULL;
+        }
+
         // Close transport layer
         if (connection->transport) {
             mcp_log_debug("Destroying transport for server: %s", connection->config.name);
@@ -700,6 +745,7 @@ void kmcp_server_manager_destroy(kmcp_server_manager_t* manager) {
         free(connection->config.name);
         free(connection->config.command);
         free(connection->config.url);
+        free(connection->config.api_key);
 
         // Free arguments array
         if (connection->config.args) {

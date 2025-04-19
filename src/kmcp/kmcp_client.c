@@ -158,6 +158,15 @@ kmcp_client_t* kmcp_client_create_from_file(const char* config_file) {
 
 /**
  * @brief Call a tool
+ *
+ * Calls a tool on an appropriate server based on tool name.
+ * The server selection is handled automatically by the client.
+ *
+ * @param client Client (must not be NULL)
+ * @param tool_name Tool name (must not be NULL)
+ * @param params_json Parameter JSON string (must not be NULL)
+ * @param result_json Pointer to result JSON string, memory allocated by function, caller responsible for freeing
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_client_call_tool(
     kmcp_client_t* client,
@@ -169,6 +178,9 @@ kmcp_error_t kmcp_client_call_tool(
         mcp_log_error("Invalid parameters");
         return KMCP_ERROR_INVALID_PARAMETER;
     }
+
+    // Initialize result pointer to NULL for safety
+    *result_json = NULL;
 
     // Check tool access permission
     if (!kmcp_tool_access_check(client->tool_access, tool_name)) {
@@ -191,8 +203,8 @@ kmcp_error_t kmcp_client_call_tool(
     }
 
     // Check connection status
-    if (!connection->is_connected || !connection->client) {
-        mcp_log_error("Server is not connected or client is not available");
+    if (!connection->is_connected) {
+        mcp_log_error("Server is not connected");
         return KMCP_ERROR_CONNECTION_FAILED;
     }
 
@@ -203,8 +215,63 @@ kmcp_error_t kmcp_client_call_tool(
 
     mcp_log_info("Calling tool '%s' on server '%s'", tool_name, connection->config.name);
 
-    // Call the tool using the correct function signature
-    int result = mcp_client_call_tool(connection->client, tool_name, params_json, (mcp_content_item_t***)&content, (size_t*)&count, (bool*)&is_error);
+    int result = 0;
+
+    // Check if this is an HTTP connection
+    if (connection->config.is_http) {
+        if (!connection->http_client) {
+            mcp_log_error("HTTP client is not available");
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        // Call the tool using HTTP client
+        char* http_result = NULL;
+        kmcp_error_t http_result_code = kmcp_http_client_call_tool(
+            connection->http_client,
+            tool_name,
+            params_json,
+            &http_result
+        );
+
+        if (http_result_code != KMCP_SUCCESS) {
+            mcp_log_error("Failed to call tool '%s' via HTTP: error code %d", tool_name, http_result_code);
+            return http_result_code;
+        }
+
+        // Create a content item with the HTTP result
+        content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
+        if (!content) {
+            mcp_log_error("Failed to allocate memory for content item array");
+            free(http_result);
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
+
+        content[0] = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+        if (!content[0]) {
+            mcp_log_error("Failed to allocate memory for content item");
+            free(content);
+            free(http_result);
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
+
+        content[0]->data = (unsigned char*)http_result;
+        content[0]->mime_type = mcp_strdup("application/json");
+        count = 1;
+        is_error = false; // Assume success unless the result indicates otherwise
+
+        // Check if the result contains an error indication
+        if (strstr(http_result, "\"error\":") != NULL) {
+            is_error = true;
+        }
+    } else {
+        if (!connection->client) {
+            mcp_log_error("MCP client is not available");
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        // Call the tool using mcp_client
+        result = mcp_client_call_tool(connection->client, tool_name, params_json, &content, &count, &is_error);
+    }
 
     // Check for errors
     if (result != 0) {
@@ -212,31 +279,91 @@ kmcp_error_t kmcp_client_call_tool(
         return KMCP_ERROR_INTERNAL;
     }
 
+    // Handle tool execution errors
     if (is_error) {
         mcp_log_warn("Tool '%s' returned an error", tool_name);
+        // We still process the content, as it may contain error details
     }
 
-    // If successful, convert the content to a JSON string
+    // Process the content items
     if (content != NULL && count > 0) {
-        // Build a JSON response from the content items
-        // For now, we'll just use the first content item's data as the result
-        if (count == 1 && content[0]->data) {
-            *result_json = mcp_strdup((const char*)content[0]->data);
+        // Check if we have a single JSON content item
+        if (count == 1 && content[0] && content[0]->data && content[0]->mime_type) {
+            // If it's JSON, just return it directly
+            if (strstr(content[0]->mime_type, "json") ||
+                strstr(content[0]->mime_type, "application/json")) {
+                *result_json = mcp_strdup((const char*)content[0]->data);
+            } else {
+                // For non-JSON content, wrap it in a JSON object
+                // Allocate enough space for the JSON wrapper and the content
+                size_t content_len = strlen((const char*)content[0]->data);
+                size_t mime_type_len = strlen(content[0]->mime_type);
+                size_t json_len = 50 + content_len + mime_type_len; // Extra space for JSON formatting
+
+                *result_json = (char*)malloc(json_len);
+                if (*result_json) {
+                    snprintf(*result_json, json_len,
+                             "{\"content\": \"%s\", \"mime_type\": \"%s\"}",
+                             (const char*)content[0]->data, content[0]->mime_type);
+                }
+            }
         } else {
-            // Create a simple JSON response with success status
-            *result_json = mcp_strdup("{\"result\": \"success\", \"count\": ");
+            // Multiple content items - create a JSON array
+            // First, calculate the required buffer size
+            size_t buffer_size = 256; // Start with some space for JSON structure
+            for (size_t i = 0; i < count; i++) {
+                if (content[i] && content[i]->data) {
+                    buffer_size += strlen((const char*)content[i]->data) + 128; // Extra space for JSON formatting
+                }
+            }
 
-            // Add the count as a string
-            char count_str[32];
-            snprintf(count_str, sizeof(count_str), "%zu}", count);
+            // Allocate the buffer
+            *result_json = (char*)malloc(buffer_size);
+            if (*result_json) {
+                // Initialize with array opening
+                strcpy(*result_json, "{\"items\": [");
+                size_t pos = strlen(*result_json);
 
-            // Reallocate the result string to include the count
-            size_t len = strlen(*result_json);
-            *result_json = (char*)realloc(*result_json, len + strlen(count_str) + 1);
-            strcat(*result_json, count_str);
+                // Add each content item
+                for (size_t i = 0; i < count; i++) {
+                    if (content[i] && content[i]->data && content[i]->mime_type) {
+                        // Add comma if not the first item
+                        if (i > 0) {
+                            strcat(*result_json + pos, ",");
+                            pos += 1;
+                        }
+
+                        // Add the item as a JSON object
+                        int written = snprintf(*result_json + pos, buffer_size - pos,
+                                             "{\"content\": \"%s\", \"mime_type\": \"%s\"}",
+                                             (const char*)content[i]->data, content[i]->mime_type);
+                        if (written > 0) {
+                            pos += written;
+                        }
+                    }
+                }
+
+                // Close the array and object
+                strcat(*result_json + pos, "]}");
+            }
         }
 
-        // Free the content items
+        // If we failed to allocate memory for the result
+        if (!*result_json) {
+            mcp_log_error("Failed to allocate memory for result JSON");
+            // Clean up content items
+            for (size_t i = 0; i < count; i++) {
+                if (content[i]) {
+                    free(content[i]->data);
+                    free(content[i]->mime_type);
+                    free(content[i]);
+                }
+            }
+            free(content);
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
+
+        // Clean up content items
         for (size_t i = 0; i < count; i++) {
             if (content[i]) {
                 free(content[i]->data);
@@ -246,16 +373,25 @@ kmcp_error_t kmcp_client_call_tool(
         }
         free(content);
 
-        return KMCP_SUCCESS;
+        return is_error ? KMCP_ERROR_TOOL_EXECUTION : KMCP_SUCCESS;
     } else {
         // No content returned
         *result_json = mcp_strdup("{\"result\": \"success\", \"count\": 0}");
-        return KMCP_SUCCESS;
+        return is_error ? KMCP_ERROR_TOOL_EXECUTION : KMCP_SUCCESS;
     }
 }
 
 /**
  * @brief Get a resource
+ *
+ * Retrieves a resource from an appropriate server based on resource URI.
+ * The server selection is handled automatically by the client.
+ *
+ * @param client Client (must not be NULL)
+ * @param resource_uri Resource URI (must not be NULL)
+ * @param content Pointer to content string, memory allocated by function, caller responsible for freeing
+ * @param content_type Pointer to content type string, memory allocated by function, caller responsible for freeing
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_client_get_resource(
     kmcp_client_t* client,
@@ -267,6 +403,10 @@ kmcp_error_t kmcp_client_get_resource(
         mcp_log_error("Invalid parameters");
         return KMCP_ERROR_INVALID_PARAMETER;
     }
+
+    // Initialize output pointers to NULL for safety
+    *content = NULL;
+    *content_type = NULL;
 
     // Select appropriate server
     int server_index = kmcp_server_manager_select_resource(client->manager, resource_uri);
@@ -283,8 +423,8 @@ kmcp_error_t kmcp_client_get_resource(
     }
 
     // Check connection status
-    if (!connection->is_connected || !connection->client) {
-        mcp_log_error("Server is not connected or client is not available");
+    if (!connection->is_connected) {
+        mcp_log_error("Server is not connected");
         return KMCP_ERROR_CONNECTION_FAILED;
     }
 
@@ -294,8 +434,60 @@ kmcp_error_t kmcp_client_get_resource(
 
     mcp_log_info("Getting resource '%s' from server '%s'", resource_uri, connection->config.name);
 
-    // Call the read_resource function with the correct signature
-    int result = mcp_client_read_resource(connection->client, resource_uri, (mcp_content_item_t***)&content_items, (size_t*)&count);
+    int result = 0;
+
+    // Check if this is an HTTP connection
+    if (connection->config.is_http) {
+        if (!connection->http_client) {
+            mcp_log_error("HTTP client is not available");
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        // Get the resource using HTTP client
+        char* http_content = NULL;
+        char* http_content_type = NULL;
+        kmcp_error_t http_result_code = kmcp_http_client_get_resource(
+            connection->http_client,
+            resource_uri,
+            &http_content,
+            &http_content_type
+        );
+
+        if (http_result_code != KMCP_SUCCESS) {
+            mcp_log_error("Failed to get resource '%s' via HTTP: error code %d", resource_uri, http_result_code);
+            return http_result_code;
+        }
+
+        // Create a content item with the HTTP result
+        content_items = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
+        if (!content_items) {
+            mcp_log_error("Failed to allocate memory for content item array");
+            free(http_content);
+            free(http_content_type);
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
+
+        content_items[0] = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+        if (!content_items[0]) {
+            mcp_log_error("Failed to allocate memory for content item");
+            free(content_items);
+            free(http_content);
+            free(http_content_type);
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
+
+        content_items[0]->data = (unsigned char*)http_content;
+        content_items[0]->mime_type = http_content_type;
+        count = 1;
+    } else {
+        if (!connection->client) {
+            mcp_log_error("MCP client is not available");
+            return KMCP_ERROR_CONNECTION_FAILED;
+        }
+
+        // Call the read_resource function
+        result = mcp_client_read_resource(connection->client, resource_uri, &content_items, &count);
+    }
 
     // Check for errors
     if (result != 0) {
@@ -307,23 +499,79 @@ kmcp_error_t kmcp_client_get_resource(
     if (content_items != NULL && count > 0) {
         // For simplicity, just use the first content item
         // In a real implementation, you might need to handle multiple content items
-        if (content_items[0]->data) {
+        if (content_items[0] && content_items[0]->data) {
             *content = mcp_strdup((const char*)content_items[0]->data);
+            if (!*content) {
+                mcp_log_error("Failed to allocate memory for content");
+                // Clean up content items
+                for (size_t i = 0; i < count; i++) {
+                    if (content_items[i]) {
+                        free(content_items[i]->data);
+                        free(content_items[i]->mime_type);
+                        free(content_items[i]);
+                    }
+                }
+                free(content_items);
+                return KMCP_ERROR_MEMORY_ALLOCATION;
+            }
             mcp_log_debug("Resource data size: %zu bytes", strlen(*content));
         } else {
             *content = mcp_strdup("");
+            if (!*content) {
+                mcp_log_error("Failed to allocate memory for empty content");
+                // Clean up content items
+                for (size_t i = 0; i < count; i++) {
+                    if (content_items[i]) {
+                        free(content_items[i]->data);
+                        free(content_items[i]->mime_type);
+                        free(content_items[i]);
+                    }
+                }
+                free(content_items);
+                return KMCP_ERROR_MEMORY_ALLOCATION;
+            }
             mcp_log_debug("Resource data is empty");
         }
 
-        if (content_items[0]->mime_type) {
+        if (content_items[0] && content_items[0]->mime_type) {
             *content_type = mcp_strdup(content_items[0]->mime_type);
+            if (!*content_type) {
+                mcp_log_error("Failed to allocate memory for content type");
+                free(*content);
+                *content = NULL;
+                // Clean up content items
+                for (size_t i = 0; i < count; i++) {
+                    if (content_items[i]) {
+                        free(content_items[i]->data);
+                        free(content_items[i]->mime_type);
+                        free(content_items[i]);
+                    }
+                }
+                free(content_items);
+                return KMCP_ERROR_MEMORY_ALLOCATION;
+            }
             mcp_log_debug("Resource content type: %s", *content_type);
         } else {
             *content_type = mcp_strdup("application/octet-stream");
+            if (!*content_type) {
+                mcp_log_error("Failed to allocate memory for default content type");
+                free(*content);
+                *content = NULL;
+                // Clean up content items
+                for (size_t i = 0; i < count; i++) {
+                    if (content_items[i]) {
+                        free(content_items[i]->data);
+                        free(content_items[i]->mime_type);
+                        free(content_items[i]);
+                    }
+                }
+                free(content_items);
+                return KMCP_ERROR_MEMORY_ALLOCATION;
+            }
             mcp_log_debug("Using default content type: %s", *content_type);
         }
 
-        // Free the content items
+        // Clean up content items
         for (size_t i = 0; i < count; i++) {
             if (content_items[i]) {
                 free(content_items[i]->data);
@@ -337,8 +585,23 @@ kmcp_error_t kmcp_client_get_resource(
     } else {
         // No content returned
         mcp_log_warn("No content returned for resource '%s'", resource_uri);
+
+        // Allocate empty content
         *content = mcp_strdup("");
+        if (!*content) {
+            mcp_log_error("Failed to allocate memory for empty content");
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
+
+        // Allocate default content type
         *content_type = mcp_strdup("application/octet-stream");
+        if (!*content_type) {
+            mcp_log_error("Failed to allocate memory for default content type");
+            free(*content);
+            *content = NULL;
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
+
         return KMCP_SUCCESS;
     }
 }

@@ -11,18 +11,56 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
+
+// Use _stricmp for Windows, which is equivalent to strcasecmp
+#define strncasecmp _strnicmp
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <strings.h>
 #endif
+
+/**
+ * @brief Case-insensitive string search (like strstr but case-insensitive)
+ *
+ * This is a custom implementation for platforms that don't provide strcasestr.
+ *
+ * @param haystack String to search in
+ * @param needle String to search for
+ * @return char* Pointer to the first occurrence of needle in haystack, or NULL if not found
+ */
+static char* my_strcasestr(const char* haystack, const char* needle) {
+    if (!haystack || !needle) {
+        return NULL;
+    }
+
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0) {
+        return (char*)haystack;
+    }
+
+    size_t haystack_len = strlen(haystack);
+    if (haystack_len < needle_len) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i <= haystack_len - needle_len; i++) {
+        if (strncasecmp(haystack + i, needle, needle_len) == 0) {
+            return (char*)(haystack + i);
+        }
+    }
+
+    return NULL;
+}
 
 /**
  * @brief Complete definition of HTTP client structure
@@ -206,6 +244,12 @@ kmcp_error_t kmcp_http_client_send(
     // Initialize output parameters
     *response = NULL;
     *status = 0;
+
+    // Variables for response parsing
+    char* response_content_type = NULL;
+    int content_length = -1;
+    char* transfer_encoding = NULL;
+    char* chunked = NULL;
 
     // Build complete path
     char* full_path = NULL;
@@ -558,24 +602,97 @@ kmcp_error_t kmcp_http_client_send(
     char* status_line = buffer;
     char* status_code_str = strchr(status_line, ' ');
     if (!status_code_str) {
-        mcp_log_error("Invalid response format");
+        mcp_log_error("Invalid response format: no status code");
         free(buffer);
         free(full_path);
         return KMCP_ERROR_INTERNAL;
     }
 
     *status = atoi(status_code_str + 1);
+    mcp_log_debug("HTTP status code: %d", *status);
+
+    // Find end of status line
+    char* headers_start = strstr(status_line, "\r\n");
+    if (!headers_start) {
+        mcp_log_error("Invalid response format: no end of status line");
+        free(buffer);
+        free(full_path);
+        return KMCP_ERROR_INTERNAL;
+    }
+    headers_start += 2; // Skip \r\n
 
     // Find response body
     char* body_start = strstr(buffer, "\r\n\r\n");
     if (!body_start) {
-        mcp_log_error("Invalid response format");
+        mcp_log_error("Invalid response format: no end of headers");
         free(buffer);
         free(full_path);
         return KMCP_ERROR_INTERNAL;
     }
 
+    // Null-terminate headers for easier parsing
+    *body_start = '\0';
     body_start += 4; // Skip \r\n\r\n
+
+    // Parse headers
+
+    char* header = headers_start;
+    while (header < body_start) {
+        char* header_end = strstr(header, "\r\n");
+        if (!header_end) {
+            break;
+        }
+
+        // Null-terminate header for easier parsing
+        *header_end = '\0';
+
+        // Parse Content-Type header
+        if (strncasecmp(header, "Content-Type:", 13) == 0) {
+            response_content_type = header + 13;
+            // Skip leading whitespace
+            while (*response_content_type == ' ') {
+                response_content_type++;
+            }
+            mcp_log_debug("Content-Type: %s", response_content_type);
+        }
+        // Parse Content-Length header
+        else if (strncasecmp(header, "Content-Length:", 15) == 0) {
+            content_length = atoi(header + 15);
+            mcp_log_debug("Content-Length: %d", content_length);
+        }
+        // Parse Transfer-Encoding header
+        else if (strncasecmp(header, "Transfer-Encoding:", 18) == 0) {
+            transfer_encoding = header + 18;
+            // Skip leading whitespace
+            while (*transfer_encoding == ' ') {
+                transfer_encoding++;
+            }
+            mcp_log_debug("Transfer-Encoding: %s", transfer_encoding);
+            // Check if chunked encoding is used
+            chunked = my_strcasestr(transfer_encoding, "chunked");
+        }
+
+        // Move to next header
+        header = header_end + 2;
+    }
+
+    // Restore the original buffer
+    *body_start = '\r';
+
+    // Handle chunked encoding
+    if (chunked) {
+        mcp_log_warn("Chunked encoding detected but not fully supported");
+        // In a real implementation, you would decode chunked encoding here
+    }
+
+    // Validate content length if provided
+    if (content_length >= 0) {
+        size_t body_length = strlen(body_start);
+        if (body_length != (size_t)content_length) {
+            mcp_log_warn("Content-Length mismatch: expected %d, got %zu", content_length, body_length);
+            // In a real implementation, you might want to handle this more gracefully
+        }
+    }
 
     // Copy response body
     *response = mcp_strdup(body_start);

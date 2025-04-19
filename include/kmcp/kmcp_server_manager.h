@@ -26,6 +26,7 @@ typedef struct {
     char** args;               /**< Command arguments */
     size_t args_count;         /**< Number of arguments */
     char* url;                 /**< HTTP URL (for HTTP connections) */
+    char* api_key;             /**< API key (for HTTP connections) */
     char** env;                /**< Environment variables */
     size_t env_count;          /**< Number of environment variables */
     bool is_http;              /**< Whether this is an HTTP connection */
