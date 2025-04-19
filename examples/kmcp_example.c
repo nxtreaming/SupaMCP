@@ -149,7 +149,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Display server count
-    size_t server_count = kmcp_server_manager_get_count(manager);
+    size_t server_count = kmcp_server_get_count(manager);
     mcp_log_info("Server count: %zu", server_count);
 
     // Try to call a tool

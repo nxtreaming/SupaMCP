@@ -47,7 +47,7 @@ typedef struct kmcp_server_manager kmcp_server_manager_t;
  *
  * @return kmcp_server_manager_t* Returns server manager pointer on success, NULL on failure
  */
-kmcp_server_manager_t* kmcp_server_manager_create();
+kmcp_server_manager_t* kmcp_server_create();
 
 /**
  * @brief Load server configurations from a config file
@@ -63,7 +63,7 @@ kmcp_server_manager_t* kmcp_server_manager_create();
  *         - KMCP_ERROR_PARSE_FAILED if the configuration file cannot be parsed
  *         - Other error codes for specific failures
  */
-kmcp_error_t kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_file);
+kmcp_error_t kmcp_server_load(kmcp_server_manager_t* manager, const char* config_file);
 
 /**
  * @brief Add a server
@@ -78,7 +78,7 @@ kmcp_error_t kmcp_server_manager_load(kmcp_server_manager_t* manager, const char
  *         - KMCP_ERROR_MEMORY_ALLOCATION if memory allocation fails
  *         - Other error codes for specific failures
  */
-kmcp_error_t kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server_config_t* config);
+kmcp_error_t kmcp_server_add(kmcp_server_manager_t* manager, kmcp_server_config_t* config);
 
 /**
  * @brief Connect to all servers
@@ -95,7 +95,7 @@ kmcp_error_t kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server
  * @note This function will attempt to connect to all servers, even if some fail.
  *       It will return success if at least one server was connected successfully.
  */
-kmcp_error_t kmcp_server_manager_connect(kmcp_server_manager_t* manager);
+kmcp_error_t kmcp_server_connect(kmcp_server_manager_t* manager);
 
 /**
  * @brief Disconnect from all servers
@@ -109,7 +109,7 @@ kmcp_error_t kmcp_server_manager_connect(kmcp_server_manager_t* manager);
  *         - KMCP_ERROR_INVALID_PARAMETER if manager is NULL
  *         - Other error codes for specific failures
  */
-kmcp_error_t kmcp_server_manager_disconnect(kmcp_server_manager_t* manager);
+kmcp_error_t kmcp_server_disconnect(kmcp_server_manager_t* manager);
 
 /**
  * @brief Select a server for a tool
@@ -121,10 +121,10 @@ kmcp_error_t kmcp_server_manager_disconnect(kmcp_server_manager_t* manager);
  * @param tool_name Tool name (must not be NULL)
  * @return int Returns server index on success, -1 if no suitable server is found
  *
- * @note The returned index can be used with kmcp_server_manager_get_connection()
+ * @note The returned index can be used with kmcp_server_get_connection()
  *       to get the actual server connection.
  */
-int kmcp_server_manager_select_tool(kmcp_server_manager_t* manager, const char* tool_name);
+int kmcp_server_select_tool(kmcp_server_manager_t* manager, const char* tool_name);
 
 /**
  * @brief Select a server for a resource
@@ -136,16 +136,16 @@ int kmcp_server_manager_select_tool(kmcp_server_manager_t* manager, const char* 
  * @param resource_uri Resource URI (must not be NULL)
  * @return int Returns server index on success, -1 if no suitable server is found
  *
- * @note The returned index can be used with kmcp_server_manager_get_connection()
+ * @note The returned index can be used with kmcp_server_get_connection()
  *       to get the actual server connection.
  */
-int kmcp_server_manager_select_resource(kmcp_server_manager_t* manager, const char* resource_uri);
+int kmcp_server_select_resource(kmcp_server_manager_t* manager, const char* resource_uri);
 
 /**
  * @brief Get a server connection
  *
  * Retrieves a server connection by its index. The index is typically obtained
- * from kmcp_server_manager_select_tool() or kmcp_server_manager_select_resource().
+ * from kmcp_server_select_tool() or kmcp_server_select_resource().
  *
  * @param manager Server manager (must not be NULL)
  * @param index Server index (must be valid)
@@ -153,7 +153,7 @@ int kmcp_server_manager_select_resource(kmcp_server_manager_t* manager, const ch
  *
  * @note The returned pointer is owned by the manager and should not be freed by the caller
  */
-kmcp_server_connection_t* kmcp_server_manager_get_connection(kmcp_server_manager_t* manager, int index);
+kmcp_server_connection_t* kmcp_server_get_connection(kmcp_server_manager_t* manager, int index);
 
 /**
  * @brief Get the number of servers
@@ -163,7 +163,41 @@ kmcp_server_connection_t* kmcp_server_manager_get_connection(kmcp_server_manager
  * @param manager Server manager (must not be NULL)
  * @return size_t Number of servers, or 0 if manager is NULL
  */
-size_t kmcp_server_manager_get_count(kmcp_server_manager_t* manager);
+size_t kmcp_server_get_count(kmcp_server_manager_t* manager);
+
+/**
+ * @brief Reconnect to a server
+ *
+ * Attempts to reconnect to a server that has been disconnected.
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param server_index Index of the server to reconnect to
+ * @param max_attempts Maximum number of reconnection attempts (0 for unlimited)
+ * @param retry_interval_ms Interval between reconnection attempts in milliseconds
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
+ */
+kmcp_error_t kmcp_server_reconnect(
+    kmcp_server_manager_t* manager,
+    int server_index,
+    int max_attempts,
+    int retry_interval_ms
+);
+
+/**
+ * @brief Reconnect to all disconnected servers
+ *
+ * Attempts to reconnect to all servers that have been disconnected.
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param max_attempts Maximum number of reconnection attempts per server (0 for unlimited)
+ * @param retry_interval_ms Interval between reconnection attempts in milliseconds
+ * @return kmcp_error_t Returns KMCP_SUCCESS if all reconnections were successful, or an error code on failure
+ */
+kmcp_error_t kmcp_server_reconnect_all(
+    kmcp_server_manager_t* manager,
+    int max_attempts,
+    int retry_interval_ms
+);
 
 /**
  * @brief Destroy the server manager
@@ -175,7 +209,7 @@ size_t kmcp_server_manager_get_count(kmcp_server_manager_t* manager);
  *
  * @note After calling this function, the manager pointer is no longer valid and should not be used.
  */
-void kmcp_server_manager_destroy(kmcp_server_manager_t* manager);
+void kmcp_server_destroy(kmcp_server_manager_t* manager);
 
 #ifdef __cplusplus
 }

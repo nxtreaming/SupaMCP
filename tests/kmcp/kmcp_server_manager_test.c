@@ -21,14 +21,14 @@ static int test_server_manager_create() {
     printf("Testing server manager creation...\n");
 
     // Create server manager
-    kmcp_server_manager_t* manager = kmcp_server_manager_create();
+    kmcp_server_manager_t* manager = kmcp_server_create();
     if (!manager) {
         printf("FAIL: Failed to create server manager\n");
         return 1;
     }
 
     // Clean up
-    kmcp_server_manager_destroy(manager);
+    kmcp_server_destroy(manager);
 
     printf("PASS: Server manager creation tests passed\n");
     return 0;
@@ -67,8 +67,6 @@ static int test_server_config() {
     free(config.name);
     free(config.command);
 
-
-
     printf("PASS: Server configuration tests passed\n");
     return 0;
 }
@@ -82,7 +80,7 @@ static int test_server_manager_add_server() {
     printf("Testing server manager add server...\n");
 
     // Create server manager
-    kmcp_server_manager_t* manager = kmcp_server_manager_create();
+    kmcp_server_manager_t* manager = kmcp_server_create();
     if (!manager) {
         printf("FAIL: Failed to create server manager\n");
         return 1;
@@ -98,17 +96,17 @@ static int test_server_manager_add_server() {
         printf("FAIL: Failed to create server configuration\n");
         free(config.name);
         free(config.command);
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
     // Add server
-    kmcp_error_t result = kmcp_server_manager_add(manager, &config);
+    kmcp_error_t result = kmcp_server_add(manager, &config);
     if (result != KMCP_SUCCESS) {
         printf("FAIL: Failed to add server to manager, error: %s\n", kmcp_error_message(result));
         free(config.name);
         free(config.command);
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
@@ -117,22 +115,22 @@ static int test_server_manager_add_server() {
     free(config.command);
 
     // Test with invalid parameters
-    result = kmcp_server_manager_add(NULL, &config);
+    result = kmcp_server_add(NULL, &config);
     if (result != KMCP_ERROR_INVALID_PARAMETER) {
         printf("FAIL: Expected KMCP_ERROR_INVALID_PARAMETER for NULL manager, got %d\n", result);
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
-    result = kmcp_server_manager_add(manager, NULL);
+    result = kmcp_server_add(manager, NULL);
     if (result != KMCP_ERROR_INVALID_PARAMETER) {
         printf("FAIL: Expected KMCP_ERROR_INVALID_PARAMETER for NULL config, got %d\n", result);
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
     // Clean up
-    kmcp_server_manager_destroy(manager);
+    kmcp_server_destroy(manager);
 
     printf("PASS: Server manager add server tests passed\n");
     return 0;
@@ -147,7 +145,7 @@ static int test_server_manager_get_server() {
     printf("Testing server manager get server...\n");
 
     // Create server manager
-    kmcp_server_manager_t* manager = kmcp_server_manager_create();
+    kmcp_server_manager_t* manager = kmcp_server_create();
     if (!manager) {
         printf("FAIL: Failed to create server manager\n");
         return 1;
@@ -163,17 +161,17 @@ static int test_server_manager_get_server() {
         printf("FAIL: Failed to create server configuration\n");
         free(config.name);
         free(config.command);
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
     // Add server
-    kmcp_error_t result = kmcp_server_manager_add(manager, &config);
+    kmcp_error_t result = kmcp_server_add(manager, &config);
     if (result != KMCP_SUCCESS) {
         printf("FAIL: Failed to add server to manager, error: %s\n", kmcp_error_message(result));
         free(config.name);
         free(config.command);
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
@@ -183,37 +181,37 @@ static int test_server_manager_get_server() {
 
     // Get server by index
     int server_index = 0; // First server
-    kmcp_server_connection_t* connection = kmcp_server_manager_get_connection(manager, server_index);
+    kmcp_server_connection_t* connection = kmcp_server_get_connection(manager, server_index);
     if (!connection) {
         printf("FAIL: Failed to get server from manager\n");
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
     if (!connection) {
         printf("FAIL: Server connection is NULL\n");
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
     // Test with invalid parameters
-    connection = kmcp_server_manager_get_connection(NULL, 0);
+    connection = kmcp_server_get_connection(NULL, 0);
     if (connection) {
         printf("FAIL: Expected NULL for NULL manager\n");
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
     // Test with invalid index
-    connection = kmcp_server_manager_get_connection(manager, 999);
+    connection = kmcp_server_get_connection(manager, 999);
     if (connection) {
         printf("FAIL: Expected NULL for invalid index\n");
-        kmcp_server_manager_destroy(manager);
+        kmcp_server_destroy(manager);
         return 1;
     }
 
     // Clean up
-    kmcp_server_manager_destroy(manager);
+    kmcp_server_destroy(manager);
 
     printf("PASS: Server manager get server tests passed\n");
     return 0;

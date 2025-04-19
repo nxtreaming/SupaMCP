@@ -56,7 +56,7 @@ kmcp_client_t* kmcp_client_create(kmcp_client_config_t* config) {
     client->config.timeout_ms = config->timeout_ms > 0 ? config->timeout_ms : 30000;
 
     // Create server manager
-    client->manager = kmcp_server_manager_create();
+    client->manager = kmcp_server_create();
     if (!client->manager) {
         mcp_log_error("Failed to create server manager");
         free(client->config.name);
@@ -69,7 +69,7 @@ kmcp_client_t* kmcp_client_create(kmcp_client_config_t* config) {
     client->tool_access = kmcp_tool_access_create(true); // Allow all tools by default
     if (!client->tool_access) {
         mcp_log_error("Failed to create tool access control");
-        kmcp_server_manager_destroy(client->manager);
+        kmcp_server_destroy(client->manager);
         free(client->config.name);
         free(client->config.version);
         free(client);
@@ -125,7 +125,7 @@ kmcp_client_t* kmcp_client_create_from_file(const char* config_file) {
 
     // Load server configurations
     mcp_log_info("Loading server configurations");
-    int server_result = kmcp_server_manager_load(client->manager, config_file);
+    int server_result = kmcp_server_load(client->manager, config_file);
     if (server_result != 0) {
         mcp_log_error("Failed to load server configurations (error code: %d)", server_result);
         // Continue execution, as some server configurations may be valid
@@ -133,14 +133,14 @@ kmcp_client_t* kmcp_client_create_from_file(const char* config_file) {
 
     // Connect to servers
     mcp_log_info("Connecting to servers");
-    int connect_result = kmcp_server_manager_connect(client->manager);
+    int connect_result = kmcp_server_connect(client->manager);
     if (connect_result != 0) {
         mcp_log_error("Failed to connect to servers (error code: %d)", connect_result);
         // Continue execution, as some server connections may be successful
     }
 
     // Get server count
-    size_t server_count = kmcp_server_manager_get_count(client->manager);
+    size_t server_count = kmcp_server_get_count(client->manager);
     mcp_log_info("Connected to %zu server(s)", server_count);
 
     // Load tool access control
@@ -189,14 +189,14 @@ kmcp_error_t kmcp_client_call_tool(
     }
 
     // Select appropriate server
-    int server_index = kmcp_server_manager_select_tool(client->manager, tool_name);
+    int server_index = kmcp_server_select_tool(client->manager, tool_name);
     if (server_index < 0) {
         mcp_log_error("No server found for tool: %s", tool_name);
         return KMCP_ERROR_TOOL_NOT_FOUND;
     }
 
     // Get server connection
-    kmcp_server_connection_t* connection = kmcp_server_manager_get_connection(client->manager, server_index);
+    kmcp_server_connection_t* connection = kmcp_server_get_connection(client->manager, server_index);
     if (!connection) {
         mcp_log_error("Failed to get server connection");
         return KMCP_ERROR_CONNECTION_FAILED;
@@ -409,14 +409,14 @@ kmcp_error_t kmcp_client_get_resource(
     *content_type = NULL;
 
     // Select appropriate server
-    int server_index = kmcp_server_manager_select_resource(client->manager, resource_uri);
+    int server_index = kmcp_server_select_resource(client->manager, resource_uri);
     if (server_index < 0) {
         mcp_log_error("No server found for resource: %s", resource_uri);
         return KMCP_ERROR_RESOURCE_NOT_FOUND;
     }
 
     // Get server connection
-    kmcp_server_connection_t* connection = kmcp_server_manager_get_connection(client->manager, server_index);
+    kmcp_server_connection_t* connection = kmcp_server_get_connection(client->manager, server_index);
     if (!connection) {
         mcp_log_error("Failed to get server connection");
         return KMCP_ERROR_CONNECTION_FAILED;
@@ -631,8 +631,8 @@ void kmcp_client_close(kmcp_client_t* client) {
     // Disconnect all connections
     if (client->manager) {
         mcp_log_debug("Disconnecting server connections");
-        kmcp_server_manager_disconnect(client->manager);
-        kmcp_server_manager_destroy(client->manager);
+        kmcp_server_disconnect(client->manager);
+        kmcp_server_destroy(client->manager);
         client->manager = NULL;
     }
 

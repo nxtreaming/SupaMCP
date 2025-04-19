@@ -7,6 +7,7 @@
 #include "mcp_hashtable.h"
 #include "mcp_sync.h"
 #include "mcp_string_utils.h"
+#include "mcp_socket_utils.h"
 #include <mcp_transport.h>
 #include <mcp_transport_factory.h>
 #include <stdlib.h>
@@ -35,7 +36,7 @@ struct kmcp_server_manager {
 /**
  * @brief Create a server manager
  */
-kmcp_server_manager_t* kmcp_server_manager_create() {
+kmcp_server_manager_t* kmcp_server_create() {
     kmcp_server_manager_t* manager = (kmcp_server_manager_t*)malloc(sizeof(kmcp_server_manager_t));
     if (!manager) {
         mcp_log_error("Failed to allocate memory for server manager");
@@ -134,7 +135,7 @@ static void kmcp_server_config_free(kmcp_server_config_t* config) {
 /**
  * @brief Load server configurations from a config file
  */
-kmcp_error_t kmcp_server_manager_load(kmcp_server_manager_t* manager, const char* config_file) {
+kmcp_error_t kmcp_server_load(kmcp_server_manager_t* manager, const char* config_file) {
     if (!manager || !config_file) {
         mcp_log_error("Invalid parameters");
         return KMCP_ERROR_INVALID_PARAMETER;
@@ -168,7 +169,7 @@ kmcp_error_t kmcp_server_manager_load(kmcp_server_manager_t* manager, const char
         }
 
         mcp_log_info("Adding server: %s", servers[i]->name ? servers[i]->name : "(unnamed)");
-        result = kmcp_server_manager_add(manager, servers[i]);
+        result = kmcp_server_add(manager, servers[i]);
         if (result != 0) {
             mcp_log_error("Failed to add server: %s", servers[i]->name ? servers[i]->name : "(unnamed)");
             // Continue adding other servers
@@ -192,7 +193,7 @@ kmcp_error_t kmcp_server_manager_load(kmcp_server_manager_t* manager, const char
 /**
  * @brief Add a server
  */
-kmcp_error_t kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server_config_t* config) {
+kmcp_error_t kmcp_server_add(kmcp_server_manager_t* manager, kmcp_server_config_t* config) {
     if (!manager || !config) {
         mcp_log_error("Invalid parameters");
         return KMCP_ERROR_INVALID_PARAMETER;
@@ -269,7 +270,7 @@ kmcp_error_t kmcp_server_manager_add(kmcp_server_manager_t* manager, kmcp_server
 /**
  * @brief Connect to all servers
  */
-kmcp_error_t kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
+kmcp_error_t kmcp_server_connect(kmcp_server_manager_t* manager) {
     if (!manager) {
         mcp_log_error("Invalid parameter");
         return KMCP_ERROR_INVALID_PARAMETER;
@@ -583,7 +584,7 @@ kmcp_error_t kmcp_server_manager_connect(kmcp_server_manager_t* manager) {
 /**
  * @brief Disconnect from all servers
  */
-kmcp_error_t kmcp_server_manager_disconnect(kmcp_server_manager_t* manager) {
+kmcp_error_t kmcp_server_disconnect(kmcp_server_manager_t* manager) {
     if (!manager) {
         mcp_log_error("Invalid parameter");
         return KMCP_ERROR_INVALID_PARAMETER;
@@ -652,7 +653,7 @@ kmcp_error_t kmcp_server_manager_disconnect(kmcp_server_manager_t* manager) {
 /**
  * @brief Select an appropriate server for a tool
  */
-int kmcp_server_manager_select_tool(kmcp_server_manager_t* manager, const char* tool_name) {
+int kmcp_server_select_tool(kmcp_server_manager_t* manager, const char* tool_name) {
     if (!manager || !tool_name) {
         mcp_log_error("Invalid parameters");
         return -1;
@@ -696,7 +697,7 @@ int kmcp_server_manager_select_tool(kmcp_server_manager_t* manager, const char* 
 /**
  * @brief Select an appropriate server for a resource
  */
-int kmcp_server_manager_select_resource(kmcp_server_manager_t* manager, const char* resource_uri) {
+int kmcp_server_select_resource(kmcp_server_manager_t* manager, const char* resource_uri) {
     if (!manager || !resource_uri) {
         mcp_log_error("Invalid parameters");
         return -1;
@@ -744,7 +745,7 @@ int kmcp_server_manager_select_resource(kmcp_server_manager_t* manager, const ch
 /**
  * @brief Get a server connection
  */
-kmcp_server_connection_t* kmcp_server_manager_get_connection(kmcp_server_manager_t* manager, int index) {
+kmcp_server_connection_t* kmcp_server_get_connection(kmcp_server_manager_t* manager, int index) {
     if (!manager || index < 0 || (size_t)index >= manager->server_count) {
         mcp_log_error("Invalid parameters");
         return NULL;
@@ -756,7 +757,7 @@ kmcp_server_connection_t* kmcp_server_manager_get_connection(kmcp_server_manager
 /**
  * @brief Get the number of servers
  */
-size_t kmcp_server_manager_get_count(kmcp_server_manager_t* manager) {
+size_t kmcp_server_get_count(kmcp_server_manager_t* manager) {
     if (!manager) {
         return 0;
     }
@@ -778,7 +779,7 @@ static void free_hash_value(const void* key, void* value, void* user_data) {
 /**
  * @brief Destroy the server manager
  */
-void kmcp_server_manager_destroy(kmcp_server_manager_t* manager) {
+void kmcp_server_destroy(kmcp_server_manager_t* manager) {
     if (!manager) {
         return;
     }
@@ -786,7 +787,7 @@ void kmcp_server_manager_destroy(kmcp_server_manager_t* manager) {
     mcp_log_info("Destroying server manager");
 
     // Disconnect all servers
-    kmcp_server_manager_disconnect(manager);
+    kmcp_server_disconnect(manager);
 
     // Free server connections
     for (size_t i = 0; i < manager->server_count; i++) {
@@ -857,4 +858,187 @@ void kmcp_server_manager_destroy(kmcp_server_manager_t* manager) {
 
     free(manager);
     mcp_log_info("Server manager destroyed");
+}
+
+/**
+ * @brief Reconnect to a server
+ */
+kmcp_error_t kmcp_server_reconnect(
+    kmcp_server_manager_t* manager,
+    int server_index,
+    int max_attempts,
+    int retry_interval_ms
+) {
+    if (!manager) {
+        mcp_log_error("Invalid parameter");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    if (server_index < 0 || server_index >= (int)manager->server_count) {
+        mcp_log_error("Invalid server index: %d", server_index);
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    mcp_mutex_lock(manager->mutex);
+
+    kmcp_server_connection_t* connection = manager->servers[server_index];
+    if (!connection) {
+        mcp_log_error("Server connection at index %d is NULL", server_index);
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_ERROR_SERVER_NOT_FOUND;
+    }
+
+    // If already connected, skip
+    if (connection->is_connected) {
+        mcp_log_info("Server '%s' is already connected, skipping",
+                   connection->config.name ? connection->config.name : "(unnamed)");
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_SUCCESS;
+    }
+
+    mcp_log_info("Reconnecting to server '%s'",
+               connection->config.name ? connection->config.name : "(unnamed)");
+
+    // Attempt to reconnect
+    int attempt = 0;
+    kmcp_error_t result = KMCP_ERROR_CONNECTION_FAILED;
+
+    while ((max_attempts == 0 || attempt < max_attempts) && result != KMCP_SUCCESS) {
+        if (attempt > 0) {
+            mcp_log_info("Reconnection attempt %d for server '%s'",
+                       attempt, connection->config.name ? connection->config.name : "(unnamed)");
+            mcp_sleep_ms(retry_interval_ms);
+        }
+
+        // Disconnect first if needed
+        if (connection->client) {
+            mcp_client_destroy(connection->client);
+            connection->client = NULL;
+        }
+
+        if (connection->transport) {
+            mcp_transport_destroy(connection->transport);
+            connection->transport = NULL;
+        }
+
+        if (connection->http_client) {
+            kmcp_http_client_close(connection->http_client);
+            connection->http_client = NULL;
+        }
+
+        if (connection->process) {
+            kmcp_process_terminate(connection->process);
+            kmcp_process_close(connection->process);
+            connection->process = NULL;
+        }
+
+        // Free previous tools and resources
+        if (connection->supported_tools) {
+            for (size_t j = 0; j < connection->supported_tools_count; j++) {
+                free(connection->supported_tools[j]);
+            }
+            free(connection->supported_tools);
+            connection->supported_tools = NULL;
+            connection->supported_tools_count = 0;
+        }
+
+        if (connection->supported_resources) {
+            for (size_t j = 0; j < connection->supported_resources_count; j++) {
+                free(connection->supported_resources[j]);
+            }
+            free(connection->supported_resources);
+            connection->supported_resources = NULL;
+            connection->supported_resources_count = 0;
+        }
+
+        // Reset connection state
+        connection->is_connected = false;
+
+        // Try to connect
+        result = kmcp_server_connect(manager);
+        attempt++;
+    }
+
+    if (result == KMCP_SUCCESS) {
+        mcp_log_info("Successfully reconnected to server '%s' after %d attempts",
+                   connection->config.name ? connection->config.name : "(unnamed)", attempt);
+    } else {
+        mcp_log_error("Failed to reconnect to server '%s' after %d attempts",
+                    connection->config.name ? connection->config.name : "(unnamed)", attempt);
+    }
+
+    mcp_mutex_unlock(manager->mutex);
+    return result;
+}
+
+/**
+ * @brief Reconnect to all disconnected servers
+ */
+kmcp_error_t kmcp_server_reconnect_all(
+    kmcp_server_manager_t* manager,
+    int max_attempts,
+    int retry_interval_ms
+) {
+    if (!manager) {
+        mcp_log_error("Invalid parameter");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    mcp_log_info("Reconnecting to all disconnected servers");
+
+    mcp_mutex_lock(manager->mutex);
+
+    int success_count = 0;
+    int total_count = 0;
+
+    for (size_t i = 0; i < manager->server_count; i++) {
+        kmcp_server_connection_t* connection = manager->servers[i];
+        if (!connection) {
+            mcp_log_error("Server connection at index %zu is NULL", i);
+            continue;
+        }
+
+        // If already connected, skip
+        if (connection->is_connected) {
+            mcp_log_info("Server '%s' is already connected, skipping",
+                       connection->config.name ? connection->config.name : "(unnamed)");
+            success_count++;
+            continue;
+        }
+
+        total_count++;
+
+        // Unlock mutex before calling reconnect to avoid deadlock
+        mcp_mutex_unlock(manager->mutex);
+
+        // Attempt to reconnect
+        kmcp_error_t result = kmcp_server_reconnect(manager, (int)i, max_attempts, retry_interval_ms);
+
+        // Lock mutex again
+        mcp_mutex_lock(manager->mutex);
+
+        if (result == KMCP_SUCCESS) {
+            success_count++;
+        }
+    }
+
+    mcp_mutex_unlock(manager->mutex);
+
+    if (total_count == 0) {
+        mcp_log_info("No disconnected servers to reconnect");
+        return KMCP_SUCCESS;
+    }
+
+    if (success_count == 0) {
+        mcp_log_error("Failed to reconnect to any server");
+        return KMCP_ERROR_CONNECTION_FAILED;
+    }
+
+    if (success_count < total_count) {
+        mcp_log_warn("Reconnected to %d out of %d disconnected servers", success_count, total_count);
+        return KMCP_ERROR_CONNECTION_FAILED;
+    }
+
+    mcp_log_info("Successfully reconnected to all %d disconnected servers", total_count);
+    return KMCP_SUCCESS;
 }
