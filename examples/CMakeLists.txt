@@ -250,5 +250,16 @@ else()
     target_link_libraries(kmcp_tool_example PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# KMCP Comprehensive Example
+add_executable(kmcp_comprehensive_example kmcp_comprehensive_example.c)
+target_include_directories(kmcp_comprehensive_example PRIVATE ../include ../include/kmcp) # Add include paths
+target_link_libraries(kmcp_comprehensive_example PRIVATE mcp_common kmcp)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(kmcp_comprehensive_example PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(kmcp_comprehensive_example PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client kmcp_example_app kmcp_ssl_example kmcp_profile_example kmcp_tool_example DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client kmcp_example_app kmcp_ssl_example kmcp_profile_example kmcp_tool_example kmcp_comprehensive_example DESTINATION bin/examples)
