@@ -267,6 +267,7 @@ set(KMCP_SOURCES
     src/kmcp/kmcp_server_manager_compat.c
     src/kmcp/kmcp_registry.c
     src/kmcp/kmcp_tool_sdk.c
+    src/kmcp/kmcp_cli.c
 )
 
 # Add platform-specific process implementation
@@ -287,8 +288,13 @@ target_include_directories(kmcp PUBLIC
 
 # KMCP example is now defined in examples/CMakeLists.txt
 
-# Install KMCP library and headers
+# Create KMCP CLI executable
+add_executable(kmcp_cli src/kmcp/kmcp_cli_main.c)
+target_link_libraries(kmcp_cli PRIVATE kmcp mcp_common)
+
+# Install KMCP library, headers, and CLI
 install(TARGETS kmcp DESTINATION lib)
+install(TARGETS kmcp_cli DESTINATION bin)
 install(DIRECTORY include/kmcp/ DESTINATION include/kmcp)
 
 # --- Benchmark Setup ---
