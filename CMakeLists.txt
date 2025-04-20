@@ -266,6 +266,7 @@ set(KMCP_SOURCES
     src/kmcp/kmcp_profile_manager.c
     src/kmcp/kmcp_server_manager_compat.c
     src/kmcp/kmcp_registry.c
+    src/kmcp/kmcp_tool_sdk.c
 )
 
 # Add platform-specific process implementation
