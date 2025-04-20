@@ -262,6 +262,7 @@ set(KMCP_SOURCES
     src/kmcp/kmcp_config_parser.c
     src/kmcp/kmcp_http_client.c
     src/kmcp/kmcp_error.c
+    src/kmcp/kmcp_version.c
 )
 
 # Add platform-specific process implementation

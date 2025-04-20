@@ -9,6 +9,7 @@
 - [HTTP Client API](#http-client-api)
 - [Process Management API](#process-management-api)
 - [Error Handling API](#error-handling-api)
+- [Version Information API](#version-information-api)
 
 ## Client API
 
@@ -580,3 +581,29 @@ Get the error message corresponding to an error code.
 
 **Return Value**:
 - Error message string
+
+## Version Information API
+
+### Functions
+
+#### kmcp_get_version
+
+```c
+const char* kmcp_get_version(void);
+```
+
+Get the KMCP version information.
+
+**Return Value**:
+- KMCP version string
+
+#### kmcp_get_build_info
+
+```c
+const char* kmcp_get_build_info(void);
+```
+
+Get the KMCP build information.
+
+**Return Value**:
+- KMCP build information string
