@@ -79,7 +79,7 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
         if (!stop_flag || !*stop_flag) {
             // it's the expected action, Log warn only if not stopped intentionally
             mcp_log_warn("mcp_framing_recv_message: Failed to read length prefix (result: %d, error: %d)",
-                           read_result, mcp_socket_get_last_error());
+                         read_result, mcp_socket_get_last_error());
         } else {
             mcp_log_debug("mcp_framing_recv_message: Aborted while reading length prefix.");
         }

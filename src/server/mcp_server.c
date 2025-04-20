@@ -61,7 +61,7 @@ mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_ser
                 server->config.prewarm_resource_uris[i] = mcp_strdup(config->prewarm_resource_uris[i]);
                 if (!server->config.prewarm_resource_uris[i]) goto create_error_cleanup; // Handle allocation failure
             } else {
-                 server->config.prewarm_resource_uris[i] = NULL; // Ensure NULL if source is NULL
+                server->config.prewarm_resource_uris[i] = NULL; // Ensure NULL if source is NULL
             }
         }
     } else {
@@ -344,7 +344,7 @@ int mcp_server_start(mcp_server_t* server, mcp_transport_t* transport) {
                 }
             } else {
                 mcp_log_warn("Failed to pre-warm resource '%s': Handler error %d (%s)",
-                                uri, handler_err, error_message ? error_message : "N/A");
+                             uri, handler_err, error_message ? error_message : "N/A");
             }
             free(error_message); // Free error message if any
             mcp_arena_reset(&prewarm_arena); // Reset arena for next iteration
@@ -380,7 +380,7 @@ int mcp_server_stop(mcp_server_t* server) {
     // If graceful shutdown is enabled, wait for active requests to complete
     if (server->config.enable_graceful_shutdown) {
         mcp_log_info("Graceful shutdown initiated, waiting for %d active requests to complete...",
-                    server->active_requests);
+                     server->active_requests);
 
         // Wait for active requests to complete or timeout
         if (server->active_requests > 0) {
@@ -422,7 +422,7 @@ int mcp_server_stop(mcp_server_t* server) {
 
                 if (timed_out) {
                     mcp_log_warn("Graceful shutdown timed out after %u ms with %d requests still active",
-                                timeout_ms, server->active_requests);
+                                 timeout_ms, server->active_requests);
                 } else {
                     mcp_log_info("All requests completed, proceeding with shutdown");
                 }

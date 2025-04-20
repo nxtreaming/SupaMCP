@@ -201,11 +201,11 @@ static int create_log_directory(const char* log_file_path) {
     *last_separator = '\0';
 
     // Handle edge cases: empty path or root directory ("/" or "C:\")
-     if (strlen(path_copy) == 0 || (strlen(path_copy) == 1 && path_copy[0] == PATH_SEPARATOR[0])
+    if (strlen(path_copy) == 0 || (strlen(path_copy) == 1 && path_copy[0] == PATH_SEPARATOR[0])
 #ifdef _WIN32 // Check for drive letter root like "C:"
         || (strlen(path_copy) == 2 && path_copy[1] == ':')
 #endif
-     ) {
+    ) {
         free(path_copy);
         return 0; // Root directory or similar, no creation needed/possible
     }
@@ -471,9 +471,9 @@ void mcp_log_structured(
         const char* json_fmt = "{\"timestamp\":\"%s\", \"level\":\"%s\", \"component\":\"%s\", \"event\":\"%s\", \"message\":\"%s\"}\n";
 
         if (g_log_file != NULL) {
-             fprintf(g_log_file, json_fmt,
-                     timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
-             fflush(g_log_file);
+            fprintf(g_log_file, json_fmt,
+                    timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
+            fflush(g_log_file);
         }
         // Outputting to stderr might still interleave, but file access is protected
         fprintf(stderr, json_fmt,

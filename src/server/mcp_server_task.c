@@ -118,11 +118,11 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
     }
 
     // Increment active request counter
-    #ifdef _WIN32
+#ifdef _WIN32
     InterlockedIncrement((LONG*)&server->active_requests);
-    #else
+#else
     __sync_fetch_and_add(&server->active_requests, 1);
-    #endif
+#endif
 
     // --- Rate Limiting Check ---
     // Get client IP address from transport (or use default if not available)
@@ -246,11 +246,11 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
     }
 
     // Decrement active request counter
-    #ifdef _WIN32
+#ifdef _WIN32
     LONG prev_count = InterlockedDecrement((LONG*)&server->active_requests);
-    #else
+#else
     int prev_count = __sync_fetch_and_sub(&server->active_requests, 1);
-    #endif
+#endif
 
     // If this was the last request and server is shutting down, signal the condition variable
     if (prev_count == 1 && server->shutting_down) {

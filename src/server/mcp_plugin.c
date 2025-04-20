@@ -189,7 +189,7 @@ int mcp_plugin_unload(mcp_plugin_t* plugin) {
     if (finalize_status != 0) {
         // Log warning but proceed with unloading anyway
         mcp_log_warn("Plugin '%s' finalize function returned non-zero status (%d).",
-                plugin->descriptor->name, finalize_status);
+                     plugin->descriptor->name, finalize_status);
     }
 
     // --- Platform-specific library unloading ---
@@ -198,14 +198,14 @@ int mcp_plugin_unload(mcp_plugin_t* plugin) {
     if (!FreeLibrary(plugin->library_handle)) {
         // Log error
         mcp_log_error("mcp_plugin_unload: FreeLibrary failed for plugin '%s'. Error %lu",
-                plugin->descriptor->name, GetLastError());
+                      plugin->descriptor->name, GetLastError());
         unload_status = -1; // Indicate failure
     }
 #else // Linux/macOS
     if (dlclose(plugin->library_handle) != 0) {
         // Log error
         mcp_log_error("mcp_plugin_unload: dlclose failed for plugin '%s'. Error: %s",
-                plugin->descriptor->name, dlerror());
+                      plugin->descriptor->name, dlerror());
         unload_status = -1; // Indicate failure
     }
 #endif

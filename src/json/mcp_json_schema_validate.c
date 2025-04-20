@@ -48,7 +48,3 @@ int mcp_json_schema_validate_cached(mcp_json_schema_cache_t* cache, const char* 
 
     return mcp_json_schema_validate(cache, json_str, schema_str);
 }
-
-// External declarations for functions defined in mcp_json_schema_cache.c
-extern int mcp_json_schema_cache_get_stats(mcp_json_schema_cache_t* cache, size_t* size, size_t* capacity, size_t* hits, size_t* misses);
-extern void mcp_json_schema_cache_clear(mcp_json_schema_cache_t* cache);

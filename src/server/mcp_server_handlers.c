@@ -368,14 +368,14 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
                 PROFILE_END("handle_read_resource");
                 return response;
             }
-             // Resource found in static list, but no handler to generate content.
-             // This case might indicate an error or simply that the resource has no dynamic content.
-             // For now, return an error indicating no handler.
-             mcp_json_destroy(params_json);
-             *error_code = MCP_ERROR_INTERNAL_ERROR;
-             char* response = create_error_response(request->id, *error_code, "Resource found but no handler configured to read content");
-             PROFILE_END("handle_read_resource");
-             return response;
+            // Resource found in static list, but no handler to generate content.
+            // This case might indicate an error or simply that the resource has no dynamic content.
+            // For now, return an error indicating no handler.
+            mcp_json_destroy(params_json);
+            *error_code = MCP_ERROR_INTERNAL_ERROR;
+            char* response = create_error_response(request->id, *error_code, "Resource found but no handler configured to read content");
+            PROFILE_END("handle_read_resource");
+            return response;
         }
     }
     // 3. If fetched from handler, put it in the cache

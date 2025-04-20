@@ -18,11 +18,11 @@ void* pool_maintenance_thread_func(void* arg) {
     // Main maintenance loop
     while (true) {
         // Sleep for a reasonable interval (e.g., 1 second)
-        #ifdef _WIN32
+#ifdef _WIN32
         Sleep(1000);
-        #else
+#else
         usleep(1000000); // 1 second in microseconds
-        #endif
+#endif
 
         // Check if we should exit
         pool_lock(pool);

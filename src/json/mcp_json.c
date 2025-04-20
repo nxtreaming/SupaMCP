@@ -334,9 +334,9 @@ int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names_out
 
     mcp_hashtable_t* table = json->object_table;
     if (table == NULL) { // Check if table exists
-         if (names_out) *names_out = NULL;
-         if (count_out) *count_out = 0;
-         return 0; // Treat as empty object
+        if (names_out) *names_out = NULL;
+        if (count_out) *count_out = 0;
+        return 0; // Treat as empty object
     }
 
     *count_out = mcp_hashtable_size(table);

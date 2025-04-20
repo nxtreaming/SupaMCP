@@ -173,9 +173,9 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     if (message_count > 1) {
         is_batch_response = true;
         if (dyn_buf_init(&response_batch_buf, 512) != 0) { // Initial capacity
-             mcp_log_error("Failed to init batch response buffer.");
-             *error_code = MCP_ERROR_INTERNAL_ERROR;
-             // Fall through to cleanup
+            mcp_log_error("Failed to init batch response buffer.");
+            *error_code = MCP_ERROR_INTERNAL_ERROR;
+            // Fall through to cleanup
         } else {
             batch_buffer_initialized = true;
             dyn_buf_append(&response_batch_buf, "[");
@@ -219,12 +219,12 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
                         single_response_str = NULL; // Avoid double free
                     } else {
                         // Batch buffer init failed, discard individual response
-                         free(single_response_str);
-                         single_response_str = NULL;
+                        free(single_response_str);
+                        single_response_str = NULL;
                     }
                 } else if (current_msg_error != MCP_ERROR_NONE && is_batch_response) {
-                     // Handle cases where handle_request failed but didn't return a string (shouldn't happen ideally)
-                     // Optionally generate and append an error response here.
+                    // Handle cases where handle_request failed but didn't return a string (shouldn't happen ideally)
+                    // Optionally generate and append an error response here.
                 }
                 break;
 
@@ -259,16 +259,16 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
         dyn_buf_append(&response_batch_buf, "]");
         final_response_str = dyn_buf_finalize(&response_batch_buf);
         if (final_response_str == NULL) {
-             *error_code = MCP_ERROR_INTERNAL_ERROR; // Finalization/allocation failed
+            *error_code = MCP_ERROR_INTERNAL_ERROR; // Finalization/allocation failed
         }
         // Check if the batch response is just "[]" (only notifications or errors occurred)
         if (final_response_str && strcmp(final_response_str, "[]") == 0) {
-             free(final_response_str);
-             final_response_str = NULL; // No actual responses to send
+            free(final_response_str);
+            final_response_str = NULL; // No actual responses to send
         }
     } else if (is_batch_response && !batch_buffer_initialized) {
-         // Error occurred during buffer init, ensure no response is sent
-         final_response_str = NULL;
+        // Error occurred during buffer init, ensure no response is sent
+        final_response_str = NULL;
     }
 
     // Free the parsed message array and its contents

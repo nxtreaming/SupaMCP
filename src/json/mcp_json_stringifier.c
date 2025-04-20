@@ -7,15 +7,6 @@
 #include <stdbool.h>
 
 // Stringification uses malloc/realloc for the output buffer, not arena.
-
-// Static forward declarations for internal helper functions within this file
-static int stringify_value(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity);
-static int ensure_output_capacity(char** output, size_t* output_size, size_t* output_capacity, size_t additional);
-static int append_string(char** output, size_t* output_size, size_t* output_capacity, const char* string);
-static int stringify_string(const char* string, char** output, size_t* output_size, size_t* output_capacity);
-static int stringify_object(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity);
-static int stringify_array(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity);
-
 static int ensure_output_capacity(char** output, size_t* output_size, size_t* output_capacity, size_t additional) {
     if (*output_size + additional > *output_capacity) {
         size_t new_capacity = *output_capacity == 0 ? 256 : *output_capacity * 2;
@@ -86,6 +77,8 @@ typedef struct {
     bool first_property;
     int error_code; // To signal errors from callback
 } stringify_object_context_t;
+
+int stringify_value(const mcp_json_t* json, char** output, size_t* output_size, size_t* output_capacity);
 
 // Callback function for mcp_hashtable_foreach used in stringify_object
 static void stringify_object_callback(const void* key, void* value, void* user_data) {

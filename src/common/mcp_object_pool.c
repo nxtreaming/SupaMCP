@@ -33,7 +33,6 @@ static void* allocate_new_object(mcp_object_pool_t* pool) {
         return NULL;
     }
     pool->total_objects++;
-    // MCP_LOG(MCP_LOG_DEBUG, "Allocated new object, total: %zu", pool->total_objects);
     return obj;
 }
 
@@ -83,7 +82,6 @@ mcp_object_pool_t* mcp_object_pool_create(size_t object_size, size_t initial_cap
                 pool->free_list_head = current_node;
                 current_obj_ptr += object_size;
             }
-            // MCP_LOG(MCP_LOG_DEBUG, "Pre-allocated %zu objects in a single block", initial_capacity);
         } else {
             // Allocate individually if block allocation fails
             mcp_log_warn("Failed to allocate initial objects as a single block, allocating individually.");
@@ -101,7 +99,6 @@ mcp_object_pool_t* mcp_object_pool_create(size_t object_size, size_t initial_cap
                     return NULL;
                 }
             }
-            // MCP_LOG(MCP_LOG_DEBUG, "Pre-allocated %zu objects individually", initial_capacity);
         }
     }
 
@@ -120,7 +117,6 @@ void mcp_object_pool_destroy(mcp_object_pool_t* pool) {
     // If objects were allocated in a single block, just free the block
     if (pool->memory_block) {
         free(pool->memory_block);
-        // mcp_log_debug("Freed single memory block for pool");
     } else {
         // Otherwise, need to free individually (only those currently in the free list)
         // Note: This assumes acquired objects are managed/freed elsewhere or released before destroy.
@@ -134,7 +130,6 @@ void mcp_object_pool_destroy(mcp_object_pool_t* pool) {
             freed_count++;
             current = next;
         }
-        // MCP_LOG(MCP_LOG_DEBUG, "Freed %zu individual objects from free list", freed_count);
         if (freed_count != pool->free_objects) {
             mcp_log_warn("Mismatch freeing objects: freed %zu, expected %zu (acquired objects not freed)", freed_count, pool->free_objects);
         }
@@ -171,19 +166,12 @@ void* mcp_object_pool_acquire(mcp_object_pool_t* pool) {
         mcp_mutex_unlock(pool->lock);
         // Optional: Clear memory before returning? Depends on usage.
         // memset(node, 0, pool->object_size);
-        // MCP_LOG(MCP_LOG_TRACE, "Acquired object from pool free list");
         return (void*)node;
     }
 
     // Free list is empty, try to allocate a new one if allowed
     void* new_obj = allocate_new_object(pool); // total_objects incremented here if successful
     mcp_mutex_unlock(pool->lock);
-
-    if (new_obj) {
-       // MCP_LOG(MCP_LOG_TRACE, "Acquired new object (pool was empty)");
-    } else {
-       // MCP_LOG(MCP_LOG_WARN, "Failed to acquire object (pool empty and cannot grow)");
-    }
 
     return new_obj;
 }
@@ -204,7 +192,7 @@ bool mcp_object_pool_release(mcp_object_pool_t* pool, void* obj) {
     pool->free_objects++;
 
     mcp_mutex_unlock(pool->lock);
-    // MCP_LOG(MCP_LOG_TRACE, "Released object back to pool");
+
     return true;
 }
 

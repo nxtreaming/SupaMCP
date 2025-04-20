@@ -102,13 +102,13 @@ static inline void store_int(volatile int* ptr, int value) {
 static inline size_t fetch_add_size(volatile size_t* ptr, size_t value) {
 #ifdef _WIN32
     // Use appropriate Windows atomic function based on pointer size
-    #if defined(_WIN64)
+#if defined(_WIN64)
         // 64-bit Windows
-        return (size_t)InterlockedExchangeAdd64((volatile LONGLONG*)ptr, (LONGLONG)value);
-    #else
+    return (size_t)InterlockedExchangeAdd64((volatile LONGLONG*)ptr, (LONGLONG)value);
+#   else
         // 32-bit Windows
-        return (size_t)InterlockedExchangeAdd((volatile LONG*)ptr, (LONG)value);
-    #endif
+    return (size_t)InterlockedExchangeAdd((volatile LONG*)ptr, (LONG)value);
+#   endif
 #else // GCC/Clang
     return __sync_fetch_and_add(ptr, value);
 #endif
@@ -132,11 +132,11 @@ static bool deque_push_bottom(work_stealing_deque_t* deque, mcp_task_t task) {
     deque->buffer[index] = task;
 
     // Ensure buffer write is visible before bottom increment (memory barrier)
-    #ifdef _WIN32
-        MemoryBarrier();
-    #else
-        __sync_synchronize();
-    #endif
+#ifdef _WIN32
+    MemoryBarrier();
+#else
+    __sync_synchronize();
+#endif
 
     // Increment bottom (owner only, volatile write is sufficient)
     deque->bottom = b + 1;
@@ -151,11 +151,11 @@ static bool deque_pop_bottom(work_stealing_deque_t* deque, mcp_task_t* task) {
     deque->bottom = b; // Volatile write
 
     // Ensure bottom write is visible before reading top (memory barrier)
-    #ifdef _WIN32
-        MemoryBarrier();
-    #else
-        __sync_synchronize();
-    #endif
+#ifdef _WIN32
+    MemoryBarrier();
+#else
+    __sync_synchronize();
+#endif
 
     size_t t = load_size(&deque->top);
     long size = (long)b - (long)t; // Use signed difference
@@ -190,11 +190,11 @@ static bool deque_steal_top(work_stealing_deque_t* deque, mcp_task_t* task) {
     size_t t = load_size(&deque->top);
 
     // Ensure top read happens before reading bottom (memory barrier)
-    #ifdef _WIN32
-        MemoryBarrier();
-    #else
-        __sync_synchronize();
-    #endif
+#ifdef _WIN32
+    MemoryBarrier();
+#else
+    __sync_synchronize();
+#endif
 
     size_t b = load_size(&deque->bottom);
 
@@ -208,11 +208,11 @@ static bool deque_steal_top(work_stealing_deque_t* deque, mcp_task_t* task) {
     *task = deque->buffer[index]; // Read task data first
 
     // Ensure task read happens before CAS (memory barrier)
-    #ifdef _WIN32
-        MemoryBarrier();
-    #else
-        __sync_synchronize();
-    #endif
+#ifdef _WIN32
+    MemoryBarrier();
+#else
+    __sync_synchronize();
+#endif
 
     // Attempt to increment top using CAS
     if (compare_and_swap_size(&deque->top, t, t + 1)) {
@@ -270,16 +270,15 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
     if (pool->deques != NULL) {
         for (size_t i = 0; i < thread_count; ++i) {
             // Use aligned allocation if possible
-            #ifdef _WIN32
-                pool->deques[i].buffer = (mcp_task_t*)_aligned_malloc(sizeof(mcp_task_t) * pool->deque_capacity, CACHE_LINE_SIZE);
-            #elif defined(__GNUC__) || defined(__clang__)
-                if (posix_memalign((void**)&pool->deques[i].buffer, CACHE_LINE_SIZE, sizeof(mcp_task_t) * pool->deque_capacity) != 0) {
-                     pool->deques[i].buffer = NULL;
-                }
-            #else
-                pool->deques[i].buffer = (mcp_task_t*)malloc(sizeof(mcp_task_t) * pool->deque_capacity);
-            #endif
-
+#ifdef  _WIN32
+            pool->deques[i].buffer = (mcp_task_t*)_aligned_malloc(sizeof(mcp_task_t) * pool->deque_capacity, CACHE_LINE_SIZE);
+#elif defined(__GNUC__) || defined(__clang__)
+            if (posix_memalign((void**)&pool->deques[i].buffer, CACHE_LINE_SIZE, sizeof(mcp_task_t) * pool->deque_capacity) != 0) {
+                pool->deques[i].buffer = NULL;
+            }
+#else
+            pool->deques[i].buffer = (mcp_task_t*)malloc(sizeof(mcp_task_t) * pool->deque_capacity);
+#endif
             if (pool->deques[i].buffer == NULL) {
                 allocation_failed = true;
                 for (size_t j = 0; j < i; ++j) { // Free previously allocated buffers
@@ -352,22 +351,22 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
              mcp_mutex_unlock(pool->cond_mutex);
          }
          for (size_t i = 0; i < pool->started; ++i) {
-              mcp_thread_join(pool->threads[i], NULL);
-              // TODO: Free worker_arg_t for joined threads
+             mcp_thread_join(pool->threads[i], NULL);
+             // TODO: Free worker_arg_t for joined threads
          }
          // Full cleanup
          if (pool->threads) free(pool->threads);
          if (pool->deques) {
-              for (size_t i = 0; i < thread_count; ++i) {
-                   if (pool->deques[i].buffer) {
-                        #ifdef _WIN32
-                            _aligned_free(pool->deques[i].buffer);
-                        #else
-                            free(pool->deques[i].buffer);
-                        #endif
-                   }
-              }
-              free(pool->deques);
+             for (size_t i = 0; i < thread_count; ++i) {
+                 if (pool->deques[i].buffer) {
+#ifdef _WIN32
+                     _aligned_free(pool->deques[i].buffer);
+#else
+                     free(pool->deques[i].buffer);
+#endif
+                 }
+             }
+             free(pool->deques);
          }
          mcp_rwlock_free(pool->rwlock);
          mcp_mutex_destroy(pool->cond_mutex);
@@ -473,14 +472,14 @@ int mcp_thread_pool_wait(mcp_thread_pool_t* pool, unsigned int timeout_ms) {
         }
 
         // Sleep for a short interval
-        #ifdef _WIN32
-            Sleep(sleep_interval);
-        #else
-            struct timespec ts;
-            ts.tv_sec = sleep_interval / 1000;
-            ts.tv_nsec = (sleep_interval % 1000) * 1000000;
-            nanosleep(&ts, NULL);
-        #endif
+#ifdef _WIN32
+        Sleep(sleep_interval);
+#else
+        struct timespec ts;
+        ts.tv_sec = sleep_interval / 1000;
+        ts.tv_nsec = (sleep_interval % 1000) * 1000000;
+        nanosleep(&ts, NULL);
+#endif
 
         wait_time += sleep_interval;
     }
@@ -548,11 +547,11 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
     if (pool->deques) {
          for (size_t i = 0; i < pool->thread_count; ++i) {
               if (pool->deques[i].buffer) {
-                    #ifdef _WIN32
-                        _aligned_free(pool->deques[i].buffer);
-                    #else
-                        free(pool->deques[i].buffer);
-                    #endif
+#ifdef _WIN32
+                  _aligned_free(pool->deques[i].buffer);
+#else
+                  free(pool->deques[i].buffer);
+#endif
               }
          }
          free(pool->deques);
@@ -593,9 +592,9 @@ static void* thread_pool_worker(void* arg) {
         mcp_rwlock_read_unlock(pool->rwlock);
 
         if (shutdown_status != 0) {
-             // Simplified exit: If shutdown signaled and own deque empty, exit.
-             // A more robust graceful shutdown would check if *all* deques are empty.
-             return NULL;
+            // Simplified exit: If shutdown signaled and own deque empty, exit.
+            // A more robust graceful shutdown would check if *all* deques are empty.
+           return NULL;
         }
 
         // 3. Try to steal from another random deque
