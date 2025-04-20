@@ -10,6 +10,9 @@ Component interactions in the KMCP module follow these patterns:
 2. **Server Manager as Proxy**: The server manager acts as a proxy between the client and servers, responsible for selecting appropriate servers to handle requests
 3. **Configuration Parser as Initialization Tool**: The configuration parser is used during initialization to provide configuration information to other components
 4. **Tool Access Control as Gatekeeper**: Tool access control acts as a gatekeeper during request processing, controlling access permissions to tools
+5. **Profile Manager as Configuration Hub**: The profile manager acts as a hub for managing multiple server configurations, allowing users to switch between different environments
+6. **Registry as Server Discovery Service**: The registry provides server discovery services, allowing clients to find and connect to available servers
+7. **Tool SDK as Extension Framework**: The tool SDK provides a framework for developing and integrating custom tools with KMCP
 
 ## Main Interaction Flows
 
@@ -55,6 +58,39 @@ Component interactions in the KMCP module follow these patterns:
 4. Server manager periodically checks process status (`kmcp_process_is_running`)
 5. When the client is closed, server manager terminates all local server processes (`kmcp_process_terminate`)
 
+### Profile Management Flow
+
+1. Application creates a profile manager (`kmcp_profile_manager_create`)
+2. Application creates profiles (`kmcp_profile_create`)
+3. Application adds servers to profiles (`kmcp_profile_add_server`)
+4. Application activates a profile (`kmcp_profile_activate`)
+5. Application gets the server manager from the active profile (`kmcp_profile_get_server_manager`)
+6. Application uses the server manager for client operations
+7. Application can switch between profiles by activating different profiles
+8. Application can save profiles to a file (`kmcp_profile_save`) and load them later (`kmcp_profile_load`)
+
+### Registry Interaction Flow
+
+1. Application creates a registry connection (`kmcp_registry_create` or `kmcp_registry_create_with_config`)
+2. Application gets available servers from the registry (`kmcp_registry_get_servers`)
+3. Application searches for servers in the registry (`kmcp_registry_search_servers`)
+4. Application gets detailed information about servers (`kmcp_registry_get_server_info`)
+5. Application adds servers from the registry to a server manager (`kmcp_registry_add_server`)
+6. Application can refresh the registry cache (`kmcp_registry_refresh_cache`)
+7. Application frees server information when no longer needed (`kmcp_registry_free_server_info`)
+
+### Tool SDK Flow
+
+1. Tool developer defines tool metadata (`kmcp_tool_metadata_t`)
+2. Tool developer implements tool callbacks (`kmcp_tool_callbacks_t`)
+3. Tool developer registers the tool with KMCP (`kmcp_tool_register`)
+4. When a client calls the tool, KMCP calls the tool's execute callback
+5. Tool gets parameters from the JSON object using helper functions (`kmcp_tool_get_string_param`, etc.)
+6. Tool creates a result using helper functions (`kmcp_tool_create_success_result`, etc.)
+7. Tool can send progress updates (`kmcp_tool_send_progress`) and partial results (`kmcp_tool_send_partial_result`)
+8. Tool can check if the operation has been cancelled (`kmcp_tool_is_cancelled`)
+9. When the tool is no longer needed, it is unregistered (`kmcp_tool_unregister`)
+
 ## Component Data Flow
 
 ### Client and Server Manager
@@ -81,6 +117,32 @@ Component interactions in the KMCP module follow these patterns:
 
 - Client requests the configuration parser to parse configuration files
 - Configuration parser returns parsing results to the client
+
+### Client and Profile Manager
+
+- Client gets server manager from the profile manager
+- Profile manager provides server configurations to the client
+
+### Profile Manager and Server Manager
+
+- Profile manager creates and manages server managers for each profile
+- Server manager provides server access to the profile manager
+
+### Client and Registry
+
+- Client discovers servers through the registry
+- Registry provides server information to the client
+
+### Registry and Server Manager
+
+- Registry adds servers to the server manager
+- Server manager integrates registry-provided servers
+
+### Tool SDK and KMCP
+
+- Tool SDK registers tools with KMCP
+- KMCP calls tool callbacks when tools are invoked
+- Tool SDK provides parameter access and result creation helpers
 
 ## Error Handling
 

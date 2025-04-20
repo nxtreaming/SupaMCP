@@ -10,6 +10,9 @@ The KMCP module uses a layered architecture design, which includes the following
 4. **Configuration Layer**: Responsible for parsing and validating configuration files
 5. **Tool Access Control Layer**: Responsible for controlling access permissions to MCP tools
 6. **Process Management Layer**: Responsible for starting and managing local MCP server processes
+7. **Profile Management Layer**: Responsible for managing multiple server configurations as profiles
+8. **Registry Layer**: Responsible for discovering and connecting to MCP servers from a central registry
+9. **Tool SDK Layer**: Responsible for developing and integrating custom tools with KMCP
 
 ## Core Components
 
@@ -65,19 +68,59 @@ Process management is responsible for starting and managing local MCP server pro
 - Monitoring process status
 - Stopping and cleaning up processes
 
+### Profile Manager (kmcp_profile_manager)
+
+The profile manager is responsible for managing multiple server configurations as profiles, including:
+
+- Creating and managing profiles
+- Adding and removing servers from profiles
+- Activating and deactivating profiles
+- Saving and loading profiles from files
+- Exporting and importing profiles
+
+### Registry (kmcp_registry)
+
+The registry is responsible for discovering and connecting to MCP servers from a central registry, including:
+
+- Connecting to registry servers
+- Discovering available MCP servers
+- Searching for servers by criteria
+- Getting detailed server information
+- Adding servers from the registry to a server manager
+
+### Tool SDK (kmcp_tool_sdk)
+
+The tool SDK is responsible for developing and integrating custom tools with KMCP, including:
+
+- Registering and unregistering tools
+- Providing tool execution context
+- Handling tool parameters and results
+- Supporting progress reporting and cancellation
+- Managing tool resources
+
 ## Component Dependencies
 
-```
+```ascii
 kmcp_client
   ├── kmcp_server_manager
   │     ├── kmcp_process
   │     └── kmcp_http_client
   ├── kmcp_config_parser
-  └── kmcp_tool_access
+  ├── kmcp_tool_access
+  ├── kmcp_profile_manager
+  │     └── kmcp_server_manager
+  └── kmcp_registry
+        └── kmcp_http_client
+
+kmcp_tool_sdk
+  └── kmcp_error
 ```
 
-- `kmcp_client` depends on `kmcp_server_manager`, `kmcp_config_parser`, and `kmcp_tool_access`
+- `kmcp_client` depends on `kmcp_server_manager`, `kmcp_config_parser`, `kmcp_tool_access`, `kmcp_profile_manager`, and `kmcp_registry`
 - `kmcp_server_manager` depends on `kmcp_process` and `kmcp_http_client`
+- `kmcp_profile_manager` depends on `kmcp_server_manager`
+- `kmcp_registry` depends on `kmcp_http_client`
+- `kmcp_tool_sdk` depends on `kmcp_error`
 - All components depend on `kmcp_error` for error handling
 
 ## Design Principles

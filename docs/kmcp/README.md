@@ -11,6 +11,9 @@ KMCP (Kernel MCP) is a lightweight MCP client library that provides a high-level
 - **Configuration Parsing**: Support for loading client and server configurations from JSON configuration files
 - **HTTP Client**: HTTP client for communicating with MCP servers
 - **Process Management**: Support for starting and managing local MCP server processes
+- **Profile Management**: Support for managing multiple server configurations as profiles
+- **Registry Integration**: Support for discovering and connecting to MCP servers from a central registry
+- **Tool SDK**: Support for developing and integrating custom tools with KMCP
 
 ## Documentation Structure
 
@@ -19,6 +22,11 @@ KMCP (Kernel MCP) is a lightweight MCP client library that provides a high-level
 - [Component Interaction](component_interaction.md): How KMCP components interact with each other
 - [Usage Examples](usage_examples.md): Code examples for common use cases
 - [Configuration Guide](configuration_guide.md): Configuration file format and options
+- [Profile Management Guide](profile_management_guide.md): Guide for managing profiles
+- [Registry Guide](registry_guide.md): Guide for using the registry
+- [Tool SDK Guide](tool_sdk_guide.md): Guide for developing and integrating tools
+- [Troubleshooting Guide](troubleshooting_guide.md): Guide for diagnosing and fixing common issues
+- [Test Plan](test_plan.md): Plan for testing KMCP
 
 ## Quick Start
 
