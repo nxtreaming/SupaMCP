@@ -11,6 +11,7 @@ set(KMCP_TEST_SOURCES
     kmcp_config_parser_test.c
     kmcp_version_test.c
     kmcp_profile_manager_test.c
+    kmcp_registry_test.c
 )
 
 # Add test executable
@@ -111,3 +112,14 @@ add_test(NAME kmcp_tool_access_test COMMAND kmcp_tool_access_test)
 add_test(NAME kmcp_config_parser_test COMMAND kmcp_config_parser_test)
 add_test(NAME kmcp_version_test COMMAND kmcp_version_test)
 add_test(NAME kmcp_profile_manager_test COMMAND kmcp_profile_manager_test)
+
+add_executable(kmcp_registry_test kmcp_registry_test.c)
+target_link_libraries(kmcp_registry_test kmcp mcp_common)
+target_include_directories(kmcp_registry_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/kmcp
+    ${CMAKE_SOURCE_DIR}/src/kmcp
+)
+target_compile_definitions(kmcp_registry_test PRIVATE STANDALONE_TEST)
+
+add_test(NAME kmcp_registry_test COMMAND kmcp_registry_test)

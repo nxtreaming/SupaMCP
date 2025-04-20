@@ -17,6 +17,7 @@ extern int kmcp_server_manager_test_main();
 extern int kmcp_tool_access_test_main();
 extern int kmcp_config_parser_test_main();
 extern int kmcp_version_test_main();
+extern int kmcp_registry_test_main();
 
 /**
  * @brief Main function
@@ -78,6 +79,12 @@ int main() {
     failures = kmcp_version_test_main();
     total_failures += failures;
     printf("Version tests: %s (%d failures)\n\n", failures == 0 ? "PASSED" : "FAILED", failures);
+
+    // Run registry tests
+    printf("Running registry tests...\n");
+    failures = kmcp_registry_test_main();
+    total_failures += failures;
+    printf("Registry tests: %s (%d failures)\n\n", failures == 0 ? "PASSED" : "FAILED", failures);
 
     // Print summary
     printf("=== Test Summary ===\n");
