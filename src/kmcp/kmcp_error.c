@@ -54,6 +54,14 @@ const char* kmcp_error_message(kmcp_error_t error_code) {
             return "Resource is busy";
         case KMCP_ERROR_OPERATION_CANCELED:
             return "Operation was canceled";
+        case KMCP_ERROR_IO:
+            return "Input/output error";
+        case KMCP_ERROR_NOT_FOUND:
+            return "Item not found";
+        case KMCP_ERROR_ALREADY_EXISTS:
+            return "Item already exists";
+        case KMCP_ERROR_INVALID_OPERATION:
+            return "Invalid operation";
         case KMCP_ERROR_INTERNAL:
             return "Internal error";
         default:

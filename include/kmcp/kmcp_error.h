@@ -37,6 +37,10 @@ typedef enum {
     KMCP_ERROR_PROTOCOL_ERROR = -20,   /**< Protocol error */
     KMCP_ERROR_RESOURCE_BUSY = -21,    /**< Resource is busy */
     KMCP_ERROR_OPERATION_CANCELED = -22, /**< Operation was canceled */
+    KMCP_ERROR_IO = -23,               /**< Input/output error */
+    KMCP_ERROR_NOT_FOUND = -24,        /**< Item not found */
+    KMCP_ERROR_ALREADY_EXISTS = -25,   /**< Item already exists */
+    KMCP_ERROR_INVALID_OPERATION = -26, /**< Invalid operation */
     KMCP_ERROR_INTERNAL = -99          /**< Internal error */
 } kmcp_error_t;
 
