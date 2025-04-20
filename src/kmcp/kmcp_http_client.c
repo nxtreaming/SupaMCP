@@ -78,6 +78,12 @@ struct kmcp_http_client {
     bool use_ssl;          // Whether to use SSL
     char* api_key;         // API key
 
+    // Timeout and retry settings
+    int connect_timeout_ms;     // Connection timeout in milliseconds
+    int request_timeout_ms;     // Request timeout in milliseconds
+    int max_retries;            // Maximum number of retries
+    int retry_interval_ms;      // Interval between retries in milliseconds
+
     // SSL/TLS related fields
     SSL_CTX* ssl_ctx;      // SSL context
     SSL* ssl;              // SSL connection
@@ -193,14 +199,32 @@ static kmcp_error_t parse_url(const char* url, char** host, char** path, int* po
  * @brief Create an HTTP client
  */
 kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* api_key) {
-    if (!base_url) {
-        mcp_log_error("Invalid parameter: base_url is NULL");
+    // Create a default configuration
+    kmcp_http_client_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.base_url = base_url;
+    config.api_key = api_key;
+    config.connect_timeout_ms = 5000;  // 5 seconds
+    config.request_timeout_ms = 30000; // 30 seconds
+    config.max_retries = 3;            // 3 retries
+    config.retry_interval_ms = 1000;   // 1 second
+
+    // Create client with the configuration
+    return kmcp_http_client_create_with_config(&config);
+}
+
+/**
+ * @brief Create an HTTP client with custom configuration
+ */
+kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_config_t* config) {
+    if (!config || !config->base_url) {
+        mcp_log_error("Invalid parameter: config or base_url is NULL");
         return NULL;
     }
 
     // Validate the base URL
-    if (validate_url(base_url) != KMCP_SUCCESS) {
-        mcp_log_error("Invalid base URL: %s", base_url);
+    if (validate_url(config->base_url) != KMCP_SUCCESS) {
+        mcp_log_error("Invalid base URL: %s", config->base_url);
         return NULL;
     }
 
@@ -213,15 +237,22 @@ kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* ap
 
     // Initialize fields
     memset(client, 0, sizeof(kmcp_http_client_t));
-    client->base_url = mcp_strdup(base_url);
-    client->api_key = api_key ? mcp_strdup(api_key) : NULL;
+    client->base_url = mcp_strdup(config->base_url);
+    client->api_key = config->api_key ? mcp_strdup(config->api_key) : NULL;
+
+    // Set timeout values from config
+    client->connect_timeout_ms = config->connect_timeout_ms > 0 ? config->connect_timeout_ms : 5000;
+    client->request_timeout_ms = config->request_timeout_ms > 0 ? config->request_timeout_ms : 30000;
+    client->max_retries = config->max_retries >= 0 ? config->max_retries : 3;
+    client->retry_interval_ms = config->retry_interval_ms > 0 ? config->retry_interval_ms : 1000;
+
     client->ssl_ctx = NULL;
     client->ssl = NULL;
     client->ssl_initialized = false;
 
     // Parse URL
-    if (parse_url(base_url, &client->host, &client->path, &client->port, &client->use_ssl) != 0) {
-        mcp_log_error("Failed to parse URL: %s", base_url);
+    if (parse_url(config->base_url, &client->host, &client->path, &client->port, &client->use_ssl) != 0) {
+        mcp_log_error("Failed to parse URL: %s", config->base_url);
         free(client->base_url);
         free(client->api_key);
         free(client);
@@ -493,6 +524,19 @@ kmcp_error_t kmcp_http_client_send(
 #endif
         return KMCP_ERROR_CONNECTION_FAILED;
     }
+
+    // Set socket timeout options
+#ifdef _WIN32
+    DWORD timeout = client->connect_timeout_ms;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+#else
+    struct timeval tv;
+    tv.tv_sec = client->connect_timeout_ms / 1000;
+    tv.tv_usec = (client->connect_timeout_ms % 1000) * 1000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+#endif
 
     // Connect to server
     struct sockaddr_in server_addr;
@@ -1114,6 +1158,49 @@ kmcp_error_t kmcp_http_client_get_resource(
     }
 
     return KMCP_SUCCESS;
+}
+
+/**
+ * @brief Send an HTTP request with timeout
+ */
+kmcp_error_t kmcp_http_client_send_with_timeout(
+    kmcp_http_client_t* client,
+    const char* method,
+    const char* path,
+    const char* content_type,
+    const char* body,
+    char** response,
+    int* status,
+    int timeout_ms
+) {
+    if (!client) {
+        mcp_log_error("Invalid parameter: client is NULL");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Save original timeout
+    int original_timeout = client->request_timeout_ms;
+
+    // Set custom timeout if specified
+    if (timeout_ms > 0) {
+        client->request_timeout_ms = timeout_ms;
+    }
+
+    // Send request
+    kmcp_error_t result = kmcp_http_client_send(
+        client,
+        method,
+        path,
+        content_type,
+        body,
+        response,
+        status
+    );
+
+    // Restore original timeout
+    client->request_timeout_ms = original_timeout;
+
+    return result;
 }
 
 /**

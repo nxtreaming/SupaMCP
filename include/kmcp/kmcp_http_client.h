@@ -19,7 +19,19 @@ extern "C" {
 typedef struct kmcp_http_client kmcp_http_client_t;
 
 /**
- * @brief Create an HTTP client
+ * @brief HTTP client configuration
+ */
+typedef struct kmcp_http_client_config {
+    const char* base_url;       /**< Base URL (must not be NULL) */
+    const char* api_key;        /**< API key, can be NULL */
+    int connect_timeout_ms;     /**< Connection timeout in milliseconds (0 for default) */
+    int request_timeout_ms;     /**< Request timeout in milliseconds (0 for default) */
+    int max_retries;            /**< Maximum number of retries (0 for no retries) */
+    int retry_interval_ms;      /**< Interval between retries in milliseconds */
+} kmcp_http_client_config_t;
+
+/**
+ * @brief Create an HTTP client with default configuration
  *
  * Creates an HTTP client for communicating with an HTTP MCP server.
  *
@@ -31,6 +43,19 @@ typedef struct kmcp_http_client kmcp_http_client_t;
  * @see kmcp_http_client_close()
  */
 kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* api_key);
+
+/**
+ * @brief Create an HTTP client with custom configuration
+ *
+ * Creates an HTTP client for communicating with an HTTP MCP server using custom configuration.
+ *
+ * @param config Client configuration (must not be NULL)
+ * @return kmcp_http_client_t* Returns HTTP client pointer on success, NULL on failure
+ *
+ * @note The caller is responsible for freeing the client using kmcp_http_client_close()
+ * @see kmcp_http_client_close()
+ */
+kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_config_t* config);
 
 /**
  * @brief Send an HTTP request
@@ -59,6 +84,38 @@ kmcp_error_t kmcp_http_client_send(
     const char* body,
     char** response,
     int* status
+);
+
+/**
+ * @brief Send an HTTP request with timeout
+ *
+ * Sends an HTTP request to the server and returns the response, with custom timeout.
+ *
+ * @param client HTTP client (must not be NULL)
+ * @param method HTTP method (GET, POST, PUT, DELETE, etc.) (must not be NULL)
+ * @param path Path (relative to base_url) (must not be NULL)
+ * @param content_type Content type, can be NULL
+ * @param body Request body, can be NULL
+ * @param response Pointer to response body, memory allocated by function, caller responsible for freeing
+ * @param status Pointer to status code
+ * @param timeout_ms Request timeout in milliseconds (0 to use client default)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
+ *         - KMCP_ERROR_INVALID_PARAMETER if any required parameter is NULL
+ *         - KMCP_ERROR_CONNECTION_FAILED if connection to server fails
+ *         - KMCP_ERROR_TIMEOUT if the request times out
+ *         - Other error codes for specific failures
+ *
+ * @note The caller is responsible for freeing the response string using free()
+ */
+kmcp_error_t kmcp_http_client_send_with_timeout(
+    kmcp_http_client_t* client,
+    const char* method,
+    const char* path,
+    const char* content_type,
+    const char* body,
+    char** response,
+    int* status,
+    int timeout_ms
 );
 
 /**

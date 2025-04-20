@@ -958,14 +958,15 @@ static kmcp_error_t check_server_health(kmcp_server_connection_t* connection) {
         // Send a simple ping request to check if server is responsive
         int status = 0;
         char* response = NULL;
-        kmcp_error_t result = kmcp_http_client_send(
+        kmcp_error_t result = kmcp_http_client_send_with_timeout(
             connection->http_client,
             "GET",
             "ping",
             NULL,
             NULL,
             &response,
-            &status
+            &status,
+            2000  // Use a short timeout (2 seconds) for health checks
         );
 
         // Free response
