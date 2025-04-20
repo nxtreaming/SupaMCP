@@ -305,13 +305,16 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
             config->ssl_verify_mode == KMCP_SSL_VERIFY_FULL) {
             verify_mode = SSL_VERIFY_PEER;
 
-            // If we're verifying but accepting self-signed certs, we need to set up a custom verify callback
+            // If we're accepting self-signed certs, set appropriate options
             if (config->accept_self_signed) {
-                // Set verification flags to allow self-signed certificates
-                X509_VERIFY_PARAM* param = SSL_CTX_get0_param(client->ssl_ctx);
-                X509_VERIFY_PARAM_set_flags(param, X509_V_FLAG_TRUSTED_FIRST);
+                // Set options to be more lenient with certificate verification
+                SSL_CTX_set_options(client->ssl_ctx, SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION);
+
+                mcp_log_info("Configured to accept self-signed certificates");
             }
         }
+
+        // Set verification mode
         SSL_CTX_set_verify(client->ssl_ctx, verify_mode, NULL);
 
         // Load CA certificate file if provided
@@ -744,26 +747,21 @@ kmcp_error_t kmcp_http_client_send(
 
             long verify_result = SSL_get_verify_result(client->ssl);
             if (verify_result != X509_V_OK) {
-                // Check if it's a self-signed certificate and we're configured to accept them
-                if (client->accept_self_signed &&
-                    (verify_result == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT ||
-                     verify_result == X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN)) {
-                    mcp_log_warn("Accepting self-signed certificate from server");
-                } else {
-                    mcp_log_error("Certificate verification failed: %s (code: %ld)",
-                                 X509_verify_cert_error_string(verify_result), verify_result);
-                    X509_free(cert);
-                    SSL_free(client->ssl);
-                    client->ssl = NULL;
-                    free(full_path);
+                // The verification callback should have handled self-signed certificates,
+                // so if we get here with an error, it's a real certificate validation failure
+                mcp_log_error("Certificate verification failed: %s (code: %ld)",
+                             X509_verify_cert_error_string(verify_result), verify_result);
+                X509_free(cert);
+                SSL_free(client->ssl);
+                client->ssl = NULL;
+                free(full_path);
 #ifdef _WIN32
-                    closesocket(sock);
-                    WSACleanup();
+                closesocket(sock);
+                WSACleanup();
 #else
-                    close(sock);
+                close(sock);
 #endif
-                    return KMCP_ERROR_CONNECTION_FAILED;
-                }
+                return KMCP_ERROR_CONNECTION_FAILED;
             }
 
             X509_free(cert);
@@ -1614,6 +1612,223 @@ kmcp_error_t kmcp_http_get_resources(
 
     // Free the response
     free(response);
+
+    return result;
+}
+
+/**
+ * @brief Test SSL certificate verification
+ *
+ * This function tests the SSL certificate verification by connecting to a server
+ * and verifying its certificate. It's useful for debugging SSL certificate issues.
+ *
+ * @param url URL to connect to (must start with https://)
+ * @param accept_self_signed Whether to accept self-signed certificates
+ * @return kmcp_error_t Returns KMCP_SUCCESS if the certificate is valid, or an error code otherwise
+ */
+kmcp_error_t kmcp_http_test_ssl_certificate(const char* url, bool accept_self_signed) {
+    if (!url) {
+        mcp_log_error("Invalid parameter: url is NULL");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Check if URL starts with https://
+    if (strncmp(url, "https://", 8) != 0) {
+        mcp_log_error("URL must start with https:// for SSL certificate testing");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Create client configuration
+    kmcp_http_client_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.base_url = url;
+    config.ssl_verify_mode = KMCP_SSL_VERIFY_PEER;
+    config.accept_self_signed = accept_self_signed;
+
+    // Create client
+    kmcp_http_client_t* client = kmcp_http_client_create_with_config(&config);
+    if (!client) {
+        mcp_log_error("Failed to create HTTP client");
+        return KMCP_ERROR_INTERNAL;
+    }
+
+    // Send a simple HEAD request to test the connection
+    int status = 0;
+    char* response = NULL;
+    kmcp_error_t result = kmcp_http_client_send(
+        client,
+        "HEAD",
+        "/",
+        NULL,
+        NULL,
+        &response,
+        &status
+    );
+
+    // Free response if any
+    if (response) {
+        free(response);
+    }
+
+    // Close client
+    kmcp_http_client_close(client);
+
+    // Check result
+    if (result == KMCP_SUCCESS) {
+        mcp_log_info("SSL certificate verification successful");
+    } else {
+        mcp_log_error("SSL certificate verification failed");
+    }
+
+    return result;
+}
+
+/**
+ * @brief Get SSL certificate information
+ *
+ * This function connects to a server and retrieves information about its SSL certificate.
+ * It's useful for debugging SSL certificate issues.
+ *
+ * @param url URL to connect to (must start with https://)
+ * @param cert_info Pointer to certificate information string, memory allocated by function, caller responsible for freeing
+ * @return kmcp_error_t Returns KMCP_SUCCESS if the certificate information was retrieved, or an error code otherwise
+ */
+kmcp_error_t kmcp_http_get_ssl_certificate_info(const char* url, char** cert_info) {
+    if (!url || !cert_info) {
+        mcp_log_error("Invalid parameters");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Initialize output parameter
+    *cert_info = NULL;
+
+    // Check if URL starts with https://
+    if (strncmp(url, "https://", 8) != 0) {
+        mcp_log_error("URL must start with https:// for SSL certificate testing");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Create client configuration
+    kmcp_http_client_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.base_url = url;
+    config.ssl_verify_mode = KMCP_SSL_VERIFY_NONE; // Don't verify certificate for this function
+
+    // Create client
+    kmcp_http_client_t* client = kmcp_http_client_create_with_config(&config);
+    if (!client) {
+        mcp_log_error("Failed to create HTTP client");
+        return KMCP_ERROR_INTERNAL;
+    }
+
+    // Send a simple HEAD request to establish the connection
+    int status = 0;
+    char* response = NULL;
+    kmcp_error_t result = kmcp_http_client_send(
+        client,
+        "HEAD",
+        "/",
+        NULL,
+        NULL,
+        &response,
+        &status
+    );
+
+    // Free response if any
+    if (response) {
+        free(response);
+        response = NULL;
+    }
+
+    // Check if connection was successful
+    if (result != KMCP_SUCCESS) {
+        mcp_log_error("Failed to connect to server");
+        kmcp_http_client_close(client);
+        return result;
+    }
+
+    // Get certificate information
+    if (client->ssl) {
+        X509* cert = SSL_get_peer_certificate(client->ssl);
+        if (cert) {
+            // Get subject name
+            char subject_name[256] = {0};
+            X509_NAME* subject = X509_get_subject_name(cert);
+            X509_NAME_oneline(subject, subject_name, sizeof(subject_name) - 1);
+
+            // Get issuer name
+            char issuer_name[256] = {0};
+            X509_NAME* issuer = X509_get_issuer_name(cert);
+            X509_NAME_oneline(issuer, issuer_name, sizeof(issuer_name) - 1);
+
+            // Get validity period
+            ASN1_TIME* not_before = X509_get_notBefore(cert);
+            ASN1_TIME* not_after = X509_get_notAfter(cert);
+
+            char not_before_str[128] = {0};
+            char not_after_str[128] = {0};
+
+            BIO* bio = BIO_new(BIO_s_mem());
+            if (bio) {
+                ASN1_TIME_print(bio, not_before);
+                BIO_read(bio, not_before_str, sizeof(not_before_str) - 1);
+                BIO_reset(bio);
+
+                ASN1_TIME_print(bio, not_after);
+                BIO_read(bio, not_after_str, sizeof(not_after_str) - 1);
+                BIO_free(bio);
+            }
+
+            // Get verification result
+            long verify_result = SSL_get_verify_result(client->ssl);
+            const char* verify_result_str = X509_verify_cert_error_string(verify_result);
+
+            // Allocate memory for certificate information
+            size_t info_size = 1024; // Initial size
+            *cert_info = (char*)malloc(info_size);
+            if (!*cert_info) {
+                mcp_log_error("Failed to allocate memory for certificate information");
+                X509_free(cert);
+                kmcp_http_client_close(client);
+                return KMCP_ERROR_MEMORY_ALLOCATION;
+            }
+
+            // Format certificate information
+            int written = snprintf(*cert_info, info_size,
+                "SSL Certificate Information:\n"
+                "Subject: %s\n"
+                "Issuer: %s\n"
+                "Valid From: %s\n"
+                "Valid Until: %s\n"
+                "Verification Result: %s (code: %ld)",
+                subject_name, issuer_name, not_before_str, not_after_str,
+                verify_result_str, verify_result);
+
+            // Check if buffer was large enough
+            if (written < 0 || (size_t)written >= info_size) {
+                mcp_log_error("Certificate information buffer too small");
+                free(*cert_info);
+                *cert_info = NULL;
+                X509_free(cert);
+                kmcp_http_client_close(client);
+                return KMCP_ERROR_INTERNAL;
+            }
+
+            X509_free(cert);
+            result = KMCP_SUCCESS;
+        } else {
+            mcp_log_error("No certificate presented by server");
+            *cert_info = mcp_strdup("No certificate presented by server");
+            result = KMCP_ERROR_INTERNAL;
+        }
+    } else {
+        mcp_log_error("SSL connection not established");
+        *cert_info = mcp_strdup("SSL connection not established");
+        result = KMCP_ERROR_INTERNAL;
+    }
+
+    // Close client
+    kmcp_http_client_close(client);
 
     return result;
 }

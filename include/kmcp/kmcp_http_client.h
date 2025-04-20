@@ -236,6 +236,30 @@ kmcp_error_t kmcp_http_get_resources(
  */
 void kmcp_http_client_close(kmcp_http_client_t* client);
 
+/**
+ * @brief Test SSL certificate verification
+ *
+ * This function tests the SSL certificate verification by connecting to a server
+ * and verifying its certificate. It's useful for debugging SSL certificate issues.
+ *
+ * @param url URL to connect to (must start with https://)
+ * @param accept_self_signed Whether to accept self-signed certificates
+ * @return kmcp_error_t Returns KMCP_SUCCESS if the certificate is valid, or an error code otherwise
+ */
+kmcp_error_t kmcp_http_test_ssl_certificate(const char* url, bool accept_self_signed);
+
+/**
+ * @brief Get SSL certificate information
+ *
+ * This function connects to a server and retrieves information about its SSL certificate.
+ * It's useful for debugging SSL certificate issues.
+ *
+ * @param url URL to connect to (must start with https://)
+ * @param cert_info Pointer to certificate information string, memory allocated by function, caller responsible for freeing
+ * @return kmcp_error_t Returns KMCP_SUCCESS if the certificate information was retrieved, or an error code otherwise
+ */
+kmcp_error_t kmcp_http_get_ssl_certificate_info(const char* url, char** cert_info);
+
 #ifdef __cplusplus
 }
 #endif
