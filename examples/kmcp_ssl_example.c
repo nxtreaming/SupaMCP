@@ -15,17 +15,20 @@ int main(int argc, char* argv[]) {
 
     // Check command line arguments
     if (argc < 2) {
-        printf("Usage: %s <https_url> [accept_self_signed]\n", argv[0]);
+        printf("Usage: %s <https_url> [accept_self_signed] [pinned_pubkey_file]\n", argv[0]);
         printf("  https_url: URL to connect to (must start with https://)\n");
         printf("  accept_self_signed: 1 to accept self-signed certificates, 0 otherwise (default: 0)\n");
+        printf("  pinned_pubkey_file: Path to file containing the expected public key for certificate pinning (optional)\n");
         return 1;
     }
 
     const char* url = argv[1];
     bool accept_self_signed = (argc > 2 && strcmp(argv[2], "1") == 0);
+    const char* pinned_pubkey = (argc > 3) ? argv[3] : NULL;
 
     printf("Testing SSL connection to %s\n", url);
     printf("Accept self-signed certificates: %s\n", accept_self_signed ? "Yes" : "No");
+    printf("Certificate pinning: %s\n", pinned_pubkey ? pinned_pubkey : "Disabled");
 
     // Test SSL certificate verification
     kmcp_error_t result = kmcp_http_test_ssl_certificate(url, accept_self_signed);
@@ -56,6 +59,7 @@ int main(int argc, char* argv[]) {
     config.base_url = url;
     config.ssl_verify_mode = KMCP_SSL_VERIFY_PEER;
     config.accept_self_signed = accept_self_signed;
+    config.pinned_pubkey = pinned_pubkey;
 
     kmcp_http_client_t* client = kmcp_http_client_create_with_config(&config);
     if (!client) {
@@ -79,7 +83,7 @@ int main(int argc, char* argv[]) {
 
     if (result == KMCP_SUCCESS) {
         printf("Request successful, status code: %d\n", status);
-        printf("Response (first 100 chars): %.100s%s\n", 
+        printf("Response (first 100 chars): %.100s%s\n",
                response, strlen(response) > 100 ? "..." : "");
     } else {
         printf("Request failed with error code: %d\n", result);

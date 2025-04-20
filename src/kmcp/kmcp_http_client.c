@@ -94,6 +94,7 @@ struct kmcp_http_client {
     char* ssl_key_file;    // Path to client private key file
     char* ssl_key_password; // Password for client private key
     bool accept_self_signed; // Whether to accept self-signed certificates
+    char* pinned_pubkey;   // Path to file containing the expected public key
 };
 
 /**
@@ -220,6 +221,7 @@ kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* ap
     config.ssl_key_file = NULL;        // No client private key
     config.ssl_key_password = NULL;    // No password
     config.accept_self_signed = false; // Don't accept self-signed certificates by default
+    config.pinned_pubkey = NULL;       // No certificate pinning by default
 
     // Create client with the configuration
     return kmcp_http_client_create_with_config(&config);
@@ -265,6 +267,7 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
     client->ssl_key_file = config->ssl_key_file ? mcp_strdup(config->ssl_key_file) : NULL;
     client->ssl_key_password = config->ssl_key_password ? mcp_strdup(config->ssl_key_password) : NULL;
     client->accept_self_signed = config->accept_self_signed;
+    client->pinned_pubkey = config->pinned_pubkey ? mcp_strdup(config->pinned_pubkey) : NULL;
 
     client->ssl_ctx = NULL;
     client->ssl = NULL;
@@ -311,6 +314,11 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
                 SSL_CTX_set_options(client->ssl_ctx, SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION);
 
                 mcp_log_info("Configured to accept self-signed certificates");
+            }
+
+            // If certificate pinning is enabled, set up the public key
+            if (config->pinned_pubkey) {
+                mcp_log_info("Certificate pinning enabled with public key file: %s", config->pinned_pubkey);
             }
         }
 
@@ -762,6 +770,84 @@ kmcp_error_t kmcp_http_client_send(
                 close(sock);
 #endif
                 return KMCP_ERROR_CONNECTION_FAILED;
+            }
+
+            // Check certificate pinning if enabled
+            if (client->pinned_pubkey && cert) {
+                FILE* fp = fopen(client->pinned_pubkey, "r");
+                if (!fp) {
+                    mcp_log_error("Failed to open pinned public key file: %s", client->pinned_pubkey);
+                    X509_free(cert);
+                    SSL_free(client->ssl);
+                    client->ssl = NULL;
+                    free(full_path);
+#ifdef _WIN32
+                    closesocket(sock);
+                    WSACleanup();
+#else
+                    close(sock);
+#endif
+                    return KMCP_ERROR_CONNECTION_FAILED;
+                }
+
+                // Read the expected public key
+                EVP_PKEY* pinned_key = PEM_read_PUBKEY(fp, NULL, NULL, NULL);
+                fclose(fp);
+
+                if (!pinned_key) {
+                    mcp_log_error("Failed to read pinned public key from file: %s", client->pinned_pubkey);
+                    X509_free(cert);
+                    SSL_free(client->ssl);
+                    client->ssl = NULL;
+                    free(full_path);
+#ifdef _WIN32
+                    closesocket(sock);
+                    WSACleanup();
+#else
+                    close(sock);
+#endif
+                    return KMCP_ERROR_CONNECTION_FAILED;
+                }
+
+                // Get the certificate's public key
+                EVP_PKEY* cert_key = X509_get_pubkey(cert);
+                if (!cert_key) {
+                    mcp_log_error("Failed to get public key from certificate");
+                    EVP_PKEY_free(pinned_key);
+                    X509_free(cert);
+                    SSL_free(client->ssl);
+                    client->ssl = NULL;
+                    free(full_path);
+#ifdef _WIN32
+                    closesocket(sock);
+                    WSACleanup();
+#else
+                    close(sock);
+#endif
+                    return KMCP_ERROR_CONNECTION_FAILED;
+                }
+
+                // Compare the public keys
+                if (EVP_PKEY_cmp(pinned_key, cert_key) != 1) {
+                    mcp_log_error("Certificate public key does not match pinned public key");
+                    EVP_PKEY_free(cert_key);
+                    EVP_PKEY_free(pinned_key);
+                    X509_free(cert);
+                    SSL_free(client->ssl);
+                    client->ssl = NULL;
+                    free(full_path);
+#ifdef _WIN32
+                    closesocket(sock);
+                    WSACleanup();
+#else
+                    close(sock);
+#endif
+                    return KMCP_ERROR_CONNECTION_FAILED;
+                }
+
+                mcp_log_info("Certificate public key matches pinned public key");
+                EVP_PKEY_free(cert_key);
+                EVP_PKEY_free(pinned_key);
             }
 
             X509_free(cert);
@@ -1392,6 +1478,7 @@ void kmcp_http_client_close(kmcp_http_client_t* client) {
         free(client->ssl_cert_file);
         free(client->ssl_key_file);
         free(client->ssl_key_password);
+        free(client->pinned_pubkey);
     }
 
     // Free resources
@@ -1831,4 +1918,31 @@ kmcp_error_t kmcp_http_get_ssl_certificate_info(const char* url, char** cert_inf
     kmcp_http_client_close(client);
 
     return result;
+}
+
+/**
+ * @brief Check if a certificate is self-signed
+ *
+ * This function checks if an X509 certificate is self-signed by comparing
+ * the subject and issuer names.
+ *
+ * @param cert X509 certificate to check
+ * @return bool Returns true if the certificate is self-signed, false otherwise
+ */
+bool kmcp_http_is_certificate_self_signed(X509* cert) {
+    if (!cert) {
+        return false;
+    }
+
+    // Get subject and issuer names
+    X509_NAME* subject = X509_get_subject_name(cert);
+    X509_NAME* issuer = X509_get_issuer_name(cert);
+
+    if (!subject || !issuer) {
+        return false;
+    }
+
+    // Compare subject and issuer names
+    // If they are the same, the certificate is self-signed
+    return (X509_NAME_cmp(subject, issuer) == 0);
 }

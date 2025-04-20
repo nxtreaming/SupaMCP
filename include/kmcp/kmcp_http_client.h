@@ -10,6 +10,9 @@
 #include <stdbool.h>
 #include "kmcp_error.h"
 
+// Forward declaration for OpenSSL types
+typedef struct x509_st X509;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,6 +49,7 @@ typedef struct kmcp_http_client_config {
     const char* ssl_key_file;   /**< Path to client private key file, can be NULL */
     const char* ssl_key_password; /**< Password for client private key, can be NULL */
     bool accept_self_signed;    /**< Whether to accept self-signed certificates */
+    const char* pinned_pubkey;  /**< Path to file containing the expected public key (for certificate pinning), can be NULL */
 } kmcp_http_client_config_t;
 
 /**
@@ -259,6 +263,17 @@ kmcp_error_t kmcp_http_test_ssl_certificate(const char* url, bool accept_self_si
  * @return kmcp_error_t Returns KMCP_SUCCESS if the certificate information was retrieved, or an error code otherwise
  */
 kmcp_error_t kmcp_http_get_ssl_certificate_info(const char* url, char** cert_info);
+
+/**
+ * @brief Check if a certificate is self-signed
+ *
+ * This function checks if an X509 certificate is self-signed by comparing
+ * the subject and issuer names.
+ *
+ * @param cert X509 certificate to check
+ * @return bool Returns true if the certificate is self-signed, false otherwise
+ */
+bool kmcp_http_is_certificate_self_signed(X509* cert);
 
 #ifdef __cplusplus
 }
