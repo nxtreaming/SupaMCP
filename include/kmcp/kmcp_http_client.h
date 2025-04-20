@@ -7,6 +7,7 @@
 #define KMCP_HTTP_CLIENT_H
 
 #include <stddef.h>
+#include <stdbool.h>
 #include "kmcp_error.h"
 
 #ifdef __cplusplus
@@ -19,6 +20,15 @@ extern "C" {
 typedef struct kmcp_http_client kmcp_http_client_t;
 
 /**
+ * @brief SSL/TLS verification mode
+ */
+typedef enum kmcp_ssl_verify_mode {
+    KMCP_SSL_VERIFY_NONE = 0,     /**< Do not verify server certificate */
+    KMCP_SSL_VERIFY_PEER = 1,     /**< Verify server certificate */
+    KMCP_SSL_VERIFY_FULL = 2      /**< Verify server certificate and hostname */
+} kmcp_ssl_verify_mode_t;
+
+/**
  * @brief HTTP client configuration
  */
 typedef struct kmcp_http_client_config {
@@ -28,6 +38,14 @@ typedef struct kmcp_http_client_config {
     int request_timeout_ms;     /**< Request timeout in milliseconds (0 for default) */
     int max_retries;            /**< Maximum number of retries (0 for no retries) */
     int retry_interval_ms;      /**< Interval between retries in milliseconds */
+
+    // SSL/TLS options
+    kmcp_ssl_verify_mode_t ssl_verify_mode; /**< SSL verification mode */
+    const char* ssl_ca_file;    /**< Path to CA certificate file, can be NULL */
+    const char* ssl_cert_file;  /**< Path to client certificate file, can be NULL */
+    const char* ssl_key_file;   /**< Path to client private key file, can be NULL */
+    const char* ssl_key_password; /**< Password for client private key, can be NULL */
+    bool accept_self_signed;    /**< Whether to accept self-signed certificates */
 } kmcp_http_client_config_t;
 
 /**
