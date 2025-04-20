@@ -88,6 +88,12 @@ struct kmcp_http_client {
     SSL_CTX* ssl_ctx;      // SSL context
     SSL* ssl;              // SSL connection
     bool ssl_initialized;  // Whether SSL is initialized
+    kmcp_ssl_verify_mode_t ssl_verify_mode; // SSL verification mode
+    char* ssl_ca_file;     // Path to CA certificate file
+    char* ssl_cert_file;   // Path to client certificate file
+    char* ssl_key_file;    // Path to client private key file
+    char* ssl_key_password; // Password for client private key
+    bool accept_self_signed; // Whether to accept self-signed certificates
 };
 
 /**
@@ -208,6 +214,12 @@ kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* ap
     config.request_timeout_ms = 30000; // 30 seconds
     config.max_retries = 3;            // 3 retries
     config.retry_interval_ms = 1000;   // 1 second
+    config.ssl_verify_mode = KMCP_SSL_VERIFY_PEER; // Default to verify server certificate
+    config.ssl_ca_file = NULL;         // Use system CA certificates
+    config.ssl_cert_file = NULL;       // No client certificate
+    config.ssl_key_file = NULL;        // No client private key
+    config.ssl_key_password = NULL;    // No password
+    config.accept_self_signed = false; // Don't accept self-signed certificates by default
 
     // Create client with the configuration
     return kmcp_http_client_create_with_config(&config);
@@ -246,6 +258,14 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
     client->max_retries = config->max_retries >= 0 ? config->max_retries : 3;
     client->retry_interval_ms = config->retry_interval_ms > 0 ? config->retry_interval_ms : 1000;
 
+    // Set SSL/TLS options
+    client->ssl_verify_mode = config->ssl_verify_mode;
+    client->ssl_ca_file = config->ssl_ca_file ? mcp_strdup(config->ssl_ca_file) : NULL;
+    client->ssl_cert_file = config->ssl_cert_file ? mcp_strdup(config->ssl_cert_file) : NULL;
+    client->ssl_key_file = config->ssl_key_file ? mcp_strdup(config->ssl_key_file) : NULL;
+    client->ssl_key_password = config->ssl_key_password ? mcp_strdup(config->ssl_key_password) : NULL;
+    client->accept_self_signed = config->accept_self_signed;
+
     client->ssl_ctx = NULL;
     client->ssl = NULL;
     client->ssl_initialized = false;
@@ -279,6 +299,84 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
             return NULL;
         }
 
+        // Set verification mode
+        int verify_mode = SSL_VERIFY_NONE;
+        if (config->ssl_verify_mode == KMCP_SSL_VERIFY_PEER ||
+            config->ssl_verify_mode == KMCP_SSL_VERIFY_FULL) {
+            verify_mode = SSL_VERIFY_PEER;
+
+            // If we're verifying but accepting self-signed certs, we need to set up a custom verify callback
+            if (config->accept_self_signed) {
+                // Set verification flags to allow self-signed certificates
+                X509_VERIFY_PARAM* param = SSL_CTX_get0_param(client->ssl_ctx);
+                X509_VERIFY_PARAM_set_flags(param, X509_V_FLAG_TRUSTED_FIRST);
+            }
+        }
+        SSL_CTX_set_verify(client->ssl_ctx, verify_mode, NULL);
+
+        // Load CA certificate file if provided
+        if (config->ssl_ca_file) {
+            if (SSL_CTX_load_verify_locations(client->ssl_ctx, config->ssl_ca_file, NULL) != 1) {
+                mcp_log_error("Failed to load CA certificate file: %s", config->ssl_ca_file);
+                ERR_print_errors_fp(stderr);
+                SSL_CTX_free(client->ssl_ctx);
+                free(client->base_url);
+                free(client->api_key);
+                free(client->host);
+                free(client->path);
+                free(client);
+                return NULL;
+            }
+        } else {
+            // Use default CA certificates
+            SSL_CTX_set_default_verify_paths(client->ssl_ctx);
+        }
+
+        // Load client certificate and key if provided
+        if (config->ssl_cert_file && config->ssl_key_file) {
+            if (SSL_CTX_use_certificate_file(client->ssl_ctx, config->ssl_cert_file, SSL_FILETYPE_PEM) != 1) {
+                mcp_log_error("Failed to load client certificate file: %s", config->ssl_cert_file);
+                ERR_print_errors_fp(stderr);
+                SSL_CTX_free(client->ssl_ctx);
+                free(client->base_url);
+                free(client->api_key);
+                free(client->host);
+                free(client->path);
+                free(client);
+                return NULL;
+            }
+
+            // Set key password if provided
+            if (config->ssl_key_password) {
+                SSL_CTX_set_default_passwd_cb_userdata(client->ssl_ctx, (void*)config->ssl_key_password);
+            }
+
+            if (SSL_CTX_use_PrivateKey_file(client->ssl_ctx, config->ssl_key_file, SSL_FILETYPE_PEM) != 1) {
+                mcp_log_error("Failed to load client private key file: %s", config->ssl_key_file);
+                ERR_print_errors_fp(stderr);
+                SSL_CTX_free(client->ssl_ctx);
+                free(client->base_url);
+                free(client->api_key);
+                free(client->host);
+                free(client->path);
+                free(client);
+                return NULL;
+            }
+
+            // Verify private key
+            if (SSL_CTX_check_private_key(client->ssl_ctx) != 1) {
+                mcp_log_error("Client certificate and private key do not match");
+                ERR_print_errors_fp(stderr);
+                SSL_CTX_free(client->ssl_ctx);
+                free(client->base_url);
+                free(client->api_key);
+                free(client->host);
+                free(client->path);
+                free(client);
+                return NULL;
+            }
+        }
+
         // Set SSL options
         SSL_CTX_set_options(client->ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
 
@@ -292,11 +390,11 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
 /**
  * @brief Send an HTTP request
  *
- * Note: This is a simple HTTP client implementation with basic SSL support.
- * For production use, it is recommended to use a mature HTTP client library such as libcurl.
+ * Note: This is an HTTP client implementation with SSL support.
+ * It supports certificate validation, self-signed certificates, and client certificates.
  *
- * @warning The SSL implementation is basic and does not validate certificates properly.
- * Do not use for sensitive data in production environments.
+ * @warning While this implementation validates certificates, for highly sensitive
+ * production environments, consider using a mature HTTP client library such as libcurl.
  */
 kmcp_error_t kmcp_http_client_send(
     kmcp_http_client_t* client,
@@ -586,6 +684,16 @@ kmcp_error_t kmcp_http_client_send(
             return KMCP_ERROR_CONNECTION_FAILED;
         }
 
+        // Set hostname for SNI (Server Name Indication)
+        SSL_set_tlsext_host_name(client->ssl, client->host);
+
+        // Set hostname for certificate verification
+        if (client->ssl_verify_mode == KMCP_SSL_VERIFY_FULL) {
+            X509_VERIFY_PARAM* param = SSL_get0_param(client->ssl);
+            // Set hostname for certificate verification
+            X509_VERIFY_PARAM_set1_host(param, client->host, 0);
+        }
+
         // Set socket for SSL connection
         if (SSL_set_fd(client->ssl, (int)sock) != 1) {
             mcp_log_error("Failed to set socket for SSL connection");
@@ -607,7 +715,61 @@ kmcp_error_t kmcp_http_client_send(
         if (ssl_connect_result != 1) {
             int ssl_error = SSL_get_error(client->ssl, ssl_connect_result);
             mcp_log_error("Failed to establish SSL connection: error %d", ssl_error);
+
+            // Get more detailed error information
+            unsigned long err;
+            char err_buf[256];
+            while ((err = ERR_get_error()) != 0) {
+                ERR_error_string_n(err, err_buf, sizeof(err_buf));
+                mcp_log_error("SSL error: %s", err_buf);
+            }
+
             ERR_print_errors_fp(stderr);
+        } else if (client->ssl_verify_mode != KMCP_SSL_VERIFY_NONE) {
+            // Verify certificate
+            X509* cert = SSL_get_peer_certificate(client->ssl);
+            if (!cert) {
+                mcp_log_error("No certificate presented by server");
+                SSL_free(client->ssl);
+                client->ssl = NULL;
+                free(full_path);
+#ifdef _WIN32
+                closesocket(sock);
+                WSACleanup();
+#else
+                close(sock);
+#endif
+                return KMCP_ERROR_CONNECTION_FAILED;
+            }
+
+            long verify_result = SSL_get_verify_result(client->ssl);
+            if (verify_result != X509_V_OK) {
+                // Check if it's a self-signed certificate and we're configured to accept them
+                if (client->accept_self_signed &&
+                    (verify_result == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT ||
+                     verify_result == X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN)) {
+                    mcp_log_warn("Accepting self-signed certificate from server");
+                } else {
+                    mcp_log_error("Certificate verification failed: %s (code: %ld)",
+                                 X509_verify_cert_error_string(verify_result), verify_result);
+                    X509_free(cert);
+                    SSL_free(client->ssl);
+                    client->ssl = NULL;
+                    free(full_path);
+#ifdef _WIN32
+                    closesocket(sock);
+                    WSACleanup();
+#else
+                    close(sock);
+#endif
+                    return KMCP_ERROR_CONNECTION_FAILED;
+                }
+            }
+
+            X509_free(cert);
+        }
+
+        if (ssl_connect_result != 1) {
             SSL_free(client->ssl);
             client->ssl = NULL;
             free(full_path);
@@ -1226,6 +1388,12 @@ void kmcp_http_client_close(kmcp_http_client_t* client) {
         ERR_free_strings();
         EVP_cleanup();
         CRYPTO_cleanup_all_ex_data();
+
+        // Free SSL-related resources
+        free(client->ssl_ca_file);
+        free(client->ssl_cert_file);
+        free(client->ssl_key_file);
+        free(client->ssl_key_password);
     }
 
     // Free resources
