@@ -7,6 +7,7 @@
 #define KMCP_H
 
 #include "kmcp_error.h"
+#include "kmcp_common.h"
 #include "kmcp_server_manager.h"
 #include "kmcp_client.h"
 #include "kmcp_tool_access.h"

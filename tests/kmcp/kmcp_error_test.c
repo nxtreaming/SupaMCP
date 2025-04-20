@@ -46,6 +46,21 @@ static int test_error_messages() {
         return 1;
     }
 
+    // Test new error codes
+    const char* ssl_cert_msg = kmcp_error_message(KMCP_ERROR_SSL_CERTIFICATE);
+    if (!ssl_cert_msg || strcmp(ssl_cert_msg, "SSL certificate error") != 0) {
+        printf("FAIL: Unexpected message for KMCP_ERROR_SSL_CERTIFICATE: %s\n",
+               ssl_cert_msg ? ssl_cert_msg : "NULL");
+        return 1;
+    }
+
+    const char* ssl_handshake_msg = kmcp_error_message(KMCP_ERROR_SSL_HANDSHAKE);
+    if (!ssl_handshake_msg || strcmp(ssl_handshake_msg, "SSL handshake failed") != 0) {
+        printf("FAIL: Unexpected message for KMCP_ERROR_SSL_HANDSHAKE: %s\n",
+               ssl_handshake_msg ? ssl_handshake_msg : "NULL");
+        return 1;
+    }
+
     const char* parse_failed_msg = kmcp_error_message(KMCP_ERROR_PARSE_FAILED);
     if (!parse_failed_msg || strcmp(parse_failed_msg, "Parse failed") != 0) {
         printf("FAIL: Unexpected message for KMCP_ERROR_PARSE_FAILED: %s\n",
@@ -94,6 +109,65 @@ static int test_error_messages() {
 }
 
 /**
+ * @brief Test MCP error code conversion
+ *
+ * @return int Returns 0 on success, non-zero on failure
+ */
+static int test_error_conversion() {
+    printf("Testing MCP error code conversion...\n");
+
+    // Test MCP error code conversion
+    if (kmcp_error_from_mcp(0) != KMCP_SUCCESS) {
+        printf("FAIL: Unexpected conversion for MCP_ERROR_NONE\n");
+        return 1;
+    }
+
+    if (kmcp_error_from_mcp(1) != KMCP_ERROR_INVALID_PARAMETER) {
+        printf("FAIL: Unexpected conversion for MCP_ERROR_INVALID_PARAMETER\n");
+        return 1;
+    }
+
+    if (kmcp_error_from_mcp(2) != KMCP_ERROR_MEMORY_ALLOCATION) {
+        printf("FAIL: Unexpected conversion for MCP_ERROR_MEMORY_ALLOCATION\n");
+        return 1;
+    }
+
+    if (kmcp_error_from_mcp(999) != KMCP_ERROR_INTERNAL) {
+        printf("FAIL: Unexpected conversion for unknown MCP error code\n");
+        return 1;
+    }
+
+    printf("PASS: MCP error code conversion tests passed\n");
+    return 0;
+}
+
+/**
+ * @brief Test error logging
+ *
+ * @return int Returns 0 on success, non-zero on failure
+ */
+static int test_error_logging() {
+    printf("Testing error logging...\n");
+
+    // Test error logging
+    kmcp_error_t result = kmcp_error_log(KMCP_ERROR_INVALID_PARAMETER, "Test error message");
+    if (result != KMCP_ERROR_INVALID_PARAMETER) {
+        printf("FAIL: kmcp_error_log did not return the same error code\n");
+        return 1;
+    }
+
+    // Test with success code (should not log anything)
+    result = kmcp_error_log(KMCP_SUCCESS, "This should not be logged");
+    if (result != KMCP_SUCCESS) {
+        printf("FAIL: kmcp_error_log did not return KMCP_SUCCESS\n");
+        return 1;
+    }
+
+    printf("PASS: Error logging tests passed\n");
+    return 0;
+}
+
+/**
  * @brief Main function for error tests
  *
  * @return int Returns 0 on success, non-zero on failure
@@ -113,6 +187,8 @@ int kmcp_error_test_main() {
 
     // Run tests
     failures += test_error_messages();
+    failures += test_error_conversion();
+    failures += test_error_logging();
 
     // Print summary
     printf("\n=== Test Summary ===\n");

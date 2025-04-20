@@ -6,6 +6,7 @@
 
 #include "kmcp_http_client.h"
 #include "kmcp_error.h"
+#include "kmcp_common.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
 #include <stdlib.h>
@@ -203,6 +204,85 @@ static kmcp_error_t parse_url(const char* url, char** host, char** path, int* po
 }
 
 /**
+ * @brief Helper function to clean up client resources
+ *
+ * @param client Client to clean up
+ * @param free_ssl_ctx Whether to free SSL context
+ */
+static void cleanup_client_resources(kmcp_http_client_t* client, bool free_ssl_ctx) {
+    if (!client) {
+        return;
+    }
+
+    // Free SSL context if requested
+    if (free_ssl_ctx && client->ssl_ctx) {
+        SSL_CTX_free(client->ssl_ctx);
+        client->ssl_ctx = NULL;
+    }
+
+    // Free client resources
+    free(client->base_url);
+    free(client->api_key);
+    free(client->host);
+    free(client->path);
+    free(client->ssl_ca_file);
+    free(client->ssl_cert_file);
+    free(client->ssl_key_file);
+    free(client->ssl_key_password);
+    free(client->pinned_pubkey);
+    free(client);
+}
+
+/**
+ * @brief Helper function to clean up resources in case of error
+ *
+ * @param client Client to clean up
+ * @param sock Socket to close
+ * @param full_path Full path to free
+ * @param cert Certificate to free
+ * @param cleanup_ssl Whether to clean up SSL resources
+ */
+static void cleanup_http_client_resources(
+    kmcp_http_client_t* client,
+#ifdef _WIN32
+    SOCKET sock,
+#else
+    int sock,
+#endif
+    char* full_path,
+    X509* cert,
+    bool cleanup_ssl
+) {
+    // Free certificate if any
+    if (cert) {
+        X509_free(cert);
+    }
+
+    // Clean up SSL resources if requested
+    if (cleanup_ssl && client && client->ssl) {
+        SSL_free(client->ssl);
+        client->ssl = NULL;
+    }
+
+    // Free full path if any
+    if (full_path) {
+        free(full_path);
+    }
+
+    // Close socket if valid
+#ifdef _WIN32
+    if (sock != INVALID_SOCKET) {
+        closesocket(sock);
+        WSACleanup();
+    }
+#else
+    if (sock != -1) {
+        close(sock);
+    }
+#endif
+}
+
+/**
  * @brief Create an HTTP client
  */
 kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* api_key) {
@@ -232,20 +312,21 @@ kmcp_http_client_t* kmcp_http_client_create(const char* base_url, const char* ap
  */
 kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_config_t* config) {
     if (!config || !config->base_url) {
-        mcp_log_error("Invalid parameter: config or base_url is NULL");
+        kmcp_error_log(KMCP_ERROR_INVALID_PARAMETER, "Invalid parameter: config or base_url is NULL");
         return NULL;
     }
 
     // Validate the base URL
-    if (validate_url(config->base_url) != KMCP_SUCCESS) {
-        mcp_log_error("Invalid base URL: %s", config->base_url);
+    kmcp_error_t result = validate_url(config->base_url);
+    if (result != KMCP_SUCCESS) {
+        kmcp_error_log(result, "Invalid base URL: %s", config->base_url);
         return NULL;
     }
 
     // Allocate memory
     kmcp_http_client_t* client = (kmcp_http_client_t*)malloc(sizeof(kmcp_http_client_t));
     if (!client) {
-        mcp_log_error("Failed to allocate memory for HTTP client");
+        kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Failed to allocate memory for HTTP client");
         return NULL;
     }
 
@@ -274,11 +355,10 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
     client->ssl_initialized = false;
 
     // Parse URL
-    if (parse_url(config->base_url, &client->host, &client->path, &client->port, &client->use_ssl) != 0) {
-        mcp_log_error("Failed to parse URL: %s", config->base_url);
-        free(client->base_url);
-        free(client->api_key);
-        free(client);
+    result = parse_url(config->base_url, &client->host, &client->path, &client->port, &client->use_ssl);
+    if (result != KMCP_SUCCESS) {
+        kmcp_error_log(result, "Failed to parse URL: %s", config->base_url);
+        cleanup_client_resources(client, false);
         return NULL;
     }
 
@@ -292,13 +372,9 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
         // Create SSL context
         client->ssl_ctx = SSL_CTX_new(TLS_client_method());
         if (!client->ssl_ctx) {
-            mcp_log_error("Failed to create SSL context");
+            kmcp_error_log(KMCP_ERROR_SSL_HANDSHAKE, "Failed to create SSL context");
             ERR_print_errors_fp(stderr);
-            free(client->base_url);
-            free(client->api_key);
-            free(client->host);
-            free(client->path);
-            free(client);
+            cleanup_client_resources(client, false);
             return NULL;
         }
 
@@ -328,14 +404,9 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
         // Load CA certificate file if provided
         if (config->ssl_ca_file) {
             if (SSL_CTX_load_verify_locations(client->ssl_ctx, config->ssl_ca_file, NULL) != 1) {
-                mcp_log_error("Failed to load CA certificate file: %s", config->ssl_ca_file);
+                kmcp_error_log(KMCP_ERROR_SSL_CERTIFICATE, "Failed to load CA certificate file: %s", config->ssl_ca_file);
                 ERR_print_errors_fp(stderr);
-                SSL_CTX_free(client->ssl_ctx);
-                free(client->base_url);
-                free(client->api_key);
-                free(client->host);
-                free(client->path);
-                free(client);
+                cleanup_client_resources(client, true);
                 return NULL;
             }
         } else {
@@ -346,14 +417,9 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
         // Load client certificate and key if provided
         if (config->ssl_cert_file && config->ssl_key_file) {
             if (SSL_CTX_use_certificate_file(client->ssl_ctx, config->ssl_cert_file, SSL_FILETYPE_PEM) != 1) {
-                mcp_log_error("Failed to load client certificate file: %s", config->ssl_cert_file);
+                kmcp_error_log(KMCP_ERROR_SSL_CERTIFICATE, "Failed to load client certificate file: %s", config->ssl_cert_file);
                 ERR_print_errors_fp(stderr);
-                SSL_CTX_free(client->ssl_ctx);
-                free(client->base_url);
-                free(client->api_key);
-                free(client->host);
-                free(client->path);
-                free(client);
+                cleanup_client_resources(client, true);
                 return NULL;
             }
 
@@ -363,27 +429,17 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
             }
 
             if (SSL_CTX_use_PrivateKey_file(client->ssl_ctx, config->ssl_key_file, SSL_FILETYPE_PEM) != 1) {
-                mcp_log_error("Failed to load client private key file: %s", config->ssl_key_file);
+                kmcp_error_log(KMCP_ERROR_SSL_CERTIFICATE, "Failed to load client private key file: %s", config->ssl_key_file);
                 ERR_print_errors_fp(stderr);
-                SSL_CTX_free(client->ssl_ctx);
-                free(client->base_url);
-                free(client->api_key);
-                free(client->host);
-                free(client->path);
-                free(client);
+                cleanup_client_resources(client, true);
                 return NULL;
             }
 
             // Verify private key
             if (SSL_CTX_check_private_key(client->ssl_ctx) != 1) {
-                mcp_log_error("Client certificate and private key do not match");
+                kmcp_error_log(KMCP_ERROR_SSL_CERTIFICATE, "Client certificate and private key do not match");
                 ERR_print_errors_fp(stderr);
-                SSL_CTX_free(client->ssl_ctx);
-                free(client->base_url);
-                free(client->api_key);
-                free(client->host);
-                free(client->path);
-                free(client);
+                cleanup_client_resources(client, true);
                 return NULL;
             }
         }
@@ -416,10 +472,12 @@ kmcp_error_t kmcp_http_client_send(
     char** response,
     int* status
 ) {
-    if (!client || !method || !path || !response || !status) {
-        mcp_log_error("Invalid parameters");
-        return KMCP_ERROR_INVALID_PARAMETER;
-    }
+    // Check parameters
+    KMCP_CHECK_PARAM(client);
+    KMCP_CHECK_PARAM(method);
+    KMCP_CHECK_PARAM(path);
+    KMCP_CHECK_PARAM(response);
+    KMCP_CHECK_PARAM(status);
 
     // Initialize output parameters
     *response = NULL;
@@ -598,7 +656,7 @@ kmcp_error_t kmcp_http_client_send(
 #ifdef _WIN32
     WSADATA wsa_data;
     if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
-        mcp_log_error("Failed to initialize Winsock");
+        kmcp_error_log(KMCP_ERROR_CONNECTION_FAILED, "Failed to initialize Winsock");
         free(full_path);
         return KMCP_ERROR_CONNECTION_FAILED;
     }
@@ -612,7 +670,7 @@ kmcp_error_t kmcp_http_client_send(
 
     // Store socket for cleanup in case of error
     if (sock < 0) {
-        mcp_log_error("Failed to create socket");
+        kmcp_error_log(KMCP_ERROR_CONNECTION_FAILED, "Failed to create socket");
         free(full_path);
 #ifdef _WIN32
         WSACleanup();
@@ -623,14 +681,8 @@ kmcp_error_t kmcp_http_client_send(
     // Resolve host name
     struct hostent* host = gethostbyname(client->host);
     if (!host) {
-        mcp_log_error("Failed to resolve host: %s", client->host);
-        free(full_path);
-#ifdef _WIN32
-        closesocket(sock);
-        WSACleanup();
-#else
-        close(sock);
-#endif
+        kmcp_error_log(KMCP_ERROR_CONNECTION_FAILED, "Failed to resolve host: %s", client->host);
+        cleanup_http_client_resources(client, sock, full_path, NULL, false);
         return KMCP_ERROR_CONNECTION_FAILED;
     }
 
@@ -655,44 +707,26 @@ kmcp_error_t kmcp_http_client_send(
     memcpy(&server_addr.sin_addr, host->h_addr, host->h_length);
 
     if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        mcp_log_error("Failed to connect to server: %s:%d", client->host, client->port);
-        free(full_path);
-#ifdef _WIN32
-        closesocket(sock);
-        WSACleanup();
-#else
-        close(sock);
-#endif
+        kmcp_error_log(KMCP_ERROR_CONNECTION_FAILED, "Failed to connect to server: %s:%d", client->host, client->port);
+        cleanup_http_client_resources(client, sock, full_path, NULL, false);
         return KMCP_ERROR_CONNECTION_FAILED;
     }
 
     // For HTTPS connections, establish SSL/TLS connection
     if (client->use_ssl) {
         if (!client->ssl_initialized) {
-            mcp_log_error("SSL not initialized for HTTPS connection");
-            free(full_path);
-#ifdef _WIN32
-            closesocket(sock);
-            WSACleanup();
-#else
-            close(sock);
-#endif
-            return KMCP_ERROR_CONNECTION_FAILED;
+            kmcp_error_log(KMCP_ERROR_SSL_HANDSHAKE, "SSL not initialized for HTTPS connection");
+            cleanup_http_client_resources(client, sock, full_path, NULL, false);
+            return KMCP_ERROR_SSL_HANDSHAKE;
         }
 
         // Create new SSL connection
         client->ssl = SSL_new(client->ssl_ctx);
         if (!client->ssl) {
-            mcp_log_error("Failed to create SSL connection");
+            kmcp_error_log(KMCP_ERROR_SSL_HANDSHAKE, "Failed to create SSL connection");
             ERR_print_errors_fp(stderr);
-            free(full_path);
-#ifdef _WIN32
-            closesocket(sock);
-            WSACleanup();
-#else
-            close(sock);
-#endif
-            return KMCP_ERROR_CONNECTION_FAILED;
+            cleanup_http_client_resources(client, sock, full_path, NULL, false);
+            return KMCP_ERROR_SSL_HANDSHAKE;
         }
 
         // Set hostname for SNI (Server Name Indication)
@@ -707,18 +741,10 @@ kmcp_error_t kmcp_http_client_send(
 
         // Set socket for SSL connection
         if (SSL_set_fd(client->ssl, (int)sock) != 1) {
-            mcp_log_error("Failed to set socket for SSL connection");
+            kmcp_error_log(KMCP_ERROR_SSL_HANDSHAKE, "Failed to set socket for SSL connection");
             ERR_print_errors_fp(stderr);
-            SSL_free(client->ssl);
-            client->ssl = NULL;
-            free(full_path);
-#ifdef _WIN32
-            closesocket(sock);
-            WSACleanup();
-#else
-            close(sock);
-#endif
-            return KMCP_ERROR_CONNECTION_FAILED;
+            cleanup_http_client_resources(client, sock, full_path, NULL, true);
+            return KMCP_ERROR_SSL_HANDSHAKE;
         }
 
         // Establish SSL connection
@@ -757,37 +783,19 @@ kmcp_error_t kmcp_http_client_send(
             if (verify_result != X509_V_OK) {
                 // The verification callback should have handled self-signed certificates,
                 // so if we get here with an error, it's a real certificate validation failure
-                mcp_log_error("Certificate verification failed: %s (code: %ld)",
+                kmcp_error_log(KMCP_ERROR_SSL_CERTIFICATE, "Certificate verification failed: %s (code: %ld)",
                              X509_verify_cert_error_string(verify_result), verify_result);
-                X509_free(cert);
-                SSL_free(client->ssl);
-                client->ssl = NULL;
-                free(full_path);
-#ifdef _WIN32
-                closesocket(sock);
-                WSACleanup();
-#else
-                close(sock);
-#endif
-                return KMCP_ERROR_CONNECTION_FAILED;
+                cleanup_http_client_resources(client, sock, full_path, cert, true);
+                return KMCP_ERROR_SSL_CERTIFICATE;
             }
 
             // Check certificate pinning if enabled
             if (client->pinned_pubkey && cert) {
                 FILE* fp = fopen(client->pinned_pubkey, "r");
                 if (!fp) {
-                    mcp_log_error("Failed to open pinned public key file: %s", client->pinned_pubkey);
-                    X509_free(cert);
-                    SSL_free(client->ssl);
-                    client->ssl = NULL;
-                    free(full_path);
-#ifdef _WIN32
-                    closesocket(sock);
-                    WSACleanup();
-#else
-                    close(sock);
-#endif
-                    return KMCP_ERROR_CONNECTION_FAILED;
+                    kmcp_error_log(KMCP_ERROR_FILE_NOT_FOUND, "Failed to open pinned public key file: %s", client->pinned_pubkey);
+                    cleanup_http_client_resources(client, sock, full_path, cert, true);
+                    return KMCP_ERROR_FILE_NOT_FOUND;
                 }
 
                 // Read the expected public key
@@ -795,54 +803,27 @@ kmcp_error_t kmcp_http_client_send(
                 fclose(fp);
 
                 if (!pinned_key) {
-                    mcp_log_error("Failed to read pinned public key from file: %s", client->pinned_pubkey);
-                    X509_free(cert);
-                    SSL_free(client->ssl);
-                    client->ssl = NULL;
-                    free(full_path);
-#ifdef _WIN32
-                    closesocket(sock);
-                    WSACleanup();
-#else
-                    close(sock);
-#endif
-                    return KMCP_ERROR_CONNECTION_FAILED;
+                    kmcp_error_log(KMCP_ERROR_PARSE_FAILED, "Failed to read pinned public key from file: %s", client->pinned_pubkey);
+                    cleanup_http_client_resources(client, sock, full_path, cert, true);
+                    return KMCP_ERROR_PARSE_FAILED;
                 }
 
                 // Get the certificate's public key
                 EVP_PKEY* cert_key = X509_get_pubkey(cert);
                 if (!cert_key) {
-                    mcp_log_error("Failed to get public key from certificate");
+                    kmcp_error_log(KMCP_ERROR_SSL_CERTIFICATE, "Failed to get public key from certificate");
                     EVP_PKEY_free(pinned_key);
-                    X509_free(cert);
-                    SSL_free(client->ssl);
-                    client->ssl = NULL;
-                    free(full_path);
-#ifdef _WIN32
-                    closesocket(sock);
-                    WSACleanup();
-#else
-                    close(sock);
-#endif
-                    return KMCP_ERROR_CONNECTION_FAILED;
+                    cleanup_http_client_resources(client, sock, full_path, cert, true);
+                    return KMCP_ERROR_SSL_CERTIFICATE;
                 }
 
                 // Compare the public keys
                 if (EVP_PKEY_cmp(pinned_key, cert_key) != 1) {
-                    mcp_log_error("Certificate public key does not match pinned public key");
+                    kmcp_error_log(KMCP_ERROR_SSL_CERTIFICATE, "Certificate public key does not match pinned public key");
                     EVP_PKEY_free(cert_key);
                     EVP_PKEY_free(pinned_key);
-                    X509_free(cert);
-                    SSL_free(client->ssl);
-                    client->ssl = NULL;
-                    free(full_path);
-#ifdef _WIN32
-                    closesocket(sock);
-                    WSACleanup();
-#else
-                    close(sock);
-#endif
-                    return KMCP_ERROR_CONNECTION_FAILED;
+                    cleanup_http_client_resources(client, sock, full_path, cert, true);
+                    return KMCP_ERROR_SSL_CERTIFICATE;
                 }
 
                 mcp_log_info("Certificate public key matches pinned public key");
@@ -854,16 +835,9 @@ kmcp_error_t kmcp_http_client_send(
         }
 
         if (ssl_connect_result != 1) {
-            SSL_free(client->ssl);
-            client->ssl = NULL;
-            free(full_path);
-#ifdef _WIN32
-            closesocket(sock);
-            WSACleanup();
-#else
-            close(sock);
-#endif
-            return KMCP_ERROR_CONNECTION_FAILED;
+            kmcp_error_log(KMCP_ERROR_SSL_HANDSHAKE, "SSL_connect failed");
+            cleanup_http_client_resources(client, sock, full_path, NULL, true);
+            return KMCP_ERROR_SSL_HANDSHAKE;
         }
 
         mcp_log_info("SSL connection established with %s", client->host);
@@ -884,15 +858,9 @@ kmcp_error_t kmcp_http_client_send(
     }
 
     if (send_result != request_len) {
-        mcp_log_error("Failed to send request");
+        kmcp_error_log(KMCP_ERROR_CONNECTION_FAILED, "Failed to send request");
         free(request);
-        free(full_path);
-#ifdef _WIN32
-        closesocket(sock);
-        WSACleanup();
-#else
-        close(sock);
-#endif
+        cleanup_http_client_resources(client, sock, full_path, NULL, client->use_ssl);
         return KMCP_ERROR_CONNECTION_FAILED;
     }
 
@@ -903,14 +871,8 @@ kmcp_error_t kmcp_http_client_send(
     size_t buffer_size = 4096; // Initial buffer size
     char* buffer = (char*)malloc(buffer_size);
     if (!buffer) {
-        mcp_log_error("Failed to allocate memory for response buffer");
-        free(full_path);
-#ifdef _WIN32
-        closesocket(sock);
-        WSACleanup();
-#else
-        close(sock);
-#endif
+        kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Failed to allocate memory for response buffer");
+        cleanup_http_client_resources(client, sock, full_path, NULL, client->use_ssl);
         return KMCP_ERROR_MEMORY_ALLOCATION;
     }
 
@@ -950,15 +912,9 @@ kmcp_error_t kmcp_http_client_send(
             char* new_buffer = (char*)realloc(buffer, new_size);
 
             if (!new_buffer) {
-                mcp_log_error("Failed to resize response buffer");
+                kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Failed to resize response buffer");
                 free(buffer);
-                free(full_path);
-#ifdef _WIN32
-                closesocket(sock);
-                WSACleanup();
-#else
-                close(sock);
-#endif
+                cleanup_http_client_resources(client, sock, full_path, NULL, client->use_ssl);
                 return KMCP_ERROR_MEMORY_ALLOCATION;
             }
 
@@ -988,7 +944,7 @@ kmcp_error_t kmcp_http_client_send(
 
     // Parse response
     if (total_received == 0) {
-        mcp_log_error("No response received");
+        kmcp_error_log(KMCP_ERROR_CONNECTION_FAILED, "No response received");
         free(buffer);
         free(full_path);
         return KMCP_ERROR_CONNECTION_FAILED;
@@ -998,10 +954,10 @@ kmcp_error_t kmcp_http_client_send(
     char* status_line = buffer;
     char* status_code_str = strchr(status_line, ' ');
     if (!status_code_str) {
-        mcp_log_error("Invalid response format: no status code");
+        kmcp_error_log(KMCP_ERROR_PROTOCOL_ERROR, "Invalid response format: no status code");
         free(buffer);
         free(full_path);
-        return KMCP_ERROR_INTERNAL;
+        return KMCP_ERROR_PROTOCOL_ERROR;
     }
 
     *status = atoi(status_code_str + 1);
@@ -1462,32 +1418,17 @@ void kmcp_http_client_close(kmcp_http_client_t* client) {
         if (client->ssl) {
             SSL_shutdown(client->ssl);
             SSL_free(client->ssl);
-        }
-
-        if (client->ssl_ctx) {
-            SSL_CTX_free(client->ssl_ctx);
+            client->ssl = NULL;
         }
 
         // Cleanup OpenSSL
         ERR_free_strings();
         EVP_cleanup();
         CRYPTO_cleanup_all_ex_data();
-
-        // Free SSL-related resources
-        free(client->ssl_ca_file);
-        free(client->ssl_cert_file);
-        free(client->ssl_key_file);
-        free(client->ssl_key_password);
-        free(client->pinned_pubkey);
     }
 
-    // Free resources
-    free(client->base_url);
-    free(client->host);
-    free(client->path);
-    free(client->api_key);
-
-    free(client);
+    // Clean up all client resources
+    cleanup_client_resources(client, true);
 }
 
 /**

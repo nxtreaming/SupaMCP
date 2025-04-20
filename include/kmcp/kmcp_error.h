@@ -29,6 +29,14 @@ typedef enum {
     KMCP_ERROR_RESOURCE_NOT_FOUND = -12, /**< Resource not found */
     KMCP_ERROR_TOOL_EXECUTION = -13,   /**< Tool execution failed */
     KMCP_ERROR_THREAD_CREATION = -14,  /**< Thread creation failed */
+    KMCP_ERROR_SSL_CERTIFICATE = -15,  /**< SSL certificate error */
+    KMCP_ERROR_SSL_HANDSHAKE = -16,    /**< SSL handshake failed */
+    KMCP_ERROR_CONFIG_INVALID = -17,   /**< Invalid configuration */
+    KMCP_ERROR_SERVER_ERROR = -18,     /**< Server returned an error */
+    KMCP_ERROR_NETWORK_ERROR = -19,    /**< Network error */
+    KMCP_ERROR_PROTOCOL_ERROR = -20,   /**< Protocol error */
+    KMCP_ERROR_RESOURCE_BUSY = -21,    /**< Resource is busy */
+    KMCP_ERROR_OPERATION_CANCELED = -22, /**< Operation was canceled */
     KMCP_ERROR_INTERNAL = -99          /**< Internal error */
 } kmcp_error_t;
 
@@ -36,9 +44,32 @@ typedef enum {
  * @brief Get error message for a KMCP error code
  *
  * @param error_code Error code
- * @return const char* Error message
+ * @return const char* Error message (never NULL)
  */
 const char* kmcp_error_message(kmcp_error_t error_code);
+
+/**
+ * @brief Convert MCP error code to KMCP error code
+ *
+ * This function converts an MCP error code to the corresponding KMCP error code.
+ *
+ * @param mcp_error MCP error code
+ * @return kmcp_error_t Corresponding KMCP error code
+ */
+kmcp_error_t kmcp_error_from_mcp(int mcp_error);
+
+/**
+ * @brief Log an error with the given error code and message
+ *
+ * This function logs an error with the given error code and message,
+ * and returns the error code for convenient error propagation.
+ *
+ * @param error_code Error code
+ * @param format Format string for the error message
+ * @param ... Additional arguments for the format string
+ * @return kmcp_error_t The same error code that was passed in
+ */
+kmcp_error_t kmcp_error_log(kmcp_error_t error_code, const char* format, ...);
 
 #ifdef __cplusplus
 }
