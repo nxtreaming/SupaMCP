@@ -44,28 +44,18 @@ struct kmcp_server_manager {
 
 /**
  * @brief Create a server manager
+ *
+ * @return kmcp_server_manager_t* Returns a new server manager or NULL on failure
  */
 kmcp_server_manager_t* kmcp_server_create() {
-    kmcp_server_manager_t* manager = (kmcp_server_manager_t*)malloc(sizeof(kmcp_server_manager_t));
+    // Allocate memory for server manager and initialize to zero
+    kmcp_server_manager_t* manager = (kmcp_server_manager_t*)calloc(1, sizeof(kmcp_server_manager_t));
     if (!manager) {
         mcp_log_error("Failed to allocate memory for server manager");
         return NULL;
     }
 
-    // Initialize fields
-    manager->servers = NULL;
-    manager->server_count = 0;
-    manager->server_capacity = 0;
-    manager->tool_map = NULL;
-    manager->resource_map = NULL;
-    manager->mutex = NULL;
-
-    // Initialize health check fields
-    manager->health_check_running = false;
-    memset(&manager->health_check_thread, 0, sizeof(mcp_thread_t));
-    manager->health_check_interval_ms = 0;
-    manager->health_check_max_attempts = 0;
-    manager->health_check_retry_interval_ms = 0;
+    // Fields are already initialized to zero by calloc
 
     // Create hash tables
     manager->tool_map = mcp_hashtable_create(
@@ -793,7 +783,9 @@ static void free_hash_value(const void* key, void* value, void* user_data) {
 }
 
 /**
- * @brief Destroy the server manager
+ * @brief Destroy the server manager and free all resources
+ *
+ * @param manager Server manager to destroy (can be NULL)
  */
 void kmcp_server_destroy(kmcp_server_manager_t* manager) {
     if (!manager) {

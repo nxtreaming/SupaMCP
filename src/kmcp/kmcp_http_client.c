@@ -323,15 +323,12 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
         return NULL;
     }
 
-    // Allocate memory
-    kmcp_http_client_t* client = (kmcp_http_client_t*)malloc(sizeof(kmcp_http_client_t));
+    // Allocate memory and initialize to zero
+    kmcp_http_client_t* client = (kmcp_http_client_t*)calloc(1, sizeof(kmcp_http_client_t));
     if (!client) {
         kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Failed to allocate memory for HTTP client");
         return NULL;
     }
-
-    // Initialize fields
-    memset(client, 0, sizeof(kmcp_http_client_t));
     client->base_url = mcp_strdup(config->base_url);
     client->api_key = config->api_key ? mcp_strdup(config->api_key) : NULL;
 
@@ -1406,12 +1403,16 @@ kmcp_error_t kmcp_http_client_send_with_timeout(
 }
 
 /**
- * @brief Close the HTTP client
+ * @brief Close the HTTP client and free all resources
+ *
+ * @param client HTTP client to close (can be NULL)
  */
 void kmcp_http_client_close(kmcp_http_client_t* client) {
     if (!client) {
         return;
     }
+
+    mcp_log_debug("Closing HTTP client for %s", client->base_url ? client->base_url : "(unknown)");
 
     // Free SSL resources
     if (client->ssl_initialized) {

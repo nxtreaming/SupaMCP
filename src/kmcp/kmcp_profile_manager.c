@@ -39,19 +39,20 @@ struct kmcp_profile_manager {
 
 /**
  * @brief Create a profile manager
+ *
+ * @return kmcp_profile_manager_t* Returns a new profile manager or NULL on failure
  */
 kmcp_profile_manager_t* kmcp_profile_manager_create(void) {
     mcp_log_debug("Creating profile manager");
 
-    // Allocate memory for profile manager
-    kmcp_profile_manager_t* manager = (kmcp_profile_manager_t*)malloc(sizeof(kmcp_profile_manager_t));
+    // Allocate memory for profile manager and initialize to zero
+    kmcp_profile_manager_t* manager = (kmcp_profile_manager_t*)calloc(1, sizeof(kmcp_profile_manager_t));
     if (!manager) {
         mcp_log_error("Failed to allocate memory for profile manager");
         return NULL;
     }
 
-    // Initialize fields
-    memset(manager, 0, sizeof(kmcp_profile_manager_t));
+    // Fields are already initialized to zero by calloc
 
     // Create mutex
     manager->mutex = mcp_mutex_create();
@@ -100,6 +101,8 @@ kmcp_profile_manager_t* kmcp_profile_manager_create(void) {
 
 /**
  * @brief Close a profile manager and free resources
+ *
+ * @param manager Profile manager to close (can be NULL)
  */
 void kmcp_profile_manager_close(kmcp_profile_manager_t* manager) {
     if (!manager) {
@@ -143,8 +146,10 @@ void kmcp_profile_manager_close(kmcp_profile_manager_t* manager) {
     // Unlock mutex before closing it
     mcp_mutex_unlock(manager->mutex);
 
-    // Close profile map
+    // Close profile map - need to free integer values stored in the hashtable
     if (manager->profile_map) {
+        // Iterate through all entries and free the integer values
+        mcp_hashtable_foreach(manager->profile_map, (mcp_hashtable_foreach_func)free, NULL);
         mcp_hashtable_destroy(manager->profile_map);
     }
 
@@ -198,16 +203,13 @@ kmcp_error_t kmcp_profile_create(kmcp_profile_manager_t* manager, const char* na
         manager->profile_capacity = new_capacity;
     }
 
-    // Create new profile
-    kmcp_profile_t* profile = (kmcp_profile_t*)malloc(sizeof(kmcp_profile_t));
+    // Create new profile and initialize to zero
+    kmcp_profile_t* profile = (kmcp_profile_t*)calloc(1, sizeof(kmcp_profile_t));
     if (!profile) {
         mcp_log_error("Failed to allocate memory for profile");
         mcp_mutex_unlock(manager->mutex);
         return KMCP_ERROR_MEMORY_ALLOCATION;
     }
-
-    // Initialize profile
-    memset(profile, 0, sizeof(kmcp_profile_t));
     profile->name = mcp_strdup(name);
     if (!profile->name) {
         mcp_log_error("Failed to duplicate profile name");
@@ -264,6 +266,10 @@ kmcp_error_t kmcp_profile_create(kmcp_profile_manager_t* manager, const char* na
 
 /**
  * @brief Delete a profile
+ *
+ * @param manager Profile manager (must not be NULL)
+ * @param name Profile name (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_profile_delete(kmcp_profile_manager_t* manager, const char* name) {
     if (!manager || !name) {
