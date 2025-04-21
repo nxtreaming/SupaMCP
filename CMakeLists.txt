@@ -269,6 +269,7 @@ set(KMCP_SOURCES
     src/kmcp/kmcp_tool_sdk.c
     src/kmcp/kmcp_cli.c
     src/kmcp/kmcp_event.c
+    src/kmcp/kmcp_memory.c
 )
 
 # Add platform-specific process implementation
