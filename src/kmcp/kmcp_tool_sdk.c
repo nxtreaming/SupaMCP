@@ -181,12 +181,6 @@ static void shutdown_tool_registry(void) {
     // Lock mutex
     mcp_mutex_lock(g_tool_registry->mutex);
 
-    // Free all tool contexts
-    // Iterate through all entries and free them
-    // Note: We're using a simpler approach since mcp_hashtable_iterator may not be available
-    void* key = NULL;
-    void* value = NULL;
-
     // Use foreach to free all tool contexts
     mcp_hashtable_foreach(g_tool_registry->tools, tool_registry_value_free, NULL);
 
@@ -855,6 +849,8 @@ mcp_json_t* kmcp_tool_create_data_result(const mcp_json_t* data) {
 #ifdef _WIN32
 // Windows DLL entry point
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
+    (void)hinstDLL;  // Unused parameter
+    (void)lpvReserved; // Unused parameter
     switch (fdwReason) {
         case DLL_PROCESS_ATTACH:
             // Initialize tool registry

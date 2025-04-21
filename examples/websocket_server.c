@@ -14,6 +14,7 @@
 #include "mcp_websocket_transport.h"
 #include "mcp_log.h"
 #include "mcp_json_rpc.h"
+#include "mcp_string_utils.h"
 
 // Global server instance for signal handling
 static mcp_server_t* g_server = NULL;
@@ -47,7 +48,7 @@ static mcp_error_code_t echo_handler(
         // Allocate resources for error message
         *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
         if (!*content) {
-            *error_message = strdup("Memory allocation failed");
+            *error_message = mcp_strdup("Memory allocation failed");
             return MCP_ERROR_INTERNAL_ERROR;
         }
 
@@ -56,14 +57,14 @@ static mcp_error_code_t echo_handler(
         if (!item) {
             free(*content);
             *content = NULL;
-            *error_message = strdup("Failed to create content item");
+            *error_message = mcp_strdup("Failed to create content item");
             return MCP_ERROR_INTERNAL_ERROR;
         }
         
         // Fill in the content item
         item->type = MCP_CONTENT_TYPE_TEXT;
-        item->mime_type = strdup("text/plain");
-        item->data = strdup("Hello from WebSocket server!");
+        item->mime_type = mcp_strdup("text/plain");
+        item->data = mcp_strdup("Hello from WebSocket server!");
         item->data_size = strlen((char*)item->data);
         
         (*content)[0] = item;
@@ -71,7 +72,7 @@ static mcp_error_code_t echo_handler(
         return MCP_ERROR_NONE;
     }
 
-    *error_message = strdup("Resource not found");
+    *error_message = mcp_strdup("Resource not found");
     return MCP_ERROR_RESOURCE_NOT_FOUND;
 }
 
