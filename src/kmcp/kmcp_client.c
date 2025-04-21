@@ -32,6 +32,9 @@ struct kmcp_client {
 
 /**
  * @brief Create a client
+ *
+ * @param config Client configuration (must not be NULL)
+ * @return kmcp_client_t* Returns a new client on success, or NULL on failure
  */
 kmcp_client_t* kmcp_client_create(kmcp_client_config_t* config) {
     if (!config) {
@@ -39,15 +42,12 @@ kmcp_client_t* kmcp_client_create(kmcp_client_config_t* config) {
         return NULL;
     }
 
-    // Allocate memory
-    kmcp_client_t* client = (kmcp_client_t*)malloc(sizeof(kmcp_client_t));
+    // Allocate memory and initialize to zero
+    kmcp_client_t* client = (kmcp_client_t*)calloc(1, sizeof(kmcp_client_t));
     if (!client) {
-        mcp_log_error("Failed to allocate memory for client");
+        mcp_log_error("Failed to allocate memory for client (size: %zu bytes)", sizeof(kmcp_client_t));
         return NULL;
     }
-
-    // Initialize fields
-    memset(client, 0, sizeof(kmcp_client_t));
 
     // Copy configuration
     client->config.name = config->name ? mcp_strdup(config->name) : mcp_strdup("kmcp-client");
@@ -81,6 +81,9 @@ kmcp_client_t* kmcp_client_create(kmcp_client_config_t* config) {
 
 /**
  * @brief Create a client from a configuration file
+ *
+ * @param config_file Path to the configuration file (must not be NULL)
+ * @return kmcp_client_t* Returns a new client on success, or NULL on failure
  */
 kmcp_client_t* kmcp_client_create_from_file(const char* config_file) {
     if (!config_file) {
@@ -300,12 +303,18 @@ kmcp_error_t kmcp_client_call_tool(
                 size_t mime_type_len = strlen(content[0]->mime_type);
                 size_t json_len = 50 + content_len + mime_type_len; // Extra space for JSON formatting
 
-                *result_json = (char*)malloc(json_len);
-                if (*result_json) {
-                    snprintf(*result_json, json_len,
-                             "{\"content\": \"%s\", \"mime_type\": \"%s\"}",
-                             (const char*)content[0]->data, content[0]->mime_type);
+                *result_json = (char*)calloc(1, json_len);
+                if (!*result_json) {
+                    mcp_log_error("Failed to allocate memory for result JSON (size: %zu bytes)", json_len);
+                    free(content[0]->data);
+                    free(content[0]->mime_type);
+                    free(content[0]);
+                    free(content);
+                    return KMCP_ERROR_MEMORY_ALLOCATION;
                 }
+                snprintf(*result_json, json_len,
+                         "{\"content\": \"%s\", \"mime_type\": \"%s\"}",
+                         (const char*)content[0]->data, content[0]->mime_type);
             }
         } else {
             // Multiple content items - create a JSON array
@@ -317,35 +326,46 @@ kmcp_error_t kmcp_client_call_tool(
                 }
             }
 
-            // Allocate the buffer
-            *result_json = (char*)malloc(buffer_size);
-            if (*result_json) {
-                // Initialize with array opening
-                strcpy(*result_json, "{\"items\": [");
-                size_t pos = strlen(*result_json);
-
-                // Add each content item
+            // Allocate the buffer and initialize to zero
+            *result_json = (char*)calloc(1, buffer_size);
+            if (!*result_json) {
+                mcp_log_error("Failed to allocate memory for result JSON (size: %zu bytes)", buffer_size);
+                // Clean up content items
                 for (size_t i = 0; i < count; i++) {
-                    if (content[i] && content[i]->data && content[i]->mime_type) {
-                        // Add comma if not the first item
-                        if (i > 0) {
-                            strcat(*result_json + pos, ",");
-                            pos += 1;
-                        }
-
-                        // Add the item as a JSON object
-                        int written = snprintf(*result_json + pos, buffer_size - pos,
-                                             "{\"content\": \"%s\", \"mime_type\": \"%s\"}",
-                                             (const char*)content[i]->data, content[i]->mime_type);
-                        if (written > 0) {
-                            pos += written;
-                        }
+                    if (content[i]) {
+                        free(content[i]->data);
+                        free(content[i]->mime_type);
+                        free(content[i]);
                     }
                 }
-
-                // Close the array and object
-                strcat(*result_json + pos, "]}");
+                free(content);
+                return KMCP_ERROR_MEMORY_ALLOCATION;
             }
+            // Initialize with array opening
+            strcpy(*result_json, "{\"items\": [");
+            size_t pos = strlen(*result_json);
+
+            // Add each content item
+            for (size_t i = 0; i < count; i++) {
+                if (content[i] && content[i]->data && content[i]->mime_type) {
+                    // Add comma if not the first item
+                    if (i > 0) {
+                        strcat(*result_json + pos, ",");
+                        pos += 1;
+                    }
+
+                    // Add the item as a JSON object
+                    int written = snprintf(*result_json + pos, buffer_size - pos,
+                                         "{\"content\": \"%s\", \"mime_type\": \"%s\"}",
+                                         (const char*)content[i]->data, content[i]->mime_type);
+                    if (written > 0) {
+                        pos += written;
+                    }
+                }
+            }
+
+            // Close the array and object
+            strcat(*result_json + pos, "]}");
         }
 
         // If we failed to allocate memory for the result
@@ -377,6 +397,10 @@ kmcp_error_t kmcp_client_call_tool(
     } else {
         // No content returned
         *result_json = mcp_strdup("{\"result\": \"success\", \"count\": 0}");
+        if (!*result_json) {
+            mcp_log_error("Failed to allocate memory for result JSON");
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
         return is_error ? KMCP_ERROR_TOOL_EXECUTION : KMCP_SUCCESS;
     }
 }
@@ -459,17 +483,17 @@ kmcp_error_t kmcp_client_get_resource(
         }
 
         // Create a content item with the HTTP result
-        content_items = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
+        content_items = (mcp_content_item_t**)calloc(1, sizeof(mcp_content_item_t*));
         if (!content_items) {
-            mcp_log_error("Failed to allocate memory for content item array");
+            mcp_log_error("Failed to allocate memory for content item array (size: %zu bytes)", sizeof(mcp_content_item_t*));
             free(http_content);
             free(http_content_type);
             return KMCP_ERROR_MEMORY_ALLOCATION;
         }
 
-        content_items[0] = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+        content_items[0] = (mcp_content_item_t*)calloc(1, sizeof(mcp_content_item_t));
         if (!content_items[0]) {
-            mcp_log_error("Failed to allocate memory for content item");
+            mcp_log_error("Failed to allocate memory for content item (size: %zu bytes)", sizeof(mcp_content_item_t));
             free(content_items);
             free(http_content);
             free(http_content_type);
@@ -608,6 +632,9 @@ kmcp_error_t kmcp_client_get_resource(
 
 /**
  * @brief Get the server manager
+ *
+ * @param client Client (must not be NULL)
+ * @return kmcp_server_manager_t* Returns the server manager, or NULL if client is NULL
  */
 kmcp_server_manager_t* kmcp_client_get_manager(kmcp_client_t* client) {
     if (!client) {
@@ -618,7 +645,9 @@ kmcp_server_manager_t* kmcp_client_get_manager(kmcp_client_t* client) {
 }
 
 /**
- * @brief Close the client
+ * @brief Close the client and free all resources
+ *
+ * @param client Client to close (can be NULL)
  */
 void kmcp_client_close(kmcp_client_t* client) {
     // This function is a wrapper around the internal client close functionality
@@ -643,10 +672,17 @@ void kmcp_client_close(kmcp_client_t* client) {
         client->tool_access = NULL;
     }
 
-    // Free configuration
+    // Free configuration with null checks
     mcp_log_debug("Freeing client configuration");
-    free(client->config.name);
-    free(client->config.version);
+    if (client->config.name) {
+        free(client->config.name);
+        client->config.name = NULL;
+    }
+
+    if (client->config.version) {
+        free(client->config.version);
+        client->config.version = NULL;
+    }
 
     // Free client structure
     free(client);

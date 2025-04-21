@@ -42,35 +42,83 @@ kmcp_process_t* kmcp_process_create(
         return NULL;
     }
 
-    // Allocate memory
-    kmcp_process_t* process = (kmcp_process_t*)malloc(sizeof(kmcp_process_t));
+    // Allocate memory and initialize to zero
+    kmcp_process_t* process = (kmcp_process_t*)calloc(1, sizeof(kmcp_process_t));
     if (!process) {
-        mcp_log_error("Failed to allocate memory for process");
+        mcp_log_error("Failed to allocate memory for process (size: %zu bytes)", sizeof(kmcp_process_t));
         return NULL;
     }
-
-    // Initialize fields
-    memset(process, 0, sizeof(kmcp_process_t));
     process->command = mcp_strdup(command);
 
     // Copy arguments array
     if (args && args_count > 0) {
-        process->args = (char**)malloc(args_count * sizeof(char*));
-        if (process->args) {
-            process->args_count = args_count;
-            for (size_t i = 0; i < args_count; i++) {
-                process->args[i] = args[i] ? mcp_strdup(args[i]) : NULL;
+        process->args = (char**)calloc(args_count, sizeof(char*));
+        if (!process->args) {
+            mcp_log_error("Failed to allocate memory for arguments array (size: %zu bytes)", args_count * sizeof(char*));
+            free(process->command);
+            free(process);
+            return NULL;
+        }
+
+        process->args_count = args_count;
+        for (size_t i = 0; i < args_count; i++) {
+            if (args[i]) {
+                process->args[i] = mcp_strdup(args[i]);
+                if (!process->args[i]) {
+                    mcp_log_error("Failed to duplicate argument string");
+                    // Clean up already allocated strings
+                    for (size_t j = 0; j < i; j++) {
+                        free(process->args[j]);
+                    }
+                    free(process->args);
+                    free(process->command);
+                    free(process);
+                    return NULL;
+                }
             }
         }
     }
 
     // Copy environment variables array
     if (env && env_count > 0) {
-        process->env = (char**)malloc(env_count * sizeof(char*));
-        if (process->env) {
-            process->env_count = env_count;
-            for (size_t i = 0; i < env_count; i++) {
-                process->env[i] = env[i] ? mcp_strdup(env[i]) : NULL;
+        process->env = (char**)calloc(env_count, sizeof(char*));
+        if (!process->env) {
+            mcp_log_error("Failed to allocate memory for environment variables array (size: %zu bytes)", env_count * sizeof(char*));
+            // Clean up arguments
+            if (process->args) {
+                for (size_t i = 0; i < process->args_count; i++) {
+                    free(process->args[i]);
+                }
+                free(process->args);
+            }
+            free(process->command);
+            free(process);
+            return NULL;
+        }
+
+        process->env_count = env_count;
+        for (size_t i = 0; i < env_count; i++) {
+            if (env[i]) {
+                process->env[i] = mcp_strdup(env[i]);
+                if (!process->env[i]) {
+                    mcp_log_error("Failed to duplicate environment variable string");
+                    // Clean up already allocated strings
+                    for (size_t j = 0; j < i; j++) {
+                        free(process->env[j]);
+                    }
+                    free(process->env);
+
+                    // Clean up arguments
+                    if (process->args) {
+                        for (size_t j = 0; j < process->args_count; j++) {
+                            free(process->args[j]);
+                        }
+                        free(process->args);
+                    }
+                    free(process->command);
+                    free(process);
+                    return NULL;
+                }
             }
         }
     }
@@ -94,9 +142,10 @@ int kmcp_process_start(kmcp_process_t* process) {
     }
 
     // Create arguments array, including the command itself as the first argument
-    char** argv = (char**)malloc((process->args_count + 2) * sizeof(char*));
+    // +2 for the command itself and the NULL terminator
+    char** argv = (char**)calloc(process->args_count + 2, sizeof(char*));
     if (!argv) {
-        mcp_log_error("Failed to allocate memory for argv");
+        mcp_log_error("Failed to allocate memory for argv (size: %zu bytes)", (process->args_count + 2) * sizeof(char*));
         return -1;
     }
 
@@ -109,9 +158,10 @@ int kmcp_process_start(kmcp_process_t* process) {
     // Create environment variables array
     char** envp = NULL;
     if (process->env && process->env_count > 0) {
-        envp = (char**)malloc((process->env_count + 1) * sizeof(char*));
+        // +1 for the NULL terminator
+        envp = (char**)calloc(process->env_count + 1, sizeof(char*));
         if (!envp) {
-            mcp_log_error("Failed to allocate memory for envp");
+            mcp_log_error("Failed to allocate memory for envp (size: %zu bytes)", (process->env_count + 1) * sizeof(char*));
             free(argv);
             return -1;
         }
@@ -119,7 +169,7 @@ int kmcp_process_start(kmcp_process_t* process) {
         for (size_t i = 0; i < process->env_count; i++) {
             envp[i] = process->env[i];
         }
-        envp[process->env_count] = NULL;
+        // Last element is already NULL due to calloc
     }
 
     // Create child process
@@ -332,7 +382,9 @@ int kmcp_process_get_exit_code(kmcp_process_t* process, int* exit_code) {
 }
 
 /**
- * @brief Close process handle
+ * @brief Close process handle and free resources
+ *
+ * @param process Process to close (can be NULL)
  */
 void kmcp_process_close(kmcp_process_t* process) {
     if (!process) {
@@ -344,23 +396,42 @@ void kmcp_process_close(kmcp_process_t* process) {
         kmcp_process_terminate(process);
     }
 
-    // Free resources
-    free(process->command);
+    // Free resources with null checks
+    if (process->command) {
+        free(process->command);
+        process->command = NULL;
+    }
 
     if (process->args) {
         for (size_t i = 0; i < process->args_count; i++) {
-            free(process->args[i]);
+            if (process->args[i]) {
+                free(process->args[i]);
+                process->args[i] = NULL;
+            }
         }
         free(process->args);
+        process->args = NULL;
+        process->args_count = 0;
     }
 
     if (process->env) {
         for (size_t i = 0; i < process->env_count; i++) {
-            free(process->env[i]);
+            if (process->env[i]) {
+                free(process->env[i]);
+                process->env[i] = NULL;
+            }
         }
         free(process->env);
+        process->env = NULL;
+        process->env_count = 0;
     }
 
+    // Reset process state
+    process->pid = 0;
+    process->exit_code = 0;
+    process->is_running = false;
+
+    // Finally free the process structure
     free(process);
 }
 

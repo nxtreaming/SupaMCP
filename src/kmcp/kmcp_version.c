@@ -17,6 +17,8 @@ static const char* KMCP_BUILD_INFO = "Built on " __DATE__ " " __TIME__;
 
 /**
  * @brief Get KMCP version information
+ *
+ * @return const char* Returns the KMCP version string
  */
 const char* kmcp_get_version(void) {
     return KMCP_VERSION;
@@ -24,6 +26,8 @@ const char* kmcp_get_version(void) {
 
 /**
  * @brief Get KMCP build information
+ *
+ * @return const char* Returns the KMCP build information string
  */
 const char* kmcp_get_build_info(void) {
     return KMCP_BUILD_INFO;

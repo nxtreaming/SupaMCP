@@ -206,7 +206,7 @@ static kmcp_error_t parse_url(const char* url, char** host, char** path, int* po
 /**
  * @brief Helper function to clean up client resources
  *
- * @param client Client to clean up
+ * @param client Client to clean up (can be NULL)
  * @param free_ssl_ctx Whether to free SSL context
  */
 static void cleanup_client_resources(kmcp_http_client_t* client, bool free_ssl_ctx) {
@@ -220,16 +220,53 @@ static void cleanup_client_resources(kmcp_http_client_t* client, bool free_ssl_c
         client->ssl_ctx = NULL;
     }
 
-    // Free client resources
-    free(client->base_url);
-    free(client->api_key);
-    free(client->host);
-    free(client->path);
-    free(client->ssl_ca_file);
-    free(client->ssl_cert_file);
-    free(client->ssl_key_file);
-    free(client->ssl_key_password);
-    free(client->pinned_pubkey);
+    // Free client resources with null checks
+    if (client->base_url) {
+        free(client->base_url);
+        client->base_url = NULL;
+    }
+
+    if (client->api_key) {
+        free(client->api_key);
+        client->api_key = NULL;
+    }
+
+    if (client->host) {
+        free(client->host);
+        client->host = NULL;
+    }
+
+    if (client->path) {
+        free(client->path);
+        client->path = NULL;
+    }
+
+    if (client->ssl_ca_file) {
+        free(client->ssl_ca_file);
+        client->ssl_ca_file = NULL;
+    }
+
+    if (client->ssl_cert_file) {
+        free(client->ssl_cert_file);
+        client->ssl_cert_file = NULL;
+    }
+
+    if (client->ssl_key_file) {
+        free(client->ssl_key_file);
+        client->ssl_key_file = NULL;
+    }
+
+    if (client->ssl_key_password) {
+        free(client->ssl_key_password);
+        client->ssl_key_password = NULL;
+    }
+
+    if (client->pinned_pubkey) {
+        free(client->pinned_pubkey);
+        client->pinned_pubkey = NULL;
+    }
+
+    // Finally free the client structure
     free(client);
 }
 
@@ -457,6 +494,16 @@ kmcp_http_client_t* kmcp_http_client_create_with_config(const kmcp_http_client_c
  * Note: This is an HTTP client implementation with SSL support.
  * It supports certificate validation, self-signed certificates, and client certificates.
  *
+ * @param client HTTP client (must not be NULL)
+ * @param method HTTP method (GET, POST, etc.) (must not be NULL)
+ * @param path Request path (must not be NULL)
+ * @param content_type Content type for the request body (can be NULL if no body)
+ * @param body Request body (can be NULL)
+ * @param response Pointer to store the response body (must not be NULL, will be allocated)
+ * @param status Pointer to store the HTTP status code (must not be NULL)
+ *
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
+ *
  * @warning While this implementation validates certificates, for highly sensitive
  * production environments, consider using a mature HTTP client library such as libcurl.
  */
@@ -491,6 +538,10 @@ kmcp_error_t kmcp_http_client_send(
     if (path[0] == '/') {
         // Absolute path
         full_path = mcp_strdup(path);
+        if (!full_path) {
+            mcp_log_error("Failed to allocate memory for full path");
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
     } else {
         // Relative path
         size_t base_path_len = strlen(client->path);
@@ -502,7 +553,7 @@ kmcp_error_t kmcp_http_client_send(
         }
 
         strcpy(full_path, client->path);
-        if (client->path[base_path_len - 1] != '/') {
+        if (base_path_len > 0 && client->path[base_path_len - 1] != '/') {
             strcat(full_path, "/");
         }
         strcat(full_path, path);
@@ -544,15 +595,16 @@ kmcp_error_t kmcp_http_client_send(
     }
 
     // Allocate request buffer with some extra space for safety
-    char* request = (char*)malloc(request_size + 100); // Add 100 bytes extra for safety
+    const size_t safety_margin = 256; // Increased safety margin for better reliability
+    char* request = (char*)malloc(request_size + safety_margin);
     if (!request) {
-        mcp_log_error("Failed to allocate memory for HTTP request");
+        mcp_log_error("Failed to allocate memory for HTTP request (size: %zu bytes)", request_size + safety_margin);
         free(full_path);
         return KMCP_ERROR_MEMORY_ALLOCATION;
     }
 
     int request_len = 0;
-    size_t remaining = request_size + 100;
+    size_t remaining = request_size + safety_margin;
 
     // Request line
     int written = snprintf(request + request_len, remaining, "%s %s HTTP/1.1\r\n", method, full_path);
@@ -865,13 +917,16 @@ kmcp_error_t kmcp_http_client_send(
     free(request);
 
     // Receive response with dynamic buffer
-    size_t buffer_size = 4096; // Initial buffer size
+    size_t buffer_size = 8192; // Increased initial buffer size for better performance
     char* buffer = (char*)malloc(buffer_size);
     if (!buffer) {
-        kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Failed to allocate memory for response buffer");
+        kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Failed to allocate memory for response buffer (size: %zu bytes)", buffer_size);
         cleanup_http_client_resources(client, sock, full_path, NULL, client->use_ssl);
         return KMCP_ERROR_MEMORY_ALLOCATION;
     }
+
+    // Initialize buffer to zeros
+    memset(buffer, 0, buffer_size);
 
     int total_received = 0;
     int bytes_received = 0;
@@ -904,16 +959,21 @@ kmcp_error_t kmcp_http_client_send(
         total_received += bytes_received;
 
         // Check if buffer is almost full, resize if needed
-        if (total_received >= (int)buffer_size - 1024) { // Leave 1KB margin
+        if (total_received >= (int)buffer_size - 2048) { // Leave 2KB margin for better performance
             size_t new_size = buffer_size * 2;
-            char* new_buffer = (char*)realloc(buffer, new_size);
+            mcp_log_debug("Resizing response buffer from %zu to %zu bytes", buffer_size, new_size);
 
+            char* new_buffer = (char*)realloc(buffer, new_size);
             if (!new_buffer) {
-                kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Failed to resize response buffer");
+                kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Failed to resize response buffer from %zu to %zu bytes",
+                              buffer_size, new_size);
                 free(buffer);
                 cleanup_http_client_resources(client, sock, full_path, NULL, client->use_ssl);
                 return KMCP_ERROR_MEMORY_ALLOCATION;
             }
+
+            // Initialize the new portion of the buffer
+            memset(new_buffer + buffer_size, 0, new_size - buffer_size);
 
             buffer = new_buffer;
             buffer_size = new_size;

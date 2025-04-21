@@ -26,6 +26,21 @@ typedef struct kmcp_profile {
 } kmcp_profile_t;
 
 /**
+ * @brief Callback function for freeing profile values in the hashtable
+ *
+ * @param key Hash table key (unused)
+ * @param value Hash table value to free
+ * @param user_data User data (unused)
+ */
+static void profile_value_free_callback(const void* key, void* value, void* user_data) {
+    (void)key;       // Unused parameter
+    (void)user_data; // Unused parameter
+    if (value) {
+        free(value);
+    }
+}
+
+/**
  * @brief Profile manager structure
  */
 struct kmcp_profile_manager {
@@ -149,7 +164,12 @@ void kmcp_profile_manager_close(kmcp_profile_manager_t* manager) {
     // Close profile map - need to free integer values stored in the hashtable
     if (manager->profile_map) {
         // Iterate through all entries and free the integer values
-        mcp_hashtable_foreach(manager->profile_map, (mcp_hashtable_foreach_func)free, NULL);
+        mcp_hashtable_foreach(manager->profile_map, profile_value_free_callback, NULL);
+
+        // Set value_free to NULL to prevent double-free in mcp_hashtable_destroy
+        manager->profile_map->value_free = NULL;
+
+        // Destroy the hashtable
         mcp_hashtable_destroy(manager->profile_map);
     }
 

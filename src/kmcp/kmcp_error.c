@@ -5,6 +5,9 @@
 
 /**
  * @brief Get error message for a KMCP error code
+ *
+ * @param error_code The error code to get a message for
+ * @return const char* Returns a human-readable error message
  */
 const char* kmcp_error_message(kmcp_error_t error_code) {
     switch (error_code) {
@@ -71,6 +74,9 @@ const char* kmcp_error_message(kmcp_error_t error_code) {
 
 /**
  * @brief Convert MCP error code to KMCP error code
+ *
+ * @param mcp_error The MCP error code to convert
+ * @return kmcp_error_t Returns the corresponding KMCP error code
  */
 kmcp_error_t kmcp_error_from_mcp(int mcp_error) {
     // MCP error codes are defined in mcp_types.h
@@ -109,6 +115,11 @@ kmcp_error_t kmcp_error_from_mcp(int mcp_error) {
 
 /**
  * @brief Log an error with the given error code and message
+ *
+ * @param error_code The error code to log
+ * @param format Format string for the error message
+ * @param ... Variable arguments for the format string
+ * @return kmcp_error_t Returns the same error code that was passed in
  */
 kmcp_error_t kmcp_error_log(kmcp_error_t error_code, const char* format, ...) {
     if (error_code == KMCP_SUCCESS) {

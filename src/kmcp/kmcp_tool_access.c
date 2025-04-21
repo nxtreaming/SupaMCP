@@ -17,15 +17,19 @@ struct kmcp_tool_access {
 
 /**
  * @brief Create tool access control
+ *
+ * @param default_allow Default policy for tools not explicitly listed (true = allow, false = deny)
+ * @return kmcp_tool_access_t* Returns a new tool access control structure, or NULL on failure
  */
 kmcp_tool_access_t* kmcp_tool_access_create(bool default_allow) {
-    kmcp_tool_access_t* access = (kmcp_tool_access_t*)malloc(sizeof(kmcp_tool_access_t));
+    // Allocate memory and initialize to zero
+    kmcp_tool_access_t* access = (kmcp_tool_access_t*)calloc(1, sizeof(kmcp_tool_access_t));
     if (!access) {
-        mcp_log_error("Failed to allocate memory for tool access control");
+        mcp_log_error("Failed to allocate memory for tool access control (size: %zu bytes)", sizeof(kmcp_tool_access_t));
         return NULL;
     }
 
-    // Initialize fields
+    // Set default policy
     access->default_allow = default_allow;
 
     // Create hash table
@@ -49,6 +53,10 @@ kmcp_tool_access_t* kmcp_tool_access_create(bool default_allow) {
 
 /**
  * @brief Set the default allow policy
+ *
+ * @param access Tool access control structure (must not be NULL)
+ * @param default_allow Default policy for tools not explicitly listed (true = allow, false = deny)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_tool_access_set_default_policy(kmcp_tool_access_t* access, bool default_allow) {
     if (!access) {
@@ -62,6 +70,11 @@ kmcp_error_t kmcp_tool_access_set_default_policy(kmcp_tool_access_t* access, boo
 
 /**
  * @brief Add a tool to the access control list
+ *
+ * @param access Tool access control structure (must not be NULL)
+ * @param tool_name Name of the tool to add (must not be NULL)
+ * @param allow Whether to allow or deny access to the tool
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_name, bool allow) {
     if (!access || !tool_name) {
@@ -72,9 +85,9 @@ kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_n
     mcp_log_debug("Adding tool to access control: %s, allow: %s", tool_name, allow ? "true" : "false");
 
     // Create value (1 means allow, 0 means deny)
-    int* value = (int*)malloc(sizeof(int));
+    int* value = (int*)calloc(1, sizeof(int));
     if (!value) {
-        mcp_log_error("Failed to allocate memory for tool access value");
+        mcp_log_error("Failed to allocate memory for tool access value (size: %zu bytes)", sizeof(int));
         return KMCP_ERROR_MEMORY_ALLOCATION;
     }
 
@@ -113,6 +126,10 @@ kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_n
 
 /**
  * @brief Check if a tool is allowed to access
+ *
+ * @param access Tool access control structure (must not be NULL)
+ * @param tool_name Name of the tool to check (must not be NULL)
+ * @return bool Returns true if the tool is allowed, false if denied
  */
 bool kmcp_tool_access_check(kmcp_tool_access_t* access, const char* tool_name) {
     if (!access || !tool_name) {
@@ -142,6 +159,10 @@ bool kmcp_tool_access_check(kmcp_tool_access_t* access, const char* tool_name) {
 
 /**
  * @brief Load access control list from a configuration file
+ *
+ * @param access Tool access control structure (must not be NULL)
+ * @param config_file Path to the configuration file (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_tool_access_load(kmcp_tool_access_t* access, const char* config_file) {
     if (!access || !config_file) {
@@ -163,6 +184,10 @@ kmcp_error_t kmcp_tool_access_load(kmcp_tool_access_t* access, const char* confi
 
 /**
  * @brief Helper function to free hash table values
+ *
+ * @param key Hash table key (unused)
+ * @param value Hash table value to free
+ * @param user_data User data (unused)
  */
 static void free_hash_value(const void* key, void* value, void* user_data) {
     (void)key;       // Unused parameter
@@ -173,23 +198,24 @@ static void free_hash_value(const void* key, void* value, void* user_data) {
 }
 
 /**
- * @brief Destroy tool access control
+ * @brief Destroy tool access control and free all resources
+ *
+ * @param access Tool access control structure (can be NULL)
  */
 void kmcp_tool_access_destroy(kmcp_tool_access_t* access) {
     if (!access) {
         return;
     }
 
-    // Free hash table
+    // Free hash table with null check
     if (access->tool_map) {
-        // Option 1: Free values manually and then set value_free to NULL
+        // Free values manually and then set value_free to NULL to prevent double-free
         mcp_hashtable_foreach(access->tool_map, free_hash_value, NULL);
         access->tool_map->value_free = NULL; // Prevent double-free in mcp_hashtable_destroy
         mcp_hashtable_destroy(access->tool_map);
-
-        // Option 2: Let mcp_hashtable_destroy handle freeing values
-        // mcp_hashtable_destroy(access->tool_map);
+        access->tool_map = NULL;
     }
 
+    // Finally free the access structure
     free(access);
 }

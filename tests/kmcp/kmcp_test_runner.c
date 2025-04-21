@@ -10,7 +10,8 @@
 #include "mcp_thread_local.h"
 
 // Function declarations for test entry points
-// We only have the profile manager test available
+extern int kmcp_profile_manager_test_main(void);
+extern int kmcp_client_test_main(void);
 
 /**
  * @brief Run all tests
@@ -18,9 +19,17 @@
  * @return int Returns 0 on success, non-zero on failure
  */
 int run_tests(void) {
-    // This is a simplified implementation for testing
-    printf("Running simplified test suite...\n");
-    return 0;
+    int failures = 0;
+
+    // Run profile manager tests
+    printf("\nRunning profile manager tests...\n");
+    failures += kmcp_profile_manager_test_main();
+
+    // Run client tests
+    printf("\nRunning client tests...\n");
+    failures += kmcp_client_test_main();
+
+    return failures;
 }
 
 /**
@@ -40,8 +49,7 @@ int main() {
 
     printf("=== KMCP Module Tests ===\n\n");
 
-    // Run tests
-    printf("Running profile manager tests...\n");
+    // Run all tests
     int result = run_tests();
 
     // Print summary

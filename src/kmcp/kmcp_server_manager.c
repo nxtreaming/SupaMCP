@@ -197,7 +197,11 @@ kmcp_error_t kmcp_server_load(kmcp_server_manager_t* manager, const char* config
 }
 
 /**
- * @brief Add a server
+ * @brief Add a server to the manager
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param config Server configuration (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_server_add(kmcp_server_manager_t* manager, kmcp_server_config_t* config) {
     if (!manager || !config) {
@@ -225,16 +229,13 @@ kmcp_error_t kmcp_server_add(kmcp_server_manager_t* manager, kmcp_server_config_
         manager->server_capacity = new_capacity;
     }
 
-    // Create a new server connection
-    kmcp_server_connection_t* connection = (kmcp_server_connection_t*)malloc(sizeof(kmcp_server_connection_t));
+    // Create a new server connection and initialize to zero
+    kmcp_server_connection_t* connection = (kmcp_server_connection_t*)calloc(1, sizeof(kmcp_server_connection_t));
     if (!connection) {
         mcp_log_error("Failed to allocate memory for server connection");
         mcp_mutex_unlock(manager->mutex);
         return KMCP_ERROR_MEMORY_ALLOCATION;
     }
-
-    // Initialize connection
-    memset(connection, 0, sizeof(kmcp_server_connection_t));
 
     // Copy configuration
     connection->config.name = mcp_strdup(config->name);
@@ -274,7 +275,10 @@ kmcp_error_t kmcp_server_add(kmcp_server_manager_t* manager, kmcp_server_config_
 }
 
 /**
- * @brief Connect to all servers
+ * @brief Connect to all servers in the manager
+ *
+ * @param manager Server manager (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS if at least one server was connected, or an error code on failure
  */
 kmcp_error_t kmcp_server_connect(kmcp_server_manager_t* manager) {
     if (!manager) {
@@ -445,7 +449,8 @@ kmcp_error_t kmcp_server_connect(kmcp_server_manager_t* manager) {
                 if (!kmcp_process_is_running(connection->process)) {
                     int exit_code = 0;
                     kmcp_process_get_exit_code(connection->process, &exit_code);
-                    mcp_log_error("Process for server %s exited prematurely with code: %d", connection->config.name, exit_code);
+                    mcp_log_error("Process for server %s exited prematurely with code: %d",
+                                 connection->config.name ? connection->config.name : "(unnamed)", exit_code);
                     kmcp_process_close(connection->process);
                     connection->process = NULL;
                     continue;
@@ -588,7 +593,10 @@ kmcp_error_t kmcp_server_connect(kmcp_server_manager_t* manager) {
 }
 
 /**
- * @brief Disconnect from all servers
+ * @brief Disconnect from all servers in the manager
+ *
+ * @param manager Server manager (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_server_disconnect(kmcp_server_manager_t* manager) {
     if (!manager) {
@@ -658,6 +666,10 @@ kmcp_error_t kmcp_server_disconnect(kmcp_server_manager_t* manager) {
 
 /**
  * @brief Select an appropriate server for a tool
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param tool_name Tool name (must not be NULL)
+ * @return int Returns the server index on success, or -1 if no server supports the tool
  */
 int kmcp_server_select_tool(kmcp_server_manager_t* manager, const char* tool_name) {
     if (!manager || !tool_name) {
@@ -677,12 +689,51 @@ int kmcp_server_select_tool(kmcp_server_manager_t* manager, const char* tool_nam
     }
 
     // No mapping found, iterate through all servers to find one that supports this tool
+    // First check connected servers, then try disconnected ones
+
+    // First pass: check connected servers
     for (size_t i = 0; i < manager->server_count; i++) {
         kmcp_server_connection_t* connection = manager->servers[i];
 
+        // Skip disconnected servers in first pass
+        if (!connection->is_connected) {
+            continue;
+        }
+
         // Check if this server supports the tool
         for (size_t j = 0; j < connection->supported_tools_count; j++) {
-            if (strcmp(connection->supported_tools[j], tool_name) == 0) {
+            const char* supported_tool = connection->supported_tools[j];
+            if (!supported_tool) continue;
+
+            if (strcmp(supported_tool, tool_name) == 0) {
+                // Found a server that supports this tool, add to mapping
+                int* index_ptr = (int*)malloc(sizeof(int));
+                if (index_ptr) {
+                    *index_ptr = (int)i;
+                    mcp_hashtable_put(manager->tool_map, tool_name, index_ptr);
+                }
+
+                mcp_mutex_unlock(manager->mutex);
+                return (int)i;
+            }
+        }
+    }
+
+    // Second pass: check disconnected servers
+    for (size_t i = 0; i < manager->server_count; i++) {
+        kmcp_server_connection_t* connection = manager->servers[i];
+
+        // Skip null or connected servers in second pass
+        if (!connection || connection->is_connected) {
+            continue;
+        }
+
+        // Check if this server supports the tool
+        for (size_t j = 0; j < connection->supported_tools_count; j++) {
+            const char* supported_tool = connection->supported_tools[j];
+            if (!supported_tool) continue;
+
+            if (strcmp(supported_tool, tool_name) == 0) {
                 // Found a server that supports this tool, add to mapping
                 int* index_ptr = (int*)malloc(sizeof(int));
                 if (index_ptr) {
@@ -702,6 +753,10 @@ int kmcp_server_select_tool(kmcp_server_manager_t* manager, const char* tool_nam
 
 /**
  * @brief Select an appropriate server for a resource
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param resource_uri Resource URI (must not be NULL)
+ * @return int Returns the server index on success, or -1 if no server supports the resource
  */
 int kmcp_server_select_resource(kmcp_server_manager_t* manager, const char* resource_uri) {
     if (!manager || !resource_uri) {
@@ -722,12 +777,52 @@ int kmcp_server_select_resource(kmcp_server_manager_t* manager, const char* reso
 
     // No mapping found, iterate through all servers to find one that supports this resource
     // Simplified handling here, only checking resource URI prefix
+    // First check connected servers, then try disconnected ones
+
+    // First pass: check connected servers
     for (size_t i = 0; i < manager->server_count; i++) {
         kmcp_server_connection_t* connection = manager->servers[i];
+
+        // Skip null or disconnected servers in first pass
+        if (!connection || !connection->is_connected) {
+            continue;
+        }
 
         // Check if this server supports the resource
         for (size_t j = 0; j < connection->supported_resources_count; j++) {
             const char* prefix = connection->supported_resources[j];
+            if (!prefix) continue;
+
+            size_t prefix_len = strlen(prefix);
+
+            if (strncmp(resource_uri, prefix, prefix_len) == 0) {
+                // Found a server that supports this resource, add to mapping
+                int* index_ptr = (int*)malloc(sizeof(int));
+                if (index_ptr) {
+                    *index_ptr = (int)i;
+                    mcp_hashtable_put(manager->resource_map, resource_uri, index_ptr);
+                }
+
+                mcp_mutex_unlock(manager->mutex);
+                return (int)i;
+            }
+        }
+    }
+
+    // Second pass: check disconnected servers
+    for (size_t i = 0; i < manager->server_count; i++) {
+        kmcp_server_connection_t* connection = manager->servers[i];
+
+        // Skip null or connected servers in second pass
+        if (!connection || connection->is_connected) {
+            continue;
+        }
+
+        // Check if this server supports the resource
+        for (size_t j = 0; j < connection->supported_resources_count; j++) {
+            const char* prefix = connection->supported_resources[j];
+            if (!prefix) continue;
+
             size_t prefix_len = strlen(prefix);
 
             if (strncmp(resource_uri, prefix, prefix_len) == 0) {
@@ -875,22 +970,33 @@ void kmcp_server_destroy(kmcp_server_manager_t* manager) {
 
 /**
  * @brief Health check thread function
+ *
+ * @param arg Pointer to the server manager (must not be NULL)
+ * @return void* Always returns NULL
  */
 static void* health_check_thread_func(void* arg) {
     kmcp_server_manager_t* manager = (kmcp_server_manager_t*)arg;
     if (!manager) {
+        mcp_log_error("Health check thread received NULL manager");
         return NULL;
     }
 
-    mcp_log_info("Health check thread started");
+    mcp_log_info("Health check thread started with interval %d ms", manager->health_check_interval_ms);
 
     while (manager->health_check_running) {
         // Check health of all servers
-        kmcp_server_check_health(
+        mcp_log_debug("Running health check cycle");
+        kmcp_error_t result = kmcp_server_check_health(
             manager,
             manager->health_check_max_attempts,
             manager->health_check_retry_interval_ms
         );
+
+        if (result != KMCP_SUCCESS) {
+            mcp_log_warn("Health check cycle completed with issues");
+        } else {
+            mcp_log_debug("Health check cycle completed successfully");
+        }
 
         // Sleep for the specified interval
 #ifdef _WIN32
@@ -927,6 +1033,9 @@ static int64_t get_current_time_ms() {
 
 /**
  * @brief Check if a server is healthy
+ *
+ * @param connection Server connection to check (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS if the server is healthy, or an error code otherwise
  */
 static kmcp_error_t check_server_health(kmcp_server_connection_t* connection) {
     if (!connection) {
@@ -936,6 +1045,8 @@ static kmcp_error_t check_server_health(kmcp_server_connection_t* connection) {
     // If not connected, server is not healthy
     if (!connection->is_connected) {
         connection->is_healthy = false;
+        mcp_log_debug("Server '%s' is not connected",
+                    connection->config.name ? connection->config.name : "(unnamed)");
         return KMCP_ERROR_CONNECTION_FAILED;
     }
 
@@ -944,6 +1055,8 @@ static kmcp_error_t check_server_health(kmcp_server_connection_t* connection) {
         // For HTTP connections, check if HTTP client is valid
         if (!connection->http_client) {
             connection->is_healthy = false;
+            mcp_log_debug("Server '%s' has no HTTP client",
+                        connection->config.name ? connection->config.name : "(unnamed)");
             return KMCP_ERROR_CONNECTION_FAILED;
         }
 
@@ -969,12 +1082,17 @@ static kmcp_error_t check_server_health(kmcp_server_connection_t* connection) {
         // Check result
         if (result != KMCP_SUCCESS || status != 200) {
             connection->is_healthy = false;
+            mcp_log_debug("Server '%s' HTTP health check failed: result=%d, status=%d",
+                        connection->config.name ? connection->config.name : "(unnamed)",
+                        result, status);
             return KMCP_ERROR_CONNECTION_FAILED;
         }
     } else {
         // For local connections, check if client is valid
         if (!connection->client) {
             connection->is_healthy = false;
+            mcp_log_debug("Server '%s' has no MCP client",
+                        connection->config.name ? connection->config.name : "(unnamed)");
             return KMCP_ERROR_CONNECTION_FAILED;
         }
 
@@ -1000,6 +1118,9 @@ static kmcp_error_t check_server_health(kmcp_server_connection_t* connection) {
         // Check result
         if (result != 0) {
             connection->is_healthy = false;
+            mcp_log_debug("Server '%s' MCP ping failed: result=%d",
+                        connection->config.name ? connection->config.name : "(unnamed)",
+                        result);
             return KMCP_ERROR_CONNECTION_FAILED;
         }
     }
@@ -1008,6 +1129,9 @@ static kmcp_error_t check_server_health(kmcp_server_connection_t* connection) {
     connection->is_healthy = true;
     connection->health_check_failures = 0;
     connection->last_health_check_time = get_current_time_ms();
+
+    mcp_log_debug("Server '%s' health check passed",
+                connection->config.name ? connection->config.name : "(unnamed)");
     return KMCP_SUCCESS;
 }
 
@@ -1103,6 +1227,12 @@ kmcp_error_t kmcp_server_check_health(
 
 /**
  * @brief Start a background health check thread
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param interval_ms Interval between health checks in milliseconds (must be positive)
+ * @param max_attempts Maximum number of reconnection attempts (0 for unlimited)
+ * @param retry_interval_ms Interval between reconnection attempts in milliseconds
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_server_start_health_check(
     kmcp_server_manager_t* manager,
@@ -1153,6 +1283,9 @@ kmcp_error_t kmcp_server_start_health_check(
 
 /**
  * @brief Stop the background health check thread
+ *
+ * @param manager Server manager (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_server_stop_health_check(kmcp_server_manager_t* manager) {
     if (!manager) {
@@ -1188,6 +1321,12 @@ kmcp_error_t kmcp_server_stop_health_check(kmcp_server_manager_t* manager) {
 
 /**
  * @brief Reconnect to a server
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param server_index Index of the server to reconnect to
+ * @param max_attempts Maximum number of reconnection attempts (0 for unlimited)
+ * @param retry_interval_ms Interval between reconnection attempts in milliseconds
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
 kmcp_error_t kmcp_server_reconnect(
     kmcp_server_manager_t* manager,
@@ -1299,6 +1438,11 @@ kmcp_error_t kmcp_server_reconnect(
 
 /**
  * @brief Reconnect to all disconnected servers
+ *
+ * @param manager Server manager (must not be NULL)
+ * @param max_attempts Maximum number of reconnection attempts (0 for unlimited)
+ * @param retry_interval_ms Interval between reconnection attempts in milliseconds
+ * @return kmcp_error_t Returns KMCP_SUCCESS if all servers were reconnected, or an error code otherwise
  */
 kmcp_error_t kmcp_server_reconnect_all(
     kmcp_server_manager_t* manager,

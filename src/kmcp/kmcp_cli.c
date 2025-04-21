@@ -291,23 +291,31 @@ void kmcp_cli_close(kmcp_cli_context_t* context) {
         return;
     }
 
-    // Free resources
+    // Free resources with null checks
     if (context->registry) {
         kmcp_registry_close(context->registry);
+        context->registry = NULL;
     }
 
     if (context->profile_manager) {
         kmcp_profile_manager_close(context->profile_manager);
+        context->profile_manager = NULL;
     }
 
     if (context->client) {
         kmcp_client_close(context->client);
+        context->client = NULL;
     }
 
     if (context->config_file) {
         free(context->config_file);
+        context->config_file = NULL;
     }
 
+    // Clear command array
+    context->command_count = 0;
+
+    // Finally free the context structure
     free(context);
 }
 
@@ -531,10 +539,15 @@ kmcp_error_t kmcp_cli_parse_identifier(
     }
 
     // Make a copy of the identifier for parsing
-    char* id_copy = strdup(identifier);
+    size_t id_len = strlen(identifier) + 1; // +1 for null terminator
+    char* id_copy = (char*)malloc(id_len);
     if (!id_copy) {
+        mcp_log_error("Failed to allocate memory for identifier copy (size: %zu bytes)", id_len);
         return KMCP_ERROR_OUT_OF_MEMORY;
     }
+
+    // Copy the identifier
+    memcpy(id_copy, identifier, id_len);
 
     // Parse identifier
     if (id_copy[0] == '@') {
