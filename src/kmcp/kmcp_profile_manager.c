@@ -140,7 +140,7 @@ void kmcp_profile_manager_close(kmcp_profile_manager_t* manager) {
 
             // Close server manager
             if (profile->servers) {
-                kmcp_server_manager_close(profile->servers);
+                kmcp_server_destroy(profile->servers);
             }
 
             // Free profile
@@ -239,7 +239,7 @@ kmcp_error_t kmcp_profile_create(kmcp_profile_manager_t* manager, const char* na
     }
 
     // Create server manager for profile
-    profile->servers = kmcp_server_manager_create();
+    profile->servers = kmcp_server_create();
     if (!profile->servers) {
         mcp_log_error("Failed to create server manager for profile");
         free(profile->name);
@@ -255,7 +255,7 @@ kmcp_error_t kmcp_profile_create(kmcp_profile_manager_t* manager, const char* na
     int* index = (int*)malloc(sizeof(int));
     if (!index) {
         mcp_log_error("Failed to allocate memory for profile index");
-        kmcp_server_manager_close(profile->servers);
+        kmcp_server_destroy(profile->servers);
         free(profile->name);
         free(profile);
         mcp_mutex_unlock(manager->mutex);
@@ -267,7 +267,7 @@ kmcp_error_t kmcp_profile_create(kmcp_profile_manager_t* manager, const char* na
     if (result != 0) {
         mcp_log_error("Failed to add profile to map");
         free(index);
-        kmcp_server_manager_close(profile->servers);
+        kmcp_server_destroy(profile->servers);
         free(profile->name);
         free(profile);
         mcp_mutex_unlock(manager->mutex);
@@ -332,7 +332,7 @@ kmcp_error_t kmcp_profile_delete(kmcp_profile_manager_t* manager, const char* na
     }
 
     if (profile->servers) {
-        kmcp_server_manager_close(profile->servers);
+        kmcp_server_destroy(profile->servers);
     }
 
     free(profile);
@@ -693,7 +693,7 @@ kmcp_error_t kmcp_profile_add_server(kmcp_profile_manager_t* manager, const char
     kmcp_profile_t* profile = manager->profiles[index];
 
     // Add server to profile's server manager
-    kmcp_error_t result = kmcp_server_manager_add(profile->servers, config);
+    kmcp_error_t result = kmcp_server_add(profile->servers, config);
 
     // Unlock mutex
     mcp_mutex_unlock(manager->mutex);
@@ -736,7 +736,7 @@ kmcp_error_t kmcp_profile_remove_server(kmcp_profile_manager_t* manager, const c
     kmcp_profile_t* profile = manager->profiles[index];
 
     // Remove server from profile's server manager
-    kmcp_error_t result = kmcp_server_manager_remove(profile->servers, server_name);
+    kmcp_error_t result = kmcp_server_remove(profile->servers, server_name);
 
     // Unlock mutex
     mcp_mutex_unlock(manager->mutex);
@@ -802,7 +802,7 @@ kmcp_error_t kmcp_profile_copy_server(
 
     // Get server configuration from source profile
     kmcp_server_config_t* config = NULL;
-    kmcp_error_t result = kmcp_server_manager_get_config(source->servers, source_server, &config);
+    kmcp_error_t result = kmcp_server_get_config(source->servers, source_server, &config);
     if (result != KMCP_SUCCESS) {
         mcp_log_error("Failed to get server configuration: %s", source_server);
         mcp_mutex_unlock(manager->mutex);
@@ -810,10 +810,10 @@ kmcp_error_t kmcp_profile_copy_server(
     }
 
     // Create a copy of the server configuration with the new name
-    kmcp_server_config_t* config_copy = kmcp_server_manager_config_clone(config);
+    kmcp_server_config_t* config_copy = kmcp_server_config_clone(config);
     if (!config_copy) {
         mcp_log_error("Failed to clone server configuration");
-        kmcp_server_manager_config_free(config);
+        kmcp_server_config_free(config);
         mcp_mutex_unlock(manager->mutex);
         return KMCP_ERROR_MEMORY_ALLOCATION;
     }
@@ -824,22 +824,22 @@ kmcp_error_t kmcp_profile_copy_server(
         config_copy->name = mcp_strdup(target_server);
         if (!config_copy->name) {
             mcp_log_error("Failed to duplicate server name");
-            kmcp_server_manager_config_free(config_copy);
-            kmcp_server_manager_config_free(config);
+            kmcp_server_config_free(config_copy);
+            kmcp_server_config_free(config);
             mcp_mutex_unlock(manager->mutex);
             return KMCP_ERROR_MEMORY_ALLOCATION;
         }
     }
 
     // Add server to target profile
-    result = kmcp_server_manager_add(target->servers, config_copy);
+    result = kmcp_server_add(target->servers, config_copy);
 
     // Free original configuration
-    kmcp_server_manager_config_free(config);
+    kmcp_server_config_free(config);
 
-    // Free copy if it was added successfully (kmcp_server_manager_add makes its own copy)
+    // Free copy if it was added successfully (kmcp_server_add makes its own copy)
     if (result == KMCP_SUCCESS) {
-        kmcp_server_manager_config_free(config_copy);
+        kmcp_server_config_free(config_copy);
     }
 
     // Unlock mutex
@@ -1027,11 +1027,11 @@ kmcp_error_t kmcp_profile_save(kmcp_profile_manager_t* manager, const char* file
         mcp_json_object_set_property(profile_obj, "servers", servers_obj);
 
         // Get server configurations
-        size_t server_count = kmcp_server_manager_get_count(profile->servers);
+        size_t server_count = kmcp_server_get_count(profile->servers);
         for (size_t j = 0; j < server_count; j++) {
             // Get server configuration
             kmcp_server_config_t* config = NULL;
-            kmcp_error_t result = kmcp_server_manager_get_config_by_index(profile->servers, j, &config);
+            kmcp_error_t result = kmcp_server_get_config_by_index(profile->servers, j, &config);
             if (result != KMCP_SUCCESS || !config) {
                 mcp_log_warn("Failed to get server configuration at index %zu", j);
                 continue;
@@ -1041,7 +1041,7 @@ kmcp_error_t kmcp_profile_save(kmcp_profile_manager_t* manager, const char* file
             mcp_json_t* server_obj = mcp_json_object_create();
             if (!server_obj) {
                 mcp_log_error("Failed to create server object");
-                kmcp_server_manager_config_free(config);
+                kmcp_server_config_free(config);
                 mcp_json_destroy(json);
                 mcp_mutex_unlock(manager->mutex);
                 return KMCP_ERROR_MEMORY_ALLOCATION;
@@ -1104,7 +1104,7 @@ kmcp_error_t kmcp_profile_save(kmcp_profile_manager_t* manager, const char* file
             mcp_json_object_set_property(servers_obj, config->name, server_obj);
 
             // Free server configuration
-            kmcp_server_manager_config_free(config);
+            kmcp_server_config_free(config);
         }
 
         // Add profile object to profiles array
@@ -1225,7 +1225,7 @@ kmcp_error_t kmcp_profile_load(kmcp_profile_manager_t* manager, const char* file
 
             // Close server manager
             if (profile->servers) {
-                kmcp_server_manager_close(profile->servers);
+                kmcp_server_destroy(profile->servers);
             }
 
             // Free profile
@@ -1328,7 +1328,7 @@ kmcp_error_t kmcp_profile_load(kmcp_profile_manager_t* manager, const char* file
         }
 
         // Create server manager for profile
-        profile->servers = kmcp_server_manager_create();
+        profile->servers = kmcp_server_create();
         if (!profile->servers) {
             mcp_log_error("Failed to create server manager for profile");
             free(profile->name);
@@ -1459,13 +1459,13 @@ kmcp_error_t kmcp_profile_load(kmcp_profile_manager_t* manager, const char* file
                     }
 
                     // Add server to profile
-                    kmcp_error_t result = kmcp_server_manager_add(profile->servers, config);
+                    kmcp_error_t result = kmcp_server_add(profile->servers, config);
                     if (result != KMCP_SUCCESS) {
                         mcp_log_error("Failed to add server to profile: %s", server_name);
                     }
 
-                    // Free server configuration (kmcp_server_manager_add makes a copy)
-                    kmcp_server_manager_config_free(config);
+                    // Free server configuration (kmcp_server_add makes a copy)
+                    kmcp_server_config_free(config);
                 }
 
                 // Free server names
@@ -1599,11 +1599,11 @@ kmcp_error_t kmcp_profile_export(kmcp_profile_manager_t* manager, const char* pr
     mcp_json_object_set_property(profile_obj, "servers", servers_obj);
 
     // Get server configurations
-    size_t server_count = kmcp_server_manager_get_count(profile->servers);
+    size_t server_count = kmcp_server_get_count(profile->servers);
     for (size_t j = 0; j < server_count; j++) {
         // Get server configuration
         kmcp_server_config_t* config = NULL;
-        kmcp_error_t result = kmcp_server_manager_get_config_by_index(profile->servers, j, &config);
+        kmcp_error_t result = kmcp_server_get_config_by_index(profile->servers, j, &config);
         if (result != KMCP_SUCCESS || !config) {
             mcp_log_warn("Failed to get server configuration at index %zu", j);
             continue;
@@ -1613,7 +1613,7 @@ kmcp_error_t kmcp_profile_export(kmcp_profile_manager_t* manager, const char* pr
         mcp_json_t* server_obj = mcp_json_object_create();
         if (!server_obj) {
             mcp_log_error("Failed to create server object");
-            kmcp_server_manager_config_free(config);
+            kmcp_server_config_free(config);
             mcp_json_destroy(json);
             mcp_mutex_unlock(manager->mutex);
             return KMCP_ERROR_MEMORY_ALLOCATION;
@@ -1676,7 +1676,7 @@ kmcp_error_t kmcp_profile_export(kmcp_profile_manager_t* manager, const char* pr
         mcp_json_object_set_property(servers_obj, config->name, server_obj);
 
         // Free server configuration
-        kmcp_server_manager_config_free(config);
+        kmcp_server_config_free(config);
     }
 
     // Add profile object to profiles array
@@ -1866,7 +1866,7 @@ kmcp_error_t kmcp_profile_import(kmcp_profile_manager_t* manager, const char* fi
     }
 
     // Create server manager for profile
-    profile->servers = kmcp_server_manager_create();
+    profile->servers = kmcp_server_create();
     if (!profile->servers) {
         mcp_log_error("Failed to create server manager for profile");
         free(profile->name);
@@ -1999,13 +1999,13 @@ kmcp_error_t kmcp_profile_import(kmcp_profile_manager_t* manager, const char* fi
                 }
 
                 // Add server to profile
-                kmcp_error_t result = kmcp_server_manager_add(profile->servers, config);
+                kmcp_error_t result = kmcp_server_add(profile->servers, config);
                 if (result != KMCP_SUCCESS) {
                     mcp_log_error("Failed to add server to profile: %s", server_name);
                 }
 
-                // Free server configuration (kmcp_server_manager_add makes a copy)
-                kmcp_server_manager_config_free(config);
+                // Free server configuration (kmcp_server_add makes a copy)
+                kmcp_server_config_free(config);
             }
 
             // Free server names
@@ -2027,7 +2027,7 @@ kmcp_error_t kmcp_profile_import(kmcp_profile_manager_t* manager, const char* fi
 
         if (!new_profiles) {
             mcp_log_error("Failed to resize profile array");
-            kmcp_server_manager_close(profile->servers);
+            kmcp_server_destroy(profile->servers);
             free(profile->name);
             free(profile);
             mcp_json_destroy(json);
@@ -2046,7 +2046,7 @@ kmcp_error_t kmcp_profile_import(kmcp_profile_manager_t* manager, const char* fi
     int* index = (int*)malloc(sizeof(int));
     if (!index) {
         mcp_log_error("Failed to allocate memory for profile index");
-        kmcp_server_manager_close(profile->servers);
+        kmcp_server_destroy(profile->servers);
         free(profile->name);
         free(profile);
         mcp_json_destroy(json);
@@ -2059,7 +2059,7 @@ kmcp_error_t kmcp_profile_import(kmcp_profile_manager_t* manager, const char* fi
     if (result != 0) {
         mcp_log_error("Failed to add profile to map");
         free(index);
-        kmcp_server_manager_close(profile->servers);
+        kmcp_server_destroy(profile->servers);
         free(profile->name);
         free(profile);
         mcp_json_destroy(json);

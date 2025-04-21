@@ -107,7 +107,7 @@ kmcp_server_manager_t* kmcp_server_create() {
  *
  * @param config Server configuration to free
  */
-static void kmcp_server_config_free(kmcp_server_config_t* config) {
+ void kmcp_server_config_free(kmcp_server_config_t* config) {
     if (!config) {
         return;
     }
@@ -184,7 +184,7 @@ kmcp_error_t kmcp_server_load(kmcp_server_manager_t* manager, const char* config
         }
 
         // Free server configuration
-        // Note: kmcp_server_manager_add copies the configuration, so it's safe to free here
+        // Note: kmcp_server_add copies the configuration, so it's safe to free here
         kmcp_server_config_free(servers[i]);
     }
 

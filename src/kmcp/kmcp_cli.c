@@ -645,7 +645,7 @@ static kmcp_error_t handle_server_list_command(kmcp_cli_context_t* context, int 
     // List servers
     for (size_t i = 0; i < server_count; i++) {
         kmcp_server_config_t* config = NULL;
-        kmcp_error_t result = kmcp_server_manager_get_config_by_index(manager, i, &config);
+        kmcp_error_t result = kmcp_server_get_config_by_index(manager, i, &config);
         if (result != KMCP_SUCCESS || !config) {
             printf("  Failed to get server configuration at index %zu\n", i);
             continue;
@@ -660,7 +660,7 @@ static kmcp_error_t handle_server_list_command(kmcp_cli_context_t* context, int 
             printf("    Command: %s\n", config->command ? config->command : "");
         }
 
-        kmcp_server_manager_config_free(config);
+        kmcp_server_config_free(config);
     }
 
     return KMCP_SUCCESS;

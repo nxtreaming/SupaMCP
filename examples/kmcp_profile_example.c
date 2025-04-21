@@ -51,7 +51,7 @@ static void print_profile_info(kmcp_profile_manager_t* manager, const char* prof
     // Print server information
     for (size_t i = 0; i < server_count; i++) {
         kmcp_server_config_t* config = NULL;
-        kmcp_error_t result = kmcp_server_manager_get_config_by_index(server_manager, i, &config);
+        kmcp_error_t result = kmcp_server_get_config_by_index(server_manager, i, &config);
         if (result != KMCP_SUCCESS || !config) {
             printf("    Failed to get server configuration at index %zu\n", i);
             continue;
@@ -87,7 +87,7 @@ static void print_profile_info(kmcp_profile_manager_t* manager, const char* prof
             }
         }
         
-        kmcp_server_manager_config_free(config);
+        kmcp_server_config_free(config);
     }
 }
 

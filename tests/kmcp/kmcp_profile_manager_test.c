@@ -200,7 +200,7 @@ static int test_profile_server_operations(void) {
 
     // Check if server exists in profile1
     kmcp_server_config_t* server_config = NULL;
-    result = kmcp_server_manager_get_config(server_manager, "test_server", &server_config);
+    result = kmcp_server_get_config(server_manager, "test_server", &server_config);
     if (result != KMCP_SUCCESS || !server_config) {
         printf("Server not found in profile1\n");
         kmcp_profile_manager_close(manager);
@@ -208,7 +208,7 @@ static int test_profile_server_operations(void) {
     }
 
     // Free server configuration
-    kmcp_server_manager_config_free(server_config);
+    kmcp_server_config_free(server_config);
 
     // Copy server to profile2
     result = kmcp_profile_copy_server(manager, "profile1", "test_server", "profile2", "copied_server");
@@ -228,7 +228,7 @@ static int test_profile_server_operations(void) {
 
     // Check if copied server exists in profile2
     server_config = NULL;
-    result = kmcp_server_manager_get_config(server_manager, "copied_server", &server_config);
+    result = kmcp_server_get_config(server_manager, "copied_server", &server_config);
     if (result != KMCP_SUCCESS || !server_config) {
         printf("Copied server not found in profile2\n");
         kmcp_profile_manager_close(manager);
@@ -236,7 +236,7 @@ static int test_profile_server_operations(void) {
     }
 
     // Free server configuration
-    kmcp_server_manager_config_free(server_config);
+    kmcp_server_config_free(server_config);
 
     // Move server from profile1 to profile2
     result = kmcp_profile_move_server(manager, "profile1", "test_server", "profile2", "moved_server");
@@ -256,10 +256,10 @@ static int test_profile_server_operations(void) {
 
     // Check if server was removed from profile1
     server_config = NULL;
-    result = kmcp_server_manager_get_config(server_manager, "test_server", &server_config);
+    result = kmcp_server_get_config(server_manager, "test_server", &server_config);
     if (result == KMCP_SUCCESS && server_config) {
         printf("Server still exists in profile1 after move\n");
-        kmcp_server_manager_config_free(server_config);
+        kmcp_server_config_free(server_config);
         kmcp_profile_manager_close(manager);
         return 0;
     }
@@ -274,7 +274,7 @@ static int test_profile_server_operations(void) {
 
     // Check if moved server exists in profile2
     server_config = NULL;
-    result = kmcp_server_manager_get_config(server_manager, "moved_server", &server_config);
+    result = kmcp_server_get_config(server_manager, "moved_server", &server_config);
     if (result != KMCP_SUCCESS || !server_config) {
         printf("Moved server not found in profile2\n");
         kmcp_profile_manager_close(manager);
@@ -282,7 +282,7 @@ static int test_profile_server_operations(void) {
     }
 
     // Free server configuration
-    kmcp_server_manager_config_free(server_config);
+    kmcp_server_config_free(server_config);
 
     // Close profile manager
     kmcp_profile_manager_close(manager);
@@ -383,7 +383,7 @@ static int test_profile_save_load(void) {
 
     // Check if server exists in profile
     kmcp_server_config_t* server_config = NULL;
-    result = kmcp_server_manager_get_config(server_manager, "test_server", &server_config);
+    result = kmcp_server_get_config(server_manager, "test_server", &server_config);
     if (result != KMCP_SUCCESS || !server_config) {
         printf("Server not found in profile after loading\n");
         kmcp_profile_manager_close(manager);
@@ -393,13 +393,13 @@ static int test_profile_save_load(void) {
     // Check server configuration
     if (!server_config->is_http || !server_config->url || strcmp(server_config->url, "http://localhost:8080") != 0) {
         printf("Server configuration is incorrect after loading\n");
-        kmcp_server_manager_config_free(server_config);
+        kmcp_server_config_free(server_config);
         kmcp_profile_manager_close(manager);
         return 0;
     }
 
     // Free server configuration
-    kmcp_server_manager_config_free(server_config);
+    kmcp_server_config_free(server_config);
 
     // Close profile manager
     kmcp_profile_manager_close(manager);
@@ -485,7 +485,7 @@ static int test_profile_export_import(void) {
 
     // Check if server exists in profile
     kmcp_server_config_t* server_config = NULL;
-    result = kmcp_server_manager_get_config(server_manager, "test_server", &server_config);
+    result = kmcp_server_get_config(server_manager, "test_server", &server_config);
     if (result != KMCP_SUCCESS || !server_config) {
         printf("Server not found in profile after importing\n");
         kmcp_profile_manager_close(manager);
@@ -495,13 +495,13 @@ static int test_profile_export_import(void) {
     // Check server configuration
     if (!server_config->is_http || !server_config->url || strcmp(server_config->url, "http://localhost:8080") != 0) {
         printf("Server configuration is incorrect after importing\n");
-        kmcp_server_manager_config_free(server_config);
+        kmcp_server_config_free(server_config);
         kmcp_profile_manager_close(manager);
         return 0;
     }
 
     // Free server configuration
-    kmcp_server_manager_config_free(server_config);
+    kmcp_server_config_free(server_config);
 
     // Close profile manager
     kmcp_profile_manager_close(manager);

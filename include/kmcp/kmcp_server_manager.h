@@ -276,36 +276,13 @@ kmcp_error_t kmcp_server_check_health(
 void kmcp_server_destroy(kmcp_server_manager_t* manager);
 
 /**
- * @brief Close a server manager and free resources (alias for kmcp_server_destroy)
- *
- * @param manager Server manager (can be NULL, in which case this function does nothing)
- */
-void kmcp_server_manager_close(kmcp_server_manager_t* manager);
-
-/**
- * @brief Create a server manager (alias for kmcp_server_create)
- *
- * @return kmcp_server_manager_t* Returns server manager pointer on success, NULL on failure
- */
-kmcp_server_manager_t* kmcp_server_manager_create(void);
-
-/**
- * @brief Add a server to the manager (alias for kmcp_server_add)
- *
- * @param manager Server manager (must not be NULL)
- * @param config Server configuration (must not be NULL)
- * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
- */
-kmcp_error_t kmcp_server_manager_add(kmcp_server_manager_t* manager, const kmcp_server_config_t* config);
-
-/**
  * @brief Remove a server from the manager
  *
  * @param manager Server manager (must not be NULL)
  * @param name Server name (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_server_manager_remove(kmcp_server_manager_t* manager, const char* name);
+kmcp_error_t kmcp_server_remove(kmcp_server_manager_t* manager, const char* name);
 
 /**
  * @brief Get a server configuration by name
@@ -315,7 +292,7 @@ kmcp_error_t kmcp_server_manager_remove(kmcp_server_manager_t* manager, const ch
  * @param config Pointer to store the server configuration (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_server_manager_get_config(kmcp_server_manager_t* manager, const char* name, kmcp_server_config_t** config);
+kmcp_error_t kmcp_server_get_config(kmcp_server_manager_t* manager, const char* name, kmcp_server_config_t** config);
 
 /**
  * @brief Get a server configuration by index
@@ -325,15 +302,7 @@ kmcp_error_t kmcp_server_manager_get_config(kmcp_server_manager_t* manager, cons
  * @param config Pointer to store the server configuration (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_server_manager_get_config_by_index(kmcp_server_manager_t* manager, size_t index, kmcp_server_config_t** config);
-
-/**
- * @brief Get the number of servers (alias for kmcp_server_get_count)
- *
- * @param manager Server manager (must not be NULL)
- * @return size_t Returns the number of servers, or 0 on error
- */
-size_t kmcp_server_manager_get_count(kmcp_server_manager_t* manager);
+kmcp_error_t kmcp_server_get_config_by_index(kmcp_server_manager_t* manager, size_t index, kmcp_server_config_t** config);
 
 /**
  * @brief Clone a server configuration
@@ -341,14 +310,14 @@ size_t kmcp_server_manager_get_count(kmcp_server_manager_t* manager);
  * @param config Server configuration to clone (must not be NULL)
  * @return kmcp_server_config_t* Returns a new server configuration on success, NULL on failure
  */
-kmcp_server_config_t* kmcp_server_manager_config_clone(const kmcp_server_config_t* config);
+kmcp_server_config_t* kmcp_server_config_clone(const kmcp_server_config_t* config);
 
 /**
  * @brief Free a server configuration
  *
  * @param config Server configuration to free (must not be NULL)
  */
-void kmcp_server_manager_config_free(kmcp_server_config_t* config);
+void kmcp_server_config_free(kmcp_server_config_t* config);
 
 #ifdef __cplusplus
 }

@@ -170,7 +170,7 @@ static void example_basic_client(const char* config_file) {
     printf("\nServer list:\n");
     for (size_t i = 0; i < server_count; i++) {
         kmcp_server_config_t* config = NULL;
-        kmcp_error_t result = kmcp_server_manager_get_config_by_index(manager, i, &config);
+        kmcp_error_t result = kmcp_server_get_config_by_index(manager, i, &config);
         if (result != KMCP_SUCCESS || !config) {
             printf("  Failed to get server configuration at index %zu\n", i);
             continue;
@@ -185,7 +185,7 @@ static void example_basic_client(const char* config_file) {
             printf("    Command: %s\n", config->command ? config->command : "");
         }
 
-        kmcp_server_manager_config_free(config);
+        kmcp_server_config_free(config);
     }
 
     // Try to call a tool
@@ -372,7 +372,7 @@ static void example_config_parser(const char* config_file) {
         // Free server configurations
         for (size_t i = 0; i < server_count; i++) {
             if (servers[i]) {
-                kmcp_server_manager_config_free(servers[i]);
+                kmcp_server_config_free(servers[i]);
             }
         }
         free(servers);
@@ -448,7 +448,7 @@ static void example_server_registry(void) {
 
     // Add server to server manager
     printf("\nAdding server to server manager...\n");
-    kmcp_server_manager_t* manager = kmcp_server_manager_create();
+    kmcp_server_manager_t* manager = kmcp_server_create();
     if (!manager) {
         printf("Failed to create server manager\n");
         kmcp_registry_close(custom_registry);
@@ -472,7 +472,7 @@ static void example_server_registry(void) {
     }
 
     // Clean up
-    kmcp_server_manager_close(manager);
+    kmcp_server_destroy(manager);
     kmcp_registry_close(custom_registry);
     kmcp_registry_close(registry);
 }
