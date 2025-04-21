@@ -264,7 +264,6 @@ set(KMCP_SOURCES
     src/kmcp/kmcp_error.c
     src/kmcp/kmcp_version.c
     src/kmcp/kmcp_profile_manager.c
-    src/kmcp/kmcp_server_manager_compat.c
     src/kmcp/kmcp_registry.c
     src/kmcp/kmcp_tool_sdk.c
     src/kmcp/kmcp_cli.c
