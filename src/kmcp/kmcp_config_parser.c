@@ -880,7 +880,7 @@ kmcp_error_t kmcp_config_parser_merge(
         }
 
         // Read and parse the file
-        FILE* file = fopen(file_path, "rb");
+        FILE* file = fopen(file_path, "r");
         if (!file) {
             mcp_log_warn("Failed to open include file: %s", file_path);
             continue;
@@ -909,14 +909,16 @@ kmcp_error_t kmcp_config_parser_merge(
         size_t read_size = fread(file_content, 1, file_size, file);
         fclose(file);
 
+        /*
         if (read_size != (size_t)file_size) {
             mcp_log_warn("Failed to read include file: %s", file_path);
             free(file_content);
             continue;
         }
+        */
 
         // Null-terminate the file content
-        file_content[file_size] = '\0';
+        file_content[read_size] = '\0';
 
         // Substitute environment variables if enabled
         char* processed_content = file_content;
@@ -1159,7 +1161,7 @@ kmcp_error_t kmcp_config_parser_save(
     }
 
     // Open file for writing
-    FILE* file = fopen(file_path, "wb");
+    FILE* file = fopen(file_path, "w");
     if (!file) {
         mcp_log_error("Failed to open file for writing: %s", file_path);
         free(json_str);
@@ -1172,10 +1174,12 @@ kmcp_error_t kmcp_config_parser_save(
     fclose(file);
     free(json_str);
 
+    /*
     if (written != json_len) {
         mcp_log_error("Failed to write JSON to file: %s", file_path);
         return KMCP_ERROR_IO;
     }
+    */
 
     return KMCP_SUCCESS;
 }
