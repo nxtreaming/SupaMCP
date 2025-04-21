@@ -11,6 +11,7 @@
 
 // Function declarations for test entry points
 extern int kmcp_error_test_main(void);
+extern int kmcp_event_test_main(void);
 extern int kmcp_profile_manager_test_main(void);
 extern int kmcp_client_test_main(void);
 
@@ -25,6 +26,10 @@ int run_tests(void) {
     // Run error handling tests
     printf("\nRunning error handling tests...\n");
     failures += kmcp_error_test_main();
+
+    // Run event system tests
+    printf("\nRunning event system tests...\n");
+    failures += kmcp_event_test_main();
 
     // Run profile manager tests
     printf("\nRunning profile manager tests...\n");
