@@ -23,7 +23,7 @@ extern "C" {
 #define KMCP_CHECK_NULL(ptr, error_code) \
     do { \
         if ((ptr) == NULL) { \
-            return kmcp_error_log((error_code), "NULL pointer detected"); \
+            return KMCP_ERROR_LOG((error_code), "NULL pointer detected"); \
         } \
     } while (0)
 
@@ -47,7 +47,7 @@ extern "C" {
 #define KMCP_CHECK_CONDITION(condition, error_code, message) \
     do { \
         if (!(condition)) { \
-            return kmcp_error_log((error_code), (message)); \
+            return KMCP_ERROR_LOG((error_code), (message)); \
         } \
     } while (0)
 
@@ -89,7 +89,7 @@ extern "C" {
 #define KMCP_CHECK_MEMORY(ptr) \
     do { \
         if ((ptr) == NULL) { \
-            return kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Memory allocation failed"); \
+            return KMCP_ERROR_LOG(KMCP_ERROR_MEMORY_ALLOCATION, "Memory allocation failed"); \
         } \
     } while (0)
 
@@ -103,9 +103,56 @@ extern "C" {
 #define KMCP_CHECK_MEMORY_GOTO(ptr, label) \
     do { \
         if ((ptr) == NULL) { \
-            result = kmcp_error_log(KMCP_ERROR_MEMORY_ALLOCATION, "Memory allocation failed"); \
+            result = KMCP_ERROR_LOG(KMCP_ERROR_MEMORY_ALLOCATION, "Memory allocation failed"); \
             goto label; \
         } \
+    } while (0)
+
+/**
+ * @brief Check if a function call returns an error and create a nested error context if it does
+ *
+ * @param call Function call to check
+ * @param error_code Error code to return if the function call returns an error
+ * @param message Error message to log if the function call returns an error
+ * @return kmcp_error_t Returns KMCP_SUCCESS if the function call succeeds, error_code otherwise
+ */
+#define KMCP_CHECK_RESULT_WITH_CONTEXT(call, error_code, message) \
+    do { \
+        kmcp_error_t result = (call); \
+        if (result != KMCP_SUCCESS) { \
+            kmcp_error_context_t* context = KMCP_ERROR_CONTEXT_CREATE(result, "Function call failed"); \
+            kmcp_error_context_t* nested = KMCP_ERROR_CONTEXT_CREATE(error_code, message); \
+            if (context && nested) { \
+                kmcp_error_context_add_nested(nested, context); \
+                kmcp_error_context_log(nested); \
+                kmcp_error_context_free(nested); \
+            } else { \
+                if (context) kmcp_error_context_free(context); \
+                if (nested) kmcp_error_context_free(nested); \
+                KMCP_ERROR_LOG(error_code, "%s (original error: %s)", message, kmcp_error_message(result)); \
+            } \
+            return error_code; \
+        } \
+    } while (0)
+
+/**
+ * @brief Create an error context and return an error code
+ *
+ * @param error_code Error code to return
+ * @param message Format string for the error message
+ * @param ... Additional arguments for the format string
+ * @return kmcp_error_t Returns the error code
+ */
+#define KMCP_RETURN_ERROR_WITH_CONTEXT(error_code, message, ...) \
+    do { \
+        kmcp_error_context_t* context = KMCP_ERROR_CONTEXT_CREATE(error_code, message, ##__VA_ARGS__); \
+        if (context) { \
+            kmcp_error_context_log(context); \
+            kmcp_error_context_free(context); \
+        } else { \
+            KMCP_ERROR_LOG(error_code, message, ##__VA_ARGS__); \
+        } \
+        return error_code; \
     } while (0)
 
 #ifdef __cplusplus

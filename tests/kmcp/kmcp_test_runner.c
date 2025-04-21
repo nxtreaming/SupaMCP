@@ -10,6 +10,7 @@
 #include "mcp_thread_local.h"
 
 // Function declarations for test entry points
+extern int kmcp_error_test_main(void);
 extern int kmcp_profile_manager_test_main(void);
 extern int kmcp_client_test_main(void);
 
@@ -20,6 +21,10 @@ extern int kmcp_client_test_main(void);
  */
 int run_tests(void) {
     int failures = 0;
+
+    // Run error handling tests
+    printf("\nRunning error handling tests...\n");
+    failures += kmcp_error_test_main();
 
     // Run profile manager tests
     printf("\nRunning profile manager tests...\n");

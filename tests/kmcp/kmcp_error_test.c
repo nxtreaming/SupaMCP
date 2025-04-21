@@ -142,6 +142,102 @@ static int test_error_conversion() {
 }
 
 /**
+ * @brief Test error category functions
+ *
+ * @return int Returns 0 on success, non-zero on failure
+ */
+static int test_error_categories() {
+    printf("Testing error category functions...\n");
+
+    // Test error categories
+    if (kmcp_error_get_category(KMCP_SUCCESS) != KMCP_ERROR_CATEGORY_NONE) {
+        printf("FAIL: Unexpected category for KMCP_SUCCESS\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_category(KMCP_ERROR_INVALID_PARAMETER) != KMCP_ERROR_CATEGORY_SYSTEM) {
+        printf("FAIL: Unexpected category for KMCP_ERROR_INVALID_PARAMETER\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_category(KMCP_ERROR_CONNECTION_FAILED) != KMCP_ERROR_CATEGORY_NETWORK) {
+        printf("FAIL: Unexpected category for KMCP_ERROR_CONNECTION_FAILED\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_category(KMCP_ERROR_PROTOCOL_ERROR) != KMCP_ERROR_CATEGORY_PROTOCOL) {
+        printf("FAIL: Unexpected category for KMCP_ERROR_PROTOCOL_ERROR\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_category(KMCP_ERROR_RESOURCE_NOT_FOUND) != KMCP_ERROR_CATEGORY_RESOURCE) {
+        printf("FAIL: Unexpected category for KMCP_ERROR_RESOURCE_NOT_FOUND\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_category(KMCP_ERROR_CONFIG_INVALID) != KMCP_ERROR_CATEGORY_CONFIGURATION) {
+        printf("FAIL: Unexpected category for KMCP_ERROR_CONFIG_INVALID\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_category(KMCP_ERROR_TOOL_NOT_FOUND) != KMCP_ERROR_CATEGORY_TOOL) {
+        printf("FAIL: Unexpected category for KMCP_ERROR_TOOL_NOT_FOUND\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_category(KMCP_ERROR_SERVER_NOT_FOUND) != KMCP_ERROR_CATEGORY_SERVER) {
+        printf("FAIL: Unexpected category for KMCP_ERROR_SERVER_NOT_FOUND\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_category(KMCP_ERROR_OPERATION_CANCELED) != KMCP_ERROR_CATEGORY_CLIENT) {
+        printf("FAIL: Unexpected category for KMCP_ERROR_OPERATION_CANCELED\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_category(KMCP_ERROR_INTERNAL) != KMCP_ERROR_CATEGORY_INTERNAL) {
+        printf("FAIL: Unexpected category for KMCP_ERROR_INTERNAL\n");
+        return 1;
+    }
+
+    printf("PASS: Error category tests passed\n");
+    return 0;
+}
+
+/**
+ * @brief Test error severity functions
+ *
+ * @return int Returns 0 on success, non-zero on failure
+ */
+static int test_error_severity() {
+    printf("Testing error severity functions...\n");
+
+    // Test error severity
+    if (kmcp_error_get_severity(KMCP_SUCCESS) != KMCP_ERROR_SEVERITY_NONE) {
+        printf("FAIL: Unexpected severity for KMCP_SUCCESS\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_severity(KMCP_ERROR_MEMORY_ALLOCATION) != KMCP_ERROR_SEVERITY_FATAL) {
+        printf("FAIL: Unexpected severity for KMCP_ERROR_MEMORY_ALLOCATION\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_severity(KMCP_ERROR_INVALID_PARAMETER) != KMCP_ERROR_SEVERITY_ERROR) {
+        printf("FAIL: Unexpected severity for KMCP_ERROR_INVALID_PARAMETER\n");
+        return 1;
+    }
+
+    if (kmcp_error_get_severity(KMCP_ERROR_INTERNAL) != KMCP_ERROR_SEVERITY_FATAL) {
+        printf("FAIL: Unexpected severity for KMCP_ERROR_INTERNAL\n");
+        return 1;
+    }
+
+    printf("PASS: Error severity tests passed\n");
+    return 0;
+}
+
+/**
  * @brief Test error logging
  *
  * @return int Returns 0 on success, non-zero on failure
@@ -163,7 +259,99 @@ static int test_error_logging() {
         return 1;
     }
 
+    // Test enhanced error logging
+    result = KMCP_ERROR_LOG(KMCP_ERROR_INVALID_PARAMETER, "Test enhanced error message");
+    if (result != KMCP_ERROR_INVALID_PARAMETER) {
+        printf("FAIL: KMCP_ERROR_LOG did not return the same error code\n");
+        return 1;
+    }
+
     printf("PASS: Error logging tests passed\n");
+    return 0;
+}
+
+/**
+ * @brief Test error context functionality
+ *
+ * @return int Returns 0 on success, non-zero on failure
+ */
+static int test_error_context() {
+    printf("Testing error context functionality...\n");
+
+    // Create an error context
+    kmcp_error_context_t* context = KMCP_ERROR_CONTEXT_CREATE(
+        KMCP_ERROR_INVALID_PARAMETER, "Test error context with value %d", 42);
+    if (!context) {
+        printf("FAIL: Failed to create error context\n");
+        return 1;
+    }
+
+    // Verify error context properties
+    if (context->error_code != KMCP_ERROR_INVALID_PARAMETER) {
+        printf("FAIL: Unexpected error code in context\n");
+        kmcp_error_context_free(context);
+        return 1;
+    }
+
+    if (context->category != KMCP_ERROR_CATEGORY_SYSTEM) {
+        printf("FAIL: Unexpected category in context\n");
+        kmcp_error_context_free(context);
+        return 1;
+    }
+
+    if (context->severity != KMCP_ERROR_SEVERITY_ERROR) {
+        printf("FAIL: Unexpected severity in context\n");
+        kmcp_error_context_free(context);
+        return 1;
+    }
+
+    if (strcmp(context->message, "Test error context with value 42") != 0) {
+        printf("FAIL: Unexpected message in context: %s\n", context->message);
+        kmcp_error_context_free(context);
+        return 1;
+    }
+
+    // Create a nested error context
+    kmcp_error_context_t* nested_context = KMCP_ERROR_CONTEXT_CREATE(
+        KMCP_ERROR_MEMORY_ALLOCATION, "Nested error context");
+    if (!nested_context) {
+        printf("FAIL: Failed to create nested error context\n");
+        kmcp_error_context_free(context);
+        return 1;
+    }
+
+    // Add nested error to the main context
+    kmcp_error_context_add_nested(context, nested_context);
+
+    // Verify nested error context
+    if (!context->next) {
+        printf("FAIL: Nested error context not added\n");
+        kmcp_error_context_free(context);
+        return 1;
+    }
+
+    if (context->next->error_code != KMCP_ERROR_MEMORY_ALLOCATION) {
+        printf("FAIL: Unexpected error code in nested context\n");
+        kmcp_error_context_free(context);
+        return 1;
+    }
+
+    // Format the error context
+    char buffer[1024];
+    size_t written = kmcp_error_context_format(context, buffer, sizeof(buffer));
+    if (written == 0) {
+        printf("FAIL: Failed to format error context\n");
+        kmcp_error_context_free(context);
+        return 1;
+    }
+
+    // Log the error context
+    kmcp_error_context_log(context);
+
+    // Free the error context
+    kmcp_error_context_free(context);
+
+    printf("PASS: Error context tests passed\n");
     return 0;
 }
 
@@ -188,7 +376,10 @@ int kmcp_error_test_main() {
     // Run tests
     failures += test_error_messages();
     failures += test_error_conversion();
+    failures += test_error_categories();
+    failures += test_error_severity();
     failures += test_error_logging();
+    failures += test_error_context();
 
     // Print summary
     printf("\n=== Test Summary ===\n");

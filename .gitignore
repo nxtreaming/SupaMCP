@@ -56,6 +56,8 @@ DartConfiguration.tcl
 Thumbs.db
 mcp-use.md
 mcpm-sh.md
-kmcp_p1.md
 kmcp_dev.md
+kmcp_opt.md
+kmcp_gem.md
+kmcp_t2.md
 mcp-use_vs_mcpm.md
