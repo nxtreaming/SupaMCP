@@ -659,8 +659,8 @@ kmcp_config_parser_t* kmcp_config_parser_create_with_options(const char* file_pa
         }
     }
 
-    // Read and parse the configuration file
-    FILE* file = fopen(file_path, "rb");
+    // Read and parse the configuration file, CAN NOT use "rb"
+    FILE* file = fopen(file_path, "r");
     if (!file) {
         mcp_log_error("Failed to open configuration file: %s", file_path);
         free((void*)parser->options.config_dir);
@@ -691,6 +691,7 @@ kmcp_config_parser_t* kmcp_config_parser_create_with_options(const char* file_pa
     size_t read_size = fread(file_content, 1, file_size, file);
     fclose(file);
 
+    /*
     if (read_size != (size_t)file_size) {
         mcp_log_error("Failed to read configuration file: %s", file_path);
         free(file_content);
@@ -700,9 +701,10 @@ kmcp_config_parser_t* kmcp_config_parser_create_with_options(const char* file_pa
         free(parser);
         return NULL;
     }
+    */
 
     // Null-terminate the file content
-    file_content[file_size] = '\0';
+    file_content[read_size] = '\0';
 
     // Substitute environment variables if enabled
     char* processed_content = file_content;
