@@ -9,6 +9,14 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 if(MSVC)
     # MSVC flags
     add_compile_options(/W4)
+    # Enable multi-threaded compilation
+    add_compile_options(/MP)
+    # Enable function-level linking
+    add_compile_options(/Gy)
+    # Enable intrinsic functions
+    add_compile_options(/Oi)
+    # Specify runtime library
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
     # GCC/Clang flags
     add_compile_options(-Wall -Wextra -pedantic)
@@ -74,22 +82,29 @@ set_target_properties(websockets PROPERTIES
 include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Set up OpenSSL
-set(OPENSSL_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/OpenSSL)
-set(OPENSSL_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/openssl)
-set(OPENSSL_LIBRARIES ${OPENSSL_ROOT_DIR}/libssl.lib ${OPENSSL_ROOT_DIR}/libcrypto.lib)
+if(WIN32)
+    set(OPENSSL_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/OpenSSL)
+    set(OPENSSL_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/openssl)
+    set(OPENSSL_LIBRARIES 
+        ${OPENSSL_ROOT_DIR}/libssl.lib 
+        ${OPENSSL_ROOT_DIR}/libcrypto.lib
+    )
 
-# Create imported targets for OpenSSL
-add_library(ssl STATIC IMPORTED)
-set_target_properties(ssl PROPERTIES
-    IMPORTED_LOCATION ${OPENSSL_ROOT_DIR}/libssl.lib
-    INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_INCLUDE_DIR}
-)
+    # Create imported targets for OpenSSL
+    add_library(ssl STATIC IMPORTED)
+    set_target_properties(ssl PROPERTIES
+        IMPORTED_LOCATION ${OPENSSL_ROOT_DIR}/libssl.lib
+        INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_INCLUDE_DIR}
+    )
 
-add_library(crypto STATIC IMPORTED)
-set_target_properties(crypto PROPERTIES
-    IMPORTED_LOCATION ${OPENSSL_ROOT_DIR}/libcrypto.lib
-    INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_INCLUDE_DIR}
-)
+    add_library(crypto STATIC IMPORTED)
+    set_target_properties(crypto PROPERTIES
+        IMPORTED_LOCATION ${OPENSSL_ROOT_DIR}/libcrypto.lib
+        INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_INCLUDE_DIR}
+    )
+else()
+    find_package(OpenSSL REQUIRED)
+endif()
 
 # Check if we need to link against additional dependencies
 if(WIN32)
@@ -186,9 +201,19 @@ target_include_directories(mcp_common PUBLIC
 )
 target_link_libraries(mcp_common PUBLIC websockets ssl crypto)
 
+# Windows-specific settings for mcp_common
+if(MSVC)
+    # Generate import library
+    set_target_properties(mcp_common PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+        ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+endif()
+
 # Make module source directories as private include paths so internal headers can be found
 target_include_directories(mcp_common PRIVATE
-    # ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Now public
     ${CMAKE_CURRENT_SOURCE_DIR}/src/common
     ${CMAKE_CURRENT_SOURCE_DIR}/src/common/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/json
@@ -233,8 +258,15 @@ target_include_directories(kmcp PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include/kmcp
 )
 
-# Export KMCP functions
+# Windows-specific settings for kmcp
 if(MSVC)
+    # Generate import library
+    set_target_properties(kmcp PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+        ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
     target_compile_definitions(kmcp PRIVATE -DKMCP_EXPORTS)
     target_compile_definitions(kmcp PUBLIC -DKMCP_DLL)
 endif()
@@ -252,12 +284,10 @@ set(CLIENT_SOURCES
 # Create server executable
 add_executable(mcp_server ${SERVER_SOURCES})
 target_link_libraries(mcp_server PRIVATE mcp_common kmcp)
-# Server include directories are inherited from mcp_common PUBLIC
 
 # Create client executable
 add_executable(mcp_client ${CLIENT_SOURCES})
 target_link_libraries(mcp_client PRIVATE mcp_common)
-# Client include directories are inherited from mcp_common PUBLIC
 
 # Link platform-specific libraries
 if(WIN32)
@@ -271,33 +301,6 @@ endif()
 install(TARGETS mcp_server mcp_client DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include) # Install public headers
 install(DIRECTORY client/include/ DESTINATION include) # Install public client headers
-
-# --- Testing Setup ---
-enable_testing()
-
-# Add Unity library
-set(UNITY_SOURCES tests/unity/unity.c)
-set(UNITY_HEADERS tests/unity/unity.h tests/unity/unity_internals.h)
-add_library(unity_lib STATIC ${UNITY_SOURCES} ${UNITY_HEADERS})
-target_include_directories(unity_lib PUBLIC tests/unity) # Make headers available
-
-# Add tests subdirectory (will contain test runner definition)
-add_subdirectory(tests)
-
-# Add examples subdirectory (optional, if examples exist)
-add_subdirectory(examples)
-
-# Add Python bindings
-add_subdirectory(python)
-
-# Create KMCP CLI executable
-add_executable(kmcp_cli src/kmcp/kmcp_cli_main.c)
-target_link_libraries(kmcp_cli PRIVATE kmcp mcp_common)
-
-# Install KMCP library, headers, and CLI
-install(TARGETS kmcp DESTINATION lib)
-install(TARGETS kmcp_cli DESTINATION bin)
-install(DIRECTORY include/kmcp/ DESTINATION include/kmcp)
 
 # --- Benchmark Setup ---
 # Define benchmark sources
@@ -325,3 +328,30 @@ target_include_directories(mcp_benchmark_cli PRIVATE
 message(STATUS "CMAKE_SYSTEM_NAME: ${CMAKE_SYSTEM_NAME}")
 message(STATUS "CMAKE_C_COMPILER: ${CMAKE_C_COMPILER}")
 message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+
+# --- Testing Setup ---
+enable_testing()
+
+# Add Unity library
+set(UNITY_SOURCES tests/unity/unity.c)
+set(UNITY_HEADERS tests/unity/unity.h tests/unity/unity_internals.h)
+add_library(unity_lib STATIC ${UNITY_SOURCES} ${UNITY_HEADERS})
+target_include_directories(unity_lib PUBLIC tests/unity) # Make headers available
+
+# Add tests subdirectory (will contain test runner definition)
+add_subdirectory(tests)
+
+# Add examples subdirectory (optional, if examples exist)
+add_subdirectory(examples)
+
+# Add Python bindings
+add_subdirectory(python)
+
+# Create KMCP CLI executable
+add_executable(kmcp_cli src/kmcp/kmcp_cli_main.c)
+target_link_libraries(kmcp_cli PRIVATE kmcp mcp_common)
+
+# Install KMCP library, headers, and CLI
+install(TARGETS kmcp DESTINATION lib)
+install(TARGETS kmcp_cli DESTINATION bin)
+install(DIRECTORY include/kmcp/ DESTINATION include/kmcp)
