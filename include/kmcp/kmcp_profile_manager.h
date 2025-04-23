@@ -10,10 +10,25 @@
 #ifndef KMCP_PROFILE_MANAGER_H
 #define KMCP_PROFILE_MANAGER_H
 
+#include "kmcp_common.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include "kmcp_error.h"
 #include "kmcp_server_manager.h"
+
+#ifdef _WIN32
+    #ifdef KMCP_EXPORTS
+        #define KMCP_API __declspec(dllexport)
+    #else
+        #ifdef KMCP_DLL
+            #define KMCP_API __declspec(dllimport)
+        #else
+            #define KMCP_API
+        #endif
+    #endif
+#else
+    #define KMCP_API
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,14 +49,14 @@ typedef struct kmcp_profile_manager kmcp_profile_manager_t;
  *
  * @return kmcp_profile_manager_t* Returns profile manager pointer on success, NULL on failure
  */
-kmcp_profile_manager_t* kmcp_profile_manager_create(void);
+KMCP_API kmcp_profile_manager_t* kmcp_profile_manager_create(void);
 
 /**
  * @brief Close a profile manager and free resources
  *
  * @param manager Profile manager (must not be NULL)
  */
-void kmcp_profile_manager_close(kmcp_profile_manager_t* manager);
+KMCP_API void kmcp_profile_manager_close(kmcp_profile_manager_t* manager);
 
 /**
  * @brief Create a new profile
@@ -50,7 +65,7 @@ void kmcp_profile_manager_close(kmcp_profile_manager_t* manager);
  * @param name Profile name (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_create(kmcp_profile_manager_t* manager, const char* name);
+KMCP_API kmcp_error_t kmcp_profile_create(kmcp_profile_manager_t* manager, const char* name);
 
 /**
  * @brief Delete a profile
@@ -59,7 +74,7 @@ kmcp_error_t kmcp_profile_create(kmcp_profile_manager_t* manager, const char* na
  * @param name Profile name (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_delete(kmcp_profile_manager_t* manager, const char* name);
+KMCP_API kmcp_error_t kmcp_profile_delete(kmcp_profile_manager_t* manager, const char* name);
 
 /**
  * @brief Rename a profile
@@ -69,7 +84,7 @@ kmcp_error_t kmcp_profile_delete(kmcp_profile_manager_t* manager, const char* na
  * @param new_name New profile name (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_rename(kmcp_profile_manager_t* manager, const char* old_name, const char* new_name);
+KMCP_API kmcp_error_t kmcp_profile_rename(kmcp_profile_manager_t* manager, const char* old_name, const char* new_name);
 
 /**
  * @brief Activate a profile
@@ -78,7 +93,7 @@ kmcp_error_t kmcp_profile_rename(kmcp_profile_manager_t* manager, const char* ol
  * @param name Profile name (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_activate(kmcp_profile_manager_t* manager, const char* name);
+KMCP_API kmcp_error_t kmcp_profile_activate(kmcp_profile_manager_t* manager, const char* name);
 
 /**
  * @brief Deactivate a profile
@@ -87,7 +102,7 @@ kmcp_error_t kmcp_profile_activate(kmcp_profile_manager_t* manager, const char* 
  * @param name Profile name (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_deactivate(kmcp_profile_manager_t* manager, const char* name);
+KMCP_API kmcp_error_t kmcp_profile_deactivate(kmcp_profile_manager_t* manager, const char* name);
 
 /**
  * @brief Get the active profile name
@@ -95,7 +110,7 @@ kmcp_error_t kmcp_profile_deactivate(kmcp_profile_manager_t* manager, const char
  * @param manager Profile manager (must not be NULL)
  * @return const char* Returns the active profile name, or NULL if no profile is active
  */
-const char* kmcp_profile_get_active(kmcp_profile_manager_t* manager);
+KMCP_API const char* kmcp_profile_get_active(kmcp_profile_manager_t* manager);
 
 /**
  * @brief Check if a profile exists
@@ -104,7 +119,7 @@ const char* kmcp_profile_get_active(kmcp_profile_manager_t* manager);
  * @param name Profile name (must not be NULL)
  * @return bool Returns true if the profile exists, false otherwise
  */
-bool kmcp_profile_exists(kmcp_profile_manager_t* manager, const char* name);
+KMCP_API bool kmcp_profile_exists(kmcp_profile_manager_t* manager, const char* name);
 
 /**
  * @brief Get the number of profiles
@@ -112,7 +127,7 @@ bool kmcp_profile_exists(kmcp_profile_manager_t* manager, const char* name);
  * @param manager Profile manager (must not be NULL)
  * @return size_t Returns the number of profiles, or 0 on error
  */
-size_t kmcp_profile_get_count(kmcp_profile_manager_t* manager);
+KMCP_API size_t kmcp_profile_get_count(kmcp_profile_manager_t* manager);
 
 /**
  * @brief Get a list of profile names
@@ -125,7 +140,7 @@ size_t kmcp_profile_get_count(kmcp_profile_manager_t* manager);
  * @note The caller is responsible for freeing each string in the names array
  * and the names array itself.
  */
-kmcp_error_t kmcp_profile_get_names(kmcp_profile_manager_t* manager, char*** names, size_t* count);
+KMCP_API kmcp_error_t kmcp_profile_get_names(kmcp_profile_manager_t* manager, char*** names, size_t* count);
 
 /**
  * @brief Add a server to a profile
@@ -135,7 +150,7 @@ kmcp_error_t kmcp_profile_get_names(kmcp_profile_manager_t* manager, char*** nam
  * @param config Server configuration (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_add_server(kmcp_profile_manager_t* manager, const char* profile_name, kmcp_server_config_t* config);
+KMCP_API kmcp_error_t kmcp_profile_add_server(kmcp_profile_manager_t* manager, const char* profile_name, kmcp_server_config_t* config);
 
 /**
  * @brief Remove a server from a profile
@@ -145,7 +160,7 @@ kmcp_error_t kmcp_profile_add_server(kmcp_profile_manager_t* manager, const char
  * @param server_name Server name (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_remove_server(kmcp_profile_manager_t* manager, const char* profile_name, const char* server_name);
+KMCP_API kmcp_error_t kmcp_profile_remove_server(kmcp_profile_manager_t* manager, const char* profile_name, const char* server_name);
 
 /**
  * @brief Copy a server from one profile to another
@@ -157,7 +172,7 @@ kmcp_error_t kmcp_profile_remove_server(kmcp_profile_manager_t* manager, const c
  * @param target_server Target server name (can be NULL to use source_server)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_copy_server(
+KMCP_API kmcp_error_t kmcp_profile_copy_server(
     kmcp_profile_manager_t* manager,
     const char* source_profile,
     const char* source_server,
@@ -175,7 +190,7 @@ kmcp_error_t kmcp_profile_copy_server(
  * @param target_server Target server name (can be NULL to use source_server)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_move_server(
+KMCP_API kmcp_error_t kmcp_profile_move_server(
     kmcp_profile_manager_t* manager,
     const char* source_profile,
     const char* source_server,
@@ -190,7 +205,7 @@ kmcp_error_t kmcp_profile_move_server(
  * @param profile_name Profile name (must not be NULL)
  * @return kmcp_server_manager_t* Returns the server manager for the profile, or NULL on error
  */
-kmcp_server_manager_t* kmcp_profile_get_server_manager(kmcp_profile_manager_t* manager, const char* profile_name);
+KMCP_API kmcp_server_manager_t* kmcp_profile_get_server_manager(kmcp_profile_manager_t* manager, const char* profile_name);
 
 /**
  * @brief Save profiles to a file
@@ -199,7 +214,7 @@ kmcp_server_manager_t* kmcp_profile_get_server_manager(kmcp_profile_manager_t* m
  * @param file_path File path (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_save(kmcp_profile_manager_t* manager, const char* file_path);
+KMCP_API kmcp_error_t kmcp_profile_save(kmcp_profile_manager_t* manager, const char* file_path);
 
 /**
  * @brief Load profiles from a file
@@ -208,7 +223,7 @@ kmcp_error_t kmcp_profile_save(kmcp_profile_manager_t* manager, const char* file
  * @param file_path File path (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_load(kmcp_profile_manager_t* manager, const char* file_path);
+KMCP_API kmcp_error_t kmcp_profile_load(kmcp_profile_manager_t* manager, const char* file_path);
 
 /**
  * @brief Export a profile to a file
@@ -218,7 +233,7 @@ kmcp_error_t kmcp_profile_load(kmcp_profile_manager_t* manager, const char* file
  * @param file_path File path (must not be NULL)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_export(kmcp_profile_manager_t* manager, const char* profile_name, const char* file_path);
+KMCP_API kmcp_error_t kmcp_profile_export(kmcp_profile_manager_t* manager, const char* profile_name, const char* file_path);
 
 /**
  * @brief Import a profile from a file
@@ -228,7 +243,7 @@ kmcp_error_t kmcp_profile_export(kmcp_profile_manager_t* manager, const char* pr
  * @param profile_name Profile name (can be NULL to use the name from the file)
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
  */
-kmcp_error_t kmcp_profile_import(kmcp_profile_manager_t* manager, const char* file_path, const char* profile_name);
+KMCP_API kmcp_error_t kmcp_profile_import(kmcp_profile_manager_t* manager, const char* file_path, const char* profile_name);
 
 #ifdef __cplusplus
 }

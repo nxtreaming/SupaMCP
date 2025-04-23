@@ -179,14 +179,14 @@ set(COMMON_SOURCES
 )
 
 # Create common library
-add_library(mcp_common STATIC)
-target_sources(mcp_common PRIVATE ${COMMON_SOURCES})
-# Make the public headers available to consumers
+add_library(mcp_common SHARED ${COMMON_SOURCES})
 target_include_directories(mcp_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include       # Public API headers
     ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Make client headers public too
 )
-# Add module source directories as private include paths so internal headers can be found
+target_link_libraries(mcp_common PUBLIC websockets ssl crypto)
+
+# Make module source directories as private include paths so internal headers can be found
 target_include_directories(mcp_common PRIVATE
     # ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Now public
     ${CMAKE_CURRENT_SOURCE_DIR}/src/common
@@ -202,59 +202,7 @@ target_include_directories(mcp_common PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gateway
 )
 
-# Server-specific source files
-set(SERVER_SOURCES
-    src/main.c
-)
-
-# Client-specific source files
-set(CLIENT_SOURCES
-    client/src/main.c
-)
-
-# Create server executable
-add_executable(mcp_server ${SERVER_SOURCES})
-target_link_libraries(mcp_server PRIVATE mcp_common)
-# Server include directories are inherited from mcp_common PUBLIC
-
-# Create client executable
-add_executable(mcp_client ${CLIENT_SOURCES})
-target_link_libraries(mcp_client PRIVATE mcp_common)
-# Client include directories are inherited from mcp_common PUBLIC
-
-# Link platform-specific libraries
-if(WIN32)
-    target_link_libraries(mcp_common INTERFACE ws2_32) # Use INTERFACE so consumers link it too
-else()
-    # Link pthreads and dl (for dynamic loading) on non-Windows
-    target_link_libraries(mcp_common INTERFACE Threads::Threads dl) # Use modern Threads target and INTERFACE
-endif()
-
-# Link libwebsockets
-target_link_libraries(mcp_common PUBLIC websockets)
-
-# Install
-install(TARGETS mcp_server mcp_client DESTINATION bin)
-install(DIRECTORY include/ DESTINATION include) # Install public headers
-install(DIRECTORY client/include/ DESTINATION include) # Install public client headers
-
-# --- Testing Setup ---
-enable_testing()
-
-# Add Unity library
-set(UNITY_SOURCES tests/unity/unity.c)
-set(UNITY_HEADERS tests/unity/unity.h tests/unity/unity_internals.h)
-add_library(unity_lib STATIC ${UNITY_SOURCES} ${UNITY_HEADERS})
-target_include_directories(unity_lib PUBLIC tests/unity) # Make headers available
-
-# Add tests subdirectory (will contain test runner definition)
-add_subdirectory(tests)
-
-# Add examples subdirectory (optional, if examples exist)
-add_subdirectory(examples)
-
-# --- KMCP Module Setup ---
-# Define KMCP sources
+# KMCP library sources
 set(KMCP_SOURCES
     src/kmcp/kmcp_server_manager.c
     src/kmcp/kmcp_client.c
@@ -278,15 +226,69 @@ else()
 endif()
 
 # Create KMCP library
-add_library(kmcp STATIC ${KMCP_SOURCES})
-target_link_libraries(kmcp PUBLIC mcp_common ssl crypto)
-
-# Make KMCP headers available
-target_include_directories(kmcp PUBLIC
+add_library(kmcp SHARED ${KMCP_SOURCES})
+target_link_libraries(kmcp PRIVATE mcp_common)
+target_include_directories(kmcp PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include/kmcp
 )
 
-# KMCP example is now defined in examples/CMakeLists.txt
+# Export KMCP functions
+if(MSVC)
+    target_compile_definitions(kmcp PRIVATE -DKMCP_EXPORTS)
+    target_compile_definitions(kmcp PUBLIC -DKMCP_DLL)
+endif()
+
+# Server-specific source files
+set(SERVER_SOURCES
+    src/main.c
+)
+
+# Client-specific source files
+set(CLIENT_SOURCES
+    client/src/main.c
+)
+
+# Create server executable
+add_executable(mcp_server ${SERVER_SOURCES})
+target_link_libraries(mcp_server PRIVATE mcp_common kmcp)
+# Server include directories are inherited from mcp_common PUBLIC
+
+# Create client executable
+add_executable(mcp_client ${CLIENT_SOURCES})
+target_link_libraries(mcp_client PRIVATE mcp_common)
+# Client include directories are inherited from mcp_common PUBLIC
+
+# Link platform-specific libraries
+if(WIN32)
+    target_link_libraries(mcp_common INTERFACE ws2_32) # Use INTERFACE so consumers link it too
+else()
+    # Link pthreads and dl (for dynamic loading) on non-Windows
+    target_link_libraries(mcp_common INTERFACE Threads::Threads dl) # Use modern Threads target and INTERFACE
+endif()
+
+# Install
+install(TARGETS mcp_server mcp_client DESTINATION bin)
+install(DIRECTORY include/ DESTINATION include) # Install public headers
+install(DIRECTORY client/include/ DESTINATION include) # Install public client headers
+
+# --- Testing Setup ---
+enable_testing()
+
+# Add Unity library
+set(UNITY_SOURCES tests/unity/unity.c)
+set(UNITY_HEADERS tests/unity/unity.h tests/unity/unity_internals.h)
+add_library(unity_lib STATIC ${UNITY_SOURCES} ${UNITY_HEADERS})
+target_include_directories(unity_lib PUBLIC tests/unity) # Make headers available
+
+# Add tests subdirectory (will contain test runner definition)
+add_subdirectory(tests)
+
+# Add examples subdirectory (optional, if examples exist)
+add_subdirectory(examples)
+
+# Add Python bindings
+add_subdirectory(python)
 
 # Create KMCP CLI executable
 add_executable(kmcp_cli src/kmcp/kmcp_cli_main.c)

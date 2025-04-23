@@ -6,10 +6,25 @@
 #ifndef KMCP_CLIENT_H
 #define KMCP_CLIENT_H
 
+#include "kmcp_common.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include "kmcp_error.h"
 #include "kmcp_server_manager.h"
+
+#ifdef _WIN32
+    #ifdef KMCP_EXPORTS
+        #define KMCP_API __declspec(dllexport)
+    #else
+        #ifdef KMCP_DLL
+            #define KMCP_API __declspec(dllimport)
+        #else
+            #define KMCP_API
+        #endif
+    #endif
+#else
+    #define KMCP_API
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,7 +58,7 @@ typedef struct kmcp_client kmcp_client_t;
  * @note The caller is responsible for freeing the client using kmcp_client_close()
  * @see kmcp_client_close()
  */
-kmcp_client_t* kmcp_client_create(kmcp_client_config_t* config);
+KMCP_API kmcp_client_t* kmcp_client_create(kmcp_client_config_t* config);
 
 /**
  * @brief Create a client from a configuration file
@@ -58,7 +73,7 @@ kmcp_client_t* kmcp_client_create(kmcp_client_config_t* config);
  * @note The caller is responsible for freeing the client using kmcp_client_close()
  * @see kmcp_client_close()
  */
-kmcp_client_t* kmcp_client_create_from_file(const char* config_file);
+KMCP_API kmcp_client_t* kmcp_client_create_from_file(const char* config_file);
 
 /**
  * @brief Call a tool
@@ -79,7 +94,7 @@ kmcp_client_t* kmcp_client_create_from_file(const char* config_file);
  *
  * @note The caller is responsible for freeing the result_json string using free()
  */
-kmcp_error_t kmcp_client_call_tool(
+KMCP_API kmcp_error_t kmcp_client_call_tool(
     kmcp_client_t* client,
     const char* tool_name,
     const char* params_json,
@@ -104,7 +119,7 @@ kmcp_error_t kmcp_client_call_tool(
  *
  * @note The caller is responsible for freeing the content and content_type strings using free()
  */
-kmcp_error_t kmcp_client_get_resource(
+KMCP_API kmcp_error_t kmcp_client_get_resource(
     kmcp_client_t* client,
     const char* resource_uri,
     char** content,
@@ -122,7 +137,7 @@ kmcp_error_t kmcp_client_get_resource(
  *
  * @note The returned pointer is owned by the client and should not be freed by the caller
  */
-kmcp_server_manager_t* kmcp_client_get_manager(kmcp_client_t* client);
+KMCP_API kmcp_server_manager_t* kmcp_client_get_manager(kmcp_client_t* client);
 
 /**
  * @brief Close the client
@@ -134,7 +149,7 @@ kmcp_server_manager_t* kmcp_client_get_manager(kmcp_client_t* client);
  *
  * @note After calling this function, the client pointer is no longer valid and should not be used.
  */
-void kmcp_client_close(kmcp_client_t* client);
+KMCP_API void kmcp_client_close(kmcp_client_t* client);
 
 #ifdef __cplusplus
 }

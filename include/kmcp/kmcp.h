@@ -13,6 +13,20 @@
 #ifndef KMCP_H
 #define KMCP_H
 
+#ifdef _WIN32
+    #ifdef KMCP_EXPORTS
+        #define KMCP_API __declspec(dllexport)
+    #else
+        #ifdef KMCP_DLL
+            #define KMCP_API __declspec(dllimport)
+        #else
+            #define KMCP_API
+        #endif
+    #endif
+#else
+    #define KMCP_API
+#endif
+
 #include "kmcp_error.h"
 #include "kmcp_common.h"
 #include "kmcp_server_manager.h"
@@ -35,7 +49,7 @@ extern "C" {
  *
  * @return const char* KMCP version string
  */
-const char* kmcp_get_version(void);
+KMCP_API const char* kmcp_get_version(void);
 
 /**
  * @brief Get KMCP build information
@@ -44,7 +58,7 @@ const char* kmcp_get_version(void);
  *
  * @return const char* KMCP build information string
  */
-const char* kmcp_get_build_info(void);
+KMCP_API const char* kmcp_get_build_info(void);
 
 #ifdef __cplusplus
 }

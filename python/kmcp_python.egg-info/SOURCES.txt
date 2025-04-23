@@ -1,0 +1,15 @@
+README.md
+setup.py
+kmcp/__init__.py
+kmcp/kmcp_binding.py
+kmcp/../build/lib/kmcp.dll
+kmcp/kmcp_tools/__init__.py
+kmcp/kmcp_tools/resource_tool.py
+kmcp/kmcp_tools/tool_executor.py
+kmcp/kmcp_tools/web_browser.py
+kmcp_python.egg-info/PKG-INFO
+kmcp_python.egg-info/SOURCES.txt
+kmcp_python.egg-info/dependency_links.txt
+kmcp_python.egg-info/requires.txt
+kmcp_python.egg-info/top_level.txt
+tests/test_kmcp.py

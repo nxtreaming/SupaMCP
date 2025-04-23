@@ -6,6 +6,22 @@
 #ifndef KMCP_TOOL_ACCESS_H
 #define KMCP_TOOL_ACCESS_H
 
+#include "kmcp_common.h"
+
+#ifdef _WIN32
+    #ifdef KMCP_EXPORTS
+        #define KMCP_API __declspec(dllexport)
+    #else
+        #ifdef KMCP_DLL
+            #define KMCP_API __declspec(dllimport)
+        #else
+            #define KMCP_API
+        #endif
+    #endif
+#else
+    #define KMCP_API
+#endif
+
 #include <stddef.h>
 #include <stdbool.h>
 #include "kmcp_error.h"
@@ -25,7 +41,7 @@ typedef struct kmcp_tool_access kmcp_tool_access_t;
  * @param default_allow Default allow policy, true means allow by default, false means deny by default
  * @return kmcp_tool_access_t* Returns tool access control pointer on success, NULL on failure
  */
-kmcp_tool_access_t* kmcp_tool_access_create(bool default_allow);
+KMCP_API kmcp_tool_access_t* kmcp_tool_access_create(bool default_allow);
 
 /**
  * @brief Set the default allow policy
@@ -35,7 +51,7 @@ kmcp_tool_access_t* kmcp_tool_access_create(bool default_allow);
  * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
  *         - KMCP_ERROR_INVALID_PARAMETER if access is NULL
  */
-kmcp_error_t kmcp_tool_access_set_default_policy(kmcp_tool_access_t* access, bool default_allow);
+KMCP_API kmcp_error_t kmcp_tool_access_set_default_policy(kmcp_tool_access_t* access, bool default_allow);
 
 /**
  * @brief Add a tool to the access control list
@@ -50,7 +66,7 @@ kmcp_error_t kmcp_tool_access_set_default_policy(kmcp_tool_access_t* access, boo
  *         - KMCP_ERROR_INVALID_PARAMETER if any parameter is NULL
  *         - KMCP_ERROR_MEMORY_ALLOCATION if memory allocation fails
  */
-kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_name, bool allow);
+KMCP_API kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_name, bool allow);
 
 /**
  * @brief Check if a tool is allowed to access
@@ -59,7 +75,7 @@ kmcp_error_t kmcp_tool_access_add(kmcp_tool_access_t* access, const char* tool_n
  * @param tool_name Tool name
  * @return bool Returns true if allowed, false if denied
  */
-bool kmcp_tool_access_check(kmcp_tool_access_t* access, const char* tool_name);
+KMCP_API bool kmcp_tool_access_check(kmcp_tool_access_t* access, const char* tool_name);
 
 /**
  * @brief Load access control list from a configuration file
@@ -76,14 +92,14 @@ bool kmcp_tool_access_check(kmcp_tool_access_t* access, const char* tool_name);
  *         - KMCP_ERROR_PARSE_FAILED if the configuration file cannot be parsed
  *         - Other error codes for specific failures
  */
-kmcp_error_t kmcp_tool_access_load(kmcp_tool_access_t* access, const char* config_file);
+KMCP_API kmcp_error_t kmcp_tool_access_load(kmcp_tool_access_t* access, const char* config_file);
 
 /**
  * @brief Destroy tool access control
  *
  * @param access Tool access control
  */
-void kmcp_tool_access_destroy(kmcp_tool_access_t* access);
+KMCP_API void kmcp_tool_access_destroy(kmcp_tool_access_t* access);
 
 #ifdef __cplusplus
 }

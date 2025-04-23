@@ -2,6 +2,7 @@
 build/
 out/
 cmake-build-*/
+python/build/
 
 # IDE files
 .idea/
