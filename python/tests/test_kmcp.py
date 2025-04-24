@@ -40,10 +40,30 @@ def test_client_create_destroy(kmcp_binding):
 
     # Create client configuration
     config = {
-        "name": "test-client",
-        "version": "1.0.0",
-        "use_manager": True,
-        "timeout_ms": 30000
+        "clientConfig": {
+            "clientName": "test-client",
+            "clientVersion": "1.0.0",
+            "useServerManager": True,
+            "requestTimeoutMs": 30000
+        },
+        "mcpServers": {
+            "local": {
+                "url": "http://localhost:8080",
+                "apiKey": "test-key"
+            }
+        },
+        "toolAccessControl": {
+            "defaultAllow": True,
+            "allowedTools": ["*"],
+            "disallowedTools": []
+        },
+        "profiles": {
+            "default": {
+                "servers": ["local"],
+                "active": True,
+                "description": "Default profile for testing"
+            }
+        }
     }
 
     # Create client
@@ -65,22 +85,28 @@ def test_client_create_from_file(kmcp_binding):
     # Create a temporary config file
     config_file = "test_config.json"
     config = {
-        "client": {
-            "name": "test-client",
-            "version": "1.0.0",
-            "use_manager": True,
-            "timeout_ms": 30000
+        "clientConfig": {
+            "clientName": "test-client",
+            "clientVersion": "1.0.0",
+            "useServerManager": True,
+            "requestTimeoutMs": 30000
+        },
+        "mcpServers": {
+            "local": {
+                "url": "http://localhost:8080",
+                "apiKey": "test-key"
+            }
+        },
+        "toolAccessControl": {
+            "defaultAllow": True,
+            "allowedTools": ["*"],
+            "disallowedTools": []
         },
         "profiles": {
             "default": {
-                "servers": [
-                    {
-                        "name": "local-server",
-                        "url": "http://localhost:8080",
-                        "api_key": "test-key",
-                        "is_http": True
-                    }
-                ]
+                "servers": ["local"],
+                "active": True,
+                "description": "Default profile for testing"
             }
         }
     }

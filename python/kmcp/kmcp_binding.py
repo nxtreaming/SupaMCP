@@ -229,25 +229,29 @@ class KMCPBinding:
         """
         if config is None:
             config = {
-                "name": "default-client",
-                "version": "1.0.0",
-                "use_manager": True,
-                "timeout_ms": 30000
+                "clientConfig": {
+                    "clientName": "default-client",
+                    "clientVersion": "1.0.0",
+                    "useServerManager": True,
+                    "requestTimeoutMs": 30000
+                }
             }
 
+        # Extract client config
+        client_config = config.get("clientConfig", {})
+
         # Create client configuration
-        client_config = self.ClientConfig()
-        client_config.name = config["name"].encode()
-        client_config.version = config["version"].encode()
-        client_config.use_manager = config["use_manager"]
-        client_config.timeout_ms = config["timeout_ms"]
+        client = self.ClientConfig()
+        client.name = client_config.get("clientName", "default-client").encode()
+        client.version = client_config.get("clientVersion", "1.0.0").encode()
+        client.use_manager = client_config.get("useServerManager", True)
+        client.timeout_ms = client_config.get("requestTimeoutMs", 30000)
 
         # Create client
-        client = self.lib.kmcp_client_create(ctypes.byref(client_config))
-        if not client:
+        handle = self.lib.kmcp_client_create(ctypes.byref(client))
+        if not handle:
             raise RuntimeError("Failed to create client")
-
-        return client
+        return handle
 
     def create_client_from_file(self, config_file: str) -> int:
         """Create a client from a configuration file.
