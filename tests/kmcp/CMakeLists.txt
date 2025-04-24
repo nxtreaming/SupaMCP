@@ -17,6 +17,7 @@ set(KMCP_TEST_SOURCES
     kmcp_event_test.c
     kmcp_profile_manager_test.c
     kmcp_client_test.c
+    kmcp_version_test.c
     unit/kmcp_server_manager_stub.c
 )
 
@@ -81,11 +82,22 @@ target_include_directories(kmcp_client_test PRIVATE
 )
 target_compile_definitions(kmcp_client_test PRIVATE STANDALONE_TEST)
 
+# Version Test
+add_executable(kmcp_version_test kmcp_version_test.c)
+target_link_libraries(kmcp_version_test kmcp mcp_common)
+target_include_directories(kmcp_version_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/kmcp
+    ${CMAKE_SOURCE_DIR}/src/kmcp
+)
+target_compile_definitions(kmcp_version_test PRIVATE STANDALONE_TEST)
+
 # Add individual tests
 add_test(NAME kmcp_error_test COMMAND kmcp_error_test)
 add_test(NAME kmcp_event_test COMMAND kmcp_event_test)
 add_test(NAME kmcp_profile_manager_test COMMAND kmcp_profile_manager_test)
 add_test(NAME kmcp_client_test COMMAND kmcp_client_test)
+add_test(NAME kmcp_version_test COMMAND kmcp_version_test)
 
 # Add subdirectories for new test structure
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/unit/CMakeLists.txt)

@@ -14,6 +14,7 @@ extern int kmcp_error_test_main(void);
 extern int kmcp_event_test_main(void);
 extern int kmcp_profile_manager_test_main(void);
 extern int kmcp_client_test_main(void);
+extern int kmcp_version_test_main(void);
 
 /**
  * @brief Run all tests
@@ -22,6 +23,10 @@ extern int kmcp_client_test_main(void);
  */
 int run_tests(void) {
     int failures = 0;
+
+    // Run version tests
+    printf("\nRunning version tests...\n");
+    failures += kmcp_version_test_main();
 
     // Run error handling tests
     printf("\nRunning error handling tests...\n");

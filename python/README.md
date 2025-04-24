@@ -11,6 +11,10 @@ Python bindings and LangChain integration for the KMCP (Kernel MCP) library.
 - Tool access control
 - Multi-server support
 - Configuration management
+- Event system for real-time notifications
+- HTTP client for web requests
+- Process management capabilities
+- Service registry for discovery
 - Easy-to-use high-level APIs
 
 ## Installation
@@ -29,24 +33,103 @@ pip install -e .
 ```python
 from kmcp.kmcp_binding import kmcp
 
-# Create a client
-client = kmcp.create_client()
+# Create a client with configuration
+client = kmcp.create_client({
+    "name": "my-client",
+    "version": "1.0.0",
+    "use_manager": True,
+    "timeout_ms": 30000
+})
 
-# Create a profile manager
-profile_manager = kmcp.create_profile_manager()
+# Call a tool
+response = kmcp.call_tool(client, "echo", {
+    "text": "Hello, KMCP!"
+})
+print(response)  # {"text": "Hello, KMCP!"}
 
-# Add a server to a profile
-profile_manager.add_server("default", "http://localhost:8080")
+# Close client when done
+kmcp.close_client(client)
+```
 
-# Activate the profile
-profile_manager.activate("default")
+### Advanced Server Management
 
-# Create tool access manager
-tool_access = kmcp.create_tool_access()
+```python
+# Create a server manager
+manager = kmcp.create_server_manager()
 
-# Check tool access
-if tool_access.check_access("web_browser"):
-    result = kmcp.call_tool(client, "web_browser", {"url": "https://example.com"})
+# Add a server
+kmcp.add_server(manager, {
+    "name": "test-server",
+    "url": "http://localhost:8080",
+    "is_http": True,
+    "api_key": "your-api-key"
+})
+
+# Connect to servers
+kmcp.connect_servers(manager)
+
+# Select a server for a tool
+server_index = kmcp.select_tool_server(manager, "echo")
+if server_index >= 0:
+    # Get server connection
+    connection = kmcp.get_server_connection(manager, server_index)
+    
+    # Call tool using the connection
+    response = kmcp.call_tool(connection, "echo", {
+        "text": "Hello from specific server!"
+    })
+    print(response)
+
+# Clean up
+kmcp.disconnect_servers(manager)
+kmcp.destroy_server_manager(manager)
+```
+
+### Advanced Features
+
+#### Event System
+```python
+def on_server_event(data, user_data):
+    print(f"Server event: {data}")
+
+# Register event handler
+kmcp.register_event_handler("server_status", on_server_event)
+
+# Trigger event
+kmcp.trigger_event("server_status", "Server started")
+```
+
+#### HTTP Client
+```python
+# Make HTTP request
+response = kmcp.http_request(
+    method="GET",
+    url="https://api.example.com/status",
+    headers={"Authorization": "Bearer token123"}
+)
+print(f"Status code: {response['status_code']}")
+```
+
+#### Process Management
+```python
+# Create and manage processes
+pid = kmcp.create_process(
+    command="python",
+    args=["-m", "http.server", "8000"],
+    env={"PORT": "8000"}
+)
+
+# Wait for process
+exit_code = kmcp.wait_process(pid, timeout_ms=5000)
+```
+
+#### Service Registry
+```python
+# Register service
+kmcp.register_service("my_service", "http://localhost:8080")
+
+# Look up service
+endpoint = kmcp.lookup_service("my_service")
 ```
 
 ### LangChain Integration
@@ -106,6 +189,26 @@ profile_manager.set_server_capability("dev", "debug_mode", True)
 profile_manager.activate("dev" if debug_mode else "prod")
 ```
 
+## API Reference
+
+### Client Functions
+
+- `create_client(config: dict = None) -> int`: Create a new KMCP client
+- `create_client_from_file(config_file: str) -> int`: Create a client from config file
+- `close_client(client: int)`: Close a client
+- `call_tool(client: int, tool_name: str, request: dict) -> dict`: Call a tool
+
+### Server Management Functions
+
+- `create_server_manager() -> int`: Create a server manager
+- `destroy_server_manager(manager: int)`: Destroy a server manager
+- `add_server(manager: int, config: dict) -> int`: Add a server to the manager
+- `connect_servers(manager: int) -> int`: Connect to all servers
+- `disconnect_servers(manager: int) -> int`: Disconnect from all servers
+- `select_tool_server(manager: int, tool_name: str) -> int`: Select server for a tool
+- `get_server_connection(manager: int, index: int) -> int`: Get server connection
+- `get_server_count(manager: int) -> int`: Get number of servers
+
 ## Development
 
 ### Building the Extension
@@ -123,6 +226,14 @@ python setup.py build_ext --inplace
 ```bash
 pytest tests/
 ```
+
+## Examples
+
+Check out the `examples` directory for more detailed examples:
+
+- `basic_usage.py`: Basic KMCP client usage
+- `langchain_integration.py`: LangChain integration examples
+- `advanced_features.py`: Advanced features demonstration
 
 ## License
 
