@@ -631,6 +631,8 @@ kmcp_error_t kmcp_server_disconnect(kmcp_server_manager_t* manager) {
             mcp_log_debug("Destroying client for server: %s", connection->config.name);
             mcp_client_destroy(connection->client);
             connection->client = NULL;
+            //MUST reset connection->transport, becasue it has been destoryed in mcp_client_destroy()
+            connection->transport = NULL;
         }
 
         // Close HTTP client
