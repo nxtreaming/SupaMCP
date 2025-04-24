@@ -1,9 +1,18 @@
 """KMCP Python bindings using ctypes."""
 
 import os
+import sys
 import ctypes
 import json
 from typing import Optional
+
+# 根据平台选择正确的libc库
+if sys.platform == 'win32':
+    libc = ctypes.cdll.msvcrt
+elif sys.platform == 'darwin':
+    libc = ctypes.CDLL('libc.dylib')
+else:  # Linux and other Unix-like systems
+    libc = ctypes.CDLL('libc.so.6')
 
 # Structure definitions for future use
 class KMCPEventHandler(ctypes.Structure):
@@ -54,10 +63,10 @@ class KMCPBinding:
         """Initialize KMCP binding."""
         # Add DLL directories to PATH on Windows
         lib_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'build', 'lib'))
-        
+
         if os.path.exists(lib_dir):
             os.add_dll_directory(lib_dir)
-        
+
         # Load the libraries
         try:
             # First try to load mcp_common
@@ -76,7 +85,7 @@ class KMCPBinding:
             self._setup_mcp_common_functions()
 
             # Initialize logging
-            result = self.mcp_common.mcp_log_init(None, 2)  # MCP_LOG_LEVEL_INFO = 2
+            result = self.mcp_common.mcp_log_init(None, 1)  # MCP_LOG_LEVEL_INFO = 2
             if result != 0:
                 raise RuntimeError(f"Failed to initialize logging with error code {result}")
 
@@ -145,6 +154,14 @@ class KMCPBinding:
             ctypes.POINTER(ctypes.c_char_p)  # result_json
         ]
         self.lib.kmcp_client_call_tool.restype = ctypes.c_int
+
+        self.lib.kmcp_client_get_resource.argtypes = [
+            ctypes.c_void_p,      # client
+            ctypes.c_char_p,      # resource_uri
+            ctypes.POINTER(ctypes.c_char_p),  # content
+            ctypes.POINTER(ctypes.c_char_p)   # content_type
+        ]
+        self.lib.kmcp_client_get_resource.restype = ctypes.c_int
 
         # Server functions
         self.lib.kmcp_server_create.restype = ctypes.c_void_p
@@ -285,7 +302,18 @@ class KMCPBinding:
 
     def close_client(self, client: int) -> None:
         """Close a client."""
-        self.lib.kmcp_client_close(ctypes.c_void_p(client))
+        print(f"close_client called with client={client}, type={type(client)}")
+        if client and client != 0:
+            try:
+                # Convert to void pointer with explicit check
+                client_ptr = ctypes.c_void_p(client)
+                print(f"Created client_ptr={client_ptr}, value={client_ptr.value}")
+                if client_ptr:
+                    print(f"Calling kmcp_client_close with client_ptr={client_ptr}")
+                    self.lib.kmcp_client_close(client_ptr)
+                    print(f"kmcp_client_close call completed successfully")
+            except Exception as e:
+                print(f"Warning: Error closing client: {e}")
 
     def call_tool(self, client: int, tool_name: str, request: dict) -> dict:
         """Call a tool."""
@@ -315,14 +343,54 @@ class KMCPBinding:
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
             # Free memory before raising exception
             if result_json.value:
-                ctypes.cdll.msvcrt.free(result_json)
+                libc.free(result_json)
             raise RuntimeError(f"Failed to parse tool response: {e}")
 
         # Free memory
         if result_json.value:
-            ctypes.cdll.msvcrt.free(result_json)
+            libc.free(result_json)
 
         return response
+
+    def get_resource(self, client: int, resource_uri: str) -> tuple:
+        """Get a resource.
+
+        Args:
+            client: Client handle
+            resource_uri: Resource URI
+
+        Returns:
+            Tuple of (content, content_type)
+
+        Raises:
+            RuntimeError: If the resource cannot be retrieved
+        """
+        # Create buffers to store the result
+        content = ctypes.c_char_p()
+        content_type = ctypes.c_char_p()
+
+        # Call get_resource
+        result = self.lib.kmcp_client_get_resource(
+            ctypes.c_void_p(client),  # Convert to void pointer
+            resource_uri.encode(),
+            ctypes.byref(content),
+            ctypes.byref(content_type)
+        )
+
+        if result != 0:
+            raise RuntimeError(f"Failed to get resource {resource_uri} with error code {result}")
+
+        # Get the values
+        content_value = content.value.decode() if content.value else ""
+        content_type_value = content_type.value.decode() if content_type.value else ""
+
+        # Free memory
+        if content.value:
+            libc.free(content)
+        if content_type.value:
+            libc.free(content_type)
+
+        return content_value, content_type_value
 
     def create_server_manager(self) -> int:
         """Create a server manager instance."""
