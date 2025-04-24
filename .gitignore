@@ -62,3 +62,26 @@ kmcp_opt.md
 kmcp_gem.md
 kmcp_t2.md
 mcp-use_vs_mcpm.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
