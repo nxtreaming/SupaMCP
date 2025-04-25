@@ -7,6 +7,22 @@ import json
 import logging
 from typing import Optional
 
+# Constants for log levels
+MCP_LOG_LEVEL_TRACE = 0  # Fine-grained debugging information
+MCP_LOG_LEVEL_DEBUG = 1  # Detailed debugging information
+MCP_LOG_LEVEL_INFO = 2   # Informational messages about normal operation
+MCP_LOG_LEVEL_WARN = 3   # Warning conditions that might indicate potential problems
+MCP_LOG_LEVEL_ERROR = 4  # Error conditions that prevent normal operation
+MCP_LOG_LEVEL_FATAL = 5  # Severe errors causing program termination
+
+# Constants for arena initialization
+MCP_ARENA_DEFAULT_SIZE = 0  # Use default arena size
+
+# Constants for client configuration
+DEFAULT_CLIENT_NAME = "default-client"
+DEFAULT_CLIENT_VERSION = "1.0.0"
+DEFAULT_REQUEST_TIMEOUT_MS = 30000  # 30 seconds
+
 # Remove libc import since we'll use kmcp_free instead
 
 # choose the correct libc
@@ -92,12 +108,12 @@ class KMCPBinding:
             self._setup_functions()
 
             # Initialize logging
-            result = self.mcp_common.mcp_log_init(None, 1)  # MCP_LOG_LEVEL_INFO = 2
+            result = self.mcp_common.mcp_log_init(None, MCP_LOG_LEVEL_INFO)
             if result != 0:
                 raise RuntimeError(f"Failed to initialize logging with error code {result}")
 
             # Initialize thread-local arena
-            result = self.mcp_common.mcp_arena_init_current_thread(0)
+            result = self.mcp_common.mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE)
             if result != 0:
                 self.mcp_common.mcp_log_close()
                 raise RuntimeError("Failed to initialize thread-local arena")
@@ -258,10 +274,10 @@ class KMCPBinding:
         if config is None:
             config = {
                 "clientConfig": {
-                    "clientName": "default-client",
-                    "clientVersion": "1.0.0",
+                    "clientName": DEFAULT_CLIENT_NAME,
+                    "clientVersion": DEFAULT_CLIENT_VERSION,
                     "useServerManager": True,
-                    "requestTimeoutMs": 30000
+                    "requestTimeoutMs": DEFAULT_REQUEST_TIMEOUT_MS
                 }
             }
 
@@ -270,10 +286,10 @@ class KMCPBinding:
 
         # Create client configuration
         client = self.ClientConfig()
-        client.name = client_config.get("clientName", "default-client").encode()
-        client.version = client_config.get("clientVersion", "1.0.0").encode()
+        client.name = client_config.get("clientName", DEFAULT_CLIENT_NAME).encode()
+        client.version = client_config.get("clientVersion", DEFAULT_CLIENT_VERSION).encode()
         client.use_manager = client_config.get("useServerManager", True)
-        client.timeout_ms = client_config.get("requestTimeoutMs", 30000)
+        client.timeout_ms = client_config.get("requestTimeoutMs", DEFAULT_REQUEST_TIMEOUT_MS)
 
         # Create client
         handle = self.lib.kmcp_client_create(ctypes.byref(client))
@@ -333,7 +349,7 @@ class KMCPBinding:
 
         # Call tool
         result = self.lib.kmcp_client_call_tool(
-            ctypes.c_void_p(client),  # Convert to void pointer
+            ctypes.c_void_p(client),
             tool_name.encode(),
             request_json,
             ctypes.byref(result_json_ptr)
@@ -384,7 +400,7 @@ class KMCPBinding:
 
         # Call get_resource
         result = self.lib.kmcp_client_get_resource(
-            ctypes.c_void_p(client),  # Convert to void pointer
+            ctypes.c_void_p(client),
             resource_uri.encode(),
             ctypes.byref(content_ptr),
             ctypes.byref(content_type_ptr)
