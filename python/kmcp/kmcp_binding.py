@@ -371,13 +371,11 @@ class KMCPBinding:
             response = json.loads(response_text)
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
             # Free memory before raising exception
-            if result_json_ptr.value:
-                self.lib.kmcp_free(result_json_ptr)
+            self._free_memory(result_json_ptr)
             raise RuntimeError(f"Failed to parse tool response: {e}")
 
         # Free memory using kmcp_free
-        if result_json_ptr.value:
-            self.lib.kmcp_free(result_json_ptr)
+        self._free_memory(result_json_ptr)
 
         return response
 
@@ -418,10 +416,8 @@ class KMCPBinding:
         content_type_value = content_type_str.decode() if content_type_str else ""
 
         # Free memory using kmcp_free
-        if content_ptr.value:
-            self.lib.kmcp_free(content_ptr)
-        if content_type_ptr.value:
-            self.lib.kmcp_free(content_type_ptr)
+        self._free_memory(content_ptr)
+        self._free_memory(content_type_ptr)
 
         return content_value, content_type_value
 
@@ -476,6 +472,15 @@ class KMCPBinding:
         """Get KMCP build information."""
         info = self.lib.kmcp_get_build_info()
         return info.decode('utf-8') if info else ""
+
+    def _free_memory(self, ptr):
+        """Free memory allocated by KMCP.
+
+        Args:
+            ptr: Pointer to memory to free
+        """
+        if ptr and ptr.value:
+            self.lib.kmcp_free(ptr)
 
     def _create_server_config(self, config: dict) -> ServerConfig:
         """Create a server configuration structure."""
