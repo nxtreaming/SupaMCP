@@ -4,6 +4,7 @@ import os
 import sys
 import ctypes
 import json
+import logging
 from typing import Optional
 
 # Remove libc import since we'll use kmcp_free instead
@@ -105,7 +106,7 @@ class KMCPBinding:
             raise RuntimeError(f"Failed to initialize KMCP binding: {e}")
 
         # Set up function prototypes
-        # self._setup_mcp_common_functions()
+        self._setup_mcp_common_functions()
 
     def __del__(self):
         """Clean up KMCP binding."""
@@ -312,7 +313,6 @@ class KMCPBinding:
 
     def close_client(self, client: int) -> None:
         """Close a client."""
-        # print(f"close_client called with client={client}, type={type(client)}")
         if client and client != 0:
             try:
                 # Convert to void pointer with explicit check
@@ -320,7 +320,8 @@ class KMCPBinding:
                 if client_ptr:
                     self.lib.kmcp_client_close(client_ptr)
             except Exception as e:
-                print(f"Warning: Error closing client: {e}")
+                # Use logging instead of print for errors
+                logging.warning(f"Error closing client: {e}")
 
     def call_tool(self, client: int, tool_name: str, request: dict) -> dict:
         """Call a tool."""
@@ -411,7 +412,6 @@ class KMCPBinding:
     def create_server_manager(self) -> int:
         """Create a server manager instance."""
         manager = self.lib.kmcp_server_create()
-        print(f"Created server manager: {manager}")
         return manager
 
     def destroy_server_manager(self, manager: int):
@@ -463,8 +463,6 @@ class KMCPBinding:
 
     def _create_server_config(self, config: dict) -> ServerConfig:
         """Create a server configuration structure."""
-        print(f"Creating server config: name={config.get('name')}, url={config.get('url')}, is_http={config.get('is_http')}")
-
         # Convert args to array if present
         args = config.get("args", [])
         args_array = (ctypes.c_char_p * len(args))()
@@ -495,7 +493,6 @@ class KMCPBinding:
             is_http=config.get("is_http", False)
         )
 
-        print(f"Config pointer: {server_config}")
         return server_config
 
 # Create a global instance
