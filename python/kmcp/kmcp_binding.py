@@ -310,16 +310,13 @@ class KMCPBinding:
 
     def close_client(self, client: int) -> None:
         """Close a client."""
-        print(f"close_client called with client={client}, type={type(client)}")
+        # print(f"close_client called with client={client}, type={type(client)}")
         if client and client != 0:
             try:
                 # Convert to void pointer with explicit check
                 client_ptr = ctypes.c_void_p(client)
-                print(f"Created client_ptr={client_ptr}, value={client_ptr.value}")
                 if client_ptr:
-                    print(f"Calling kmcp_client_close with client_ptr={client_ptr}")
                     self.lib.kmcp_client_close(client_ptr)
-                    print(f"kmcp_client_close call completed successfully")
             except Exception as e:
                 print(f"Warning: Error closing client: {e}")
 
