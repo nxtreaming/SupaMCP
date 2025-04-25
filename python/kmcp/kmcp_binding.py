@@ -14,6 +14,10 @@ elif sys.platform == 'darwin':
 else:  # Linux and other Unix-like systems
     libc = ctypes.CDLL('libc.so.6')
 
+# Explicitly specify libc.free parameter and return types
+libc.free.argtypes = [ctypes.c_void_p]
+libc.free.restype = None
+
 # Structure definitions for future use
 class KMCPEventHandler(ctypes.Structure):
     """KMCP event handler structure."""
@@ -350,7 +354,9 @@ class KMCPBinding:
             response_text = result_json_str.decode()
             response = json.loads(response_text)
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
-            # We don't need to free memory here, as we'll do it at the end of the function
+            # Free memory before raising exception
+            if result_json_ptr.value:
+                self.lib.kmcp_free(result_json_ptr)
             raise RuntimeError(f"Failed to parse tool response: {e}")
 
         # Free memory using kmcp_free
