@@ -262,14 +262,14 @@ class KMCPBinding:
             ("is_http", ctypes.c_bool)
         ]
 
-    def create_client(self, config: Optional[dict] = None) -> int:
+    def create_client(self, config: Optional[dict] = None) -> ctypes.c_void_p:
         """Create a client.
 
         Args:
             config: Optional configuration dictionary. If None, default values are used.
 
         Returns:
-            Client handle as an integer
+            Client handle as a c_void_p
         """
         if config is None:
             config = {
@@ -295,63 +295,60 @@ class KMCPBinding:
         handle = self.lib.kmcp_client_create(ctypes.byref(client))
         if not handle:
             raise RuntimeError("Failed to create client")
-        return handle
+        return ctypes.c_void_p(handle)
 
-    def create_client_from_file(self, config_file: str) -> int:
+    def create_client_from_file(self, config_file: str) -> ctypes.c_void_p:
         """Create a client from a configuration file.
 
         Args:
             config_file: Path to configuration file
 
         Returns:
-            Client handle as an integer
+            Client handle as a c_void_p
         """
         client = self.lib.kmcp_client_create_from_file(config_file.encode())
         if not client:
             raise RuntimeError("Failed to create client from file")
 
-        return client
+        return ctypes.c_void_p(client)
 
-    def get_server_manager(self, client: int) -> int:
+    def get_server_manager(self, client: ctypes.c_void_p) -> ctypes.c_void_p:
         """Get server manager from client.
 
         Args:
-            client: Client handle
+            client: Client handle as a c_void_p
 
         Returns:
-            Server manager handle as an integer
+            Server manager handle as a c_void_p
         """
         manager = self.lib.kmcp_client_get_manager(client)
         if not manager:
             raise RuntimeError("Failed to get server manager")
 
-        return manager
+        return ctypes.c_void_p(manager)
 
-    def close_client(self, client: int) -> None:
+    def close_client(self, client: ctypes.c_void_p) -> None:
         """Close a client.
 
         Args:
-            client: Client handle
+            client: Client handle as a c_void_p
 
         Raises:
             RuntimeError: If the client cannot be closed
         """
-        if client and client != 0:
+        if client and client.value:
             try:
-                # Convert to void pointer with explicit check
-                client_ptr = ctypes.c_void_p(client)
-                if client_ptr:
-                    self.lib.kmcp_client_close(client_ptr)
+                self.lib.kmcp_client_close(client)
             except Exception as e:
                 # Log the error and raise an exception
                 logging.error(f"Error closing client: {e}")
                 raise RuntimeError(f"Failed to close client: {e}")
 
-    def call_tool(self, client: int, tool_name: str, request: dict) -> dict:
+    def call_tool(self, client: ctypes.c_void_p, tool_name: str, request: dict) -> dict:
         """Call a tool.
 
         Args:
-            client: Client handle
+            client: Client handle as a c_void_p
             tool_name: Name of the tool to call
             request: Request data as a dictionary
 
@@ -369,7 +366,7 @@ class KMCPBinding:
 
         # Call tool
         result = self.lib.kmcp_client_call_tool(
-            ctypes.c_void_p(client),
+            client,
             tool_name.encode(),
             request_json,
             ctypes.byref(result_json_ptr)
@@ -400,11 +397,11 @@ class KMCPBinding:
 
         return response
 
-    def get_resource(self, client: int, resource_uri: str) -> tuple:
+    def get_resource(self, client: ctypes.c_void_p, resource_uri: str) -> tuple:
         """Get a resource.
 
         Args:
-            client: Client handle
+            client: Client handle as a c_void_p
             resource_uri: Resource URI
 
         Returns:
@@ -419,7 +416,7 @@ class KMCPBinding:
 
         # Call get_resource
         result = self.lib.kmcp_client_get_resource(
-            ctypes.c_void_p(client),
+            client,
             resource_uri.encode(),
             ctypes.byref(content_ptr),
             ctypes.byref(content_type_ptr)
@@ -442,11 +439,11 @@ class KMCPBinding:
 
         return content_value, content_type_value
 
-    def create_server_manager(self) -> int:
+    def create_server_manager(self) -> ctypes.c_void_p:
         """Create a server manager instance.
 
         Returns:
-            Server manager handle as an integer
+            Server manager handle as a c_void_p
 
         Raises:
             RuntimeError: If the server manager cannot be created
@@ -454,17 +451,21 @@ class KMCPBinding:
         manager = self.lib.kmcp_server_create()
         if not manager:
             raise RuntimeError("Failed to create server manager")
-        return manager
+        return ctypes.c_void_p(manager)
 
-    def destroy_server_manager(self, manager: int):
-        """Destroy a server manager instance."""
+    def destroy_server_manager(self, manager: ctypes.c_void_p):
+        """Destroy a server manager instance.
+
+        Args:
+            manager: Server manager handle as a c_void_p
+        """
         self.lib.kmcp_server_destroy(manager)
 
-    def add_server(self, manager: int, config: dict) -> int:
+    def add_server(self, manager: ctypes.c_void_p, config: dict) -> int:
         """Add a server configuration to the manager.
 
         Args:
-            manager: Server manager handle
+            manager: Server manager handle as a c_void_p
             config: Server configuration dictionary
 
         Returns:
@@ -479,11 +480,11 @@ class KMCPBinding:
             raise RuntimeError(f"Failed to add server with error code {result}")
         return result
 
-    def connect_servers(self, manager: int) -> int:
+    def connect_servers(self, manager: ctypes.c_void_p) -> int:
         """Connect to all servers in the manager.
 
         Args:
-            manager: Server manager handle
+            manager: Server manager handle as a c_void_p
 
         Returns:
             Number of connected servers
@@ -496,15 +497,22 @@ class KMCPBinding:
             raise RuntimeError(f"Failed to connect servers with error code {result}")
         return result
 
-    def disconnect_servers(self, manager: int) -> int:
-        """Disconnect from all servers in the manager."""
+    def disconnect_servers(self, manager: ctypes.c_void_p) -> int:
+        """Disconnect from all servers in the manager.
+
+        Args:
+            manager: Server manager handle as a c_void_p
+
+        Returns:
+            0 on success
+        """
         return self.lib.kmcp_server_disconnect(manager)
 
-    def select_tool_server(self, manager: int, tool_name: str) -> int:
+    def select_tool_server(self, manager: ctypes.c_void_p, tool_name: str) -> int:
         """Select a server for a tool.
 
         Args:
-            manager: Server manager handle
+            manager: Server manager handle as a c_void_p
             tool_name: Name of the tool
 
         Returns:
@@ -518,11 +526,11 @@ class KMCPBinding:
             raise RuntimeError(f"Failed to select server for tool {tool_name} with error code {result}")
         return result
 
-    def select_resource_server(self, manager: int, resource_uri: str) -> int:
+    def select_resource_server(self, manager: ctypes.c_void_p, resource_uri: str) -> int:
         """Select a server for a resource.
 
         Args:
-            manager: Server manager handle
+            manager: Server manager handle as a c_void_p
             resource_uri: URI of the resource
 
         Returns:
@@ -536,15 +544,15 @@ class KMCPBinding:
             raise RuntimeError(f"Failed to select server for resource {resource_uri} with error code {result}")
         return result
 
-    def get_server_connection(self, manager: int, index: int) -> int:
+    def get_server_connection(self, manager: ctypes.c_void_p, index: int) -> ctypes.c_void_p:
         """Get a server connection.
 
         Args:
-            manager: Server manager handle
+            manager: Server manager handle as a c_void_p
             index: Server index
 
         Returns:
-            Connection handle as an integer
+            Connection handle as a c_void_p
 
         Raises:
             RuntimeError: If the connection cannot be retrieved
@@ -552,17 +560,24 @@ class KMCPBinding:
         result = self.lib.kmcp_server_get_connection(manager, index)
         if not result:
             raise RuntimeError(f"Failed to get server connection for index {index}")
-        return result
+        return ctypes.c_void_p(result)
 
-    def get_server_count(self, manager: int) -> int:
-        """Get the number of servers in the manager."""
+    def get_server_count(self, manager: ctypes.c_void_p) -> int:
+        """Get the number of servers in the manager.
+
+        Args:
+            manager: Server manager handle as a c_void_p
+
+        Returns:
+            Number of servers in the manager
+        """
         return self.lib.kmcp_server_get_count(manager)
 
-    def reconnect_server(self, manager: int, server_index: int, max_attempts: int, retry_interval_ms: int) -> int:
+    def reconnect_server(self, manager: ctypes.c_void_p, server_index: int, max_attempts: int, retry_interval_ms: int) -> int:
         """Reconnect to a server.
 
         Args:
-            manager: Server manager handle
+            manager: Server manager handle as a c_void_p
             server_index: Server index
             max_attempts: Maximum number of reconnection attempts
             retry_interval_ms: Interval between reconnection attempts in milliseconds
