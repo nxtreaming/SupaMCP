@@ -6,17 +6,19 @@ import ctypes
 import json
 from typing import Optional
 
-# 根据平台选择正确的libc库
-if sys.platform == 'win32':
-    libc = ctypes.cdll.msvcrt
-elif sys.platform == 'darwin':
-    libc = ctypes.CDLL('libc.dylib')
-else:  # Linux and other Unix-like systems
-    libc = ctypes.CDLL('libc.so.6')
+# Remove libc import since we'll use kmcp_free instead
+
+# choose the correct libc
+# if sys.platform == 'win32':
+#     libc = ctypes.cdll.msvcrt
+# elif sys.platform == 'darwin':
+#     libc = ctypes.CDLL('libc.dylib')
+# else:  # Linux and other Unix-like systems
+#     libc = ctypes.CDLL('libc.so.6')
 
 # Explicitly specify libc.free parameter and return types
-libc.free.argtypes = [ctypes.c_void_p]
-libc.free.restype = None
+# libc.free.argtypes = [ctypes.c_void_p]
+# libc.free.restype = None
 
 # Structure definitions for future use
 class KMCPEventHandler(ctypes.Structure):
@@ -85,8 +87,8 @@ class KMCPBinding:
             except OSError as e:
                 raise OSError(f"Could not load KMCP library: {e}")
 
-            # Set up function prototypes
-            self._setup_mcp_common_functions()
+            # Set up function prototypes including kmcp_free
+            self._setup_functions()
 
             # Initialize logging
             result = self.mcp_common.mcp_log_init(None, 1)  # MCP_LOG_LEVEL_INFO = 2
@@ -103,7 +105,7 @@ class KMCPBinding:
             raise RuntimeError(f"Failed to initialize KMCP binding: {e}")
 
         # Set up function prototypes
-        self._setup_functions()
+        # self._setup_mcp_common_functions()
 
     def __del__(self):
         """Clean up KMCP binding."""
@@ -131,6 +133,10 @@ class KMCPBinding:
 
     def _setup_functions(self):
         """Set up function prototypes."""
+        # Memory management
+        self.lib.kmcp_free.argtypes = [ctypes.c_void_p]
+        self.lib.kmcp_free.restype = None
+
         # Version functions
         self.lib.kmcp_get_version.restype = ctypes.c_char_p
         self.lib.kmcp_get_version.argtypes = []
@@ -166,10 +172,6 @@ class KMCPBinding:
             ctypes.POINTER(ctypes.c_void_p)   # content_type (char**)
         ]
         self.lib.kmcp_client_get_resource.restype = ctypes.c_int
-
-        # Define kmcp_free function
-        self.lib.kmcp_free.argtypes = [ctypes.c_void_p]  # void*
-        self.lib.kmcp_free.restype = None  # void
 
         # Server functions
         self.lib.kmcp_server_create.restype = ctypes.c_void_p
@@ -452,12 +454,12 @@ class KMCPBinding:
     def get_version(self) -> str:
         """Get KMCP version."""
         version = self.lib.kmcp_get_version()
-        return version.decode() if version else ""
+        return version.decode('utf-8') if version else ""
 
     def get_build_info(self) -> str:
         """Get KMCP build information."""
-        build_info = self.lib.kmcp_get_build_info()
-        return build_info.decode() if build_info else ""
+        info = self.lib.kmcp_get_build_info()
+        return info.decode('utf-8') if info else ""
 
     def _create_server_config(self, config: dict) -> ServerConfig:
         """Create a server configuration structure."""
