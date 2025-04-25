@@ -52,13 +52,13 @@ def test_version(kmcp_binding):
     print("\nTesting version information...")
 
     # Test version string
-    version = kmcp_binding.get_version()
+    version = kmcp_binding.version
     assert version is not None
     assert len(version) > 0
     print(f"PASS: Version string: {version}")
 
     # Test build info string
-    build_info = kmcp_binding.get_build_info()
+    build_info = kmcp_binding.build_info
     assert build_info is not None
     assert len(build_info) > 0
     print(f"PASS: Build info: {build_info}")

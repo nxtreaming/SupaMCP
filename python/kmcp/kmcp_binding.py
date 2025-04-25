@@ -82,8 +82,13 @@ class KMCPProcessInfo(ctypes.Structure):
 class KMCPBinding:
     """KMCP library binding using ctypes."""
 
-    def __init__(self):
-        """Initialize KMCP binding."""
+    def __init__(self) -> None:
+        """Initialize KMCP binding.
+
+        Raises:
+            OSError: If the KMCP or MCP Common libraries cannot be loaded
+            RuntimeError: If initialization fails
+        """
         # Add DLL directories to PATH on Windows
         lib_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'build', 'lib'))
 
@@ -124,16 +129,23 @@ class KMCPBinding:
         # Set up function prototypes
         self._setup_mcp_common_functions()
 
-    def __del__(self):
-        """Clean up KMCP binding."""
+    def __del__(self) -> None:
+        """Clean up KMCP binding.
+
+        This method is called when the object is about to be destroyed.
+        It cleans up resources allocated by the KMCP binding.
+        """
         if hasattr(self, 'mcp_common'):
             # Clean up thread-local arena
             self.mcp_common.mcp_arena_destroy_current_thread()
             # Clean up logging
             self.mcp_common.mcp_log_close()
 
-    def _setup_mcp_common_functions(self):
-        """Set up mcp_common function prototypes."""
+    def _setup_mcp_common_functions(self) -> None:
+        """Set up mcp_common function prototypes.
+
+        This method sets up the function prototypes for the MCP Common library.
+        """
         # Logging functions
         self.mcp_common.mcp_log_init.restype = ctypes.c_int
         self.mcp_common.mcp_log_init.argtypes = [ctypes.c_char_p, ctypes.c_int]
@@ -148,8 +160,11 @@ class KMCPBinding:
         self.mcp_common.mcp_arena_destroy_current_thread.restype = None
         self.mcp_common.mcp_arena_destroy_current_thread.argtypes = []
 
-    def _setup_functions(self):
-        """Set up function prototypes."""
+    def _setup_functions(self) -> None:
+        """Set up function prototypes.
+
+        This method sets up the function prototypes for the KMCP library.
+        """
         # Memory management
         self.lib.kmcp_free.argtypes = [ctypes.c_void_p]
         self.lib.kmcp_free.restype = None
@@ -397,7 +412,7 @@ class KMCPBinding:
 
         return response
 
-    def get_resource(self, client: ctypes.c_void_p, resource_uri: str) -> tuple:
+    def get_resource(self, client: ctypes.c_void_p, resource_uri: str) -> tuple[str, str]:
         """Get a resource.
 
         Args:
@@ -593,17 +608,19 @@ class KMCPBinding:
             raise RuntimeError(f"Failed to reconnect server {server_index} with error code {result}")
         return result
 
-    def get_version(self) -> str:
+    @property
+    def version(self) -> str:
         """Get KMCP version."""
         version = self.lib.kmcp_get_version()
         return version.decode('utf-8') if version else ""
 
-    def get_build_info(self) -> str:
+    @property
+    def build_info(self) -> str:
         """Get KMCP build information."""
         info = self.lib.kmcp_get_build_info()
         return info.decode('utf-8') if info else ""
 
-    def _free_memory(self, ptr):
+    def _free_memory(self, ptr: ctypes.c_void_p) -> None:
         """Free memory allocated by KMCP.
 
         Args:
@@ -612,8 +629,15 @@ class KMCPBinding:
         if ptr and ptr.value:
             self.lib.kmcp_free(ptr)
 
-    def _create_server_config(self, config: dict) -> ServerConfig:
-        """Create a server configuration structure."""
+    def _create_server_config(self, config: dict) -> 'KMCPBinding.ServerConfig':
+        """Create a server configuration structure.
+
+        Args:
+            config: Server configuration dictionary
+
+        Returns:
+            Server configuration structure
+        """
         # Convert args to array if present
         args = config.get("args", [])
         args_array = (ctypes.c_char_p * len(args))()
@@ -627,7 +651,7 @@ class KMCPBinding:
             env_array[i] = var.encode() if var is not None else b""
 
         # Handle None values for string fields
-        def encode_or_empty(value):
+        def encode_or_empty(value: Optional[str]) -> bytes:
             if value is None:
                 return b""
             return value.encode() if isinstance(value, str) else b""
