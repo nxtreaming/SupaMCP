@@ -151,6 +151,16 @@ KMCP_API kmcp_server_manager_t* kmcp_client_get_manager(kmcp_client_t* client);
  */
 KMCP_API void kmcp_client_close(kmcp_client_t* client);
 
+/**
+ * @brief Free memory allocated by KMCP
+ *
+ * Frees memory allocated by KMCP functions.
+ * This is a wrapper around the standard free() function.
+ *
+ * @param ptr Pointer to memory to free (can be NULL)
+ */
+KMCP_API void kmcp_free(void* ptr);
+
 #ifdef __cplusplus
 }
 #endif

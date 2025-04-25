@@ -148,20 +148,24 @@ class KMCPBinding:
         self.lib.kmcp_client_create_from_file.restype = ctypes.c_void_p
 
         self.lib.kmcp_client_call_tool.argtypes = [
-            ctypes.c_void_p,      # client
-            ctypes.c_char_p,      # tool_name
-            ctypes.c_char_p,      # params_json
-            ctypes.POINTER(ctypes.c_char_p)  # result_json
+            ctypes.c_void_p,                # client
+            ctypes.c_char_p,                # tool_name
+            ctypes.c_char_p,                # params_json
+            ctypes.POINTER(ctypes.c_void_p)  # result_json (char**)
         ]
         self.lib.kmcp_client_call_tool.restype = ctypes.c_int
 
         self.lib.kmcp_client_get_resource.argtypes = [
-            ctypes.c_void_p,      # client
-            ctypes.c_char_p,      # resource_uri
-            ctypes.POINTER(ctypes.c_char_p),  # content
-            ctypes.POINTER(ctypes.c_char_p)   # content_type
+            ctypes.c_void_p,                # client
+            ctypes.c_char_p,                # resource_uri
+            ctypes.POINTER(ctypes.c_void_p),  # content (char**)
+            ctypes.POINTER(ctypes.c_void_p)   # content_type (char**)
         ]
         self.lib.kmcp_client_get_resource.restype = ctypes.c_int
+
+        # Define kmcp_free function
+        self.lib.kmcp_free.argtypes = [ctypes.c_void_p]  # void*
+        self.lib.kmcp_free.restype = None  # void
 
         # Server functions
         self.lib.kmcp_server_create.restype = ctypes.c_void_p
@@ -320,35 +324,38 @@ class KMCPBinding:
         # Convert request to JSON
         request_json = json.dumps(request).encode()
 
-        # Create a buffer to store the result
-        result_json = ctypes.c_char_p()
+        # Create a pointer to receive the result string
+        result_json_ptr = ctypes.c_void_p()
 
         # Call tool
         result = self.lib.kmcp_client_call_tool(
             ctypes.c_void_p(client),  # Convert to void pointer
             tool_name.encode(),
             request_json,
-            ctypes.byref(result_json)
+            ctypes.byref(result_json_ptr)
         )
         if result != 0:
             raise RuntimeError(f"Failed to call tool {tool_name} with error code {result}")
 
         # Parse response
-        if not result_json.value:
+        if not result_json_ptr:
             return {"error": "No response from tool"}
 
+        # Convert void* to char* and decode
+        result_json_str = ctypes.cast(result_json_ptr, ctypes.c_char_p).value
+        if not result_json_str:
+            return {"error": "Empty response from tool"}
+
         try:
-            response_text = result_json.value.decode()
+            response_text = result_json_str.decode()
             response = json.loads(response_text)
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
-            # Free memory before raising exception
-            if result_json.value:
-                libc.free(result_json)
+            # We don't need to free memory here, as we'll do it at the end of the function
             raise RuntimeError(f"Failed to parse tool response: {e}")
 
-        # Free memory
-        if result_json.value:
-            libc.free(result_json)
+        # Free memory using kmcp_free
+        if result_json_ptr.value:
+            self.lib.kmcp_free(result_json_ptr)
 
         return response
 
@@ -366,29 +373,33 @@ class KMCPBinding:
             RuntimeError: If the resource cannot be retrieved
         """
         # Create buffers to store the result
-        content = ctypes.c_char_p()
-        content_type = ctypes.c_char_p()
+        content_ptr = ctypes.c_void_p()
+        content_type_ptr = ctypes.c_void_p()
 
         # Call get_resource
         result = self.lib.kmcp_client_get_resource(
             ctypes.c_void_p(client),  # Convert to void pointer
             resource_uri.encode(),
-            ctypes.byref(content),
-            ctypes.byref(content_type)
+            ctypes.byref(content_ptr),
+            ctypes.byref(content_type_ptr)
         )
 
         if result != 0:
             raise RuntimeError(f"Failed to get resource {resource_uri} with error code {result}")
 
-        # Get the values
-        content_value = content.value.decode() if content.value else ""
-        content_type_value = content_type.value.decode() if content_type.value else ""
+        # Convert void* to char* and decode
+        content_str = ctypes.cast(content_ptr, ctypes.c_char_p).value if content_ptr else None
+        content_type_str = ctypes.cast(content_type_ptr, ctypes.c_char_p).value if content_type_ptr else None
 
-        # Free memory
-        if content.value:
-            libc.free(content)
-        if content_type.value:
-            libc.free(content_type)
+        # Get the values
+        content_value = content_str.decode() if content_str else ""
+        content_type_value = content_type_str.decode() if content_type_str else ""
+
+        # Free memory using kmcp_free
+        if content_ptr.value:
+            self.lib.kmcp_free(content_ptr)
+        if content_type_ptr.value:
+            self.lib.kmcp_free(content_type_ptr)
 
         return content_value, content_type_value
 

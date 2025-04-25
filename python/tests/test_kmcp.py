@@ -5,6 +5,7 @@ import json
 import pytest
 from kmcp.kmcp_binding import kmcp
 
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_tests():
     """Setup for all tests."""
@@ -147,48 +148,157 @@ def test_tool_call(kmcp_binding, example_config):
     """Test tool call functionality."""
     print("\nTesting tool call...")
 
-    # Create client
-    client = None
-    try:
-        client = kmcp_binding.create_client(example_config)
-        assert client != 0, "Failed to create client"
+    # Create a temporary config file
+    config_file = "test_config.json"
 
-        # Try to call a tool
+    try:
+        # Write config to file
+        print(f"Writing config to file: {config_file}")
+        with open(config_file, "w") as f:
+            json.dump(example_config, f, indent=2)
+
+        print(f"Config file created successfully.")
+
+        # Create client
+        client = None
         try:
-            result = kmcp_binding.call_tool(client, "echo", {"text": "Hello, World!"})
-            print(f"Tool call result: {result}")
-            assert "text" in result, "Expected 'text' field in response"
-        except RuntimeError as e:
-            # This is expected if no real server is running
-            print(f"Failed to call tool, this is expected if no real server is running: {e}")
+            # Create client from file (same as in test_client_create_from_file)
+            print("Creating client from file...")
+            client = kmcp_binding.create_client_from_file(config_file)
+            assert client != 0, "Failed to create client from file"
+            print(f"Client created successfully: {client}")
+
+            # Get server manager
+            manager = kmcp_binding.get_server_manager(client)
+            assert manager != 0, "Failed to get server manager"
+            print(f"Server manager obtained: {manager}")
+
+            # Get server count before connecting
+            server_count = kmcp_binding.get_server_count(manager)
+            print(f"Server count before connecting: {server_count}")
+
+            # Connect to servers
+            print("Connecting to servers...")
+            try:
+                result = kmcp_binding.connect_servers(manager)
+                print(f"Connect servers result: {result}")
+
+                # Get server count after connecting
+                server_count = kmcp_binding.get_server_count(manager)
+                print(f"Server count after connecting: {server_count}")
+
+                # Try to select the echo tool server
+                try:
+                    tool_server = kmcp_binding.select_tool_server(manager, "echo")
+                    print(f"Selected tool server for 'echo': {tool_server}")
+                except Exception as e:
+                    print(f"Warning: Failed to select tool server for 'echo': {e}")
+            except Exception as e:
+                print(f"Warning: Failed to connect to servers: {e}")
+
+            # Try to call a tool
+            print("Calling 'echo' tool...")
+            try:
+                result = kmcp_binding.call_tool(client, "echo", {"text": "Hello, World!"})
+                print(f"Tool call result: {result}")
+                # Check for 'content' field instead of 'text'
+                assert "content" in result, "Expected 'content' field in response"
+                assert result["content"] == "Hello, World!", "Expected echo to return the input text"
+                print("PASS: Successfully called tool")
+            except RuntimeError as e:
+                print(f"ERROR: Failed to call tool: {e}")
+
+                # Try to get more information about available tools
+                try:
+                    # Try to list tools if available
+                    print("Attempting to list available tools...")
+                    # This is just a placeholder - the actual method might be different
+                    # or might not exist in the current API
+                    if hasattr(kmcp_binding, 'list_tools'):
+                        tools = kmcp_binding.list_tools(client)
+                        print(f"Available tools: {tools}")
+                except Exception as list_error:
+                    print(f"Could not list tools: {list_error}")
+
+                raise  # Re-raise the exception to fail the test
+        finally:
+            # Close client if it was created
+            if client:
+                kmcp_binding.close_client(client)
     finally:
-        # Close client if it was created
-        if client:
-            kmcp_binding.close_client(client)
+        # Clean up config file
+        if os.path.exists(config_file):
+            print(f"Removing config file: {config_file}")
+            os.remove(config_file)
+
         print("PASS: Tool call test completed")
 
 def test_get_resource(kmcp_binding, example_config):
     """Test get resource functionality."""
     print("\nTesting get resource...")
 
-    # Create client
-    client = None
-    try:
-        client = kmcp_binding.create_client(example_config)
-        assert client != 0, "Failed to create client"
+    # Create a temporary config file
+    config_file = "test_config.json"
 
-        # Try to get a resource
+    try:
+        # Write config to file
+        print(f"Writing config to file: {config_file}")
+        with open(config_file, "w") as f:
+            json.dump(example_config, f, indent=2)
+
+        print(f"Config file created successfully.")
+
+        # Create client
+        client = None
         try:
-            content, content_type = kmcp_binding.get_resource(client, "example://hello")
-            print(f"Resource content: {content}")
-            print(f"Content type: {content_type}")
-        except RuntimeError as e:
-            # This is expected if no real server is running
-            print(f"Failed to get resource, this is expected if no real server is running: {e}")
+            # Create client from file (same as in test_client_create_from_file)
+            print("Creating client from file...")
+            client = kmcp_binding.create_client_from_file(config_file)
+            assert client != 0, "Failed to create client from file"
+            print(f"Client created successfully: {client}")
+
+            # Get server manager
+            manager = kmcp_binding.get_server_manager(client)
+            assert manager != 0, "Failed to get server manager"
+            print(f"Server manager obtained: {manager}")
+
+            # Get server count before connecting
+            server_count = kmcp_binding.get_server_count(manager)
+            print(f"Server count before connecting: {server_count}")
+
+            # Connect to servers
+            print("Connecting to servers...")
+            try:
+                result = kmcp_binding.connect_servers(manager)
+                print(f"Connect servers result: {result}")
+
+                # Get server count after connecting
+                server_count = kmcp_binding.get_server_count(manager)
+                print(f"Server count after connecting: {server_count}")
+            except Exception as e:
+                print(f"Warning: Failed to connect to servers: {e}")
+
+            # Try to get a resource
+            print("Getting resource 'example://hello'...")
+            try:
+                content, content_type = kmcp_binding.get_resource(client, "example://hello")
+                print(f"Resource content: {content}")
+                print(f"Content type: {content_type}")
+                assert content, "Expected non-empty content"
+                print("PASS: Successfully retrieved resource")
+            except RuntimeError as e:
+                print(f"ERROR: Failed to get resource: {e}")
+                raise  # Re-raise the exception to fail the test
+        finally:
+            # Close client if it was created
+            if client:
+                kmcp_binding.close_client(client)
     finally:
-        # Close client if it was created
-        if client:
-            kmcp_binding.close_client(client)
+        # Clean up config file
+        if os.path.exists(config_file):
+            print(f"Removing config file: {config_file}")
+            os.remove(config_file)
+
         print("PASS: Get resource test completed")
 
 def test_server_manager_operations(kmcp_binding):

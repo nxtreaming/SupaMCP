@@ -688,3 +688,9 @@ void kmcp_client_close(kmcp_client_t* client) {
     free(client);
     mcp_log_info("KMCP client closed successfully");
 }
+
+void kmcp_free(void* ptr) {
+    if (ptr) {
+        free(ptr);
+    }
+}
