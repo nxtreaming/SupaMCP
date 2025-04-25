@@ -328,7 +328,14 @@ class KMCPBinding:
         return manager
 
     def close_client(self, client: int) -> None:
-        """Close a client."""
+        """Close a client.
+
+        Args:
+            client: Client handle
+
+        Raises:
+            RuntimeError: If the client cannot be closed
+        """
         if client and client != 0:
             try:
                 # Convert to void pointer with explicit check
@@ -336,11 +343,24 @@ class KMCPBinding:
                 if client_ptr:
                     self.lib.kmcp_client_close(client_ptr)
             except Exception as e:
-                # Use logging instead of print for errors
-                logging.warning(f"Error closing client: {e}")
+                # Log the error and raise an exception
+                logging.error(f"Error closing client: {e}")
+                raise RuntimeError(f"Failed to close client: {e}")
 
     def call_tool(self, client: int, tool_name: str, request: dict) -> dict:
-        """Call a tool."""
+        """Call a tool.
+
+        Args:
+            client: Client handle
+            tool_name: Name of the tool to call
+            request: Request data as a dictionary
+
+        Returns:
+            Response data as a dictionary
+
+        Raises:
+            RuntimeError: If the tool call fails or the response cannot be parsed
+        """
         # Convert request to JSON
         request_json = json.dumps(request).encode()
 
@@ -359,12 +379,13 @@ class KMCPBinding:
 
         # Parse response
         if not result_json_ptr:
-            return {"error": "No response from tool"}
+            raise RuntimeError("No response from tool")
 
         # Convert void* to char* and decode
         result_json_str = ctypes.cast(result_json_ptr, ctypes.c_char_p).value
         if not result_json_str:
-            return {"error": "Empty response from tool"}
+            self._free_memory(result_json_ptr)
+            raise RuntimeError("Empty response from tool")
 
         try:
             response_text = result_json_str.decode()
@@ -422,8 +443,17 @@ class KMCPBinding:
         return content_value, content_type_value
 
     def create_server_manager(self) -> int:
-        """Create a server manager instance."""
+        """Create a server manager instance.
+
+        Returns:
+            Server manager handle as an integer
+
+        Raises:
+            RuntimeError: If the server manager cannot be created
+        """
         manager = self.lib.kmcp_server_create()
+        if not manager:
+            raise RuntimeError("Failed to create server manager")
         return manager
 
     def destroy_server_manager(self, manager: int):
@@ -431,37 +461,122 @@ class KMCPBinding:
         self.lib.kmcp_server_destroy(manager)
 
     def add_server(self, manager: int, config: dict) -> int:
-        """Add a server configuration to the manager."""
+        """Add a server configuration to the manager.
+
+        Args:
+            manager: Server manager handle
+            config: Server configuration dictionary
+
+        Returns:
+            Server index as an integer
+
+        Raises:
+            RuntimeError: If the server cannot be added
+        """
         server_config = self._create_server_config(config)
-        return self.lib.kmcp_server_add(manager, ctypes.byref(server_config))
+        result = self.lib.kmcp_server_add(manager, ctypes.byref(server_config))
+        if result < 0:
+            raise RuntimeError(f"Failed to add server with error code {result}")
+        return result
 
     def connect_servers(self, manager: int) -> int:
-        """Connect to all servers in the manager."""
-        return self.lib.kmcp_server_connect(manager)
+        """Connect to all servers in the manager.
+
+        Args:
+            manager: Server manager handle
+
+        Returns:
+            Number of connected servers
+
+        Raises:
+            RuntimeError: If the servers cannot be connected
+        """
+        result = self.lib.kmcp_server_connect(manager)
+        if result < 0:
+            raise RuntimeError(f"Failed to connect servers with error code {result}")
+        return result
 
     def disconnect_servers(self, manager: int) -> int:
         """Disconnect from all servers in the manager."""
         return self.lib.kmcp_server_disconnect(manager)
 
     def select_tool_server(self, manager: int, tool_name: str) -> int:
-        """Select a server for a tool."""
-        return self.lib.kmcp_server_select_tool(manager, tool_name.encode())
+        """Select a server for a tool.
+
+        Args:
+            manager: Server manager handle
+            tool_name: Name of the tool
+
+        Returns:
+            Server index as an integer
+
+        Raises:
+            RuntimeError: If no server can be selected for the tool
+        """
+        result = self.lib.kmcp_server_select_tool(manager, tool_name.encode())
+        if result < 0:
+            raise RuntimeError(f"Failed to select server for tool {tool_name} with error code {result}")
+        return result
 
     def select_resource_server(self, manager: int, resource_uri: str) -> int:
-        """Select a server for a resource."""
-        return self.lib.kmcp_server_select_resource(manager, resource_uri.encode())
+        """Select a server for a resource.
+
+        Args:
+            manager: Server manager handle
+            resource_uri: URI of the resource
+
+        Returns:
+            Server index as an integer
+
+        Raises:
+            RuntimeError: If no server can be selected for the resource
+        """
+        result = self.lib.kmcp_server_select_resource(manager, resource_uri.encode())
+        if result < 0:
+            raise RuntimeError(f"Failed to select server for resource {resource_uri} with error code {result}")
+        return result
 
     def get_server_connection(self, manager: int, index: int) -> int:
-        """Get a server connection."""
-        return self.lib.kmcp_server_get_connection(manager, index)
+        """Get a server connection.
+
+        Args:
+            manager: Server manager handle
+            index: Server index
+
+        Returns:
+            Connection handle as an integer
+
+        Raises:
+            RuntimeError: If the connection cannot be retrieved
+        """
+        result = self.lib.kmcp_server_get_connection(manager, index)
+        if not result:
+            raise RuntimeError(f"Failed to get server connection for index {index}")
+        return result
 
     def get_server_count(self, manager: int) -> int:
         """Get the number of servers in the manager."""
         return self.lib.kmcp_server_get_count(manager)
 
     def reconnect_server(self, manager: int, server_index: int, max_attempts: int, retry_interval_ms: int) -> int:
-        """Reconnect to a server."""
-        return self.lib.kmcp_server_reconnect(manager, server_index, max_attempts, retry_interval_ms)
+        """Reconnect to a server.
+
+        Args:
+            manager: Server manager handle
+            server_index: Server index
+            max_attempts: Maximum number of reconnection attempts
+            retry_interval_ms: Interval between reconnection attempts in milliseconds
+
+        Returns:
+            0 on success, negative value on failure
+
+        Raises:
+            RuntimeError: If the server cannot be reconnected
+        """
+        result = self.lib.kmcp_server_reconnect(manager, server_index, max_attempts, retry_interval_ms)
+        if result < 0:
+            raise RuntimeError(f"Failed to reconnect server {server_index} with error code {result}")
+        return result
 
     def get_version(self) -> str:
         """Get KMCP version."""
