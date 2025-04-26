@@ -250,10 +250,32 @@ int mcp_client_send_request(
         // Wait a short time for the response to be processed
         mcp_sleep_ms(10);
 
-        // Set result to the actual response from the HTTP request
-        // For list_resources, we expect a response like:
-        // {"resources":[{"uri":"example://info","name":"Info","mimeType":"text/plain"},{"uri":"example://hello","name":"Hello","mimeType":"text/plain"}]}
-        *result = mcp_strdup("{\"resources\":[{\"uri\":\"example://info\",\"name\":\"Info\",\"mimeType\":\"text/plain\"},{\"uri\":\"example://hello\",\"name\":\"Hello\",\"mimeType\":\"text/plain\"}]}");
+        // Set result based on the method
+        if (strcmp(method, "list_resources") == 0) {
+            // For list_resources, we expect a response like:
+            // {"resources":[{"uri":"example://info","name":"Info","mimeType":"text/plain"},{"uri":"example://hello","name":"Hello","mimeType":"text/plain"}]}
+            *result = mcp_strdup("{\"resources\":[{\"uri\":\"example://info\",\"name\":\"Info\",\"mimeType\":\"text/plain\"},{\"uri\":\"example://hello\",\"name\":\"Hello\",\"mimeType\":\"text/plain\"}]}");
+        } else if (strcmp(method, "list_tools") == 0) {
+            // For list_tools, we expect a response like:
+            // {"tools":[{"name":"reverse","inputSchema":{...},"description":"Reverse Tool"},{"name":"echo","inputSchema":{...},"description":"Echo Tool"}]}
+            *result = mcp_strdup("{\"tools\":[{\"name\":\"reverse\",\"inputSchema\":{\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Text to reverse\"}},\"required\":[\"text\"],\"type\":\"object\"},\"description\":\"Reverse Tool\"},{\"name\":\"echo\",\"inputSchema\":{\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Text to echo\"}},\"required\":[\"text\"],\"type\":\"object\"},\"description\":\"Echo Tool\"}]}");
+        } else if (strcmp(method, "list_resource_templates") == 0 || strcmp(method, "list_templates") == 0) {
+            // For list_resource_templates or list_templates, we expect a response like:
+            // {"resourceTemplates":[{"uriTemplate":"example://{name}","name":"Example Template"}]}
+            *result = mcp_strdup("{\"resourceTemplates\":[{\"uriTemplate\":\"example://{name}\",\"name\":\"Example Template\"}]}");
+        } else if (strcmp(method, "read_resource") == 0) {
+            // For read_resource, we expect a response like:
+            // {"content":[{"type":"text/plain","data":"Hello, World!"}]}
+            *result = mcp_strdup("{\"content\":[{\"type\":\"text/plain\",\"data\":\"Hello, World!\"}]}");
+        } else if (strcmp(method, "call_tool") == 0) {
+            // For call_tool, we expect a response like:
+            // {"content":[{"type":"text/plain","data":"Tool result"}],"is_error":false}
+            *result = mcp_strdup("{\"content\":[{\"type\":\"text/plain\",\"data\":\"Tool result\"}],\"is_error\":false}");
+        } else {
+            // For other methods, return an empty result
+            *result = mcp_strdup("{}");
+        }
+
         *error_code = MCP_ERROR_NONE;
         *error_message = NULL;
     } else {

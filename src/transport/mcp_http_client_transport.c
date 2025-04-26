@@ -471,14 +471,10 @@ static int http_client_transport_send(mcp_transport_t* transport, const void* da
         }
 
         // Log the cleaned response data for debugging
-        mcp_log_debug("HTTP client transport received response: %s", clean_json);
-
         // For HTTP transport, we don't call the message callback here
         // because we're handling the response directly in mcp_client_send_request
         // This avoids the "Received response with unexpected ID" warning
-
-        // Just log the response for debugging
-        mcp_log_debug("HTTP client transport received response (not calling callback): %s", clean_json);
+        mcp_log_debug("HTTP client transport received response: %s", clean_json);
 
         // Free the JSON data
         free(clean_json);
