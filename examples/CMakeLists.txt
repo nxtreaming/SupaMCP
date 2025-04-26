@@ -262,7 +262,7 @@ else()
 endif()
 
 # HTTP Server Example with SSE
-add_executable(http_server http_server.c)
+add_executable(http_server http_server.c http_static_res.c)
 target_link_libraries(http_server PRIVATE mcp_common)
 # Link platform-specific libraries needed by the transport
 if(WIN32)
