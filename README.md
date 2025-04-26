@@ -5,11 +5,12 @@ A cross-platform implementation of the Model Context Protocol (MCP) server/clien
 ## Features
 
 - Cross-platform support (Windows, macOS, Linux)
-- Multiple transport options (stdio, TCP)
+- Multiple transport options (stdio, TCP, HTTP, WebSocket)
 - Resource and tool support
 - **MCP Gateway Mode:** Can act as a gateway to route requests to downstream MCP servers.
+- HTTP protocol with Server-Sent Events (SSE) support
+- CORS support for web integration
 - Extensible architecture
-- WebSocket transport
 
 ## Requirements
 
@@ -24,7 +25,8 @@ The project is organized into three main components:
 1. **Common Library (mcp_common)**: Contains shared functionality used by both the server and client.
    - JSON parsing and manipulation
    - JSON-RPC message formatting and parsing
-   - Transport layer (stdio, TCP, with WebSocket placeholders for future implementation)
+   - Transport layer (stdio, TCP, HTTP, WebSocket)
+   - Server-Sent Events (SSE) support
    - Common data types and utilities
    - Connection Pooling
 
@@ -80,6 +82,7 @@ cmake --install . --config Release
 ```
 
 The build process will create:
+
 1. A static library `libmcp_common.a` (or `mcp_common.lib` on Windows)
 2. The server executable `mcp_server`
 3. The client executable `mcp_client`
@@ -125,6 +128,9 @@ mcp_server
 # Run with TCP transport
 mcp_server --tcp --host 127.0.0.1 --port 8080
 
+# Run with HTTP transport
+mcp_server --http --host 127.0.0.1 --port 8080
+
 # Run with logging to file
 mcp_server --log-file /path/to/log/file.log
 
@@ -143,6 +149,7 @@ mcp_server --help
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--tcp` | Use TCP transport | - |
+| `--http` | Use HTTP transport with SSE support | - |
 | `--stdio` | Use stdio transport (default) | - |
 | `--host HOST` | Host to bind to | 127.0.0.1 |
 | `--port PORT` | Port to bind to | 8080 |
@@ -250,6 +257,13 @@ The server provides the following example tools:
 
 - `echo`: Echoes back the input text
 - `reverse`: Reverses the input text
+
+## Documentation
+
+Additional documentation is available in the `docs` directory:
+
+- [HTTP Protocol Implementation Optimization](docs/http_protocol_optimization.md): Details about the optimizations made to the HTTP protocol implementation in SupaMCP and how to test these optimizations.
+- [HTTP Protocol](docs/http_protocol.md): Comprehensive documentation of the HTTP protocol implementation in SupaMCP.
 
 ## Protocol
 

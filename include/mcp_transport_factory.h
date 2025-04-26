@@ -17,7 +17,8 @@ typedef enum mcp_transport_type {
     MCP_TRANSPORT_TCP_CLIENT,  /**< TCP client transport */
     MCP_TRANSPORT_WS_SERVER,   /**< WebSocket server transport */
     MCP_TRANSPORT_WS_CLIENT,   /**< WebSocket client transport */
-    MCP_TRANSPORT_HTTP_SERVER  /**< HTTP server transport */
+    MCP_TRANSPORT_HTTP_SERVER, /**< HTTP server transport */
+    MCP_TRANSPORT_HTTP_CLIENT  /**< HTTP client transport */
 } mcp_transport_type_t;
 
 /**
@@ -53,6 +54,16 @@ typedef union mcp_transport_config {
         const char* doc_root;     /**< Document root for serving static files (optional) */
         uint32_t timeout_ms;      /**< Connection timeout in milliseconds (0 to disable) */
     } http;
+
+    struct {
+        const char* host;         /**< Hostname or IP address to connect to */
+        uint16_t port;            /**< Port number */
+        int use_ssl;              /**< Whether to use SSL/TLS (1 for true, 0 for false) */
+        const char* cert_path;    /**< Path to SSL certificate (if use_ssl is true) */
+        const char* key_path;     /**< Path to SSL private key (if use_ssl is true) */
+        uint32_t timeout_ms;      /**< Connection timeout in milliseconds (0 to disable) */
+        const char* api_key;      /**< API key for authentication (optional) */
+    } http_client;
 
 } mcp_transport_config_t;
 

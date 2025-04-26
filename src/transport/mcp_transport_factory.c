@@ -4,6 +4,7 @@
 #include "mcp_tcp_client_transport.h"
 #include "mcp_websocket_transport.h"
 #include "mcp_http_transport.h"
+#include "mcp_http_client_transport.h"
 #include <stdlib.h>
 
 mcp_transport_t* mcp_transport_factory_create(
@@ -93,6 +94,24 @@ mcp_transport_t* mcp_transport_factory_create(
                     .timeout_ms = config->http.timeout_ms
                 };
                 return mcp_transport_http_create(&http_config);
+            }
+
+        case MCP_TRANSPORT_HTTP_CLIENT:
+            if (config == NULL) {
+                return NULL;
+            }
+            {
+                // Convert from transport factory config to HTTP client config
+                mcp_http_client_config_t http_client_config = {
+                    .host = config->http_client.host,
+                    .port = config->http_client.port,
+                    .use_ssl = config->http_client.use_ssl ? true : false,
+                    .cert_path = config->http_client.cert_path,
+                    .key_path = config->http_client.key_path,
+                    .timeout_ms = config->http_client.timeout_ms,
+                    .api_key = config->http_client.api_key
+                };
+                return mcp_transport_http_client_create_with_config(&http_client_config);
             }
 
         default:

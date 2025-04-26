@@ -14,6 +14,9 @@ struct mcp_transport {
     // Transport type (server or client)
     mcp_transport_type_enum_t type;
 
+    // Transport protocol type (TCP, HTTP, etc.)
+    mcp_transport_protocol_t protocol_type;
+
     // Function pointers for specific transport implementation
     union {
         mcp_server_transport_t server;

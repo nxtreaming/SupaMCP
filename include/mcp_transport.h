@@ -9,6 +9,17 @@ extern "C" {
 #endif
 
 /**
+ * @brief Transport protocol type enumeration.
+ */
+typedef enum {
+    MCP_TRANSPORT_PROTOCOL_UNKNOWN = 0,
+    MCP_TRANSPORT_PROTOCOL_STDIO,
+    MCP_TRANSPORT_PROTOCOL_TCP,
+    MCP_TRANSPORT_PROTOCOL_HTTP,
+    MCP_TRANSPORT_PROTOCOL_WEBSOCKET
+} mcp_transport_protocol_t;
+
+/**
  * @brief Opaque transport handle.
  *
  * The internal structure is defined in the implementation files.
@@ -151,6 +162,22 @@ int mcp_transport_receive(
  *         The returned string is owned by the transport and should not be freed by the caller.
  */
 const char* mcp_transport_get_client_ip(mcp_transport_t* transport);
+
+/**
+ * @brief Gets the transport protocol type.
+ *
+ * @param transport The transport handle.
+ * @return The transport protocol type.
+ */
+mcp_transport_protocol_t mcp_transport_get_protocol(mcp_transport_t* transport);
+
+/**
+ * @brief Sets the transport protocol type.
+ *
+ * @param transport The transport handle.
+ * @param protocol The transport protocol type.
+ */
+void mcp_transport_set_protocol(mcp_transport_t* transport, mcp_transport_protocol_t protocol);
 
 
 // --- Concrete Transport Creation Function Declarations ---

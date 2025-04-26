@@ -24,10 +24,10 @@
 #include <libwebsockets.h>
 
 // Maximum number of SSE clients
-#define MAX_SSE_CLIENTS 10000
+#define MAX_SSE_CLIENTS 50000
 
 // Maximum number of stored SSE events for replay
-#define MAX_SSE_STORED_EVENTS 1000
+#define MAX_SSE_STORED_EVENTS 5000
 
 // SSE event structure for storing events for replay
 typedef struct {
@@ -52,16 +52,25 @@ typedef struct {
     int sse_client_count;
     mcp_mutex_t* sse_mutex;
 
-    // SSE event storage for reconnection
+    // SSE event storage for reconnection (circular buffer)
     sse_event_t stored_events[MAX_SSE_STORED_EVENTS];
-    int stored_event_count;
-    int next_event_id;
+    int event_head;          // Index of the oldest event
+    int event_tail;          // Index where the next event will be stored
+    int stored_event_count;  // Current number of stored events
+    int next_event_id;       // Next event ID to assign
     mcp_mutex_t* event_mutex;
 
     // SSE heartbeat
     bool send_heartbeats;
     int heartbeat_interval_ms;
     time_t last_heartbeat;
+
+    // CORS settings
+    bool enable_cors;
+    char* cors_allow_origin;
+    char* cors_allow_methods;
+    char* cors_allow_headers;
+    int cors_max_age;
 
     // Message callback
     mcp_transport_message_callback_t message_callback;
@@ -86,6 +95,8 @@ static int http_transport_start(mcp_transport_t* transport,
 static int http_transport_stop(mcp_transport_t* transport);
 static int http_transport_destroy(mcp_transport_t* transport);
 static void* http_event_thread_func(void* arg);
+static int add_cors_headers(struct lws* wsi, http_transport_data_t* data,
+                           unsigned char** p, unsigned char* end);
 
 // Forward declaration for libwebsockets function
 int lws_http_transaction_completed(struct lws *wsi);
@@ -168,6 +179,62 @@ static int root_handler(struct lws* wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
+// Add CORS headers to HTTP response
+static int add_cors_headers(struct lws* wsi, http_transport_data_t* data,
+                           unsigned char** p, unsigned char* end) {
+    if (!data->enable_cors) {
+        return 0; // CORS is disabled, no headers to add
+    }
+
+    // Add Access-Control-Allow-Origin header
+    if (lws_add_http_header_by_name(wsi,
+                                   (unsigned char*)"Access-Control-Allow-Origin",
+                                   (unsigned char*)data->cors_allow_origin,
+                                   strlen(data->cors_allow_origin),
+                                   p, end)) {
+        return -1;
+    }
+
+    // Add Access-Control-Allow-Methods header
+    if (lws_add_http_header_by_name(wsi,
+                                   (unsigned char*)"Access-Control-Allow-Methods",
+                                   (unsigned char*)data->cors_allow_methods,
+                                   strlen(data->cors_allow_methods),
+                                   p, end)) {
+        return -1;
+    }
+
+    // Add Access-Control-Allow-Headers header
+    if (lws_add_http_header_by_name(wsi,
+                                   (unsigned char*)"Access-Control-Allow-Headers",
+                                   (unsigned char*)data->cors_allow_headers,
+                                   strlen(data->cors_allow_headers),
+                                   p, end)) {
+        return -1;
+    }
+
+    // Add Access-Control-Max-Age header
+    char max_age_str[16];
+    snprintf(max_age_str, sizeof(max_age_str), "%d", data->cors_max_age);
+    if (lws_add_http_header_by_name(wsi,
+                                   (unsigned char*)"Access-Control-Max-Age",
+                                   (unsigned char*)max_age_str,
+                                   strlen(max_age_str),
+                                   p, end)) {
+        return -1;
+    }
+
+    // Add Access-Control-Allow-Credentials header
+    if (lws_add_http_header_by_name(wsi,
+                                   (unsigned char*)"Access-Control-Allow-Credentials",
+                                   (unsigned char*)"true", 4,
+                                   p, end)) {
+        return -1;
+    }
+
+    return 0;
+}
+
 // LWS protocols
 static struct lws_protocols http_protocols[] = {
     {
@@ -222,6 +289,28 @@ mcp_transport_t* mcp_transport_http_create(const mcp_http_config_t* config) {
         data->config.doc_root = mcp_strdup(config->doc_root);
     }
 
+    // Initialize CORS settings
+    data->enable_cors = config->enable_cors;
+    if (config->cors_allow_origin) {
+        data->cors_allow_origin = mcp_strdup(config->cors_allow_origin);
+    } else {
+        data->cors_allow_origin = mcp_strdup("*"); // Default to allow all origins
+    }
+
+    if (config->cors_allow_methods) {
+        data->cors_allow_methods = mcp_strdup(config->cors_allow_methods);
+    } else {
+        data->cors_allow_methods = mcp_strdup("GET, POST, OPTIONS"); // Default methods
+    }
+
+    if (config->cors_allow_headers) {
+        data->cors_allow_headers = mcp_strdup(config->cors_allow_headers);
+    } else {
+        data->cors_allow_headers = mcp_strdup("Content-Type, Authorization"); // Default headers
+    }
+
+    data->cors_max_age = config->cors_max_age > 0 ? config->cors_max_age : 86400; // Default to 24 hours
+
     // Initialize SSE mutex
     data->sse_mutex = mcp_mutex_create();
     if (data->sse_mutex == NULL) {
@@ -247,7 +336,9 @@ mcp_transport_t* mcp_transport_http_create(const mcp_http_config_t* config) {
         return NULL;
     }
 
-    // Initialize SSE event storage
+    // Initialize SSE event storage (circular buffer)
+    data->event_head = 0;
+    data->event_tail = 0;
     data->stored_event_count = 0;
     data->next_event_id = 1;
 
@@ -392,14 +483,26 @@ static int http_transport_stop(mcp_transport_t* transport) {
 
     http_transport_data_t* data = (http_transport_data_t*)transport->transport_data;
 
+    mcp_log_info("Stopping HTTP transport...");
+
     // Set running flag to false
     data->running = false;
 
-    // Wait for event thread to exit
-    mcp_thread_join(data->event_thread, NULL);
+    // Force libwebsockets to break out of its service loop
+    if (data->context) {
+        lws_cancel_service(data->context);
+        mcp_log_info("Cancelled libwebsockets service");
+    }
+
+    // Wait for event thread to exit with a timeout
+    mcp_log_info("Waiting for HTTP event thread to exit...");
+    if (mcp_thread_join(data->event_thread, NULL) != 0) {
+        mcp_log_error("Failed to join HTTP event thread");
+    }
 
     // Destroy context
     if (data->context) {
+        mcp_log_info("Destroying libwebsockets context...");
         lws_context_destroy(data->context);
         data->context = NULL;
     }
@@ -427,18 +530,33 @@ static int http_transport_destroy(mcp_transport_t* transport) {
     if (data->config.key_path) free((void*)data->config.key_path);
     if (data->config.doc_root) free((void*)data->config.doc_root);
 
+    // Free CORS settings
+    if (data->cors_allow_origin) free(data->cors_allow_origin);
+    if (data->cors_allow_methods) free(data->cors_allow_methods);
+    if (data->cors_allow_headers) free(data->cors_allow_headers);
+
     // Free mount structure
     if (data->mount) {
         free(data->mount);
         data->mount = NULL;
     }
 
-    // Free stored SSE events
+    // Free stored SSE events (circular buffer)
     mcp_mutex_lock(data->event_mutex);
-    for (int i = 0; i < data->stored_event_count; i++) {
-        if (data->stored_events[i].id) free(data->stored_events[i].id);
-        if (data->stored_events[i].event_type) free(data->stored_events[i].event_type);
-        if (data->stored_events[i].data) free(data->stored_events[i].data);
+    if (data->stored_event_count > 0) {
+        int current = data->event_head;
+        int count = 0;
+
+        // Process all events in the buffer
+        while (count < data->stored_event_count) {
+            if (data->stored_events[current].id) free(data->stored_events[current].id);
+            if (data->stored_events[current].event_type) free(data->stored_events[current].event_type);
+            if (data->stored_events[current].data) free(data->stored_events[current].data);
+
+            // Move to the next event in the circular buffer
+            current = (current + 1) % MAX_SSE_STORED_EVENTS;
+            count++;
+        }
     }
     mcp_mutex_unlock(data->event_mutex);
 
@@ -460,7 +578,7 @@ static int http_transport_destroy(mcp_transport_t* transport) {
     return 0;
 }
 
-// Store an SSE event for replay on reconnection
+// Store an SSE event for replay on reconnection (using circular buffer)
 static void store_sse_event(http_transport_data_t* data, const char* event, const char* event_data) {
     if (data == NULL || event_data == NULL) {
         return;
@@ -471,24 +589,27 @@ static void store_sse_event(http_transport_data_t* data, const char* event, cons
     // Get the current event ID
     int event_id = data->next_event_id++;
 
-    // If we've reached the maximum number of stored events, remove the oldest one
-    if (data->stored_event_count >= MAX_SSE_STORED_EVENTS) {
-        // Free the oldest event's memory
-        if (data->stored_events[0].id) free(data->stored_events[0].id);
-        if (data->stored_events[0].event_type) free(data->stored_events[0].event_type);
-        if (data->stored_events[0].data) free(data->stored_events[0].data);
+    // If the buffer is full, free the oldest event's memory
+    if (data->stored_event_count == MAX_SSE_STORED_EVENTS) {
+        // Free the oldest event's memory (at head position)
+        if (data->stored_events[data->event_head].id)
+            free(data->stored_events[data->event_head].id);
+        if (data->stored_events[data->event_head].event_type)
+            free(data->stored_events[data->event_head].event_type);
+        if (data->stored_events[data->event_head].data)
+            free(data->stored_events[data->event_head].data);
 
-        // Shift all events down by one
-        for (int i = 0; i < data->stored_event_count - 1; i++) {
-            data->stored_events[i] = data->stored_events[i + 1];
-        }
+        // Move head forward (oldest event position)
+        data->event_head = (data->event_head + 1) % MAX_SSE_STORED_EVENTS;
 
-        // Decrement the count
-        data->stored_event_count--;
+        // Count stays the same as we're replacing an event
+    } else {
+        // Buffer is not full, increment count
+        data->stored_event_count++;
     }
 
-    // Add the new event at the end
-    int index = data->stored_event_count;
+    // Add the new event at the tail position
+    int index = data->event_tail;
 
     // Allocate and store the event ID
     char id_str[32];
@@ -504,8 +625,8 @@ static void store_sse_event(http_transport_data_t* data, const char* event, cons
     // Store the timestamp
     data->stored_events[index].timestamp = time(NULL);
 
-    // Increment the count
-    data->stored_event_count++;
+    // Move tail forward (position for next event)
+    data->event_tail = (data->event_tail + 1) % MAX_SSE_STORED_EVENTS;
 
     mcp_mutex_unlock(data->event_mutex);
 }
@@ -626,6 +747,12 @@ static void process_http_request(struct lws* wsi, http_transport_data_t* data,
             return;
         }
 
+        // Add CORS headers
+        if (add_cors_headers(wsi, data, &p, end) != 0) {
+            mcp_log_error("Failed to add CORS headers for error response");
+            return;
+        }
+
         if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
             mcp_log_error("Failed to finalize HTTP headers");
             return;
@@ -646,6 +773,13 @@ static void process_http_request(struct lws* wsi, http_transport_data_t* data,
         if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
                                        "application/json", strlen(response), &p, end)) {
             mcp_log_error("Failed to add HTTP headers");
+            free(response);
+            return;
+        }
+
+        // Add CORS headers
+        if (add_cors_headers(wsi, data, &p, end) != 0) {
+            mcp_log_error("Failed to add CORS headers for success response");
             free(response);
             return;
         }
@@ -693,6 +827,12 @@ static void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
     if (lws_add_http_header_by_name(wsi,
                                    (unsigned char*)"Connection",
                                    (unsigned char*)"keep-alive", 10, &p, end)) {
+        return;
+    }
+
+    // Add CORS headers
+    if (add_cors_headers(wsi, data, &p, end) != 0) {
+        mcp_log_error("Failed to add CORS headers for SSE");
         return;
     }
 
@@ -780,42 +920,51 @@ static void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
     if (session && session->last_event_id > 0) {
         mcp_mutex_lock(data->event_mutex);
 
-        // Find the first event with ID greater than last_event_id
-        for (int i = 0; i < data->stored_event_count; i++) {
-            int event_id = atoi(data->stored_events[i].id);
+        // Iterate through the circular buffer to find events with ID greater than last_event_id
+        if (data->stored_event_count > 0) {
+            int current = data->event_head;
+            int count = 0;
 
-            // Skip events with ID less than or equal to last_event_id
-            if (event_id <= session->last_event_id) {
-                continue;
+            // Process all events in the buffer
+            while (count < data->stored_event_count) {
+                int event_id = atoi(data->stored_events[current].id);
+
+                // Only send events with ID greater than last_event_id
+                if (event_id > session->last_event_id) {
+                    // Skip events that don't match the filter (if any)
+                    if (!(session->event_filter && data->stored_events[current].event_type &&
+                        strcmp(session->event_filter, data->stored_events[current].event_type) != 0)) {
+
+                        // Replay the event
+                        if (data->stored_events[current].event_type) {
+                            // Write event type
+                            lws_write_http(wsi, "event: ", 7);
+                            lws_write_http(wsi, data->stored_events[current].event_type,
+                                          strlen(data->stored_events[current].event_type));
+                            lws_write_http(wsi, "\n", 1);
+                        }
+
+                        // Write event ID
+                        lws_write_http(wsi, "id: ", 4);
+                        lws_write_http(wsi, data->stored_events[current].id,
+                                      strlen(data->stored_events[current].id));
+                        lws_write_http(wsi, "\n", 1);
+
+                        // Write event data
+                        lws_write_http(wsi, "data: ", 6);
+                        lws_write_http(wsi, data->stored_events[current].data,
+                                      strlen(data->stored_events[current].data));
+                        lws_write_http(wsi, "\n\n", 2);
+
+                        // Request a callback when the socket is writable again
+                        lws_callback_on_writable(wsi);
+                    }
+                }
+
+                // Move to the next event in the circular buffer
+                current = (current + 1) % MAX_SSE_STORED_EVENTS;
+                count++;
             }
-
-            // Skip events that don't match the filter (if any)
-            if (session->event_filter && data->stored_events[i].event_type &&
-                strcmp(session->event_filter, data->stored_events[i].event_type) != 0) {
-                continue;
-            }
-
-            // Replay the event
-            if (data->stored_events[i].event_type) {
-                // Write event type
-                lws_write_http(wsi, "event: ", 7);
-                lws_write_http(wsi, data->stored_events[i].event_type,
-                              strlen(data->stored_events[i].event_type));
-                lws_write_http(wsi, "\n", 1);
-            }
-
-            // Write event ID
-            lws_write_http(wsi, "id: ", 4);
-            lws_write_http(wsi, data->stored_events[i].id, strlen(data->stored_events[i].id));
-            lws_write_http(wsi, "\n", 1);
-
-            // Write event data
-            lws_write_http(wsi, "data: ", 6);
-            lws_write_http(wsi, data->stored_events[i].data, strlen(data->stored_events[i].data));
-            lws_write_http(wsi, "\n\n", 2);
-
-            // Request a callback when the socket is writable again
-            lws_callback_on_writable(wsi);
         }
 
         mcp_mutex_unlock(data->event_mutex);
@@ -916,34 +1065,134 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                     return 0;
                 }
 
+                // Check if this is a tool discovery request
+                if (strcmp(uri, "/tools") == 0) {
+                    mcp_log_info("Handling tool discovery request");
+
+                    // Prepare a simple JSON response with tool information
+                    // In a real implementation, this would query the server for available tools
+                    const char* tools_json = "{\n"
+                        "  \"tools\": [\n"
+                        "    {\n"
+                        "      \"name\": \"echo\",\n"
+                        "      \"description\": \"Echoes back the input text\",\n"
+                        "      \"parameters\": {\n"
+                        "        \"text\": {\n"
+                        "          \"type\": \"string\",\n"
+                        "          \"description\": \"Text to echo\",\n"
+                        "          \"required\": true\n"
+                        "        }\n"
+                        "      }\n"
+                        "    },\n"
+                        "    {\n"
+                        "      \"name\": \"reverse\",\n"
+                        "      \"description\": \"Reverses the input text\",\n"
+                        "      \"parameters\": {\n"
+                        "        \"text\": {\n"
+                        "          \"type\": \"string\",\n"
+                        "          \"description\": \"Text to reverse\",\n"
+                        "          \"required\": true\n"
+                        "        }\n"
+                        "      }\n"
+                        "    }\n"
+                        "  ]\n"
+                        "}";
+
+                    // Prepare response headers
+                    unsigned char buffer[LWS_PRE + 1024];
+                    unsigned char* p = &buffer[LWS_PRE];
+                    unsigned char* end = &buffer[sizeof(buffer) - 1];
+
+                    // Add headers
+                    if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
+                                                  "application/json",
+                                                  strlen(tools_json), &p, end)) {
+                        mcp_log_error("Failed to add HTTP headers for tool discovery");
+                        return -1;
+                    }
+
+                    // Add CORS headers
+                    if (add_cors_headers(wsi, data, &p, end) != 0) {
+                        mcp_log_error("Failed to add CORS headers for tool discovery");
+                        return -1;
+                    }
+
+                    if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
+                        mcp_log_error("Failed to finalize HTTP headers for tool discovery");
+                        return -1;
+                    }
+
+                    // Write response body
+                    int bytes_written = lws_write(wsi, (unsigned char*)tools_json, strlen(tools_json), LWS_WRITE_HTTP);
+                    mcp_log_info("Wrote %d bytes for tool discovery", bytes_written);
+
+                    // Complete HTTP transaction
+                    lws_http_transaction_completed(wsi);
+                    return 0;
+                }
+
                 // Check if this is a tool call
                 if (strcmp(uri, "/call_tool") == 0) {
                     mcp_log_info("Handling tool call request");
 
-                    // Check if this is a POST request
+                    // Check the request method
                     char method[16] = {0};
 
                     // Try to get the request method
                     // In libwebsockets, the HTTP method is part of the URI
-                    // We can check if it's a POST request by checking for the POST_URI token
                     if (lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI) > 0) {
                         strcpy(method, "POST");
                         mcp_log_info("HTTP method: POST");
                     } else if (lws_hdr_total_length(wsi, WSI_TOKEN_GET_URI) > 0) {
                         strcpy(method, "GET");
                         mcp_log_info("HTTP method: GET");
+                    } else if (lws_hdr_total_length(wsi, WSI_TOKEN_OPTIONS_URI) > 0) {
+                        strcpy(method, "OPTIONS");
+                        mcp_log_info("HTTP method: OPTIONS (CORS preflight)");
                     } else {
                         mcp_log_error("Failed to determine HTTP method");
                     }
 
-                    // Check if this is a POST request
-                    if (method[0] != '\0' && strcmp(method, "POST") == 0) {
+                    // Handle OPTIONS request (CORS preflight)
+                    if (method[0] != '\0' && strcmp(method, "OPTIONS") == 0) {
+                        // Prepare response headers for OPTIONS request
+                        unsigned char buffer[LWS_PRE + 1024];
+                        unsigned char* p = &buffer[LWS_PRE];
+                        unsigned char* end = &buffer[sizeof(buffer) - 1];
+
+                        // Add common headers
+                        if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
+                                                      "text/plain",
+                                                      0, &p, end)) {
+                            mcp_log_error("Failed to add HTTP headers for OPTIONS");
+                            return -1;
+                        }
+
+                        // Add CORS headers
+                        if (add_cors_headers(wsi, data, &p, end) != 0) {
+                            mcp_log_error("Failed to add CORS headers for OPTIONS");
+                            return -1;
+                        }
+
+                        if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
+                            mcp_log_error("Failed to finalize HTTP headers for OPTIONS");
+                            return -1;
+                        }
+
+                        // Complete HTTP transaction (no body for OPTIONS)
+                        lws_http_transaction_completed(wsi);
+                        return 0;
+                    }
+                    // Handle POST request
+                    else if (method[0] != '\0' && strcmp(method, "POST") == 0) {
                         // This is a POST request, wait for body
                         mcp_log_info("Waiting for POST body");
                         return 0;
-                    } else {
-                        // For non-POST requests, return a simple JSON response
-                        const char* json_response = "{\"error\":\"Method not allowed. Use POST for tool calls.\"}";
+                    }
+                    // Handle other methods (GET, etc.)
+                    else {
+                        // For non-POST/OPTIONS requests, return a simple JSON response
+                        const char* json_response = "{\"error\":\"Method not allowed. Use POST for tool calls or OPTIONS for preflight.\"}";
 
                         // Prepare response headers
                         unsigned char buffer[LWS_PRE + 1024];
@@ -955,6 +1204,12 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                                                       "application/json",
                                                       strlen(json_response), &p, end)) {
                             mcp_log_error("Failed to add HTTP headers");
+                            return -1;
+                        }
+
+                        // Add CORS headers
+                        if (add_cors_headers(wsi, data, &p, end) != 0) {
+                            mcp_log_error("Failed to add CORS headers");
                             return -1;
                         }
 
@@ -1018,6 +1273,7 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                         "        <h2>Available Endpoints:</h2>\n"
                         "        <ul>\n"
                         "            <li><a href=\"/call_tool\"><code>/call_tool</code></a> - JSON-RPC endpoint for calling tools</li>\n"
+                        "            <li><a href=\"/tools\"><code>/tools</code></a> - Tool discovery API (returns available tools)</li>\n"
                         "            <li><a href=\"/events\"><code>/events</code></a> - Server-Sent Events (SSE) endpoint</li>\n"
                         "            <li><a href=\"/sse_test.html\"><code>/sse_test.html</code></a> - SSE test page</li>\n"
                         "        </ul>\n"

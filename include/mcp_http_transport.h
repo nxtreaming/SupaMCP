@@ -20,11 +20,18 @@ typedef struct mcp_http_config {
     const char* key_path;     /**< Path to SSL private key file (for HTTPS) */
     const char* doc_root;     /**< Document root for serving static files (optional) */
     uint32_t timeout_ms;      /**< Connection timeout in milliseconds (0 to disable) */
+
+    // CORS settings
+    bool enable_cors;                /**< Whether to enable CORS */
+    const char* cors_allow_origin;   /**< Allowed origins for CORS (e.g., "*" for all) */
+    const char* cors_allow_methods;  /**< Allowed methods for CORS (e.g., "GET, POST, OPTIONS") */
+    const char* cors_allow_headers;  /**< Allowed headers for CORS */
+    int cors_max_age;                /**< Max age for CORS preflight requests in seconds */
 } mcp_http_config_t;
 
 /**
  * @brief Create an HTTP server transport
- * 
+ *
  * @param config HTTP transport configuration
  * @return mcp_transport_t* Transport handle or NULL on failure
  */
@@ -32,7 +39,7 @@ mcp_transport_t* mcp_transport_http_create(const mcp_http_config_t* config);
 
 /**
  * @brief Send an SSE (Server-Sent Event) to all connected clients
- * 
+ *
  * @param transport Transport handle
  * @param event Event name (can be NULL)
  * @param data Event data

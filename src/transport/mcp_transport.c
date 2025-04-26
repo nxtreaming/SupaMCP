@@ -173,3 +173,19 @@ const char* mcp_transport_get_client_ip(mcp_transport_t* transport) {
     static const char* default_ip = "127.0.0.1";
     return default_ip;
 }
+
+mcp_transport_protocol_t mcp_transport_get_protocol(mcp_transport_t* transport) {
+    if (!transport) {
+        return MCP_TRANSPORT_PROTOCOL_UNKNOWN;
+    }
+
+    return transport->protocol_type;
+}
+
+void mcp_transport_set_protocol(mcp_transport_t* transport, mcp_transport_protocol_t protocol) {
+    if (!transport) {
+        return;
+    }
+
+    transport->protocol_type = protocol;
+}

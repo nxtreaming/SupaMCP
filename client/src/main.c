@@ -10,6 +10,7 @@
 #include "mcp_client.h"
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_client_transport.h"
+#include "mcp_http_client_transport.h"
 #include "mcp_log.h"
 #include "mcp_thread_local.h"
 
@@ -18,6 +19,9 @@ int main(int argc, char** argv) {
     const char* transport_type = "stdio";
     const char* host = "127.0.0.1";
     uint16_t port = 8080;
+    bool use_ssl = false;
+    const char* api_key = NULL;
+    uint32_t timeout_ms = 30000; // 30 seconds default timeout
 
     mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG); // Use new init and enum
 
@@ -30,19 +34,48 @@ int main(int argc, char** argv) {
     }
 
     // Basic argument parsing
-    if (argc > 1) {
-        if (strcmp(argv[1], "--tcp") == 0) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--tcp") == 0) {
             transport_type = "tcp";
-            if (argc > 2) host = argv[2];
-            if (argc > 3) port = (uint16_t)atoi(argv[3]);
-        } else if (strcmp(argv[1], "--stdio") == 0) {
+        } else if (strncmp(argv[i], "--host=", 7) == 0) {
+            host = argv[i] + 7;
+        } else if (strncmp(argv[i], "--port=", 7) == 0) {
+            port = (uint16_t)atoi(argv[i] + 7);
+        } else if (strcmp(argv[i], "--http") == 0) {
+            transport_type = "http";
+        } else if (strcmp(argv[i], "--https") == 0) {
+            transport_type = "http";
+            use_ssl = true;
+        } else if (strcmp(argv[i], "--stdio") == 0) {
             transport_type = "stdio";
-        } else if (strcmp(argv[1], "--help") == 0) {
-             printf("Usage: %s [--stdio | --tcp [HOST [PORT]]]\n\n", argv[0]);
+        } else if (strncmp(argv[i], "--api-key=", 10) == 0) {
+            api_key = argv[i] + 10;
+        } else if (strncmp(argv[i], "--timeout=", 10) == 0) {
+            timeout_ms = (uint32_t)atoi(argv[i] + 10);
+        } else if (strcmp(argv[i], "--api-key") == 0) {
+            if (i + 1 < argc) api_key = argv[++i];
+        } else if (strcmp(argv[i], "--timeout") == 0) {
+            if (i + 1 < argc) timeout_ms = (uint32_t)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--host") == 0) {
+            if (i + 1 < argc) host = argv[++i];
+        } else if (strcmp(argv[i], "--port") == 0) {
+            if (i + 1 < argc) port = (uint16_t)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--help") == 0) {
+             printf("Usage: %s [OPTIONS]\n\n", argv[0]);
              printf("Options:\n");
-             printf("  --stdio             Use stdio transport (default)\n");
-             printf("  --tcp [HOST [PORT]] Use TCP transport (default: 127.0.0.1:8080)\n");
-             printf("  --help              Show this help message\n\n");
+             printf("  --stdio                   Use stdio transport (default)\n");
+             printf("  --tcp                     Use TCP transport\n");
+             printf("  --http                    Use HTTP transport\n");
+             printf("  --https                   Use HTTPS transport\n");
+             printf("  --host=HOST               Set host to connect to (default: 127.0.0.1)\n");
+             printf("  --port=PORT               Set port to connect to (default: 8080)\n");
+             printf("  --host HOST               Set host to connect to (default: 127.0.0.1)\n");
+             printf("  --port PORT               Set port to connect to (default: 8080)\n");
+             printf("  --api-key=KEY             Set API key for authentication\n");
+             printf("  --api-key KEY             Set API key for authentication\n");
+             printf("  --timeout=MS              Set request timeout in milliseconds (default: 30000)\n");
+             printf("  --timeout MS              Set request timeout in milliseconds (default: 30000)\n");
+             printf("  --help                    Show this help message\n\n");
              printf("Interactive Commands:\n");
              printf("  list_resources              - List available resources\n");
              printf("  list_templates              - List available resource templates\n");
@@ -57,7 +90,7 @@ int main(int argc, char** argv) {
              printf("Example: read_template example://{name} {\"name\":\"john\"}\n");
              return 0;
         } else {
-            mcp_log_error("Unknown option: %s\n", argv[1]);
+            mcp_log_error("Unknown option: %s\n", argv[i]);
             return 1;
         }
     }
@@ -70,6 +103,20 @@ int main(int argc, char** argv) {
     } else if (strcmp(transport_type, "tcp") == 0) {
         mcp_log_info("Using TCP client transport (%s:%d)", host, port);
         transport = mcp_transport_tcp_client_create(host, port);
+    } else if (strcmp(transport_type, "http") == 0) {
+        mcp_log_info("Using HTTP%s client transport (%s:%d)", use_ssl ? "S" : "", host, port);
+
+        // Create HTTP client configuration
+        mcp_http_client_config_t config = {0};
+        config.host = host;
+        config.port = port;
+        config.use_ssl = use_ssl;
+        config.cert_path = NULL; // Could add command line options for these
+        config.key_path = NULL;
+        config.timeout_ms = timeout_ms;
+        config.api_key = api_key;
+
+        transport = mcp_transport_http_client_create_with_config(&config);
     } else {
         mcp_log_error("Unknown transport type: %s", transport_type);
         return 1;
