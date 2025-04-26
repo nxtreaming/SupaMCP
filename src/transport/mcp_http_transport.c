@@ -24,10 +24,10 @@
 #include <libwebsockets.h>
 
 // Maximum number of SSE clients
-#define MAX_SSE_CLIENTS 100
+#define MAX_SSE_CLIENTS 10000
 
 // Maximum number of stored SSE events for replay
-#define MAX_SSE_STORED_EVENTS 50
+#define MAX_SSE_STORED_EVENTS 1000
 
 // SSE event structure for storing events for replay
 typedef struct {
