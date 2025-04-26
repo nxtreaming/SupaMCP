@@ -268,13 +268,62 @@ static const char* handle_tool_call(const char* request_body) {
             return response;
         }
 
-        // Reverse the text
+        // UTF-8 aware string reversal
         char reversed[1024];
-        int len = strlen(text);
-        for (int i = 0; i < len; i++) {
-            reversed[i] = text[len - i - 1];
+        int len = (int)strlen(text);
+
+        // First, count the number of UTF-8 characters
+        int char_count = 0;
+        int byte_pos = 0;
+
+        // Array to store the byte positions of each character
+        int char_positions[1024]; // Assuming max 1024 characters
+
+        // Record the starting byte position of each character
+        while (byte_pos < len) {
+            char_positions[char_count++] = byte_pos;
+
+            // Skip to the next UTF-8 character
+            unsigned char c = (unsigned char)text[byte_pos];
+            if (c < 0x80) {
+                // ASCII character (1 byte)
+                byte_pos += 1;
+            } else if ((c & 0xE0) == 0xC0) {
+                // 2-byte UTF-8 character
+                byte_pos += 2;
+            } else if ((c & 0xF0) == 0xE0) {
+                // 3-byte UTF-8 character (like Chinese)
+                byte_pos += 3;
+            } else if ((c & 0xF8) == 0xF0) {
+                // 4-byte UTF-8 character
+                byte_pos += 4;
+            } else {
+                // Invalid UTF-8 sequence, treat as 1 byte
+                byte_pos += 1;
+            }
+
+            // Safety check for malformed UTF-8
+            if (byte_pos > len) {
+                byte_pos = len;
+            }
         }
-        reversed[len] = '\0';
+
+        // Add the position after the last character
+        char_positions[char_count] = len;
+
+        // Copy characters in reverse order
+        int out_pos = 0;
+        for (int i = char_count; i > 0; i--) {
+            int char_start = char_positions[i-1];
+            int char_len = char_positions[i] - char_positions[i-1];
+
+            // Copy this character to the output
+            memcpy(reversed + out_pos, text + char_start, char_len);
+            out_pos += char_len;
+        }
+
+        // Null-terminate the result
+        reversed[out_pos] = '\0';
 
         // Create JSON response
         char json_response[4096];
@@ -297,7 +346,7 @@ static const char* handle_tool_call(const char* request_body) {
             "Connection: close\r\n"
             "\r\n"
             "{\"error\":\"Unknown tool: %s\"}",
-            (int)strlen("{\"error\":\"Unknown tool: ") + strlen(tool_name) + 2,
+            (int)(strlen("{\"error\":\"Unknown tool: ") + strlen(tool_name)) + 2,
             tool_name);
     }
 
@@ -368,7 +417,7 @@ static void handle_client(socket_t client_sock) {
         }
 
         // Send response with error checking
-        int bytes_sent = send(client_sock, response, strlen(response), 0);
+        int bytes_sent = send(client_sock, response, (int)strlen(response), 0);
         if (bytes_sent < 0) {
             printf("Failed to send response: %d\n",
 #ifdef _WIN32

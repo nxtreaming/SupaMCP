@@ -179,11 +179,72 @@ static mcp_error_code_t http_tool_handler(
         }
     } else if (strcmp(name, "reverse") == 0) {
         if (input_text) {
+            // UTF-8 aware string reversal
             size_t len = strlen(input_text);
+
+            // First, count the number of UTF-8 characters
+            size_t char_count = 0;
+            size_t byte_pos = 0;
+
+            // Array to store the byte positions of each character
+            size_t* char_positions = (size_t*)malloc((len + 1) * sizeof(size_t));
+            if (!char_positions) {
+                mcp_log_error("Failed to allocate memory for character positions");
+                *is_error = true;
+                *error_message = mcp_strdup("Memory allocation failed.");
+                err_code = MCP_ERROR_INTERNAL_ERROR;
+                goto cleanup;
+            }
+
+            // Record the starting byte position of each character
+            while (byte_pos < len) {
+                char_positions[char_count++] = byte_pos;
+
+                // Skip to the next UTF-8 character
+                unsigned char c = (unsigned char)input_text[byte_pos];
+                if (c < 0x80) {
+                    // ASCII character (1 byte)
+                    byte_pos += 1;
+                } else if ((c & 0xE0) == 0xC0) {
+                    // 2-byte UTF-8 character
+                    byte_pos += 2;
+                } else if ((c & 0xF0) == 0xE0) {
+                    // 3-byte UTF-8 character (like Chinese)
+                    byte_pos += 3;
+                } else if ((c & 0xF8) == 0xF0) {
+                    // 4-byte UTF-8 character
+                    byte_pos += 4;
+                } else {
+                    // Invalid UTF-8 sequence, treat as 1 byte
+                    byte_pos += 1;
+                }
+
+                // Safety check for malformed UTF-8
+                if (byte_pos > len) {
+                    byte_pos = len;
+                }
+            }
+
+            // Add the position after the last character
+            char_positions[char_count] = len;
+
+            // Allocate memory for the reversed string
             result_data = (char*)malloc(len + 1);
             if (result_data != NULL) {
-                for (size_t i = 0; i < len; i++) result_data[i] = input_text[len - i - 1];
+                // Copy characters in reverse order
+                size_t out_pos = 0;
+                for (size_t i = char_count; i > 0; i--) {
+                    size_t char_start = char_positions[i-1];
+                    size_t char_len = char_positions[i] - char_positions[i-1];
+
+                    // Copy this character to the output
+                    memcpy(result_data + out_pos, input_text + char_start, char_len);
+                    out_pos += char_len;
+                }
+
+                // Null-terminate the result
                 result_data[len] = '\0';
+
                 mcp_log_info("Reverse tool called with text: %s, result: %s", input_text, result_data);
 
                 // Send an SSE event with the reversed text
@@ -200,7 +261,11 @@ static mcp_error_code_t http_tool_handler(
                 } else {
                     mcp_log_warn("Transport not available for SSE");
                 }
+
+                // Free the character positions array
+                free(char_positions);
             } else {
+                free(char_positions);
                 mcp_log_error("Failed to allocate memory for reversed text");
                 *is_error = true;
                 *error_message = mcp_strdup("Memory allocation failed.");
