@@ -1,10 +1,9 @@
 #ifndef MCP_SERVER_INTERNAL_H
 #define MCP_SERVER_INTERNAL_H
 
-// Ensure winsock2.h is included before windows.h (which might be included by other headers)
+// Include our Windows socket compatibility header
 #ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <win_socket_compat.h>
 #endif
 
 #include <mcp_server.h>

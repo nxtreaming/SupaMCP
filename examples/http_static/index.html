@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP HTTP Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .panel {
+            flex: 1;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 15px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, select, button {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #result, #events {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 5px;
+            min-height: 100px;
+            max-height: 300px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+        }
+        .event {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .event-echo {
+            background-color: #e3f2fd;
+        }
+        .event-reverse {
+            background-color: #fff8e1;
+        }
+    </style>
+</head>
+<body>
+    <h1>MCP HTTP Client</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <h2>Tool Calls</h2>
+            <div class="form-group">
+                <label for="tool">Select Tool:</label>
+                <select id="tool">
+                    <option value="echo">Echo</option>
+                    <option value="reverse">Reverse</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="text">Text:</label>
+                <input type="text" id="text" placeholder="Enter text">
+            </div>
+            <button id="callTool">Call Tool</button>
+            <div id="result"></div>
+        </div>
+        
+        <div class="panel">
+            <h2>Server-Sent Events</h2>
+            <p>Events received from the server will appear below:</p>
+            <div id="events"></div>
+        </div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Connect to SSE endpoint
+            const eventsContainer = document.getElementById('events');
+            const eventSource = new EventSource('/events');
+            
+            // Handle SSE events
+            eventSource.onopen = function() {
+                console.log('SSE connection opened');
+                addEventMessage('Connected to event stream', 'system');
+            };
+            
+            eventSource.onerror = function() {
+                console.error('SSE connection error');
+                addEventMessage('Error connecting to event stream', 'error');
+            };
+            
+            // Handle generic messages
+            eventSource.onmessage = function(event) {
+                console.log('Generic event:', event.data);
+                addEventMessage(event.data, 'generic');
+            };
+            
+            // Handle echo events
+            eventSource.addEventListener('echo', function(event) {
+                console.log('Echo event:', event.data);
+                const data = JSON.parse(event.data);
+                addEventMessage(`Echo event: ${data.text}`, 'echo');
+            });
+            
+            // Handle reverse events
+            eventSource.addEventListener('reverse', function(event) {
+                console.log('Reverse event:', event.data);
+                const data = JSON.parse(event.data);
+                addEventMessage(`Reverse event: ${data.text}`, 'reverse');
+            });
+            
+            // Handle tool calls
+            document.getElementById('callTool').addEventListener('click', function() {
+                const tool = document.getElementById('tool').value;
+                const text = document.getElementById('text').value;
+                
+                if (!text) {
+                    alert('Please enter some text');
+                    return;
+                }
+                
+                // Prepare request
+                const request = {
+                    jsonrpc: '2.0',
+                    method: 'call_tool',
+                    params: {
+                        name: tool,
+                        params: {
+                            text: text
+                        }
+                    },
+                    id: Date.now()
+                };
+                
+                // Send request
+                fetch('/call_tool', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(request)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Tool call response:', data);
+                    document.getElementById('result').innerHTML = `
+                        <h3>Response:</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                })
+                .catch(error => {
+                    console.error('Error calling tool:', error);
+                    document.getElementById('result').innerHTML = `
+                        <h3>Error:</h3>
+                        <pre>${error.message}</pre>
+                    `;
+                });
+            });
+            
+            // Helper function to add event messages
+            function addEventMessage(message, type) {
+                const eventElement = document.createElement('div');
+                eventElement.className = `event event-${type}`;
+                eventElement.textContent = message;
+                eventsContainer.appendChild(eventElement);
+                eventsContainer.scrollTop = eventsContainer.scrollHeight;
+            }
+        });
+    </script>
+</body>
+</html>

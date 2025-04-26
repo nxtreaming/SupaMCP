@@ -7,11 +7,8 @@
 
 // --- Platform-Specific Socket Definitions ---
 #ifdef _WIN32
-#   ifndef WIN32_LEAN_AND_MEAN
-#       define WIN32_LEAN_AND_MEAN
-#   endif
-#   include <winsock2.h>
-#   include <ws2tcpip.h>
+// Include our Windows socket compatibility header
+#include "win_socket_compat.h"
 #   pragma comment(lib, "Ws2_32.lib")
     typedef SOCKET socket_t;
     typedef WSABUF mcp_iovec_t;

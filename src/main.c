@@ -26,6 +26,7 @@
 #include "mcp_log.h"
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_transport.h"
+#include "mcp_http_transport.h"
 #include "mcp_profiler.h"
 #include "mcp_json.h"
 #include "gateway.h"
@@ -388,6 +389,8 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tcp") == 0) {
             config->transport_type = "tcp";
+        } else if (strcmp(argv[i], "--http") == 0) {
+            config->transport_type = "http";
         } else if (strcmp(argv[i], "--stdio") == 0) {
             config->transport_type = "stdio";
         } else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
@@ -418,6 +421,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("Options:\n");
             printf("  --tcp               Use TCP transport (default for daemon mode)\n");
+            printf("  --http              Use HTTP transport with SSE support\n");
             printf("  --stdio             Use stdio transport (default for interactive mode)\n");
             printf("  --host HOST         Host to bind to (default: 127.0.0.1)\n");
             printf("  --port PORT         Port to bind to (default: 8080)\n");
@@ -620,6 +624,19 @@ int main(int argc, char** argv) {
         uint32_t idle_timeout = 0; // Disabled server-side idle timeout
         mcp_log_info("Server-side idle timeout disabled.");
         transport = mcp_transport_tcp_create(config.host, config.port, idle_timeout);
+    } else if (strcmp(config.transport_type, "http") == 0) {
+        mcp_log_info("Using HTTP transport on %s:%d", config.host, config.port);
+        // Create HTTP transport configuration
+        mcp_http_config_t http_config = {
+            .host = config.host,
+            .port = config.port,
+            .use_ssl = false,  // No SSL for now
+            .cert_path = NULL,
+            .key_path = NULL,
+            .doc_root = NULL,  // No static file serving
+            .timeout_ms = 0    // No timeout
+        };
+        transport = mcp_transport_http_create(&http_config);
     } else {
         mcp_log_error("Unknown transport type: %s", config.transport_type);
         mcp_server_destroy(g_server); g_server = NULL;

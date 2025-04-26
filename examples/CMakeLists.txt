@@ -261,5 +261,30 @@ else()
     target_link_libraries(kmcp_comprehensive_example PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# HTTP Server Example with SSE
+add_executable(http_server http_server.c)
+target_link_libraries(http_server PRIVATE mcp_common)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(http_server PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(http_server PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
+# Basic HTTP Server Example (no libwebsockets dependency)
+add_executable(basic_http_server basic_http_server.c)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(basic_http_server PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(basic_http_server PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client kmcp_example_app kmcp_ssl_example kmcp_profile_example kmcp_tool_example kmcp_comprehensive_example DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client kmcp_example_app kmcp_ssl_example kmcp_profile_example kmcp_tool_example kmcp_comprehensive_example http_server DESTINATION bin/examples)
+
+# Create directory for HTTP static files
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/examples/http_static)
+
+# Copy HTTP static files
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/http_static/ DESTINATION ${CMAKE_BINARY_DIR}/examples/http_static/)

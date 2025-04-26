@@ -85,8 +85,8 @@ include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
     set(OPENSSL_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/OpenSSL)
     set(OPENSSL_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/openssl)
-    set(OPENSSL_LIBRARIES 
-        ${OPENSSL_ROOT_DIR}/libssl.lib 
+    set(OPENSSL_LIBRARIES
+        ${OPENSSL_ROOT_DIR}/libssl.lib
         ${OPENSSL_ROOT_DIR}/libcrypto.lib
     )
 
@@ -136,6 +136,7 @@ set(COMMON_SOURCES
     src/transport/mcp_tcp_client_reconnect.c
     src/transport/mcp_tcp_pool_transport.c
     src/transport/mcp_websocket_transport.c
+    src/transport/mcp_http_transport.c
     src/common/mcp_types.c
     src/common/mcp_arena.c
     src/common/mcp_log.c
@@ -253,7 +254,7 @@ endif()
 # Create KMCP library
 add_library(kmcp SHARED ${KMCP_SOURCES})
 target_link_libraries(kmcp PRIVATE mcp_common)
-target_include_directories(kmcp PUBLIC 
+target_include_directories(kmcp PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include/kmcp
 )
