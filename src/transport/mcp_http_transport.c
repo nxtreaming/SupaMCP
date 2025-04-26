@@ -73,6 +73,8 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
 // Root path handler
 static int root_handler(struct lws* wsi, enum lws_callback_reasons reason,
                        void* user, void* in, size_t len) {
+    (void)user; // Unused parameter
+    (void)len;  // Unused parameter
     mcp_log_debug("Root handler: reason=%d", reason);
 
     // Handle protocol initialization
@@ -666,35 +668,41 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                         mcp_log_error("Failed to determine HTTP method");
                     }
 
-                    // For simplicity, let's just handle the request directly
-                    // Create a simple JSON response
-                    const char* json_response = "{\"result\":\"Hello from MCP Server!\"}";
+                    // Check if this is a POST request
+                    if (method[0] != '\0' && strcmp(method, "POST") == 0) {
+                        // This is a POST request, wait for body
+                        mcp_log_info("Waiting for POST body");
+                        return 0;
+                    } else {
+                        // For non-POST requests, return a simple JSON response
+                        const char* json_response = "{\"error\":\"Method not allowed. Use POST for tool calls.\"}";
 
-                    // Prepare response headers
-                    unsigned char buffer[LWS_PRE + 1024];
-                    unsigned char* p = &buffer[LWS_PRE];
-                    unsigned char* end = &buffer[sizeof(buffer) - 1];
+                        // Prepare response headers
+                        unsigned char buffer[LWS_PRE + 1024];
+                        unsigned char* p = &buffer[LWS_PRE];
+                        unsigned char* end = &buffer[sizeof(buffer) - 1];
 
-                    // Add headers
-                    if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
-                                                  "application/json",
-                                                  strlen(json_response), &p, end)) {
-                        mcp_log_error("Failed to add HTTP headers");
-                        return -1;
+                        // Add headers
+                        if (lws_add_http_common_headers(wsi, HTTP_STATUS_METHOD_NOT_ALLOWED,
+                                                      "application/json",
+                                                      strlen(json_response), &p, end)) {
+                            mcp_log_error("Failed to add HTTP headers");
+                            return -1;
+                        }
+
+                        if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
+                            mcp_log_error("Failed to finalize HTTP headers");
+                            return -1;
+                        }
+
+                        // Write response body
+                        int bytes_written = lws_write(wsi, (unsigned char*)json_response, strlen(json_response), LWS_WRITE_HTTP);
+                        mcp_log_info("Wrote %d bytes", bytes_written);
+
+                        // Complete HTTP transaction
+                        lws_http_transaction_completed(wsi);
+                        return 0;
                     }
-
-                    if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
-                        mcp_log_error("Failed to finalize HTTP headers");
-                        return -1;
-                    }
-
-                    // Write response body
-                    int bytes_written = lws_write(wsi, (unsigned char*)json_response, strlen(json_response), LWS_WRITE_HTTP);
-                    mcp_log_info("Wrote %d bytes", bytes_written);
-
-                    // Complete HTTP transaction
-                    lws_http_transaction_completed(wsi);
-                    return 0;
                 }
 
                 // For the root path, return a simple HTML page
@@ -910,30 +918,98 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
 
                 mcp_log_info("Request body: %s", session->request_buffer);
 
-                // For simplicity, let's just return a simple JSON response
-                const char* json_response = "{\"result\":\"Hello from MCP Server!\"}";
+                // Process the request using the message callback
+                if (data->message_callback) {
+                    int error_code = 0;
+                    char* response = data->message_callback(data->callback_user_data,
+                                                          session->request_buffer,
+                                                          session->request_len,
+                                                          &error_code);
 
-                // Prepare response headers
-                unsigned char buffer[LWS_PRE + 1024];
-                unsigned char* p = &buffer[LWS_PRE];
-                unsigned char* end = &buffer[sizeof(buffer) - 1];
+                    if (response) {
+                        mcp_log_info("Message callback returned: %s", response);
 
-                // Add headers
-                if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
-                                              "application/json",
-                                              strlen(json_response), &p, end)) {
-                    mcp_log_error("Failed to add HTTP headers");
-                    return -1;
+                        // Prepare response headers
+                        unsigned char buffer[LWS_PRE + 1024];
+                        unsigned char* p = &buffer[LWS_PRE];
+                        unsigned char* end = &buffer[sizeof(buffer) - 1];
+
+                        // Add headers
+                        if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
+                                                      "application/json",
+                                                      strlen(response), &p, end)) {
+                            mcp_log_error("Failed to add HTTP headers");
+                            free(response);
+                            return -1;
+                        }
+
+                        if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
+                            mcp_log_error("Failed to finalize HTTP headers");
+                            free(response);
+                            return -1;
+                        }
+
+                        // Write response body
+                        int bytes_written = lws_write(wsi, (unsigned char*)response, strlen(response), LWS_WRITE_HTTP);
+                        mcp_log_info("Wrote %d bytes", bytes_written);
+
+                        // Free the response
+                        free(response);
+                    } else {
+                        // Error occurred, return error response
+                        char error_buf[256];
+                        snprintf(error_buf, sizeof(error_buf),
+                                "{\"error\":{\"code\":%d,\"message\":\"Internal server error\"}}",
+                                error_code);
+
+                        // Prepare response headers
+                        unsigned char buffer[LWS_PRE + 1024];
+                        unsigned char* p = &buffer[LWS_PRE];
+                        unsigned char* end = &buffer[sizeof(buffer) - 1];
+
+                        // Add headers
+                        if (lws_add_http_common_headers(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                                                      "application/json",
+                                                      strlen(error_buf), &p, end)) {
+                            mcp_log_error("Failed to add HTTP headers");
+                            return -1;
+                        }
+
+                        if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
+                            mcp_log_error("Failed to finalize HTTP headers");
+                            return -1;
+                        }
+
+                        // Write response body
+                        int bytes_written = lws_write(wsi, (unsigned char*)error_buf, strlen(error_buf), LWS_WRITE_HTTP);
+                        mcp_log_info("Wrote %d bytes", bytes_written);
+                    }
+                } else {
+                    // No message callback registered, return error
+                    const char* json_response = "{\"error\":\"No message handler registered\"}";
+
+                    // Prepare response headers
+                    unsigned char buffer[LWS_PRE + 1024];
+                    unsigned char* p = &buffer[LWS_PRE];
+                    unsigned char* end = &buffer[sizeof(buffer) - 1];
+
+                    // Add headers
+                    if (lws_add_http_common_headers(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                                                  "application/json",
+                                                  strlen(json_response), &p, end)) {
+                        mcp_log_error("Failed to add HTTP headers");
+                        return -1;
+                    }
+
+                    if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
+                        mcp_log_error("Failed to finalize HTTP headers");
+                        return -1;
+                    }
+
+                    // Write response body
+                    int bytes_written = lws_write(wsi, (unsigned char*)json_response, strlen(json_response), LWS_WRITE_HTTP);
+                    mcp_log_info("Wrote %d bytes", bytes_written);
                 }
-
-                if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
-                    mcp_log_error("Failed to finalize HTTP headers");
-                    return -1;
-                }
-
-                // Write response body
-                int bytes_written = lws_write(wsi, (unsigned char*)json_response, strlen(json_response), LWS_WRITE_HTTP);
-                mcp_log_info("Wrote %d bytes", bytes_written);
 
                 // Complete HTTP transaction
                 lws_http_transaction_completed(wsi);
@@ -987,34 +1063,44 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event, c
 
     http_transport_data_t* transport_data = (http_transport_data_t*)transport->transport_data;
 
-    // Prepare SSE message
-    char* message;
-    if (event != NULL) {
-        // Format: event: <event>\ndata: <data>\n\n
-        message = (char*)malloc(strlen(event) + strlen(data) + 16);
-        if (message == NULL) {
-            return -1;
-        }
-        sprintf(message, "event: %s\ndata: %s\n\n", event, data);
-    } else {
-        // Format: data: <data>\n\n
-        message = (char*)malloc(strlen(data) + 8);
-        if (message == NULL) {
-            return -1;
-        }
-        sprintf(message, "data: %s\n\n", data);
-    }
-
     // Send to all SSE clients
     mcp_mutex_lock(transport_data->sse_mutex);
     for (int i = 0; i < transport_data->sse_client_count; i++) {
         struct lws* wsi = transport_data->sse_clients[i];
-        lws_write(wsi, (unsigned char*)message, strlen(message), LWS_WRITE_HTTP);
+
+        if (event != NULL) {
+            // Write in multiple pieces to avoid any heap allocation
+            // 1. Write "event: "
+            lws_write_http(wsi, "event: ", 7);
+
+            // 2. Write the event name
+            lws_write_http(wsi, event, strlen(event));
+
+            // 3. Write "\ndata: "
+            lws_write_http(wsi, "\ndata: ", 7);
+
+            // 4. Write the data
+            lws_write_http(wsi, data, strlen(data));
+
+            // 5. Write final "\n\n"
+            lws_write_http(wsi, "\n\n", 2);
+        } else {
+            // No event specified, simpler format
+            // 1. Write "data: "
+            lws_write_http(wsi, "data: ", 6);
+
+            // 2. Write the data
+            lws_write_http(wsi, data, strlen(data));
+
+            // 3. Write final "\n\n"
+            lws_write_http(wsi, "\n\n", 2);
+        }
+
+        // Request a callback when the socket is writable again
+        // This ensures that libwebsockets will flush the data
+        lws_callback_on_writable(wsi);
     }
     mcp_mutex_unlock(transport_data->sse_mutex);
-
-    // Free message
-    free(message);
 
     return 0;
 }
