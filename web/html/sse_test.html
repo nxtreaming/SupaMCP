@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP Server SSE Test</title>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <link rel="stylesheet" href="sse_test.css">
+</head>
+<body>
+    <h1>MCP Server SSE Test</h1>
+    
+    <div>
+        <h2>Server-Sent Events</h2>
+        <div class="status-bar">
+            <span>Status: <span id="connection-status" class="disconnected">Disconnected</span></span>
+            <span>Last Event ID: <span id="last-event-id">None</span></span>
+        </div>
+        
+        <div class="controls">
+            <button id="connect-btn">Connect</button>
+            <button id="disconnect-btn">Disconnect</button>
+            <select id="event-filter">
+                <option value="">All Events</option>
+                <option value="echo">Echo Events</option>
+                <option value="reverse">Reverse Events</option>
+                <option value="tool_call">Tool Call Events</option>
+                <option value="tool_result">Tool Result Events</option>
+            </select>
+            <button id="apply-filter-btn">Apply Filter</button>
+        </div>
+        
+        <div id="events"></div>
+        
+        <div class="controls">
+            <input type="text" id="text-input" placeholder="Enter text to echo or reverse" value="Hello, MCP Server!">
+            <button id="echo-btn">Echo</button>
+            <button id="reverse-btn">Reverse</button>
+            <button id="clear-btn">Clear Events</button>
+            <button id="reload-btn">Reload Page (Clear Cache)</button>
+        </div>
+    </div>
+    
+    <script src="sse_test.js"></script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+body {
+    font-family: Arial, sans-serif;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #f5f5f5;
+}
+
+h1, h2 {
+    color: #333;
+}
+
+.status-bar {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    padding: 10px;
+    background-color: #eee;
+    border-radius: 4px;
+}
+
+.controls {
+    margin: 10px 0;
+    padding: 10px;
+    background-color: #eee;
+    border-radius: 4px;
+}
+
+#events {
+    height: 300px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    padding: 10px;
+    background-color: white;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+
+.event {
+    margin-bottom: 5px;
+    padding: 5px;
+    border-bottom: 1px solid #eee;
+}
+
+.event.info {
+    color: #0066cc;
+}
+
+.event.error {
+    color: #cc0000;
+}
+
+.event.echo {
+    color: #006600;
+    background-color: #e6f7ff;
+}
+
+.event.reverse {
+    color: #660066;
+    background-color: #fff7e6;
+}
+
+.event.tool_call {
+    color: #0066cc;
+}
+
+.event.tool_result {
+    color: #006600;
+}
+
+button {
+    padding: 8px 16px;
+    margin-right: 10px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #45a049;
+}
+
+input, select {
+    padding: 8px;
+    margin-right: 5px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+input[type="text"] {
+    width: 300px;
+}
+
+#connection-status.connected {
+    color: green;
+    font-weight: bold;
+}
+
+#connection-status.disconnected {
+    color: red;
+    font-weight: bold;
+}
+
+#connection-status.reconnecting {
+    color: orange;
+    font-weight: bold;
+}
+
+#connection-status.connecting {
+    color: blue;
+    font-weight: bold;
+}

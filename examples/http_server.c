@@ -12,9 +12,13 @@
 #include <string.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <time.h>
+#include <ctype.h>
 
 #ifdef _WIN32
 // Windows.h is already included by win_socket_compat.h
+#include <direct.h>
+#define getcwd _getcwd
 #else
 #include <unistd.h>
 #endif
@@ -235,6 +239,114 @@ cleanup:
 // Flag to indicate shutdown is in progress
 static volatile bool shutdown_requested = false;
 
+// Function to check if a file exists
+static int file_exists(const char* path) {
+    FILE* file = fopen(path, "r");
+    if (file) {
+        fclose(file);
+        return 1;
+    }
+    return 0;
+}
+
+// Function to trim whitespace from a string
+static char* trim(char* str) {
+    if (!str) return NULL;
+
+    // Trim leading whitespace
+    char* start = str;
+    while (isspace((unsigned char)*start)) start++;
+
+    if (*start == 0) return start; // All spaces
+
+    // Trim trailing whitespace
+    char* end = start + strlen(start) - 1;
+    while (end > start && isspace((unsigned char)*end)) end--;
+
+    // Write new null terminator
+    *(end + 1) = '\0';
+
+    return start;
+}
+
+// Function to parse a configuration file
+static int parse_config_file(const char* filename, mcp_http_config_t* config, int* log_level) {
+    FILE* file = fopen(filename, "r");
+    if (!file) {
+        printf("Warning: Could not open config file %s\n", filename);
+        return -1;
+    }
+
+    printf("Info: Successfully opened config file %s\n", filename);
+
+    char line[512];
+    char* key;
+    char* value;
+
+    while (fgets(line, sizeof(line), file)) {
+        // Skip comments and empty lines
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+
+        // Find the equals sign
+        char* equals = strchr(line, '=');
+        if (!equals) continue;
+
+        // Split the line into key and value
+        *equals = '\0';
+        key = trim(line);
+        value = trim(equals + 1);
+
+        // Remove trailing newline from value if present
+        char* newline = strchr(value, '\n');
+        if (newline) *newline = '\0';
+
+        // Parse the key-value pair
+        if (strcmp(key, "host") == 0) {
+            config->host = mcp_strdup(value);
+        } else if (strcmp(key, "port") == 0) {
+            config->port = (uint16_t)atoi(value);
+        } else if (strcmp(key, "doc_root") == 0) {
+            // Handle doc_root path
+            if (value[0] != '/' && !(value[0] && value[1] == ':' && (value[2] == '/' || value[2] == '\\'))) {
+                // This is a relative path, make it absolute relative to the config file
+                char abs_path[512];
+                char config_dir[512] = ".";
+
+                // Get the directory of the config file
+                char* last_slash = strrchr(filename, '/');
+                char* last_backslash = strrchr(filename, '\\');
+                char* last_separator = last_slash > last_backslash ? last_slash : last_backslash;
+
+                if (last_separator) {
+                    size_t dir_len = last_separator - filename;
+                    strncpy(config_dir, filename, dir_len);
+                    config_dir[dir_len] = '\0';
+                }
+
+                snprintf(abs_path, sizeof(abs_path), "%s/%s", config_dir, value);
+                config->doc_root = mcp_strdup(abs_path);
+                printf("Converted config doc_root to absolute path: %s\n", abs_path);
+            } else {
+                // This is already an absolute path
+                config->doc_root = mcp_strdup(value);
+            }
+        } else if (strcmp(key, "use_ssl") == 0) {
+            config->use_ssl = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
+        } else if (strcmp(key, "cert_path") == 0) {
+            config->cert_path = mcp_strdup(value);
+        } else if (strcmp(key, "key_path") == 0) {
+            config->key_path = mcp_strdup(value);
+        } else if (strcmp(key, "timeout_ms") == 0) {
+            config->timeout_ms = atoi(value);
+        } else if (strcmp(key, "log_level") == 0) {
+            *log_level = atoi(value);
+        }
+    }
+
+    fclose(file);
+    return 0;
+}
+
 // Signal handler
 static void signal_handler(int sig) {
     printf("Received signal %d, shutting down...\n", sig);
@@ -265,97 +377,9 @@ static void signal_handler(int sig) {
 #endif
 }
 
-int main(int argc, char** argv) {
-    // Default configuration
-    const char* host = "127.0.0.1";
-    uint16_t port = 8280;
-
-    // Parse command line arguments
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
-            host = argv[++i];
-        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
-            port = (uint16_t)atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--help") == 0) {
-            printf("Usage: %s [options]\n", argv[0]);
-            printf("Options:\n");
-            printf("  --host HOST         Host to bind to (default: 127.0.0.1)\n");
-            printf("  --port PORT         Port to bind to (default: 8280)\n");
-            printf("  --help              Show this help message\n");
-            return 0;
-        } else {
-            printf("Unknown option: %s\n", argv[i]);
-            return 1;
-        }
-    }
-
-    // Initialize logging
-    mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG);
-
-    // Set up signal handling
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-
-    // Create server configuration
-    mcp_server_config_t server_config = {
-        .name = "http-example-server",
-        .version = "1.0.0",
-        .description = "HTTP MCP Server Example with SSE",
-        .thread_pool_size = 4,
-        .task_queue_size = 32,
-        .max_message_size = 1024 * 1024, // 1MB
-        .api_key = NULL // No API key required
-    };
-
-    // Set server capabilities
-    mcp_server_capabilities_t capabilities = {
-        .resources_supported = false, // No resources in this example
-        .tools_supported = true
-    };
-
-    // Create server
-    g_server = mcp_server_create(&server_config, &capabilities);
-    if (!g_server) {
-        mcp_log_error("Failed to create server");
-        return 1;
-    }
-
-    // Register tool handler
-    if (mcp_server_set_tool_handler(g_server, example_tool_handler, NULL) != 0) {
-        mcp_log_error("Failed to set tool handler");
-        mcp_server_destroy(g_server);
-        return 1;
-    }
-
-    // Add example tools
-    mcp_tool_t* echo_tool = mcp_tool_create("echo", "Echo Tool");
-    mcp_tool_t* reverse_tool = mcp_tool_create("reverse", "Reverse Tool");
-
-    if (echo_tool) {
-        mcp_tool_add_param(echo_tool, "text", "string", "Text to echo", true);
-        mcp_server_add_tool(g_server, echo_tool);
-        mcp_tool_free(echo_tool);
-    }
-
-    if (reverse_tool) {
-        mcp_tool_add_param(reverse_tool, "text", "string", "Text to reverse", true);
-        mcp_server_add_tool(g_server, reverse_tool);
-        mcp_tool_free(reverse_tool);
-    }
-
-    // Create HTTP transport configuration
-    mcp_http_config_t http_config = {
-        .host = host,
-        .port = port,
-        .use_ssl = false,
-        .cert_path = NULL,
-        .key_path = NULL,
-        .doc_root = ".", // Use current directory
-        .timeout_ms = 0 // No timeout
-    };
-
-    // Create a simple index.html file in the current directory
-    FILE* f = fopen("index.html", "w");
+// Create a simple index.html file in the current directory
+static void http_create_index_html(const char* index_html, const char *host, uint16_t port) {
+    FILE* f = fopen(index_html, "w");
     if (f) {
         fprintf(f, "<!DOCTYPE html>\n");
         fprintf(f, "<html>\n");
@@ -377,13 +401,96 @@ int main(int argc, char** argv) {
         fprintf(f, "</body>\n");
         fprintf(f, "</html>\n");
         fclose(f);
-        mcp_log_info("Created a simple index.html file in the current directory");
-    } else {
-        mcp_log_error("Failed to create index.html file in the current directory");
+        mcp_log_info("Created a simple %s file in the current directory", index_html);
     }
+    else {
+        mcp_log_error("Failed to create %s file in the current directory", index_html);
+    }
+}
 
-    // Create CSS file for SSE test
-    FILE* css_file = fopen("sse_test.css", "w");
+// Create styles.css file
+static void http_create_styles_css(const char* styles_css) {
+    FILE* css_file = fopen(styles_css, "w");
+    if (css_file) {
+        fprintf(css_file, "body {\n");
+        fprintf(css_file, "    font-family: Arial, sans-serif;\n");
+        fprintf(css_file, "    margin: 0;\n");
+        fprintf(css_file, "    padding: 0;\n");
+        fprintf(css_file, "    line-height: 1.6;\n");
+        fprintf(css_file, "    color: #333;\n");
+        fprintf(css_file, "    background-color: #f5f5f5;\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, ".container {\n");
+        fprintf(css_file, "    max-width: 1000px;\n");
+        fprintf(css_file, "    margin: 0 auto;\n");
+        fprintf(css_file, "    padding: 20px;\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, "h1, h2, h3 {\n");
+        fprintf(css_file, "    color: #333;\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, "h1 {\n");
+        fprintf(css_file, "    border-bottom: 2px solid #4CAF50;\n");
+        fprintf(css_file, "    padding-bottom: 10px;\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, "pre {\n");
+        fprintf(css_file, "    background-color: #f0f0f0;\n");
+        fprintf(css_file, "    padding: 15px;\n");
+        fprintf(css_file, "    border-radius: 4px;\n");
+        fprintf(css_file, "    overflow-x: auto;\n");
+        fprintf(css_file, "    border-left: 4px solid #4CAF50;\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, ".endpoint {\n");
+        fprintf(css_file, "    background-color: white;\n");
+        fprintf(css_file, "    padding: 20px;\n");
+        fprintf(css_file, "    margin: 20px 0;\n");
+        fprintf(css_file, "    border-radius: 4px;\n");
+        fprintf(css_file, "    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, ".endpoint h2 {\n");
+        fprintf(css_file, "    margin-top: 0;\n");
+        fprintf(css_file, "    color: #4CAF50;\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, "a {\n");
+        fprintf(css_file, "    color: #0066cc;\n");
+        fprintf(css_file, "    text-decoration: none;\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, "a:hover {\n");
+        fprintf(css_file, "    text-decoration: underline;\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, "code {\n");
+        fprintf(css_file, "    background-color: #f0f0f0;\n");
+        fprintf(css_file, "    padding: 2px 4px;\n");
+        fprintf(css_file, "    border-radius: 3px;\n");
+        fprintf(css_file, "    font-family: monospace;\n");
+        fprintf(css_file, "}\n");
+        fprintf(css_file, "\n");
+        fprintf(css_file, "footer {\n");
+        fprintf(css_file, "    text-align: center;\n");
+        fprintf(css_file, "    margin-top: 40px;\n");
+        fprintf(css_file, "    padding: 20px;\n");
+        fprintf(css_file, "    background-color: #333;\n");
+        fprintf(css_file, "    color: white;\n");
+        fprintf(css_file, "}\n");
+        fclose(css_file);
+        mcp_log_info("Created %s file in the current directory", styles_css);
+    }
+    else {
+        mcp_log_error("Failed to create %s file in the current directory", styles_css);
+    }
+}
+
+// Create CSS file for SSE test
+static void http_create_sse_test_css(const char* sse_test_css) {
+    FILE* css_file = fopen(sse_test_css, "w");
     if (css_file) {
         fprintf(css_file, "body {\n");
         fprintf(css_file, "    font-family: Arial, sans-serif;\n");
@@ -500,13 +607,15 @@ int main(int argc, char** argv) {
         fprintf(css_file, "    font-weight: bold;\n");
         fprintf(css_file, "}\n");
         fclose(css_file);
-        mcp_log_info("Created sse_test.css file in the current directory");
-    } else {
-        mcp_log_error("Failed to create sse_test.css file in the current directory");
+        mcp_log_info("Created %s file in the current directory", sse_test_css);
     }
+    else {
+        mcp_log_error("Failed to create %s file in the current directory", sse_test_css);
+    }
+}
 
-    // Create JavaScript file for SSE test
-    FILE* js_file = fopen("sse_test.js", "w");
+static void http_create_sse_test_js(const char *sse_test_js) {
+    FILE* js_file = fopen(sse_test_js, "w");
     if (js_file) {
         fprintf(js_file, "// Function to add an event to the events div\n");
         fprintf(js_file, "function addEvent(type, data, eventId = null) {\n");
@@ -739,13 +848,15 @@ int main(int argc, char** argv) {
         fprintf(js_file, "    });\n");
         fprintf(js_file, "});\n");
         fclose(js_file);
-        mcp_log_info("Created sse_test.js file in the current directory");
-    } else {
-        mcp_log_error("Failed to create sse_test.js file in the current directory");
+        mcp_log_info("Created %s file in the current directory", sse_test_js);
     }
+    else {
+        mcp_log_error("Failed to create %s file in the current directory", sse_test_js);
+    }
+}
 
-    // Create sse_test.html file directly in the current directory
-    FILE* sse_file = fopen("sse_test.html", "w");
+static void http_create_sse_test_html(const char* sse_test_html) {
+    FILE* sse_file = fopen(sse_test_html, "w");
     if (sse_file) {
         fprintf(sse_file, "<!DOCTYPE html>\n");
         fprintf(sse_file, "<html>\n");
@@ -795,9 +906,217 @@ int main(int argc, char** argv) {
         fprintf(sse_file, "</body>\n");
         fprintf(sse_file, "</html>\n");
         fclose(sse_file);
-        mcp_log_info("Created sse_test.html file in the current directory");
+        mcp_log_info("Created %s file in the current directory", sse_test_html);
+    }
+    else {
+        mcp_log_error("Failed to create %s file in the current directory", sse_test_html);
+    }
+}
+
+
+int main(int argc, char** argv) {
+    // Default configuration
+    const char* host = "127.0.0.1";
+    uint16_t port = 8080;
+    const char* config_file = "http_server.conf";
+    const char* doc_root = ".";
+    int log_level = MCP_LOG_LEVEL_INFO;
+    bool config_file_specified = false;
+
+    // Parse command line arguments
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
+            host = argv[++i];
+        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            port = (uint16_t)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            config_file = argv[++i];
+            config_file_specified = true;
+        } else if (strcmp(argv[i], "--doc-root") == 0 && i + 1 < argc) {
+            doc_root = argv[++i];
+        } else if (strcmp(argv[i], "--log-level") == 0 && i + 1 < argc) {
+            log_level = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--help") == 0) {
+            printf("Usage: %s [options]\n", argv[0]);
+            printf("Options:\n");
+            printf("  --host HOST         Host to bind to (default: 127.0.0.1)\n");
+            printf("  --port PORT         Port to bind to (default: 8080)\n");
+            printf("  --config FILE       Configuration file to use (default: http_server.conf)\n");
+            printf("  --doc-root PATH     Document root for static files (default: .)\n");
+            printf("  --log-level LEVEL   Log level (0=TRACE, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=FATAL)\n");
+            printf("  --help              Show this help message\n");
+            return 0;
+        } else {
+            printf("Unknown option: %s\n", argv[i]);
+            return 1;
+        }
+    }
+
+    // Get current working directory for path resolution
+    char cwd[512];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("Current working directory: %s\n", cwd);
     } else {
-        mcp_log_error("Failed to create sse_test.html file in the current directory");
+        printf("Failed to get current working directory\n");
+        strcpy(cwd, "."); // Fallback to current directory
+    }
+
+    // Create HTTP transport configuration with default values
+    mcp_http_config_t http_config = {
+        .host = mcp_strdup(host),
+        .port = port,
+        .use_ssl = false,
+        .cert_path = NULL,
+        .key_path = NULL,
+        .doc_root = NULL, // Will be set after path resolution
+        .timeout_ms = 0 // No timeout
+    };
+
+    // Convert relative doc_root to absolute path if needed
+    if (doc_root && doc_root[0] != '/' &&
+        !(doc_root[0] && doc_root[1] == ':' && (doc_root[2] == '/' || doc_root[2] == '\\'))) {
+        // This is a relative path, make it absolute
+        char abs_path[512];
+        snprintf(abs_path, sizeof(abs_path), "%s/%s", cwd, doc_root);
+        http_config.doc_root = mcp_strdup(abs_path);
+        printf("Converted relative doc_root to absolute path: %s\n", abs_path);
+    } else {
+        // This is already an absolute path
+        http_config.doc_root = mcp_strdup(doc_root);
+    }
+
+    // Try to load configuration from file
+    if (config_file) {
+        printf("Trying to load configuration from file: %s\n", config_file);
+
+        // First try in the current directory
+        printf("Trying config file in current directory: %s\n", config_file);
+        if (parse_config_file(config_file, &http_config, &log_level) != 0) {
+            // If not found and not explicitly specified, try in web/html directory
+            if (!config_file_specified) {
+                char web_config_path[512];
+                snprintf(web_config_path, sizeof(web_config_path), "web/html/%s", config_file);
+                printf("Trying config file in web/html directory: %s\n", web_config_path);
+                if (parse_config_file(web_config_path, &http_config, &log_level) != 0) {
+                    // If still not found, try in the executable directory
+                    char exe_path[512];
+                    if (getcwd(exe_path, sizeof(exe_path)) != NULL) {
+                        // Try in current directory
+                        char exe_config_path[512];
+                        snprintf(exe_config_path, sizeof(exe_config_path), "%s/%s", exe_path, config_file);
+                        printf("Trying config file in exe directory: %s\n", exe_config_path);
+                        if (parse_config_file(exe_config_path, &http_config, &log_level) != 0) {
+                            // Try in Debug subdirectory (for Visual Studio)
+                            snprintf(exe_config_path, sizeof(exe_config_path), "%s/Debug/%s", exe_path, config_file);
+                            printf("Trying config file in Debug subdirectory: %s\n", exe_config_path);
+                            if (parse_config_file(exe_config_path, &http_config, &log_level) != 0) {
+                                // Try in Release subdirectory
+                                snprintf(exe_config_path, sizeof(exe_config_path), "%s/Release/%s", exe_path, config_file);
+                                printf("Trying config file in Release subdirectory: %s\n", exe_config_path);
+                                parse_config_file(exe_config_path, &http_config, &log_level);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Initialize logging
+    mcp_log_init(NULL, log_level);
+
+    // Set up signal handling
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+
+    // Create server configuration
+    mcp_server_config_t server_config = {
+        .name = "http-example-server",
+        .version = "1.0.0",
+        .description = "HTTP MCP Server Example with SSE",
+        .thread_pool_size = 4,
+        .task_queue_size = 32,
+        .max_message_size = 1024 * 1024, // 1MB
+        .api_key = NULL // No API key required
+    };
+
+    // Set server capabilities
+    mcp_server_capabilities_t capabilities = {
+        .resources_supported = false, // No resources in this example
+        .tools_supported = true
+    };
+
+    // Create server
+    g_server = mcp_server_create(&server_config, &capabilities);
+    if (!g_server) {
+        mcp_log_error("Failed to create server");
+        return 1;
+    }
+
+    // Register tool handler
+    if (mcp_server_set_tool_handler(g_server, example_tool_handler, NULL) != 0) {
+        mcp_log_error("Failed to set tool handler");
+        mcp_server_destroy(g_server);
+        return 1;
+    }
+
+    // Add example tools
+    mcp_tool_t* echo_tool = mcp_tool_create("echo", "Echo Tool");
+    mcp_tool_t* reverse_tool = mcp_tool_create("reverse", "Reverse Tool");
+
+    if (echo_tool) {
+        mcp_tool_add_param(echo_tool, "text", "string", "Text to echo", true);
+        mcp_server_add_tool(g_server, echo_tool);
+        mcp_tool_free(echo_tool);
+    }
+
+    if (reverse_tool) {
+        mcp_tool_add_param(reverse_tool, "text", "string", "Text to reverse", true);
+        mcp_server_add_tool(g_server, reverse_tool);
+        mcp_tool_free(reverse_tool);
+    }
+
+    // Log the configuration
+    mcp_log_info("HTTP Server Configuration:");
+    mcp_log_info("  Host: %s", http_config.host);
+    mcp_log_info("  Port: %d", http_config.port);
+    mcp_log_info("  Document Root: %s", http_config.doc_root ? http_config.doc_root : "(null)");
+    mcp_log_info("  Use SSL: %s", http_config.use_ssl ? "true" : "false");
+    mcp_log_info("  Log Level: %d", log_level);
+
+    // Check if static files exist in the document root
+    if (http_config.doc_root) {
+        char path[512];
+
+        // Check index.html
+        snprintf(path, sizeof(path), "%s/index.html", http_config.doc_root);
+        mcp_log_info("Checking if index.html exists: %s - %s", path, file_exists(path) ? "YES" : "NO");
+
+        // Check styles.css
+        snprintf(path, sizeof(path), "%s/styles.css", http_config.doc_root);
+        mcp_log_info("Checking if styles.css exists: %s - %s", path, file_exists(path) ? "YES" : "NO");
+
+        // Check sse_test.html
+        snprintf(path, sizeof(path), "%s/sse_test.html", http_config.doc_root);
+        mcp_log_info("Checking if sse_test.html exists: %s - %s", path, file_exists(path) ? "YES" : "NO");
+
+        // Check sse_test.css
+        snprintf(path, sizeof(path), "%s/sse_test.css", http_config.doc_root);
+        mcp_log_info("Checking if sse_test.css exists: %s - %s", path, file_exists(path) ? "YES" : "NO");
+
+        // Check sse_test.js
+        snprintf(path, sizeof(path), "%s/sse_test.js", http_config.doc_root);
+        mcp_log_info("Checking if sse_test.js exists: %s - %s", path, file_exists(path) ? "YES" : "NO");
+    }
+
+    // Check if we need to create static files (only if doc_root is ".")
+    if (http_config.doc_root && strcmp(http_config.doc_root, ".") == 0) {
+        mcp_log_info("Document root is current directory, creating static files...");
+        http_create_index_html("index.html", http_config.host, http_config.port);
+        http_create_styles_css("styles.css");
+        http_create_sse_test_css("sse_test.css");
+        http_create_sse_test_js("sse_test.js");
+        http_create_sse_test_html("sse_test.html");
     }
 
     // Store the doc_root
@@ -812,9 +1131,9 @@ int main(int argc, char** argv) {
     }
 
     // Start server
-    printf("Starting HTTP server on %s:%d\n", host, port);
-    printf("- Tool calls: http://%s:%d/call_tool\n", host, port);
-    printf("- SSE events: http://%s:%d/events\n", host, port);
+    printf("Starting HTTP server on %s:%d\n", http_config.host, http_config.port);
+    printf("- Tool calls: http://%s:%d/call_tool\n", http_config.host, http_config.port);
+    printf("- SSE events: http://%s:%d/events\n", http_config.host, http_config.port);
 
     if (mcp_server_start(g_server, g_transport) != 0) {
         mcp_log_error("Failed to start server");

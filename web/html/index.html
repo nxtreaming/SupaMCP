@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP HTTP Server</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>MCP HTTP Server</h1>
+        <p>This is the MCP HTTP server, providing HTTP and SSE functionality for the MCP server.</p>
+        
+        <div class="endpoint">
+            <h2>Available Endpoints:</h2>
+            <ul>
+                <li><a href="/call_tool"><code>/call_tool</code></a> - JSON-RPC endpoint for calling tools</li>
+                <li><a href="/events"><code>/events</code></a> - Server-Sent Events (SSE) endpoint</li>
+                <li><a href="/sse_test.html"><code>/sse_test.html</code></a> - SSE test page</li>
+            </ul>
+        </div>
+        
+        <div class="endpoint">
+            <h2>Available Tools:</h2>
+            <ul>
+                <li><strong>echo</strong> - Echoes back the input text</li>
+                <li><strong>reverse</strong> - Reverses the input text</li>
+            </ul>
+        </div>
+        
+        <div class="endpoint">
+            <h2>Tool Call Example:</h2>
+            <h3>Using curl:</h3>
+            <pre>curl -X POST http://127.0.0.1:8080/call_tool \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"call_tool","params":{"name":"echo","arguments":{"text":"Hello, MCP Server!"}}}'
+</pre>
+            <h3>Using JavaScript:</h3>
+            <pre>fetch('/call_tool', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'call_tool',
+        params: {
+            name: 'echo',
+            arguments: {
+                text: 'Hello, MCP Server!'
+            }
+        }
+    })
+})
+.then(response => response.json())
+.then(data => console.log(data));</pre>
+        </div>
+        
+        <div class="endpoint">
+            <h2>SSE Example:</h2>
+            <p>Connect to the SSE endpoint to receive real-time events:</p>
+            <pre>const eventSource = new EventSource('/events');
+
+eventSource.onmessage = function(event) {
+    console.log('Received event:', event.data);
+};
+
+eventSource.addEventListener('tool_call', function(event) {
+    console.log('Tool call event:', event.data);
+});
+
+eventSource.addEventListener('tool_result', function(event) {
+    console.log('Tool result event:', event.data);
+});</pre>
+            <p>Visit the <a href="/sse_test.html">SSE test page</a> to see it in action.</p>
+        </div>
+    </div>
+    <footer>
+        <p>SupaMCP Server - HTTP Transport</p>
+    </footer>
+</body>
+</html>
