@@ -9,6 +9,11 @@
 // Uses the thread-local arena for allocating mcp_json_t nodes.
 // String values are always duplicated using malloc/mcp_strdup.
 
+// Helper function to check if a byte is a UTF-8 continuation byte (10xxxxxx)
+static inline bool is_utf8_continuation(unsigned char c) {
+    return (c & 0xC0) == 0x80; // 10xxxxxx
+}
+
 // Forward declarations for static parser helper functions
 static void skip_whitespace(const char** json);
 static char* parse_string(const char** json); // Uses malloc/mcp_strdup
@@ -23,8 +28,7 @@ static void skip_whitespace(const char** json) {
     }
 }
 
-// Parses a JSON string, handling basic escapes. Uses malloc.
-// NOTE: Does not handle \uXXXX escapes correctly in this simplified version.
+// Parses a JSON string, handling basic escapes and UTF-8 characters. Uses malloc.
 static char* parse_string(const char** json) {
     if (**json != '"') {
         return NULL;
@@ -35,10 +39,19 @@ static char* parse_string(const char** json) {
     size_t required_len = 0;
     const char* p = *json;
     while (*p != '"' && *p != '\0') {
-        if (*p < 32 && *p != '\t' && *p != '\n' && *p != '\r' && *p != '\b' && *p != '\f') {
-            fprintf(stderr, "Error: Invalid control character in JSON string.\n");
-            return NULL; // Invalid control character
+        // Check for actual control characters, but allow UTF-8 multi-byte sequences
+        unsigned char c = (unsigned char)*p;
+
+        // Only check for control characters in ASCII range (< 128) and not part of UTF-8 sequence
+        if (c < 32 && c != '\t' && c != '\n' && c != '\r' && c != '\b' && c != '\f') {
+            // For UTF-8, first byte of multi-byte sequence has high bit set
+            // If this is a continuation byte (10xxxxxx), it's part of a UTF-8 sequence
+            if (c < 128 || !is_utf8_continuation(c)) {
+                fprintf(stderr, "Error: Invalid control character in JSON string.\n");
+                return NULL; // Invalid control character
+            }
         }
+
         if (*p == '\\') {
             p++; // Skip backslash
             switch (*p) {
@@ -57,7 +70,7 @@ static char* parse_string(const char** json) {
                         p++;
                     }
                     // TODO: Proper UTF-8 conversion needed here for correct length/value
-                    required_len++; // Placeholder: Assume 1 char for now
+                    required_len += 3; // Allow up to 3 bytes for UTF-8 encoded character
                     break;
                 default:
                     fprintf(stderr, "Error: Invalid escape sequence '\\%c'.\n", *p);
@@ -98,16 +111,20 @@ static char* parse_string(const char** json) {
                 case 'n':  *q++ = '\n'; p++; break;
                 case 'r':  *q++ = '\r'; p++; break;
                 case 't':  *q++ = '\t'; p++; break;
-                case 'u': // Unicode escape - basic parser puts '?'
-                    p++;    // Advance past 'u'
-                    p += 4; // Advance past XXXX
-                    *q++ = '?'; // Placeholder
-                    // No extra p++ needed here
+                case 'u': // Unicode escape - preserve as-is for now
+                    // Just copy the \uXXXX sequence as-is
+                    *q++ = '\\';
+                    *q++ = 'u';
+                    p++; // Skip 'u'
+                    for (int i = 0; i < 4; i++) {
+                        *q++ = *p++;
+                    }
                     break;
                 // No default needed due to first pass validation
             }
             // Removed the p++ that was here, advancement is handled in cases now
         } else {
+            // For UTF-8 characters, just copy them as-is
             *q++ = *p++;
         }
     }
