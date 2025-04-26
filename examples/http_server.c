@@ -92,7 +92,7 @@ static mcp_transport_t* g_transport = NULL;
 static const char* g_doc_root = NULL; // To store the doc_root path
 
 // Example tool handler
-static mcp_error_code_t example_tool_handler(
+static mcp_error_code_t http_tool_handler(
     mcp_server_t* server,
     const char* name,
     const mcp_json_t* params,
@@ -844,7 +844,7 @@ static void signal_handler(int sig) {
 int main(int argc, char** argv) {
     // Default configuration values
     const char* host = "127.0.0.1";
-    uint16_t port = 8080;
+    uint16_t port = 8280;
     const char* config_file = "http_server.conf";
     const char* doc_root = ".";
     bool config_file_specified = false;
@@ -1010,7 +1010,7 @@ int main(int argc, char** argv) {
     }
 
     // Register tool handler
-    if (mcp_server_set_tool_handler(g_server, example_tool_handler, NULL) != 0) {
+    if (mcp_server_set_tool_handler(g_server, http_tool_handler, NULL) != 0) {
         http_server_handle_error(HTTP_SERVER_ERROR_TOOL_HANDLER, "Failed to set tool handler", &server_config);
         return 1;
     }

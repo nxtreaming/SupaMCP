@@ -152,7 +152,7 @@ static int root_handler(struct lws* wsi, enum lws_callback_reasons reason,
             "        <li><strong>reverse</strong> - Reverses the input text</li>\n"
             "    </ul>\n"
             "    <h2>Tool Call Example:</h2>\n"
-            "    <pre>curl -X POST http://127.0.0.1:8280/call_tool -H \"Content-Type: application/json\" -d \"{\\\"name\\\":\\\"echo\\\",\\\"params\\\":{\\\"text\\\":\\\"Hello, MCP Server!\\\"}}\"</pre>\n"
+            "    <pre>curl -X POST http://127.0.0.1:8180/call_tool -H \"Content-Type: application/json\" -d \"{\\\"name\\\":\\\"echo\\\",\\\"params\\\":{\\\"text\\\":\\\"Hello, MCP Server!\\\"}}\"</pre>\n"
             "</body>\n"
             "</html>\n";
 
@@ -1034,7 +1034,7 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                         "    <div class=\"endpoint\">\n"
                         "        <h2>Tool Call Example:</h2>\n"
                         "        <h3>Using curl:</h3>\n"
-                        "        <pre>curl -X POST http://127.0.0.1:8080/call_tool \\\n"
+                        "        <pre>curl -X POST http://127.0.0.1:8180/call_tool \\\n"
                         "     -H \"Content-Type: application/json\" \\\n"
                         "     -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"call_tool\",\"params\":{\"name\":\"echo\",\"arguments\":{\"text\":\"Hello, MCP Server!\"}}}'\n"
                         "</pre>\n"
