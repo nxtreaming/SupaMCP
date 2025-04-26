@@ -196,6 +196,9 @@ mcp_client --list-resources
 # List resources using TCP transport
 mcp_client --tcp --host 127.0.0.1 --port 8080 --list-resources
 
+# List resources using HTTP transport
+mcp_client --http --host 127.0.0.1 --port 8080 --list-resources
+
 # List resource templates
 mcp_client --list-templates
 
@@ -217,6 +220,7 @@ mcp_client --help
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--tcp` | Use TCP transport | - |
+| `--http` | Use HTTP transport | - |
 | `--stdio` | Use stdio transport (default) | - |
 | `--host HOST` | Host to connect to | 127.0.0.1 |
 | `--port PORT` | Port to connect to | 8080 |
@@ -264,6 +268,7 @@ Additional documentation is available in the `docs` directory:
 
 - [HTTP Protocol Implementation Optimization](docs/http_protocol_optimization.md): Details about the optimizations made to the HTTP protocol implementation in SupaMCP and how to test these optimizations.
 - [HTTP Protocol](docs/http_protocol.md): Comprehensive documentation of the HTTP protocol implementation in SupaMCP.
+- [HTTP Client Transport](docs/http_client.md): Documentation of the HTTP client transport implementation in SupaMCP, including SSE support.
 
 ## Protocol
 
