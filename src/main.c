@@ -56,8 +56,7 @@ typedef struct {
 static void cleanup(void);
 static bool parse_tcp_address(const char* address, char* host_buf, size_t host_buf_size, int* port);
 
-// Example resource handler
-static mcp_error_code_t example_resource_handler(
+static mcp_error_code_t server_resource_handler(
     mcp_server_t* server,
     const char* uri,
     void* user_data,
@@ -171,8 +170,7 @@ cleanup:
     return err_code;
 }
 
-// Example tool handler
-static mcp_error_code_t example_tool_handler(
+static mcp_error_code_t server_tool_handler(
     mcp_server_t* server,
     const char* name,
     const mcp_json_t* params,
@@ -758,8 +756,8 @@ int main(int argc, char** argv) {
     // --- End Gateway Mode Setup ---
 
     // Set local handlers (these might be used if no backend matches a request)
-    if (mcp_server_set_resource_handler(g_server, example_resource_handler, NULL) != 0 ||
-        mcp_server_set_tool_handler(g_server, example_tool_handler, NULL) != 0) {
+    if (mcp_server_set_resource_handler(g_server, server_resource_handler, NULL) != 0 ||
+        mcp_server_set_tool_handler(g_server, server_tool_handler, NULL) != 0) {
         mcp_log_error("Failed to set local handlers");
         mcp_server_destroy(g_server); // cleanup will call destroy again, but it's safe
         g_server = NULL;
