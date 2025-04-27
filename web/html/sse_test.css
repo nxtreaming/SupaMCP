@@ -93,6 +93,23 @@ input[type="text"] {
     width: 300px;
 }
 
+#session-id {
+    width: 200px;
+}
+
+label {
+    font-weight: bold;
+    margin-right: 5px;
+}
+
+#generate-session-id-btn {
+    background-color: #2196F3;
+}
+
+#generate-session-id-btn:hover {
+    background-color: #0b7dda;
+}
+
 #connection-status.connected {
     color: green;
     font-weight: bold;

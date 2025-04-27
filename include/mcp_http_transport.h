@@ -38,14 +38,15 @@ typedef struct mcp_http_config {
 mcp_transport_t* mcp_transport_http_create(const mcp_http_config_t* config);
 
 /**
- * @brief Send an SSE (Server-Sent Event) to all connected clients
+ * @brief Send an SSE (Server-Sent Event) to a specific session or all connected clients
  *
  * @param transport Transport handle
  * @param event Event name (can be NULL)
  * @param data Event data
+ * @param session_id Session ID to send to (NULL to send to all clients)
  * @return int 0 on success, non-zero on failure
  */
-int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event, const char* data);
+int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event, const char* data, const char* session_id);
 
 #ifdef __cplusplus
 }

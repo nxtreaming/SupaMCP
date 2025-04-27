@@ -161,7 +161,7 @@ static mcp_error_code_t http_tool_handler(
                 char event_data[256];
                 snprintf(event_data, sizeof(event_data), "{\"text\":\"%s\"}", input_text);
                 mcp_log_info("Sending SSE event: echo - %s", event_data);
-                int ret = mcp_http_transport_send_sse(g_transport, "echo", event_data);
+                int ret = mcp_http_transport_send_sse(g_transport, "echo", event_data, NULL);
                 if (ret != 0) {
                     mcp_log_error("Failed to send SSE event: %d", ret);
                 } else {
@@ -252,7 +252,7 @@ static mcp_error_code_t http_tool_handler(
                     char event_data[256];
                     snprintf(event_data, sizeof(event_data), "{\"text\":\"%s\"}", result_data);
                     mcp_log_info("Sending SSE event: reverse - %s", event_data);
-                    int ret = mcp_http_transport_send_sse(g_transport, "reverse", event_data);
+                    int ret = mcp_http_transport_send_sse(g_transport, "reverse", event_data, NULL);
                     if (ret != 0) {
                         mcp_log_error("Failed to send SSE event: %d", ret);
                     } else {

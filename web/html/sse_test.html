@@ -11,14 +11,14 @@
 </head>
 <body>
     <h1>MCP Server SSE Test</h1>
-    
+
     <div>
         <h2>Server-Sent Events</h2>
         <div class="status-bar">
             <span>Status: <span id="connection-status" class="disconnected">Disconnected</span></span>
             <span>Last Event ID: <span id="last-event-id">None</span></span>
         </div>
-        
+
         <div class="controls">
             <button id="connect-btn">Connect</button>
             <button id="disconnect-btn">Disconnect</button>
@@ -31,9 +31,16 @@
             </select>
             <button id="apply-filter-btn">Apply Filter</button>
         </div>
-        
+
+        <div class="controls">
+            <label for="session-id">Session ID:</label>
+            <input type="text" id="session-id" placeholder="Enter session ID (optional)">
+            <button id="generate-session-id-btn">Generate Random ID</button>
+            <button id="reconnect-btn">Reconnect</button>
+        </div>
+
         <div id="events"></div>
-        
+
         <div class="controls">
             <input type="text" id="text-input" placeholder="Enter text to echo or reverse" value="Hello, MCP Server!">
             <button id="echo-btn">Echo</button>
@@ -42,7 +49,7 @@
             <button id="reload-btn">Reload Page (Clear Cache)</button>
         </div>
     </div>
-    
+
     <script src="sse_test.js"></script>
 </body>
 </html>

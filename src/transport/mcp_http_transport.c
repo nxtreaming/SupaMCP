@@ -85,6 +85,7 @@ typedef struct {
     bool is_sse_client;
     int last_event_id;     // Last event ID received by this client
     char* event_filter;    // Event type filter (NULL = all events)
+    char* session_id;      // Session ID for targeting specific clients (NULL = no session)
 } http_session_data_t;
 
 // Forward declarations
@@ -805,6 +806,18 @@ static void process_http_request(struct lws* wsi, http_transport_data_t* data,
 
 // Handle SSE request
 static void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
+    // Get session data
+    http_session_data_t* session_data = (http_session_data_t*)lws_wsi_user(wsi);
+    if (!session_data) {
+        mcp_log_error("No session data for SSE request");
+        return;
+    }
+
+    // Log session data
+    mcp_log_debug("SSE request - session data: is_sse_client=%d, session_id=%s",
+                 session_data->is_sse_client,
+                 session_data->session_id ? session_data->session_id : "NULL");
+
     // Prepare response headers
     unsigned char buffer[LWS_PRE + 1024];
     unsigned char* p = &buffer[LWS_PRE];
@@ -843,65 +856,160 @@ static void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
     // Mark as SSE connection
     lws_http_mark_sse(wsi);
 
-    // Get session data
-    http_session_data_t* session = (http_session_data_t*)lws_wsi_user(wsi);
-    if (session) {
-        session->is_sse_client = true;
-        session->last_event_id = 0;
+    // Mark as SSE client
+    session_data->is_sse_client = true;
+    session_data->last_event_id = 0;
 
-        // Check for Last-Event-ID header
-        // libwebsockets doesn't have a direct token for Last-Event-ID, so we need to use a custom header
-        char last_event_id[32] = {0};
+    // Check for Last-Event-ID header
+    // libwebsockets doesn't have a direct token for Last-Event-ID, so we need to use a custom header
+    char last_event_id[32] = {0};
 
-        // Try to get the Last-Event-ID from the query string first
-        char query[256] = {0};
-        int len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
+    // Try to get the Last-Event-ID from the query string first
+    char query[256] = {0};
+    int len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
+    if (len > 0 && len < (int)sizeof(query)) {
+        lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS);
+
+        // Parse query string for 'lastEventId' parameter
+        char* id_param = strstr(query, "lastEventId=");
+        if (id_param) {
+            id_param += 12; // Skip "lastEventId="
+
+            // Find the end of the parameter value
+            char* end_param = strchr(id_param, '&');
+            if (end_param) {
+                *end_param = '\0';
+            }
+
+            // Copy the ID
+            strncpy(last_event_id, id_param, sizeof(last_event_id) - 1);
+            session_data->last_event_id = atoi(last_event_id);
+            mcp_log_info("SSE client reconnected with Last-Event-ID: %d", session_data->last_event_id);
+        }
+    }
+
+    // Check for event filter in query string (reuse the query string we already parsed)
+    if (len == 0) {
+        // If we didn't get the query string above, get it now
+        len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
         if (len > 0 && len < (int)sizeof(query)) {
             lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS);
+        }
+    }
 
-            // Parse query string for 'lastEventId' parameter
-            char* id_param = strstr(query, "lastEventId=");
-            if (id_param) {
-                id_param += 12; // Skip "lastEventId="
+    if (len > 0) {
+        // Parse query string for 'filter' parameter
+        char* filter_param = strstr(query, "filter=");
+        if (filter_param) {
+            filter_param += 7; // Skip "filter="
 
-                // Find the end of the parameter value
-                char* end_param = strchr(id_param, '&');
-                if (end_param) {
-                    *end_param = '\0';
-                }
-
-                // Copy the ID
-                strncpy(last_event_id, id_param, sizeof(last_event_id) - 1);
-                session->last_event_id = atoi(last_event_id);
-                mcp_log_info("SSE client reconnected with Last-Event-ID: %d", session->last_event_id);
+            // Find the end of the parameter value
+            char* end_param = strchr(filter_param, '&');
+            if (end_param) {
+                *end_param = '\0';
             }
+
+            // Store the filter
+            session_data->event_filter = mcp_strdup(filter_param);
+            mcp_log_info("SSE client connected with event filter: %s", session_data->event_filter);
         }
 
-        // Check for event filter in query string (reuse the query string we already parsed)
-        if (len == 0) {
-            // If we didn't get the query string above, get it now
-            len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
-            if (len > 0 && len < (int)sizeof(query)) {
-                lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS);
+        // Parse query string for 'session_id' parameter
+        mcp_log_info("Parsing query string for session_id: '%s'", query);
+        char* session_id_param = strstr(query, "session_id=");
+        if (session_id_param) {
+            mcp_log_info("Found session_id parameter at position %d", (int)(session_id_param - query));
+            session_id_param += 11; // Skip "session_id="
+            mcp_log_info("After skipping prefix, session_id_param = '%s'", session_id_param);
+
+            // Find the end of the parameter value
+            char* end_param = strchr(session_id_param, '&');
+            if (end_param) {
+                mcp_log_info("Found end of session_id at position %d", (int)(end_param - session_id_param));
+                *end_param = '\0';
+                mcp_log_info("After null-terminating, session_id_param = '%s'", session_id_param);
+            } else {
+                mcp_log_info("No '&' found, session_id is the last parameter");
             }
-        }
 
-        if (len > 0) {
-            // Parse query string for 'filter' parameter
-            char* filter_param = strstr(query, "filter=");
-            if (filter_param) {
-                filter_param += 7; // Skip "filter="
+            // Log the raw session_id parameter
+            mcp_log_info("SSE client connecting with raw session_id parameter: '%s'", session_id_param);
 
-                // Find the end of the parameter value
-                char* end_param = strchr(filter_param, '&');
-                if (end_param) {
-                    *end_param = '\0';
+            // URL decode the session_id parameter if needed
+            // (This is a simple implementation that handles %xx escapes)
+            char decoded_session_id[256] = {0};
+            const char* src = session_id_param;
+            char* dst = decoded_session_id;
+            while (*src) {
+                if (*src == '%' && src[1] && src[2]) {
+                    // Handle %xx escape
+                    char hex[3] = {src[1], src[2], 0};
+                    *dst = (char)strtol(hex, NULL, 16);
+                    src += 3;
+                } else if (*src == '+') {
+                    // Handle + as space
+                    *dst = ' ';
+                    src++;
+                } else {
+                    // Copy character as-is
+                    *dst = *src;
+                    src++;
                 }
-
-                // Store the filter
-                session->event_filter = mcp_strdup(filter_param);
-                mcp_log_info("SSE client connected with event filter: %s", session->event_filter);
+                dst++;
             }
+            *dst = '\0';
+
+            // TEMPORARY FIX: Store the session ID directly from the query string
+            // Extract the session_id directly from the query string
+            char* direct_session_id = NULL;
+            char* session_id_start = strstr(query, "session_id=");
+            if (session_id_start) {
+                session_id_start += 11; // Skip "session_id="
+                char* session_id_end = strchr(session_id_start, '&');
+                if (session_id_end) {
+                    // Allocate memory for the session ID
+                    size_t id_len = session_id_end - session_id_start;
+                    direct_session_id = (char*)malloc(id_len + 1);
+                    if (direct_session_id) {
+                        strncpy(direct_session_id, session_id_start, id_len);
+                        direct_session_id[id_len] = '\0';
+                    }
+                } else {
+                    // Session ID is the last parameter
+                    direct_session_id = mcp_strdup(session_id_start);
+                }
+            }
+
+            mcp_log_info("Direct session_id extraction: '%s'", direct_session_id ? direct_session_id : "NULL");
+
+            // Store the session ID (use the direct extraction if available)
+            if (direct_session_id) {
+                session_data->session_id = direct_session_id;
+            } else if (strcmp(session_id_param, decoded_session_id) != 0) {
+                mcp_log_info("URL decoded session_id: '%s' -> '%s'", session_id_param, decoded_session_id);
+                session_data->session_id = mcp_strdup(decoded_session_id);
+            } else {
+                session_data->session_id = mcp_strdup(session_id_param);
+            }
+
+            mcp_log_info("SSE client connected with session ID: '%s'", session_data->session_id);
+
+            // Add more detailed logging
+            mcp_log_info("SSE connection details - session_id: '%s', query: '%s'",
+                         session_data->session_id, query);
+
+            // Verify that the session_id was stored correctly
+            if (session_data->session_id == NULL) {
+                mcp_log_error("Failed to store session_id: '%s'", session_id_param);
+            } else if (strcmp(session_data->session_id, session_id_param) != 0 &&
+                       strcmp(session_data->session_id, decoded_session_id) != 0) {
+                mcp_log_error("Session ID mismatch: stored='%s', param='%s', decoded='%s'",
+                             session_data->session_id, session_id_param, decoded_session_id);
+            } else {
+                mcp_log_info("Session ID stored correctly: '%s'", session_data->session_id);
+            }
+        } else {
+            mcp_log_debug("SSE client connected without session ID - query: %s", query);
         }
     }
 
@@ -909,6 +1017,18 @@ static void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
     mcp_mutex_lock(data->sse_mutex);
     if (data->sse_client_count < MAX_SSE_CLIENTS) {
         data->sse_clients[data->sse_client_count++] = wsi;
+
+        // Log the client connection with session details
+        if (session_data) {
+            mcp_log_info("Added SSE client #%d - session_id: %s, filter: %s",
+                        data->sse_client_count,
+                        session_data->session_id ? session_data->session_id : "NULL",
+                        session_data->event_filter ? session_data->event_filter : "ALL");
+        } else {
+            mcp_log_info("Added SSE client #%d - no session data", data->sse_client_count);
+        }
+    } else {
+        mcp_log_error("Maximum number of SSE clients (%d) reached, rejecting connection", MAX_SSE_CLIENTS);
     }
     mcp_mutex_unlock(data->sse_mutex);
 
@@ -917,7 +1037,7 @@ static void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
     lws_write(wsi, (unsigned char*)initial_msg, strlen(initial_msg), LWS_WRITE_HTTP);
 
     // If client reconnected with Last-Event-ID, replay missed events
-    if (session && session->last_event_id > 0) {
+    if (session_data && session_data->last_event_id > 0) {
         mcp_mutex_lock(data->event_mutex);
 
         // Iterate through the circular buffer to find events with ID greater than last_event_id
@@ -930,10 +1050,10 @@ static void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
                 int event_id = atoi(data->stored_events[current].id);
 
                 // Only send events with ID greater than last_event_id
-                if (event_id > session->last_event_id) {
+                if (event_id > session_data->last_event_id) {
                     // Skip events that don't match the filter (if any)
-                    if (!(session->event_filter && data->stored_events[current].event_type &&
-                        strcmp(session->event_filter, data->stored_events[current].event_type) != 0)) {
+                    if (!(session_data->event_filter && data->stored_events[current].event_type &&
+                        strcmp(session_data->event_filter, data->stored_events[current].event_type) != 0)) {
 
                         // Replay the event
                         if (data->stored_events[current].event_type) {
@@ -1053,6 +1173,21 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
     mcp_log_debug("HTTP callback: reason=%s (%d)", reason_str, reason);
 
     switch (reason) {
+        case LWS_CALLBACK_WSI_CREATE:
+            {
+                // Initialize session data
+                if (session) {
+                    session->request_buffer = NULL;
+                    session->request_len = 0;
+                    session->is_sse_client = false;
+                    session->last_event_id = 0;
+                    session->event_filter = NULL;
+                    session->session_id = NULL;
+                    mcp_log_debug("Session data initialized");
+                }
+                return 0;
+            }
+
         case LWS_CALLBACK_HTTP:
             {
                 char* uri = (char*)in;
@@ -1061,6 +1196,51 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                 // Check if this is an SSE request
                 if (strcmp(uri, "/events") == 0) {
                     mcp_log_info("Handling SSE request");
+
+                    // Extract session_id from query string
+                    char query[256] = {0};
+                    int query_len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
+                    if (query_len > 0 && query_len < (int)sizeof(query)) {
+                        lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS);
+                        mcp_log_debug("SSE request query string: '%s'", query);
+
+                        // Extract and store session_id directly in the HTTP callback
+                        if (session) {
+                            // Free any existing session_id
+                            if (session->session_id) {
+                                free(session->session_id);
+                                session->session_id = NULL;
+                            }
+
+                            // Extract session_id from query string
+                            char* session_id_param = strstr(query, "session_id=");
+                            if (session_id_param) {
+                                session_id_param += 11; // Skip "session_id="
+
+                                // Find the end of the parameter value
+                                char* end_param = strchr(session_id_param, '&');
+                                if (end_param) {
+                                    // Allocate memory for the session ID
+                                    size_t param_len = end_param - session_id_param;
+                                    char* session_id_str = (char*)malloc(param_len + 1);
+                                    if (session_id_str) {
+                                        strncpy(session_id_str, session_id_param, param_len);
+                                        session_id_str[param_len] = '\0';
+                                        session->session_id = session_id_str;
+                                    }
+                                } else {
+                                    // Session ID is the last parameter
+                                    session->session_id = mcp_strdup(session_id_param);
+                                }
+
+                                mcp_log_info("SSE client connected with session ID: %s",
+                                           session->session_id ? session->session_id : "NULL");
+                            }
+                        }
+                    } else {
+                        mcp_log_debug("SSE request has no query string (len=%d)", query_len);
+                    }
+
                     handle_sse_request(wsi, data);
                     return 0;
                 }
@@ -1753,6 +1933,12 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                     session->event_filter = NULL;
                 }
 
+                // Free session ID if set
+                if (session->session_id) {
+                    free(session->session_id);
+                    session->session_id = NULL;
+                }
+
                 // Remove from SSE clients if this was an SSE client
                 if (session->is_sse_client) {
                     mcp_mutex_lock(data->sse_mutex);
@@ -1779,8 +1965,8 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
     //return 0;
 }
 
-// Send SSE event to all connected clients
-int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event, const char* data) {
+// Send SSE event to a specific session or all connected clients
+int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event, const char* data, const char* session_id) {
     if (transport == NULL || transport->transport_data == NULL || data == NULL) {
         return -1;
     }
@@ -1795,19 +1981,72 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event, c
     char id_str[32];
     snprintf(id_str, sizeof(id_str), "%d", event_id);
 
+    // Log the number of connected SSE clients
+    mcp_log_debug("Sending SSE event to %d connected clients, session_id: %s",
+                transport_data->sse_client_count, session_id ? session_id : "NULL");
+
     // Send to all SSE clients
     mcp_mutex_lock(transport_data->sse_mutex);
+
+    // If no clients are connected, log a warning
+    if (transport_data->sse_client_count == 0) {
+        mcp_log_warn("No SSE clients connected, event will not be delivered");
+    }
+
+    int matched_clients = 0;
     for (int i = 0; i < transport_data->sse_client_count; i++) {
         struct lws* wsi = transport_data->sse_clients[i];
 
-        // Get session data to check for event filter
+        // Get session data to check for event filter and session ID
         http_session_data_t* session = (http_session_data_t*)lws_wsi_user(wsi);
 
         // Skip this client if it has a filter and the event doesn't match
         if (session && session->event_filter && event &&
             strcmp(session->event_filter, event) != 0) {
+            mcp_log_debug("Skipping SSE client due to event filter mismatch - filter: %s, event: %s",
+                         session->event_filter, event);
             continue;
         }
+
+        // If a specific session ID was requested
+        if (session_id != NULL) {
+            // If session is NULL, skip
+            if (session == NULL) {
+                mcp_log_debug("Skipping SSE client - client has no session data but requested session_id: %s", session_id);
+                continue;
+            }
+
+            // If session_id is NULL, skip
+            if (session->session_id == NULL) {
+                mcp_log_debug("Skipping SSE client - client session_id is NULL but requested session_id: %s", session_id);
+
+                // Dump all session data for debugging
+                mcp_log_debug("Client session data: is_sse_client=%d, last_event_id=%d, event_filter=%s",
+                             session->is_sse_client,
+                             session->last_event_id,
+                             session->event_filter ? session->event_filter : "NULL");
+                continue;
+            }
+
+            // If session_id doesn't match, skip
+            if (strcmp(session->session_id, session_id) != 0) {
+                mcp_log_debug("Skipping SSE client - session_id mismatch - requested: %s, client: %s",
+                             session_id, session->session_id);
+
+                // Try case-insensitive comparison
+                if (strcasecmp(session->session_id, session_id) == 0) {
+                    mcp_log_debug("Session IDs match with case-insensitive comparison");
+                    // Continue with this client despite the case difference
+                } else {
+                    continue;
+                }
+            }
+
+            // If we get here, the session_id matched
+            mcp_log_info("Found matching SSE client with session_id: %s", session_id);
+        }
+
+        matched_clients++;
 
         if (event != NULL) {
             // Write in multiple pieces to avoid any heap allocation
@@ -1859,6 +2098,18 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event, c
         lws_callback_on_writable(wsi);
     }
     mcp_mutex_unlock(transport_data->sse_mutex);
+
+    // Log the number of matched clients
+    if (session_id != NULL) {
+        if (matched_clients > 0) {
+            mcp_log_info("Successfully sent SSE event to %d client(s) with session_id: %s",
+                        matched_clients, session_id);
+        } else {
+            mcp_log_warn("No SSE clients matched the requested session_id: %s", session_id);
+        }
+    } else {
+        mcp_log_info("Successfully sent SSE event to %d client(s) (broadcast)", matched_clients);
+    }
 
     return 0;
 }

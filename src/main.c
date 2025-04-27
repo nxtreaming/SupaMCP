@@ -49,6 +49,7 @@ typedef struct {
     bool daemon;
     const char* api_key;
     bool gateway_mode;
+    const char* doc_root;  // Document root for static file serving
 } server_config_t;
 
 // Forward declarations
@@ -181,7 +182,8 @@ static mcp_error_code_t example_tool_handler(
     bool* is_error,
     char** error_message)
 {
-    (void)server; (void)user_data;
+    // Don't void server parameter, we need it to access transport
+    (void)user_data;
 
     mcp_log_info("Tool called: %s", name);
 
@@ -195,7 +197,7 @@ static mcp_error_code_t example_tool_handler(
     const char* input_text = NULL;
     mcp_error_code_t err_code = MCP_ERROR_NONE;
 
-    // Extract "text" parameter using mcp_json
+    // Extract parameters using mcp_json
     if (params == NULL || mcp_json_get_type(params) != MCP_JSON_OBJECT) {
         mcp_log_warn("Tool '%s': Invalid or missing params object.", name);
         *is_error = true;
@@ -203,7 +205,67 @@ static mcp_error_code_t example_tool_handler(
         err_code = MCP_ERROR_INVALID_PARAMS;
         goto cleanup;
     }
+
+    // Variables to store parameters
+    const char* session_id = NULL;
+
+    // Dump the entire params object for debugging
+    char* params_json = mcp_json_stringify(params);
+    mcp_log_debug("Tool '%s': Raw params: %s", name, params_json ? params_json : "NULL");
+    if (params_json) free(params_json);
+
+    // First try to get text directly from params
     mcp_json_t* text_node = mcp_json_object_get_property(params, "text");
+
+    // If text not found directly, check for arguments object (for compatibility with different call formats)
+    mcp_json_t* args = NULL;
+    if (text_node == NULL) {
+        mcp_log_debug("Tool '%s': No 'text' property found directly in params, checking 'arguments'", name);
+        args = mcp_json_object_get_property(params, "arguments");
+        if (args != NULL && mcp_json_get_type(args) == MCP_JSON_OBJECT) {
+            mcp_log_debug("Tool '%s': Found 'arguments' object", name);
+            text_node = mcp_json_object_get_property(args, "text");
+
+            // Try to get session_id from arguments
+            mcp_json_t* session_id_node = mcp_json_object_get_property(args, "session_id");
+            if (session_id_node != NULL) {
+                mcp_log_debug("Tool '%s': Found 'session_id' property in arguments, type: %d",
+                             name, mcp_json_get_type(session_id_node));
+
+                if (mcp_json_get_type(session_id_node) == MCP_JSON_STRING) {
+                    mcp_json_get_string(session_id_node, &session_id);
+                    mcp_log_info("Tool '%s': Found session_id in arguments: %s",
+                                name, session_id ? session_id : "NULL");
+                } else {
+                    mcp_log_warn("Tool '%s': 'session_id' property is not a string", name);
+                }
+            } else {
+                mcp_log_debug("Tool '%s': No 'session_id' property found in arguments", name);
+            }
+        } else {
+            mcp_log_debug("Tool '%s': No valid 'arguments' object found", name);
+        }
+    } else {
+        mcp_log_debug("Tool '%s': Found 'text' property directly in params", name);
+
+        // Try to get session_id directly from params
+        mcp_json_t* session_id_node = mcp_json_object_get_property(params, "session_id");
+        if (session_id_node != NULL) {
+            mcp_log_debug("Tool '%s': Found 'session_id' property directly in params, type: %d",
+                         name, mcp_json_get_type(session_id_node));
+
+            if (mcp_json_get_type(session_id_node) == MCP_JSON_STRING) {
+                mcp_json_get_string(session_id_node, &session_id);
+                mcp_log_info("Tool '%s': Found session_id directly in params: %s",
+                            name, session_id ? session_id : "NULL");
+            } else {
+                mcp_log_warn("Tool '%s': 'session_id' property is not a string", name);
+            }
+        } else {
+            mcp_log_debug("Tool '%s': No 'session_id' property found directly in params", name);
+        }
+    }
+
     if (text_node == NULL || mcp_json_get_type(text_node) != MCP_JSON_STRING ||
         mcp_json_get_string(text_node, &input_text) != 0 || input_text == NULL) {
         mcp_log_warn("Tool '%s': Missing or invalid 'text' string parameter.", name);
@@ -216,6 +278,34 @@ static mcp_error_code_t example_tool_handler(
     // Execute tool logic
     if (strcmp(name, "echo") == 0) {
         result_data = mcp_strdup(input_text);
+        mcp_log_info("Echo tool called with text: %s", input_text);
+
+        // Send an SSE event with the echoed text if using HTTP transport
+        mcp_log_info("Checking transport protocol for SSE event...");
+        if (server && server->transport) {
+            mcp_transport_protocol_t protocol = mcp_transport_get_protocol(server->transport);
+            mcp_log_info("Transport protocol: %d (HTTP=%d)", protocol, MCP_TRANSPORT_PROTOCOL_HTTP);
+            if (protocol == MCP_TRANSPORT_PROTOCOL_HTTP) {
+                char event_data[256];
+                snprintf(event_data, sizeof(event_data), "{\"text\":\"%s\"}", input_text);
+                if (session_id) {
+                    mcp_log_info("Sending SSE event: echo - %s to session: %s", event_data, session_id);
+                } else {
+                    mcp_log_info("Sending SSE event: echo - %s (broadcast)", event_data);
+                }
+
+                // Add more detailed logging
+                mcp_log_debug("SSE parameters - event: %s, data: %s, session_id: %s",
+                             "echo", event_data, session_id ? session_id : "NULL");
+
+                int ret = mcp_http_transport_send_sse(server->transport, "echo", event_data, session_id);
+                if (ret != 0) {
+                    mcp_log_error("Failed to send SSE event: %d", ret);
+                } else {
+                    mcp_log_info("SSE event sent successfully");
+                }
+            }
+        }
     } else if (strcmp(name, "reverse") == 0) {
         // UTF-8 aware string reversal
         size_t len = strlen(input_text);
@@ -282,6 +372,35 @@ static mcp_error_code_t example_tool_handler(
 
             // Null-terminate the result
             result_data[len] = '\0';
+
+            mcp_log_info("Reverse tool called with text: %s, result: %s", input_text, result_data);
+
+            // Send an SSE event with the reversed text if using HTTP transport
+            mcp_log_info("Checking transport protocol for SSE event...");
+            if (server && server->transport) {
+                mcp_transport_protocol_t protocol = mcp_transport_get_protocol(server->transport);
+                mcp_log_info("Transport protocol: %d (HTTP=%d)", protocol, MCP_TRANSPORT_PROTOCOL_HTTP);
+                if (protocol == MCP_TRANSPORT_PROTOCOL_HTTP) {
+                    char event_data[256];
+                    snprintf(event_data, sizeof(event_data), "{\"text\":\"%s\"}", result_data);
+                    if (session_id) {
+                        mcp_log_info("Sending SSE event: reverse - %s to session: %s", event_data, session_id);
+                    } else {
+                        mcp_log_info("Sending SSE event: reverse - %s (broadcast)", event_data);
+                    }
+
+                    // Add more detailed logging
+                    mcp_log_debug("SSE parameters - event: %s, data: %s, session_id: %s",
+                                 "reverse", event_data, session_id ? session_id : "NULL");
+
+                    int ret = mcp_http_transport_send_sse(server->transport, "reverse", event_data, session_id);
+                    if (ret != 0) {
+                        mcp_log_error("Failed to send SSE event: %d", ret);
+                    } else {
+                        mcp_log_info("SSE event sent successfully");
+                    }
+                }
+            }
 
             // Free the character positions array
             free(char_positions);
@@ -451,6 +570,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
     config->daemon = false;
     config->api_key = NULL;
     config->gateway_mode = false;
+    config->doc_root = NULL;  // Default: no static file serving
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tcp") == 0) {
@@ -483,6 +603,8 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             config->api_key = argv[++i];
         } else if (strcmp(argv[i], "--gateway") == 0) {
             config->gateway_mode = true;
+        } else if (strcmp(argv[i], "--doc-root") == 0 && i + 1 < argc) {
+            config->doc_root = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("Options:\n");
@@ -495,6 +617,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             printf("  --log-level LEVEL   Set log level (error, warn, info, debug)\n");
             printf("  --api-key KEY       Require API key for authentication\n");
             printf("  --gateway           Enable MCP Gateway mode (requires gateway_config.json)\n");
+            printf("  --doc-root PATH     Document root for serving static files (HTTP mode only)\n");
             printf("  --daemon            Run as daemon (Unix-like systems only)\n");
             printf("  --help              Show this help message\n");
             exit(0);
@@ -699,10 +822,20 @@ int main(int argc, char** argv) {
             .use_ssl = false,  // No SSL for now
             .cert_path = NULL,
             .key_path = NULL,
-            .doc_root = NULL,  // No static file serving
+            .doc_root = config.doc_root,  // Use doc_root from command line if provided
             .timeout_ms = 0    // No timeout
         };
+
+        if (config.doc_root) {
+            mcp_log_info("Static file serving enabled, document root: %s", config.doc_root);
+        }
         transport = mcp_transport_http_create(&http_config);
+
+        // Explicitly set the protocol type to HTTP
+        if (transport) {
+            mcp_transport_set_protocol(transport, MCP_TRANSPORT_PROTOCOL_HTTP);
+            mcp_log_info("Transport protocol explicitly set to HTTP");
+        }
     } else {
         mcp_log_error("Unknown transport type: %s", config.transport_type);
         mcp_server_destroy(g_server); g_server = NULL;
