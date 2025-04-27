@@ -311,10 +311,13 @@ static int http_client_transport_stop(mcp_transport_t* transport) {
     data->running = false;
 
     // Close the SSE socket to unblock the event thread
+    // Use mutex to protect access to sse_socket
+    mcp_mutex_lock(data->mutex);
     if (data->sse_socket != MCP_INVALID_SOCKET) {
         mcp_socket_close(data->sse_socket);
         data->sse_socket = MCP_INVALID_SOCKET;
     }
+    mcp_mutex_unlock(data->mutex);
 
     // Wait for event thread to finish (with timeout)
     mcp_thread_join(data->event_thread, NULL);
@@ -755,7 +758,10 @@ static void* http_client_event_thread_func(void* arg) {
         }
 
         // Store the socket for later use (e.g., to close it in stop function)
+        // Use mutex to protect access to sse_socket
+        mcp_mutex_lock(data->mutex);
         data->sse_socket = sock;
+        mcp_mutex_unlock(data->mutex);
 
         mcp_log_info("Connected to SSE endpoint");
 
@@ -848,8 +854,11 @@ static void* http_client_event_thread_func(void* arg) {
         }
 
         // Clean up
+        // Use mutex to protect access to sse_socket
+        mcp_mutex_lock(data->mutex);
         mcp_socket_close(sock);
         data->sse_socket = MCP_INVALID_SOCKET;
+        mcp_mutex_unlock(data->mutex);
 
         // Free event data
         if (event_type != NULL) {
