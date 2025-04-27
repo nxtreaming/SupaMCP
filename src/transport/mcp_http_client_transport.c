@@ -76,6 +76,7 @@ typedef struct {
 
     // SSE event handling
     char* last_event_id;         // Last event ID received
+    socket_t sse_socket;         // Socket for SSE connection
 
     // Message callback
     mcp_transport_message_callback_t message_callback;
@@ -92,7 +93,7 @@ static http_response_t* http_post_request(const char* url, const char* content_t
 
 
 static void http_response_free(http_response_t* response);
-static int connect_to_sse_endpoint(http_client_transport_data_t* data);
+static socket_t connect_to_sse_endpoint(http_client_transport_data_t* data);
 static void process_sse_event(http_client_transport_data_t* data, const sse_event_t* event);
 static sse_event_t* sse_event_create(const char* id, const char* event, const char* data);
 static void sse_event_free(sse_event_t* event);
@@ -138,6 +139,9 @@ mcp_transport_t* mcp_transport_http_client_create_with_config(const mcp_http_cli
         free(transport);
         return NULL;
     }
+
+    // Initialize socket to invalid
+    data->sse_socket = MCP_INVALID_SOCKET;
 
     // Copy configuration
     data->host = mcp_strdup(config->host);
@@ -306,7 +310,13 @@ static int http_client_transport_stop(mcp_transport_t* transport) {
     // Set running flag to false to signal threads to stop
     data->running = false;
 
-    // Wait for event thread to finish
+    // Close the SSE socket to unblock the event thread
+    if (data->sse_socket != MCP_INVALID_SOCKET) {
+        mcp_socket_close(data->sse_socket);
+        data->sse_socket = MCP_INVALID_SOCKET;
+    }
+
+    // Wait for event thread to finish (with timeout)
     mcp_thread_join(data->event_thread, NULL);
 
     mcp_log_info("HTTP client transport stopped");
@@ -592,9 +602,9 @@ static int http_client_transport_receive(mcp_transport_t* transport, char** data
 /**
  * @brief Connects to the SSE endpoint.
  */
-static int connect_to_sse_endpoint(http_client_transport_data_t* data) {
+static socket_t connect_to_sse_endpoint(http_client_transport_data_t* data) {
     if (data == NULL) {
-        return -1;
+        return MCP_INVALID_SOCKET;
     }
 
     // Build URL
@@ -608,7 +618,7 @@ static int connect_to_sse_endpoint(http_client_transport_data_t* data) {
     socket_t sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == MCP_INVALID_SOCKET) {
         mcp_log_error("Failed to create socket for SSE connection");
-        return -1;
+        return MCP_INVALID_SOCKET;
     }
 
     // Resolve host
@@ -616,7 +626,7 @@ static int connect_to_sse_endpoint(http_client_transport_data_t* data) {
     if (server == NULL) {
         mcp_log_error("Failed to resolve host: %s", data->host);
         mcp_socket_close(sock);
-        return -1;
+        return MCP_INVALID_SOCKET;
     }
 
     // Connect to server
@@ -629,14 +639,14 @@ static int connect_to_sse_endpoint(http_client_transport_data_t* data) {
     if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == MCP_SOCKET_ERROR) {
         mcp_log_error("Failed to connect to server: %s:%d", data->host, data->port);
         mcp_socket_close(sock);
-        return -1;
+        return MCP_INVALID_SOCKET;
     }
 
     // TODO: Implement SSL support if needed
     if (data->use_ssl) {
         mcp_log_error("SSL not implemented yet for SSE connection");
         mcp_socket_close(sock);
-        return -1;
+        return MCP_INVALID_SOCKET;
     }
 
     // Build HTTP request
@@ -667,11 +677,11 @@ static int connect_to_sse_endpoint(http_client_transport_data_t* data) {
     if (send(sock, request, request_len, 0) != request_len) {
         mcp_log_error("Failed to send HTTP request for SSE connection");
         mcp_socket_close(sock);
-        return -1;
+        return MCP_INVALID_SOCKET;
     }
 
-    // Cast to int to avoid warning
-    return (int)sock;
+    // Return the socket
+    return sock;
 }
 
 /**
@@ -734,8 +744,8 @@ static void* http_client_event_thread_func(void* arg) {
     // Main loop
     while (data->running) {
         // Connect to SSE endpoint
-        int sock = connect_to_sse_endpoint(data);
-        if (sock < 0) {
+        socket_t sock = connect_to_sse_endpoint(data);
+        if (sock == MCP_INVALID_SOCKET) {
             mcp_log_error("Failed to connect to SSE endpoint, retrying in 5 seconds");
             // Sleep and retry
             for (int i = 0; i < 50 && data->running; i++) {
@@ -743,6 +753,9 @@ static void* http_client_event_thread_func(void* arg) {
             }
             continue;
         }
+
+        // Store the socket for later use (e.g., to close it in stop function)
+        data->sse_socket = sock;
 
         mcp_log_info("Connected to SSE endpoint");
 
@@ -836,6 +849,7 @@ static void* http_client_event_thread_func(void* arg) {
 
         // Clean up
         mcp_socket_close(sock);
+        data->sse_socket = MCP_INVALID_SOCKET;
 
         // Free event data
         if (event_type != NULL) {
