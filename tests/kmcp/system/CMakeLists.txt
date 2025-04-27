@@ -16,8 +16,8 @@ target_link_libraries(kmcp_system_tests kmcp mcp_common)
 # Add include directories
 target_include_directories(kmcp_system_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
+    ${CMAKE_SOURCE_DIR}/kmcp/include
+    ${CMAKE_SOURCE_DIR}/kmcp/src
 )
 
 # Add system test

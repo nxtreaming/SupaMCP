@@ -30,8 +30,8 @@ target_link_libraries(kmcp_tests kmcp mcp_common)
 # Add include directories
 target_include_directories(kmcp_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
+    ${CMAKE_SOURCE_DIR}/kmcp/include
+    ${CMAKE_SOURCE_DIR}/kmcp/src
     ${CMAKE_CURRENT_SOURCE_DIR}/unit
 )
 
@@ -45,8 +45,8 @@ add_executable(kmcp_error_test kmcp_error_test.c)
 target_link_libraries(kmcp_error_test kmcp mcp_common)
 target_include_directories(kmcp_error_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
+    ${CMAKE_SOURCE_DIR}/kmcp/include
+    ${CMAKE_SOURCE_DIR}/kmcp/src
 )
 target_compile_definitions(kmcp_error_test PRIVATE STANDALONE_TEST)
 
@@ -55,8 +55,8 @@ add_executable(kmcp_event_test kmcp_event_test.c)
 target_link_libraries(kmcp_event_test kmcp mcp_common)
 target_include_directories(kmcp_event_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
+    ${CMAKE_SOURCE_DIR}/kmcp/include
+    ${CMAKE_SOURCE_DIR}/kmcp/src
 )
 target_compile_definitions(kmcp_event_test PRIVATE STANDALONE_TEST)
 
@@ -65,8 +65,8 @@ add_executable(kmcp_profile_manager_test kmcp_profile_manager_test.c unit/kmcp_s
 target_link_libraries(kmcp_profile_manager_test kmcp mcp_common)
 target_include_directories(kmcp_profile_manager_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
+    ${CMAKE_SOURCE_DIR}/kmcp/include
+    ${CMAKE_SOURCE_DIR}/kmcp/src
     ${CMAKE_CURRENT_SOURCE_DIR}/unit
 )
 target_compile_definitions(kmcp_profile_manager_test PRIVATE STANDALONE_TEST)
@@ -76,8 +76,8 @@ add_executable(kmcp_client_test kmcp_client_test.c unit/kmcp_server_manager_stub
 target_link_libraries(kmcp_client_test kmcp mcp_common)
 target_include_directories(kmcp_client_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
+    ${CMAKE_SOURCE_DIR}/kmcp/include
+    ${CMAKE_SOURCE_DIR}/kmcp/src
     ${CMAKE_CURRENT_SOURCE_DIR}/unit
 )
 target_compile_definitions(kmcp_client_test PRIVATE STANDALONE_TEST)
@@ -87,8 +87,8 @@ add_executable(kmcp_version_test kmcp_version_test.c)
 target_link_libraries(kmcp_version_test kmcp mcp_common)
 target_include_directories(kmcp_version_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
+    ${CMAKE_SOURCE_DIR}/kmcp/include
+    ${CMAKE_SOURCE_DIR}/kmcp/src
 )
 target_compile_definitions(kmcp_version_test PRIVATE STANDALONE_TEST)
 

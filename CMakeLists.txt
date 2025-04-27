@@ -231,25 +231,25 @@ target_include_directories(mcp_common PRIVATE
 
 # KMCP library sources
 set(KMCP_SOURCES
-    src/kmcp/kmcp_server_manager.c
-    src/kmcp/kmcp_client.c
-    src/kmcp/kmcp_tool_access.c
-    src/kmcp/kmcp_config_parser.c
-    src/kmcp/kmcp_http_client.c
-    src/kmcp/kmcp_error.c
-    src/kmcp/kmcp_version.c
-    src/kmcp/kmcp_profile_manager.c
-    src/kmcp/kmcp_registry.c
-    src/kmcp/kmcp_tool_sdk.c
-    src/kmcp/kmcp_cli.c
-    src/kmcp/kmcp_event.c
+    kmcp/src/kmcp_server_manager.c
+    kmcp/src/kmcp_client.c
+    kmcp/src/kmcp_tool_access.c
+    kmcp/src/kmcp_config_parser.c
+    kmcp/src/kmcp_http_client.c
+    kmcp/src/kmcp_error.c
+    kmcp/src/kmcp_version.c
+    kmcp/src/kmcp_profile_manager.c
+    kmcp/src/kmcp_registry.c
+    kmcp/src/kmcp_tool_sdk.c
+    kmcp/src/kmcp_cli.c
+    kmcp/src/kmcp_event.c
 )
 
 # Add platform-specific process implementation
 if(WIN32)
-    list(APPEND KMCP_SOURCES src/kmcp/kmcp_process_win.c)
+    list(APPEND KMCP_SOURCES kmcp/src/kmcp_process_win.c)
 else()
-    list(APPEND KMCP_SOURCES src/kmcp/kmcp_process_posix.c)
+    list(APPEND KMCP_SOURCES kmcp/src/kmcp_process_posix.c)
 endif()
 
 # Create KMCP library
@@ -257,8 +257,7 @@ add_library(kmcp SHARED ${KMCP_SOURCES})
 target_link_libraries(kmcp PRIVATE mcp_common)
 target_include_directories(kmcp PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/kmcp
-)
+    ${CMAKE_CURRENT_SOURCE_DIR}/kmcp/include)
 
 # Windows-specific settings for kmcp
 if(MSVC)
@@ -349,11 +348,14 @@ add_subdirectory(examples)
 # Add Python bindings
 add_subdirectory(python)
 
+# Add kmcp subdirectory
+add_subdirectory(kmcp)
+
 # Create KMCP CLI executable
-add_executable(kmcp_cli src/kmcp/kmcp_cli_main.c)
+add_executable(kmcp_cli kmcp/src/kmcp_cli_main.c)
 target_link_libraries(kmcp_cli PRIVATE kmcp mcp_common)
 
 # Install KMCP library, headers, and CLI
 install(TARGETS kmcp DESTINATION lib)
 install(TARGETS kmcp_cli DESTINATION bin)
-install(DIRECTORY include/kmcp/ DESTINATION include/kmcp)
+install(DIRECTORY kmcp/include/ DESTINATION include/kmcp)

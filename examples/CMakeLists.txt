@@ -208,7 +208,7 @@ endif()
 
 # KMCP Example
 add_executable(kmcp_example_app kmcp_example.c)
-target_include_directories(kmcp_example_app PRIVATE ../src/kmcp) # Add KMCP include path
+target_include_directories(kmcp_example_app PRIVATE ../kmcp/src) # Add KMCP include path
 target_link_libraries(kmcp_example_app PRIVATE mcp_common kmcp)
 # Link platform-specific libraries needed by the transport
 if(WIN32)
@@ -219,7 +219,7 @@ endif()
 
 # KMCP SSL Example
 add_executable(kmcp_ssl_example kmcp_ssl_example.c)
-target_include_directories(kmcp_ssl_example PRIVATE ../src/kmcp) # Add KMCP include path
+target_include_directories(kmcp_ssl_example PRIVATE ../kmcp/src) # Add KMCP include path
 target_link_libraries(kmcp_ssl_example PRIVATE mcp_common kmcp)
 # Link platform-specific libraries needed by the transport
 if(WIN32)
@@ -230,7 +230,7 @@ endif()
 
 # KMCP Profile Manager Example
 add_executable(kmcp_profile_example kmcp_profile_example.c)
-target_include_directories(kmcp_profile_example PRIVATE ../src/kmcp) # Add KMCP include path
+target_include_directories(kmcp_profile_example PRIVATE ../kmcp/src) # Add KMCP include path
 target_link_libraries(kmcp_profile_example PRIVATE mcp_common kmcp)
 # Link platform-specific libraries needed by the transport
 if(WIN32)
