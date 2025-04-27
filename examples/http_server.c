@@ -114,6 +114,7 @@ static mcp_error_code_t http_tool_handler(
     mcp_content_item_t* item = NULL;
     char* result_data = NULL;
     const char* input_text = NULL;
+    const char* session_id = NULL;  // Add session_id variable
     mcp_error_code_t err_code = MCP_ERROR_NONE;
 
     // Extract "text" parameter using mcp_json
@@ -133,12 +134,27 @@ static mcp_error_code_t http_tool_handler(
     // Get text directly from params
     mcp_json_t* text_node = mcp_json_object_get_property(params, "text");
 
-    // If text not found directly, check for arguments object
-    if (text_node == NULL) {
+    // Get session_id directly from params
+    mcp_json_t* session_id_node = mcp_json_object_get_property(params, "session_id");
+
+    // If text or session_id not found directly, check for arguments object
+    if (text_node == NULL || session_id_node == NULL) {
         mcp_json_t* args = mcp_json_object_get_property(params, "arguments");
         if (args != NULL && mcp_json_get_type(args) == MCP_JSON_OBJECT) {
-            text_node = mcp_json_object_get_property(args, "text");
+            if (text_node == NULL) {
+                text_node = mcp_json_object_get_property(args, "text");
+            }
+
+            if (session_id_node == NULL) {
+                session_id_node = mcp_json_object_get_property(args, "session_id");
+            }
         }
+    }
+
+    // Extract session_id if available
+    if (session_id_node != NULL && mcp_json_get_type(session_id_node) == MCP_JSON_STRING) {
+        mcp_json_get_string(session_id_node, &session_id);
+        mcp_log_info("Tool '%s': Found session_id: %s", name, session_id ? session_id : "NULL");
     }
 
     if (text_node == NULL || mcp_json_get_type(text_node) != MCP_JSON_STRING ||
@@ -160,8 +176,14 @@ static mcp_error_code_t http_tool_handler(
             if (g_transport) {
                 char event_data[256];
                 snprintf(event_data, sizeof(event_data), "{\"text\":\"%s\"}", input_text);
-                mcp_log_info("Sending SSE event: echo - %s", event_data);
-                int ret = mcp_http_transport_send_sse(g_transport, "echo", event_data, NULL);
+
+                if (session_id) {
+                    mcp_log_info("Sending SSE event: echo - %s to session: %s", event_data, session_id);
+                } else {
+                    mcp_log_info("Sending SSE event: echo - %s (broadcast)", event_data);
+                }
+
+                int ret = mcp_http_transport_send_sse(g_transport, "echo", event_data, session_id);
                 if (ret != 0) {
                     mcp_log_error("Failed to send SSE event: %d", ret);
                 } else {
@@ -251,8 +273,14 @@ static mcp_error_code_t http_tool_handler(
                 if (g_transport) {
                     char event_data[256];
                     snprintf(event_data, sizeof(event_data), "{\"text\":\"%s\"}", result_data);
-                    mcp_log_info("Sending SSE event: reverse - %s", event_data);
-                    int ret = mcp_http_transport_send_sse(g_transport, "reverse", event_data, NULL);
+
+                    if (session_id) {
+                        mcp_log_info("Sending SSE event: reverse - %s to session: %s", event_data, session_id);
+                    } else {
+                        mcp_log_info("Sending SSE event: reverse - %s (broadcast)", event_data);
+                    }
+
+                    int ret = mcp_http_transport_send_sse(g_transport, "reverse", event_data, session_id);
                     if (ret != 0) {
                         mcp_log_error("Failed to send SSE event: %d", ret);
                     } else {
