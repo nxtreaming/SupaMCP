@@ -689,6 +689,13 @@ void kmcp_client_destroy(kmcp_client_t* client) {
     mcp_log_info("KMCP client closed successfully");
 }
 
+/**
+ * @brief Free the specified pointer, it is a wrapper around free(),
+ * it is a helper function for Python etc.
+ *
+ * @param ptr Pointer to free (can be NULL)
+ * @return void
+ */
 void kmcp_free(void* ptr) {
     if (ptr) {
         free(ptr);

@@ -691,18 +691,6 @@ kmcp_config_parser_t* kmcp_config_parser_create_with_options(const char* file_pa
     size_t read_size = fread(file_content, 1, file_size, file);
     fclose(file);
 
-    /*
-    if (read_size != (size_t)file_size) {
-        mcp_log_error("Failed to read configuration file: %s", file_path);
-        free(file_content);
-        free((void*)parser->options.config_dir);
-        free((void*)parser->options.default_profile);
-        free(parser->file_path);
-        free(parser);
-        return NULL;
-    }
-    */
-
     // Null-terminate the file content
     file_content[read_size] = '\0';
 
@@ -908,14 +896,6 @@ kmcp_error_t kmcp_config_parser_merge(
         // Read file content
         size_t read_size = fread(file_content, 1, file_size, file);
         fclose(file);
-
-        /*
-        if (read_size != (size_t)file_size) {
-            mcp_log_warn("Failed to read include file: %s", file_path);
-            free(file_content);
-            continue;
-        }
-        */
 
         // Null-terminate the file content
         file_content[read_size] = '\0';
