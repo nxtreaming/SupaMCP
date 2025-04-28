@@ -102,10 +102,6 @@ int add_cors_headers(struct lws* wsi, http_transport_data_t* data,
 int root_handler(struct lws* wsi, enum lws_callback_reasons reason,
                 void* user, void* in, size_t len);
 
-// Forward declarations for functions in mcp_http_server_callbacks.c
-int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
-                     void* user, void* in, size_t len);
-
 // Forward declarations for functions in mcp_http_server_sse.c
 void store_sse_event(http_transport_data_t* data, const char* event, const char* event_data);
 void send_sse_heartbeat(http_transport_data_t* data);
