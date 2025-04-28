@@ -274,6 +274,305 @@ kmcp_error_t kmcp_server_add(kmcp_server_manager_t* manager, kmcp_server_config_
     return KMCP_SUCCESS;
 }
 
+
+/**
+ * @brief Internal helper function to connect a single server connection
+ *
+ * @param connection Server connection to connect (must not be NULL)
+ * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
+ */
+static kmcp_error_t _kmcp_connect_single_server(kmcp_server_connection_t* connection) {
+    if (!connection) {
+        mcp_log_error("Invalid parameter: connection is NULL");
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // If already connected, skip
+    if (connection->is_connected) {
+        mcp_log_info("Server '%s' is already connected, skipping",
+                   connection->config.name ? connection->config.name : "(unnamed)");
+        return KMCP_SUCCESS;
+    }
+
+    mcp_log_info("Connecting to server '%s'",
+               connection->config.name ? connection->config.name : "(unnamed)");
+
+    // Connect server based on configuration type
+    if (connection->config.is_http) {
+        // HTTP connection
+        mcp_log_info("Connecting to HTTP server: %s", connection->config.name);
+
+        // Create HTTP client
+        connection->http_client = kmcp_http_client_create(connection->config.url, connection->config.api_key);
+        if (!connection->http_client) {
+            mcp_log_error("Failed to create HTTP client for server: %s", connection->config.name);
+            return KMCP_ERROR_CONNECTION_FAILED; // Return error
+        }
+
+        mcp_log_info("Created HTTP client for server: %s", connection->config.name);
+
+        // Query supported tools from the server
+        kmcp_error_t result = kmcp_http_get_tools(
+            connection->http_client,
+            &connection->supported_tools,
+            &connection->supported_tools_count
+        );
+
+        if (result != KMCP_SUCCESS) {
+            mcp_log_warn("Failed to query supported tools from HTTP server: %s", connection->config.name);
+            mcp_log_warn("Using default tools list");
+
+            // Use default tools if query fails
+            connection->supported_tools = (char**)malloc(3 * sizeof(char*));
+            if (connection->supported_tools) {
+                connection->supported_tools[0] = mcp_strdup("echo");
+                connection->supported_tools[1] = mcp_strdup("ping");
+                connection->supported_tools[2] = mcp_strdup("http_tool");
+                connection->supported_tools_count = 3;
+                mcp_log_info("Added default supported tools for HTTP server: echo, ping, http_tool");
+            }
+        } else {
+            mcp_log_info("Successfully queried %zu tools from HTTP server: %s",
+                         connection->supported_tools_count, connection->config.name);
+        }
+
+        // Query supported resources from the server
+        result = kmcp_http_get_resources(
+            connection->http_client,
+            &connection->supported_resources,
+            &connection->supported_resources_count
+        );
+
+        if (result != KMCP_SUCCESS) {
+            mcp_log_warn("Failed to query supported resources from HTTP server: %s", connection->config.name);
+            mcp_log_warn("Using default resources list");
+
+            // Use default resources if query fails
+            connection->supported_resources = (char**)malloc(3 * sizeof(char*));
+            if (connection->supported_resources) {
+                connection->supported_resources[0] = mcp_strdup("http://example");
+                connection->supported_resources[1] = mcp_strdup("http://data");
+                connection->supported_resources[2] = mcp_strdup("http://image");
+                connection->supported_resources_count = 3;
+                mcp_log_info("Added default supported resources for HTTP server: http://example, http://data, http://image");
+            }
+        } else {
+            mcp_log_info("Successfully queried %zu resources from HTTP server: %s",
+                         connection->supported_resources_count, connection->config.name);
+        }
+
+        // Log the results
+        if (connection->supported_tools_count > 0) {
+            mcp_log_info("Server %s supports %zu tools:", connection->config.name, connection->supported_tools_count);
+            for (size_t tool_idx = 0; tool_idx < connection->supported_tools_count && tool_idx < 10; tool_idx++) {
+                mcp_log_info("  - %s", connection->supported_tools[tool_idx]);
+            }
+            if (connection->supported_tools_count > 10) {
+                mcp_log_info("  ... and %zu more", connection->supported_tools_count - 10);
+            }
+        } else {
+            mcp_log_warn("Server %s does not support any tools", connection->config.name);
+        }
+
+        if (connection->supported_resources_count > 0) {
+            mcp_log_info("Server %s supports %zu resources:", connection->config.name, connection->supported_resources_count);
+            for (size_t res_idx = 0; res_idx < connection->supported_resources_count && res_idx < 10; res_idx++) {
+                mcp_log_info("  - %s", connection->supported_resources[res_idx]);
+            }
+            if (connection->supported_resources_count > 10) {
+                mcp_log_info("  ... and %zu more", connection->supported_resources_count - 10);
+            }
+        } else {
+            mcp_log_warn("Server %s does not support any resources", connection->config.name);
+        }
+
+        // Mark as connected
+        connection->is_connected = true;
+    } else {
+        // Local process connection
+        if (connection->config.command) {
+            // Create and start process
+            connection->process = kmcp_process_create(
+                connection->config.command,
+                connection->config.args,
+                connection->config.args_count,
+                connection->config.env,
+                connection->config.env_count
+            );
+
+            if (!connection->process) {
+                mcp_log_error("Failed to create process for server: %s", connection->config.name);
+                return KMCP_ERROR_PROCESS_FAILED;
+            }
+
+            int start_result = kmcp_process_start(connection->process);
+            if (start_result != 0) {
+                mcp_log_error("Failed to start process for server: %s (error code: %d)", connection->config.name, start_result);
+                kmcp_process_close(connection->process);
+                connection->process = NULL;
+                return KMCP_ERROR_PROCESS_FAILED;
+            }
+
+            // Check if the process is still running after a short delay
+            #ifdef _WIN32
+            Sleep(500); // Wait for 500 ms on Windows
+            #else
+            usleep(500000); // Wait for 500 ms on Unix-like systems
+            #endif
+
+            if (!kmcp_process_is_running(connection->process)) {
+                int exit_code = 0;
+                kmcp_process_get_exit_code(connection->process, &exit_code);
+                mcp_log_error("Process for server %s exited prematurely with code: %d", connection->config.name, exit_code);
+                kmcp_process_close(connection->process);
+                connection->process = NULL;
+                return KMCP_ERROR_PROCESS_FAILED;
+            }
+
+            // Create transport layer based on process input/output
+            mcp_log_info("Process started for server: %s", connection->config.name);
+
+            // Check if the process is still running
+            if (!kmcp_process_is_running(connection->process)) {
+                int exit_code = 0;
+                kmcp_process_get_exit_code(connection->process, &exit_code);
+                mcp_log_error("Process for server %s exited prematurely with code: %d",
+                             connection->config.name ? connection->config.name : "(unnamed)", exit_code);
+                kmcp_process_close(connection->process);
+                connection->process = NULL;
+                return KMCP_ERROR_PROCESS_FAILED;
+            }
+
+            // We've waited for the server to start, now let's try to connect
+
+            // Create TCP client transport to connect to the server
+            // Note: We're connecting to 127.0.0.1:8080 where the server is listening
+            mcp_transport_config_t transport_config;
+            memset(&transport_config, 0, sizeof(mcp_transport_config_t));
+            transport_config.tcp.host = "127.0.0.1";
+            transport_config.tcp.port = 8080;
+
+            connection->transport = mcp_transport_factory_create(MCP_TRANSPORT_TCP_CLIENT, &transport_config);
+            if (!connection->transport) {
+                mcp_log_error("Failed to create transport for server: %s", connection->config.name);
+                kmcp_process_terminate(connection->process);
+                kmcp_process_close(connection->process);
+                connection->process = NULL;
+                return KMCP_ERROR_CONNECTION_FAILED;
+            }
+
+            mcp_log_info("Created transport for server: %s", connection->config.name);
+
+            // Create MCP client
+            mcp_client_config_t client_config;
+            memset(&client_config, 0, sizeof(mcp_client_config_t));
+
+            // Set request timeout
+            client_config.request_timeout_ms = 5000; // 5 seconds - shorter timeout for better responsiveness
+
+            // Create client with transport
+            connection->client = mcp_client_create(&client_config, connection->transport);
+            if (!connection->client) {
+                mcp_log_error("Failed to create client for server: %s", connection->config.name);
+                mcp_transport_destroy(connection->transport);
+                connection->transport = NULL;
+                kmcp_process_terminate(connection->process);
+                kmcp_process_close(connection->process);
+                connection->process = NULL;
+                return KMCP_ERROR_CONNECTION_FAILED;
+            }
+
+            mcp_log_info("Created client for server: %s", connection->config.name);
+
+            // Query supported tools
+            mcp_log_info("Querying supported tools from server: %s", connection->config.name);
+            mcp_tool_t** tools = NULL;
+            size_t tool_count = 0;
+
+            int result = mcp_client_list_tools(connection->client, &tools, &tool_count);
+            mcp_log_debug("mcp_client_list_tools returned: %d", result);
+
+            if (result == 0) {
+                mcp_log_info("Server %s supports %zu tools", connection->config.name, tool_count);
+
+                // Allocate memory for tool names
+                connection->supported_tools = (char**)malloc(tool_count * sizeof(char*));
+                if (connection->supported_tools) {
+                    connection->supported_tools_count = tool_count;
+
+                    // Copy tool names
+                    for (size_t j = 0; j < tool_count; j++) {
+                        connection->supported_tools[j] = mcp_strdup(tools[j]->name);
+                        mcp_log_info("  Tool: %s", tools[j]->name);
+                    }
+                }
+
+                // Free tools
+                mcp_free_tools(tools, tool_count);
+            } else {
+                mcp_log_warn("Failed to query tools from server: %s", connection->config.name);
+
+                // For testing purposes, add some default supported tools
+                connection->supported_tools = (char**)malloc(2 * sizeof(char*));
+                if (connection->supported_tools) {
+                    connection->supported_tools[0] = mcp_strdup("echo");
+                    connection->supported_tools[1] = mcp_strdup("ping");
+                    connection->supported_tools_count = 2;
+                    mcp_log_info("Added default supported tools for testing: echo, ping");
+                }
+            }
+
+            // Query supported resources
+            mcp_log_info("Querying supported resources from server: %s", connection->config.name);
+            mcp_resource_t** resources = NULL;
+            size_t resource_count = 0;
+
+            int res_result = mcp_client_list_resources(connection->client, &resources, &resource_count);
+            mcp_log_debug("mcp_client_list_resources returned: %d", res_result);
+
+            if (res_result == 0) {
+                mcp_log_info("Server %s supports %zu resources", connection->config.name, resource_count);
+
+                // Allocate memory for resource URIs
+                connection->supported_resources = (char**)malloc(resource_count * sizeof(char*));
+                if (connection->supported_resources) {
+                    connection->supported_resources_count = resource_count;
+
+                    // Copy resource URIs
+                    for (size_t j = 0; j < resource_count; j++) {
+                        connection->supported_resources[j] = mcp_strdup(resources[j]->uri);
+                        mcp_log_info("  Resource: %s", resources[j]->uri);
+                    }
+                }
+
+                // Free resources
+                mcp_free_resources(resources, resource_count);
+            } else {
+                mcp_log_warn("Failed to query resources from server: %s", connection->config.name);
+
+                // For testing purposes, add some default supported resources
+                connection->supported_resources = (char**)malloc(2 * sizeof(char*));
+                if (connection->supported_resources) {
+                    connection->supported_resources[0] = mcp_strdup("example://hello");
+                    connection->supported_resources[1] = mcp_strdup("example://data");
+                    connection->supported_resources_count = 2;
+                    mcp_log_info("Added default supported resources for testing: example://hello, example://data");
+                }
+            }
+
+            // Mark as connected
+            connection->is_connected = true;
+        } else {
+             mcp_log_warn("Server '%s' has no command configured, cannot connect locally.",
+                        connection->config.name ? connection->config.name : "(unnamed)");
+             return KMCP_ERROR_CONFIG_INVALID; // Cannot connect without command or URL
+        }
+    }
+
+    return KMCP_SUCCESS;
+}
+
+
 /**
  * @brief Connect to all servers in the manager
  *
@@ -303,280 +602,17 @@ kmcp_error_t kmcp_server_connect(kmcp_server_manager_t* manager) {
             mcp_log_info("Server '%s' is already connected, skipping",
                        connection->config.name ? connection->config.name : "(unnamed)");
             success_count++;
-            continue;
+            continue; // Skip NULL connection
         }
 
-        mcp_log_info("Connecting to server '%s'",
-                   connection->config.name ? connection->config.name : "(unnamed)");
-
-        // Connect server based on configuration type
-        if (connection->config.is_http) {
-            // HTTP connection
-            mcp_log_info("Connecting to HTTP server: %s", connection->config.name);
-
-            // Create HTTP client
-            connection->http_client = kmcp_http_client_create(connection->config.url, connection->config.api_key);
-            if (!connection->http_client) {
-                mcp_log_error("Failed to create HTTP client for server: %s", connection->config.name);
-                continue;
-            }
-
-            mcp_log_info("Created HTTP client for server: %s", connection->config.name);
-
-            // Query supported tools from the server
-            kmcp_error_t result = kmcp_http_get_tools(
-                connection->http_client,
-                &connection->supported_tools,
-                &connection->supported_tools_count
-            );
-
-            if (result != KMCP_SUCCESS) {
-                mcp_log_warn("Failed to query supported tools from HTTP server: %s", connection->config.name);
-                mcp_log_warn("Using default tools list");
-
-                // Use default tools if query fails
-                connection->supported_tools = (char**)malloc(3 * sizeof(char*));
-                if (connection->supported_tools) {
-                    connection->supported_tools[0] = mcp_strdup("echo");
-                    connection->supported_tools[1] = mcp_strdup("ping");
-                    connection->supported_tools[2] = mcp_strdup("http_tool");
-                    connection->supported_tools_count = 3;
-                    mcp_log_info("Added default supported tools for HTTP server: echo, ping, http_tool");
-                }
-            } else {
-                mcp_log_info("Successfully queried %zu tools from HTTP server: %s",
-                             connection->supported_tools_count, connection->config.name);
-            }
-
-            // Query supported resources from the server
-            result = kmcp_http_get_resources(
-                connection->http_client,
-                &connection->supported_resources,
-                &connection->supported_resources_count
-            );
-
-            if (result != KMCP_SUCCESS) {
-                mcp_log_warn("Failed to query supported resources from HTTP server: %s", connection->config.name);
-                mcp_log_warn("Using default resources list");
-
-                // Use default resources if query fails
-                connection->supported_resources = (char**)malloc(3 * sizeof(char*));
-                if (connection->supported_resources) {
-                    connection->supported_resources[0] = mcp_strdup("http://example");
-                    connection->supported_resources[1] = mcp_strdup("http://data");
-                    connection->supported_resources[2] = mcp_strdup("http://image");
-                    connection->supported_resources_count = 3;
-                    mcp_log_info("Added default supported resources for HTTP server: http://example, http://data, http://image");
-                }
-            } else {
-                mcp_log_info("Successfully queried %zu resources from HTTP server: %s",
-                             connection->supported_resources_count, connection->config.name);
-            }
-
-            // Log the results
-            if (connection->supported_tools_count > 0) {
-                mcp_log_info("Server %s supports %zu tools:", connection->config.name, connection->supported_tools_count);
-                for (size_t tool_idx = 0; tool_idx < connection->supported_tools_count && tool_idx < 10; tool_idx++) {
-                    mcp_log_info("  - %s", connection->supported_tools[tool_idx]);
-                }
-                if (connection->supported_tools_count > 10) {
-                    mcp_log_info("  ... and %zu more", connection->supported_tools_count - 10);
-                }
-            } else {
-                mcp_log_warn("Server %s does not support any tools", connection->config.name);
-            }
-
-            if (connection->supported_resources_count > 0) {
-                mcp_log_info("Server %s supports %zu resources:", connection->config.name, connection->supported_resources_count);
-                for (size_t res_idx = 0; res_idx < connection->supported_resources_count && res_idx < 10; res_idx++) {
-                    mcp_log_info("  - %s", connection->supported_resources[res_idx]);
-                }
-                if (connection->supported_resources_count > 10) {
-                    mcp_log_info("  ... and %zu more", connection->supported_resources_count - 10);
-                }
-            } else {
-                mcp_log_warn("Server %s does not support any resources", connection->config.name);
-            }
-
-            // Mark as connected
-            connection->is_connected = true;
+        // Attempt to connect this server using the helper function
+        kmcp_error_t connect_result = _kmcp_connect_single_server(connection);
+        if (connect_result == KMCP_SUCCESS) {
             success_count++;
         } else {
-            // Local process connection
-            if (connection->config.command) {
-                // Create and start process
-                connection->process = kmcp_process_create(
-                    connection->config.command,
-                    connection->config.args,
-                    connection->config.args_count,
-                    connection->config.env,
-                    connection->config.env_count
-                );
-
-                if (!connection->process) {
-                    mcp_log_error("Failed to create process for server: %s", connection->config.name);
-                    continue;
-                }
-
-                int start_result = kmcp_process_start(connection->process);
-                if (start_result != 0) {
-                    mcp_log_error("Failed to start process for server: %s (error code: %d)", connection->config.name, start_result);
-                    kmcp_process_close(connection->process);
-                    connection->process = NULL;
-                    continue;
-                }
-
-                // Check if the process is still running after a short delay
-                #ifdef _WIN32
-                Sleep(500); // Wait for 500 ms on Windows
-                #else
-                usleep(500000); // Wait for 500 ms on Unix-like systems
-                #endif
-
-                if (!kmcp_process_is_running(connection->process)) {
-                    int exit_code = 0;
-                    kmcp_process_get_exit_code(connection->process, &exit_code);
-                    mcp_log_error("Process for server %s exited prematurely with code: %d", connection->config.name, exit_code);
-                    kmcp_process_close(connection->process);
-                    connection->process = NULL;
-                    continue;
-                }
-
-                // Create transport layer based on process input/output
-                mcp_log_info("Process started for server: %s", connection->config.name);
-
-                // Check if the process is still running
-                if (!kmcp_process_is_running(connection->process)) {
-                    int exit_code = 0;
-                    kmcp_process_get_exit_code(connection->process, &exit_code);
-                    mcp_log_error("Process for server %s exited prematurely with code: %d",
-                                 connection->config.name ? connection->config.name : "(unnamed)", exit_code);
-                    kmcp_process_close(connection->process);
-                    connection->process = NULL;
-                    continue;
-                }
-
-                // We've waited for the server to start, now let's try to connect
-
-                // Create TCP client transport to connect to the server
-                // Note: We're connecting to 127.0.0.1:8080 where the server is listening
-                mcp_transport_config_t transport_config;
-                memset(&transport_config, 0, sizeof(mcp_transport_config_t));
-                transport_config.tcp.host = "127.0.0.1";
-                transport_config.tcp.port = 8080;
-
-                connection->transport = mcp_transport_factory_create(MCP_TRANSPORT_TCP_CLIENT, &transport_config);
-                if (!connection->transport) {
-                    mcp_log_error("Failed to create transport for server: %s", connection->config.name);
-                    kmcp_process_terminate(connection->process);
-                    kmcp_process_close(connection->process);
-                    connection->process = NULL;
-                    continue;
-                }
-
-                mcp_log_info("Created transport for server: %s", connection->config.name);
-
-                // Create MCP client
-                mcp_client_config_t client_config;
-                memset(&client_config, 0, sizeof(mcp_client_config_t));
-
-                // Set request timeout
-                client_config.request_timeout_ms = 5000; // 5 seconds - shorter timeout for better responsiveness
-
-                // Create client with transport
-                connection->client = mcp_client_create(&client_config, connection->transport);
-                if (!connection->client) {
-                    mcp_log_error("Failed to create client for server: %s", connection->config.name);
-                    mcp_transport_destroy(connection->transport);
-                    connection->transport = NULL;
-                    kmcp_process_terminate(connection->process);
-                    kmcp_process_close(connection->process);
-                    connection->process = NULL;
-                    continue;
-                }
-
-                mcp_log_info("Created client for server: %s", connection->config.name);
-
-                // Query supported tools
-                mcp_log_info("Querying supported tools from server: %s", connection->config.name);
-                mcp_tool_t** tools = NULL;
-                size_t tool_count = 0;
-
-                int result = mcp_client_list_tools(connection->client, &tools, &tool_count);
-                mcp_log_debug("mcp_client_list_tools returned: %d", result);
-
-                if (result == 0) {
-                    mcp_log_info("Server %s supports %zu tools", connection->config.name, tool_count);
-
-                    // Allocate memory for tool names
-                    connection->supported_tools = (char**)malloc(tool_count * sizeof(char*));
-                    if (connection->supported_tools) {
-                        connection->supported_tools_count = tool_count;
-
-                        // Copy tool names
-                        for (size_t j = 0; j < tool_count; j++) {
-                            connection->supported_tools[j] = mcp_strdup(tools[j]->name);
-                            mcp_log_info("  Tool: %s", tools[j]->name);
-                        }
-                    }
-
-                    // Free tools
-                    mcp_free_tools(tools, tool_count);
-                } else {
-                    mcp_log_warn("Failed to query tools from server: %s", connection->config.name);
-
-                    // For testing purposes, add some default supported tools
-                    connection->supported_tools = (char**)malloc(2 * sizeof(char*));
-                    if (connection->supported_tools) {
-                        connection->supported_tools[0] = mcp_strdup("echo");
-                        connection->supported_tools[1] = mcp_strdup("ping");
-                        connection->supported_tools_count = 2;
-                        mcp_log_info("Added default supported tools for testing: echo, ping");
-                    }
-                }
-
-                // Query supported resources
-                mcp_log_info("Querying supported resources from server: %s", connection->config.name);
-                mcp_resource_t** resources = NULL;
-                size_t resource_count = 0;
-
-                int res_result = mcp_client_list_resources(connection->client, &resources, &resource_count);
-                mcp_log_debug("mcp_client_list_resources returned: %d", res_result);
-
-                if (res_result == 0) {
-                    mcp_log_info("Server %s supports %zu resources", connection->config.name, resource_count);
-
-                    // Allocate memory for resource URIs
-                    connection->supported_resources = (char**)malloc(resource_count * sizeof(char*));
-                    if (connection->supported_resources) {
-                        connection->supported_resources_count = resource_count;
-
-                        // Copy resource URIs
-                        for (size_t j = 0; j < resource_count; j++) {
-                            connection->supported_resources[j] = mcp_strdup(resources[j]->uri);
-                            mcp_log_info("  Resource: %s", resources[j]->uri);
-                        }
-                    }
-
-                    // Free resources
-                    mcp_free_resources(resources, resource_count);
-                } else {
-                    mcp_log_warn("Failed to query resources from server: %s", connection->config.name);
-
-                    // For testing purposes, add some default supported resources
-                    connection->supported_resources = (char**)malloc(2 * sizeof(char*));
-                    if (connection->supported_resources) {
-                        connection->supported_resources[0] = mcp_strdup("example://hello");
-                        connection->supported_resources[1] = mcp_strdup("example://data");
-                        connection->supported_resources_count = 2;
-                        mcp_log_info("Added default supported resources for testing: example://hello, example://data");
-                    }
-                }
-
-                // Mark as connected
-                connection->is_connected = true;
-                success_count++;
-            }
+            mcp_log_error("Failed to connect to server '%s' (error: %d)",
+                        connection->config.name ? connection->config.name : "(unnamed)", connect_result);
+            // Continue trying to connect other servers
         }
     }
 
@@ -632,7 +668,7 @@ kmcp_error_t kmcp_server_disconnect(kmcp_server_manager_t* manager) {
             mcp_client_destroy(connection->client);
             connection->client = NULL;
             //MUST reset connection->transport, becasue it has been destoryed in mcp_client_destroy()
-            connection->transport = NULL;
+            connection->transport = NULL; // Transport is destroyed by mcp_client_destroy
         }
 
         // Close HTTP client
@@ -642,12 +678,7 @@ kmcp_error_t kmcp_server_disconnect(kmcp_server_manager_t* manager) {
             connection->http_client = NULL;
         }
 
-        // Close transport layer
-        if (connection->transport) {
-            mcp_log_debug("Destroying transport for server: %s", connection->config.name);
-            mcp_transport_destroy(connection->transport);
-            connection->transport = NULL;
-        }
+        // Transport layer is handled by client destroy or http client close, no need to destroy separately
 
         // Terminate process
         if (connection->process) {
@@ -1421,8 +1452,8 @@ kmcp_error_t kmcp_server_reconnect(
         // Reset connection state
         connection->is_connected = false;
 
-        // Try to connect
-        result = kmcp_server_connect(manager);
+        // Try to connect using the helper function for the specific connection
+        result = _kmcp_connect_single_server(connection);
         attempt++;
     }
 
@@ -1524,9 +1555,92 @@ kmcp_error_t kmcp_server_remove(kmcp_server_manager_t* manager, const char* name
         return KMCP_ERROR_INVALID_PARAMETER;
     }
 
-    // TODO: Implement server removal
-    // This is a stub implementation that always returns success
     mcp_log_info("Removing server: %s", name);
+    mcp_mutex_lock(manager->mutex);
+
+    // Find the server index
+    int server_index = -1;
+    for (size_t i = 0; i < manager->server_count; i++) {
+        if (manager->servers[i] && manager->servers[i]->config.name && strcmp(manager->servers[i]->config.name, name) == 0) {
+            server_index = (int)i;
+            break;
+        }
+    }
+
+    if (server_index == -1) {
+        mcp_log_error("Server not found: %s", name);
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_ERROR_SERVER_NOT_FOUND;
+    }
+
+    // Get the connection
+    kmcp_server_connection_t* connection = manager->servers[server_index];
+
+    // Disconnect if connected
+    if (connection->is_connected) {
+        mcp_log_info("Disconnecting server '%s' before removal", name);
+        if (connection->client) {
+            mcp_client_destroy(connection->client);
+            connection->client = NULL;
+            connection->transport = NULL; // Transport is destroyed by mcp_client_destroy
+        }
+        if (connection->http_client) {
+            kmcp_http_client_close(connection->http_client);
+            connection->http_client = NULL;
+        }
+        if (connection->process) {
+            kmcp_process_terminate(connection->process);
+            kmcp_process_close(connection->process);
+            connection->process = NULL;
+        }
+        connection->is_connected = false;
+    }
+
+    // Free connection resources
+    free(connection->config.name);
+    free(connection->config.command);
+    free(connection->config.url);
+    free(connection->config.api_key);
+    if (connection->config.args) {
+        for (size_t j = 0; j < connection->config.args_count; j++) {
+            free(connection->config.args[j]);
+        }
+        free(connection->config.args);
+    }
+    if (connection->config.env) {
+        for (size_t j = 0; j < connection->config.env_count; j++) {
+            free(connection->config.env[j]);
+        }
+        free(connection->config.env);
+    }
+    if (connection->supported_tools) {
+        for (size_t j = 0; j < connection->supported_tools_count; j++) {
+            free(connection->supported_tools[j]);
+        }
+        free(connection->supported_tools);
+    }
+    if (connection->supported_resources) {
+        for (size_t j = 0; j < connection->supported_resources_count; j++) {
+            free(connection->supported_resources[j]);
+        }
+        free(connection->supported_resources);
+    }
+    free(connection);
+
+    // Shift remaining servers in the array
+    for (size_t i = (size_t)server_index; i < manager->server_count - 1; i++) {
+        manager->servers[i] = manager->servers[i + 1];
+    }
+    manager->servers[manager->server_count - 1] = NULL; // Clear the last slot
+    manager->server_count--;
+
+    // Clear the tool and resource maps as indices are now invalid
+    // A more sophisticated approach would update indices, but clearing is simpler
+    mcp_hashtable_clear(manager->tool_map);
+    mcp_hashtable_clear(manager->resource_map);
+
+    mcp_mutex_unlock(manager->mutex);
+    mcp_log_info("Server removed: %s", name);
     return KMCP_SUCCESS;
 }
 
@@ -1538,11 +1652,36 @@ kmcp_error_t kmcp_server_get_config(kmcp_server_manager_t* manager, const char* 
         mcp_log_error("Invalid parameters");
         return KMCP_ERROR_INVALID_PARAMETER;
     }
+    *config = NULL; // Initialize output
 
-    // TODO: Implement server configuration retrieval by name
-    // This is a stub implementation that always returns not found
-    mcp_log_info("Getting server configuration: %s", name);
-    return KMCP_ERROR_SERVER_NOT_FOUND;
+    mcp_log_debug("Getting server configuration: %s", name);
+    mcp_mutex_lock(manager->mutex);
+
+    // Find the server by name
+    kmcp_server_connection_t* connection = NULL;
+    for (size_t i = 0; i < manager->server_count; i++) {
+        if (manager->servers[i] && manager->servers[i]->config.name && strcmp(manager->servers[i]->config.name, name) == 0) {
+            connection = manager->servers[i];
+            break;
+        }
+    }
+
+    if (!connection) {
+        mcp_log_error("Server not found: %s", name);
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_ERROR_SERVER_NOT_FOUND;
+    }
+
+    // Clone the configuration (with explicit cast)
+    *config = kmcp_server_config_clone((const kmcp_server_config_t*)&connection->config);
+    if (!*config) {
+        mcp_log_error("Failed to clone server configuration for %s", name);
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_ERROR_MEMORY_ALLOCATION;
+    }
+
+    mcp_mutex_unlock(manager->mutex);
+    return KMCP_SUCCESS;
 }
 
 /**
@@ -1553,11 +1692,36 @@ kmcp_error_t kmcp_server_get_config_by_index(kmcp_server_manager_t* manager, siz
         mcp_log_error("Invalid parameters");
         return KMCP_ERROR_INVALID_PARAMETER;
     }
+    *config = NULL; // Initialize output
 
-    // TODO: Implement server configuration retrieval by index
-    // This is a stub implementation that always returns not found
-    mcp_log_info("Getting server configuration at index: %zu", index);
-    return KMCP_ERROR_SERVER_NOT_FOUND;
+    mcp_log_debug("Getting server configuration at index: %zu", index);
+    mcp_mutex_lock(manager->mutex);
+
+    // Validate index
+    if (index >= manager->server_count) {
+        mcp_log_error("Invalid server index: %zu (count: %zu)", index, manager->server_count);
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_ERROR_INVALID_PARAMETER;
+    }
+
+    // Get the connection
+    kmcp_server_connection_t* connection = manager->servers[index];
+    if (!connection) {
+         mcp_log_error("Server connection at index %zu is NULL", index);
+         mcp_mutex_unlock(manager->mutex);
+         return KMCP_ERROR_INTERNAL; // Should not happen if index is valid
+    }
+
+    // Clone the configuration (with explicit cast)
+    *config = kmcp_server_config_clone((const kmcp_server_config_t*)&connection->config);
+    if (!*config) {
+        mcp_log_error("Failed to clone server configuration at index %zu", index);
+        mcp_mutex_unlock(manager->mutex);
+        return KMCP_ERROR_MEMORY_ALLOCATION;
+    }
+
+    mcp_mutex_unlock(manager->mutex);
+    return KMCP_SUCCESS;
 }
 
 /**

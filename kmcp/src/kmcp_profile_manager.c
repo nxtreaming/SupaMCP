@@ -1083,19 +1083,31 @@ kmcp_error_t kmcp_profile_save(kmcp_profile_manager_t* manager, const char* file
                     }
                 }
 
-                // Add environment variables array
+                // Add environment variables object
                 if (config->env && config->env_count > 0) {
-                    mcp_json_t* env_array = mcp_json_array_create();
-                    if (env_array) {
+                    mcp_json_t* env_obj = mcp_json_object_create();
+                    if (env_obj) {
                         for (size_t k = 0; k < config->env_count; k++) {
                             if (config->env[k]) {
-                                mcp_json_t* env_json = mcp_json_string_create(config->env[k]);
-                                if (env_json) {
-                                    mcp_json_array_add_item(env_array, env_json);
+                                // Split "KEY=VALUE" string
+                                char* eq_ptr = strchr(config->env[k], '=');
+                                if (eq_ptr) {
+                                    size_t key_len = eq_ptr - config->env[k];
+                                    char* key = (char*)malloc(key_len + 1);
+                                    if (key) {
+                                        memcpy(key, config->env[k], key_len);
+                                        key[key_len] = '\0';
+                                        const char* value = eq_ptr + 1;
+                                        mcp_json_t* value_json = mcp_json_string_create(value);
+                                        if (value_json) {
+                                            mcp_json_object_set_property(env_obj, key, value_json);
+                                        }
+                                        free(key);
+                                    }
                                 }
                             }
                         }
-                        mcp_json_object_set_property(server_obj, "env", env_array);
+                        mcp_json_object_set_property(server_obj, "env", env_obj);
                     }
                 }
             }
@@ -1428,32 +1440,39 @@ kmcp_error_t kmcp_profile_load(kmcp_profile_manager_t* manager, const char* file
                             }
                         }
 
-                        // Get environment variables
-                        mcp_json_t* env_array = mcp_json_object_get_property(server_obj, "env");
-                        if (env_array && mcp_json_get_type(env_array) != MCP_JSON_ARRAY) {
-                            env_array = NULL;
-                        }
-                        if (env_array) {
-                            int env_array_size = mcp_json_array_get_size(env_array);
-                            size_t env_count = (env_array_size >= 0) ? (size_t)env_array_size : 0;
-                            if (env_count > 0) {
-                                config->env = (char**)malloc(env_count * sizeof(char*));
+                        // Get environment variables object
+                        mcp_json_t* env_obj = mcp_json_object_get_property(server_obj, "env");
+                        if (env_obj && mcp_json_get_type(env_obj) == MCP_JSON_OBJECT) {
+                            char** env_keys = NULL;
+                            size_t env_key_count = 0;
+                            if (mcp_json_object_get_property_names(env_obj, &env_keys, &env_key_count) == 0 && env_key_count > 0) {
+                                config->env = (char**)malloc(env_key_count * sizeof(char*));
                                 if (config->env) {
-                                    config->env_count = env_count;
-
-                                    for (size_t k = 0; k < env_count; k++) {
-                                        const char* env = NULL;
-                                        mcp_json_t* env_item = mcp_json_array_get_item(env_array, (int)k);
-                                        if (env_item) {
-                                            mcp_json_get_string(env_item, &env);
+                                    config->env_count = 0;
+                                for (size_t k = 0; k < env_key_count; k++) {
+                                    const char* key = env_keys[k];
+                                    const char* env_value_str = NULL; // Renamed variable
+                                    mcp_json_t* value_json = mcp_json_object_get_property(env_obj, key);
+                                    if (value_json) {
+                                        mcp_json_get_string(value_json, &env_value_str);
+                                    }
+                                    if (key && env_value_str) {
+                                        // Format: KEY=VALUE
+                                        size_t env_len = strlen(key) + strlen(env_value_str) + 2; // +2 for '=' and '\0'
+                                        char* env_var = (char*)malloc(env_len);
+                                        if (env_var) {
+                                            snprintf(env_var, env_len, "%s=%s", key, env_value_str);
+                                            config->env[config->env_count] = env_var;
+                                            config->env_count++;
                                         }
-                                        if (env) {
-                                            config->env[k] = mcp_strdup(env);
-                                        } else {
-                                            config->env[k] = NULL;
                                         }
                                     }
                                 }
+                                // Free environment variable keys array
+                                for (size_t k = 0; k < env_key_count; k++) {
+                                    free(env_keys[k]);
+                                }
+                                free(env_keys);
                             }
                         }
                     }
@@ -1655,19 +1674,31 @@ kmcp_error_t kmcp_profile_export(kmcp_profile_manager_t* manager, const char* pr
                 }
             }
 
-            // Add environment variables array
+            // Add environment variables object
             if (config->env && config->env_count > 0) {
-                mcp_json_t* env_array = mcp_json_array_create();
-                if (env_array) {
+                mcp_json_t* env_obj = mcp_json_object_create();
+                if (env_obj) {
                     for (size_t k = 0; k < config->env_count; k++) {
                         if (config->env[k]) {
-                            mcp_json_t* env_json = mcp_json_string_create(config->env[k]);
-                            if (env_json) {
-                                mcp_json_array_add_item(env_array, env_json);
+                            // Split "KEY=VALUE" string
+                            char* eq_ptr = strchr(config->env[k], '=');
+                            if (eq_ptr) {
+                                    size_t key_len = eq_ptr - config->env[k];
+                                    char* key = (char*)malloc(key_len + 1);
+                                    if (key) {
+                                        memcpy(key, config->env[k], key_len);
+                                        key[key_len] = '\0';
+                                        const char* env_value_str = eq_ptr + 1; // Renamed variable
+                                        mcp_json_t* value_json = mcp_json_string_create(env_value_str);
+                                        if (value_json) {
+                                            mcp_json_object_set_property(env_obj, key, value_json);
+                                        }
+                                        free(key);
+                                    }
                             }
                         }
                     }
-                    mcp_json_object_set_property(server_obj, "env", env_array);
+                    mcp_json_object_set_property(server_obj, "env", env_obj);
                 }
             }
         }
@@ -1968,32 +1999,39 @@ kmcp_error_t kmcp_profile_import(kmcp_profile_manager_t* manager, const char* fi
                         }
                     }
 
-                    // Get environment variables
-                    mcp_json_t* env_array = mcp_json_object_get_property(server_obj, "env");
-                    if (env_array && mcp_json_get_type(env_array) != MCP_JSON_ARRAY) {
-                        env_array = NULL;
-                    }
-                    if (env_array) {
-                        int env_array_size = mcp_json_array_get_size(env_array);
-                        size_t env_count = (env_array_size >= 0) ? (size_t)env_array_size : 0;
-                        if (env_count > 0) {
-                            config->env = (char**)malloc(env_count * sizeof(char*));
+                    // Get environment variables object
+                    mcp_json_t* env_obj = mcp_json_object_get_property(server_obj, "env");
+                    if (env_obj && mcp_json_get_type(env_obj) == MCP_JSON_OBJECT) {
+                        char** env_keys = NULL;
+                        size_t env_key_count = 0;
+                        if (mcp_json_object_get_property_names(env_obj, &env_keys, &env_key_count) == 0 && env_key_count > 0) {
+                            config->env = (char**)malloc(env_key_count * sizeof(char*));
                             if (config->env) {
-                                config->env_count = env_count;
-
-                                for (size_t k = 0; k < env_count; k++) {
-                                    const char* env = NULL;
-                                    mcp_json_t* env_item = mcp_json_array_get_item(env_array, (int)k);
-                                    if (env_item) {
-                                        mcp_json_get_string(env_item, &env);
+                                config->env_count = 0;
+                                for (size_t k = 0; k < env_key_count; k++) {
+                                    const char* key = env_keys[k];
+                                    const char* env_value_str = NULL; // Renamed variable
+                                    mcp_json_t* value_json = mcp_json_object_get_property(env_obj, key);
+                                    if (value_json) {
+                                        mcp_json_get_string(value_json, &env_value_str);
                                     }
-                                    if (env) {
-                                        config->env[k] = mcp_strdup(env);
-                                    } else {
-                                        config->env[k] = NULL;
+                                    if (key && env_value_str) {
+                                        // Format: KEY=VALUE
+                                        size_t env_len = strlen(key) + strlen(env_value_str) + 2; // +2 for '=' and '\0'
+                                        char* env_var = (char*)malloc(env_len);
+                                        if (env_var) {
+                                            snprintf(env_var, env_len, "%s=%s", key, env_value_str);
+                                            config->env[config->env_count] = env_var;
+                                            config->env_count++;
+                                        }
                                     }
                                 }
                             }
+                            // Free environment variable keys array
+                            for (size_t k = 0; k < env_key_count; k++) {
+                                free(env_keys[k]);
+                            }
+                            free(env_keys);
                         }
                     }
                 }

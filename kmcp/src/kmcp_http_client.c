@@ -9,6 +9,8 @@
 #include "kmcp_common.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
+#include "mcp_json.h"
+#include "mcp_json_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -514,7 +516,8 @@ kmcp_error_t kmcp_http_client_send(
     const char* content_type,
     const char* body,
     char** response,
-    int* status
+    int* status,
+    char** response_content_type_out
 ) {
     // Check parameters
     KMCP_CHECK_PARAM(client);
@@ -522,13 +525,17 @@ kmcp_error_t kmcp_http_client_send(
     KMCP_CHECK_PARAM(path);
     KMCP_CHECK_PARAM(response);
     KMCP_CHECK_PARAM(status);
+    // response_content_type_out can be NULL if caller doesn't need it
 
     // Initialize output parameters
     *response = NULL;
     *status = 0;
+    if (response_content_type_out) {
+        *response_content_type_out = NULL;
+    }
 
     // Variables for response parsing
-    char* response_content_type = NULL;
+    char* parsed_content_type = NULL;
     int content_length = -1;
     char* transfer_encoding = NULL;
     char* chunked = NULL;
@@ -866,8 +873,8 @@ kmcp_error_t kmcp_http_client_send(
                     return KMCP_ERROR_SSL_CERTIFICATE;
                 }
 
-                // Compare the public keys
-                if (EVP_PKEY_cmp(pinned_key, cert_key) != 1) {
+                // Compare the public keys using the non-deprecated function
+                if (EVP_PKEY_eq(pinned_key, cert_key) != 1) {
                     kmcp_error_log(KMCP_ERROR_SSL_CERTIFICATE, "Certificate public key does not match pinned public key");
                     EVP_PKEY_free(cert_key);
                     EVP_PKEY_free(pinned_key);
@@ -1057,12 +1064,12 @@ kmcp_error_t kmcp_http_client_send(
 
         // Parse Content-Type header
         if (strncasecmp(header, "Content-Type:", 13) == 0) {
-            response_content_type = header + 13;
+            parsed_content_type = header + 13;
             // Skip leading whitespace
-            while (*response_content_type == ' ') {
-                response_content_type++;
+            while (*parsed_content_type == ' ') {
+                parsed_content_type++;
             }
-            mcp_log_debug("Content-Type: %s", response_content_type);
+            mcp_log_debug("Content-Type: %s", parsed_content_type);
         }
         // Parse Content-Length header
         else if (strncasecmp(header, "Content-Length:", 15) == 0) {
@@ -1089,9 +1096,9 @@ kmcp_error_t kmcp_http_client_send(
     *body_start = '\r';
 
     // Handle chunked encoding
+    // TODO: Implement proper chunked decoding. Currently, the body will be incorrect.
     if (chunked) {
-        mcp_log_warn("Chunked encoding detected but not fully supported");
-        // In a real implementation, you would decode chunked encoding here
+        mcp_log_warn("Chunked encoding detected but not fully supported, response body may be incorrect.");
     }
 
     // Validate content length if provided
@@ -1110,6 +1117,19 @@ kmcp_error_t kmcp_http_client_send(
         free(buffer);
         free(full_path);
         return KMCP_ERROR_MEMORY_ALLOCATION;
+    }
+
+    // Set the output content type if requested and parsed
+    if (response_content_type_out && parsed_content_type) {
+        *response_content_type_out = mcp_strdup(parsed_content_type);
+        if (!*response_content_type_out) {
+             mcp_log_error("Failed to allocate memory for output content type");
+             free(*response); // Free the already allocated response body
+             *response = NULL;
+             free(buffer);
+             free(full_path);
+             return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
     }
 
     // Free the response buffer
@@ -1165,6 +1185,8 @@ static kmcp_error_t validate_tool_name(const char* tool_name) {
  * @return kmcp_error_t Returns KMCP_SUCCESS if JSON is valid, or an error code otherwise
  */
 static kmcp_error_t validate_json(const char* json_str) {
+    // TODO: Implement proper JSON validation using mcp_json_parse or a schema validator.
+    // This basic check is insufficient.
     if (!json_str) {
         return KMCP_ERROR_INVALID_PARAMETER;
     }
@@ -1176,28 +1198,12 @@ static kmcp_error_t validate_json(const char* json_str) {
         return KMCP_ERROR_INVALID_PARAMETER;
     }
 
-    // Check for balanced braces
-    int brace_count = 0;
-    int bracket_count = 0;
-
-    for (size_t i = 0; i < len; i++) {
-        char c = json_str[i];
-        if (c == '{') brace_count++;
-        else if (c == '}') brace_count--;
-        else if (c == '[') bracket_count++;
-        else if (c == ']') bracket_count--;
-
-        // Check for negative counts (closing before opening)
-        if (brace_count < 0 || bracket_count < 0) {
-            mcp_log_error("Unbalanced braces or brackets in JSON");
-            return KMCP_ERROR_INVALID_PARAMETER;
-        }
-    }
-
-    // Check for balanced counts
-    if (brace_count != 0 || bracket_count != 0) {
-        mcp_log_error("Unbalanced braces or brackets in JSON");
-        return KMCP_ERROR_INVALID_PARAMETER;
+    // Basic check for start/end characters
+    if (!((json_str[0] == '{' && json_str[len - 1] == '}') ||
+          (json_str[0] == '[' && json_str[len - 1] == ']'))) {
+        mcp_log_warn("JSON string does not start/end with matching braces/brackets (basic check)");
+        // Allow potentially valid single values like "true", "123", "\"string\""
+        // A full parser check is needed here.
     }
 
     return KMCP_SUCCESS;
@@ -1265,7 +1271,8 @@ kmcp_error_t kmcp_http_client_call_tool(
         content_type,
         params_json,
         &response,
-        &status
+        &status,
+        NULL // Don't need content type for tool call response
     );
 
     // Free the dynamically allocated path
@@ -1375,6 +1382,7 @@ kmcp_error_t kmcp_http_client_get_resource(
     // Send request
     int status = 0;
     char* response = NULL;
+    char* response_content_type = NULL;
     result = kmcp_http_client_send(
         client,
         "GET",
@@ -1382,7 +1390,8 @@ kmcp_error_t kmcp_http_client_get_resource(
         NULL,
         NULL,
         &response,
-        &status
+        &status,
+        &response_content_type
     );
 
     // Free the dynamically allocated path
@@ -1405,15 +1414,20 @@ kmcp_error_t kmcp_http_client_get_resource(
     }
 
     // Set content
-    *content = response;
+    *content = response; // Ownership transferred
 
-    // Set content type (default to text/plain)
-    *content_type = mcp_strdup("text/plain");
-    if (!*content_type) {
-        mcp_log_error("Failed to allocate memory for content type");
-        free(response);
-        *content = NULL;
-        return KMCP_ERROR_MEMORY_ALLOCATION;
+    // Set content type (use parsed value or default)
+    if (response_content_type) {
+        *content_type = response_content_type; // Ownership transferred
+    } else {
+        // Default if not provided or allocation failed in send
+        *content_type = mcp_strdup("application/octet-stream"); // Better default?
+        if (!*content_type) {
+            mcp_log_error("Failed to allocate memory for default content type");
+            free(*content);
+            *content = NULL;
+            return KMCP_ERROR_MEMORY_ALLOCATION;
+        }
     }
 
     return KMCP_SUCCESS;
@@ -1453,7 +1467,8 @@ kmcp_error_t kmcp_http_client_send_with_timeout(
         content_type,
         body,
         response,
-        status
+        status,
+        NULL
     );
 
     // Restore original timeout
@@ -1511,94 +1526,79 @@ static kmcp_error_t parse_json_string_array(const char* json_str, char*** items,
     *items = NULL;
     *count = 0;
 
-    // Find the start of the array
-    const char* array_start = strchr(json_str, '[');
-    if (!array_start) {
-        mcp_log_error("JSON string does not contain an array");
+    // Parse the JSON string
+    mcp_json_t* json = mcp_json_parse(json_str);
+    if (!json) {
+        mcp_log_error("Failed to parse JSON string: %s", json_str);
         return KMCP_ERROR_PARSE_FAILED;
     }
 
-    // Find the end of the array
-    const char* array_end = strrchr(json_str, ']');
-    if (!array_end || array_end <= array_start) {
-        mcp_log_error("JSON string does not contain a valid array");
+    // Check if it's an array
+    if (!mcp_json_is_array(json)) {
+        mcp_log_error("JSON is not an array");
+        mcp_json_destroy(json);
         return KMCP_ERROR_PARSE_FAILED;
     }
 
-    // Count the number of items (strings) in the array
-    // This is a simple implementation that counts the number of double quotes
-    // and divides by 2 to get the number of strings
-    size_t num_quotes = 0;
-    for (const char* p = array_start; p <= array_end; p++) {
-        if (*p == '"') {
-            num_quotes++;
-        }
+    // Get array size
+    int array_size = mcp_json_array_get_size(json);
+    if (array_size < 0) {
+        mcp_log_error("Failed to get JSON array size");
+        mcp_json_destroy(json);
+        return KMCP_ERROR_INTERNAL;
     }
+    size_t num_items = (size_t)array_size;
 
-    // Each string has two quotes, so divide by 2
-    size_t num_items = num_quotes / 2;
     if (num_items == 0) {
         // Empty array
-        *items = NULL;
-        *count = 0;
+        mcp_json_destroy(json);
         return KMCP_SUCCESS;
     }
 
     // Allocate memory for the array of strings
-    char** result = (char**)malloc(num_items * sizeof(char*));
-    if (!result) {
+    char** result_items = (char**)malloc(num_items * sizeof(char*));
+    if (!result_items) {
         mcp_log_error("Failed to allocate memory for string array");
+        mcp_json_destroy(json);
         return KMCP_ERROR_MEMORY_ALLOCATION;
     }
 
     // Initialize all pointers to NULL
-    memset(result, 0, num_items * sizeof(char*));
+    memset(result_items, 0, num_items * sizeof(char*));
 
-    // Parse each string in the array
-    size_t item_index = 0;
-    const char* p = array_start;
-
-    while (p < array_end && item_index < num_items) {
-        // Find the start of the string
-        p = strchr(p, '"');
-        if (!p || p >= array_end) {
-            break;
-        }
-        p++; // Skip the opening quote
-
-        // Find the end of the string
-        const char* str_end = strchr(p, '"');
-        if (!str_end || str_end >= array_end) {
-            break;
-        }
-
-        // Calculate the length of the string
-        size_t str_len = str_end - p;
-
-        // Allocate memory for the string
-        result[item_index] = (char*)malloc(str_len + 1);
-        if (!result[item_index]) {
-            mcp_log_error("Failed to allocate memory for string");
-            // Free previously allocated strings
-            for (size_t i = 0; i < item_index; i++) {
-                free(result[i]);
+    // Extract strings from the array
+    size_t valid_count = 0;
+    for (size_t i = 0; i < num_items; i++) {
+        mcp_json_t* item = mcp_json_array_get_item(json, (int)i);
+        if (item && mcp_json_is_string(item)) {
+            const char* str_value = NULL;
+            if (mcp_json_get_string(item, &str_value) == 0 && str_value) {
+                result_items[valid_count] = mcp_strdup(str_value);
+                if (!result_items[valid_count]) {
+                    mcp_log_error("Failed to duplicate string from JSON array");
+                    // Free previously allocated strings
+                    for (size_t j = 0; j < valid_count; j++) {
+                        free(result_items[j]);
+                    }
+                    free(result_items);
+                    mcp_json_destroy(json);
+                    return KMCP_ERROR_MEMORY_ALLOCATION;
+                }
+                valid_count++;
+            } else {
+                 mcp_log_warn("Failed to get string value from JSON array item at index %zu", i);
             }
-            free(result);
-            return KMCP_ERROR_MEMORY_ALLOCATION;
+        } else {
+            mcp_log_warn("JSON array item at index %zu is not a string", i);
         }
-
-        // Copy the string
-        strncpy(result[item_index], p, str_len);
-        result[item_index][str_len] = '\0';
-
-        // Move to the next string
-        p = str_end + 1;
-        item_index++;
     }
 
     // Set the output parameters
-    *items = result;
-    *count = item_index;
+    *items = result_items;
+    *count = valid_count;
+
+    // Free the parsed JSON object
+    mcp_json_destroy(json);
 
     return KMCP_SUCCESS;
 }
@@ -1630,7 +1630,8 @@ kmcp_error_t kmcp_http_get_tools(
         NULL,
         NULL,
         &response,
-        &status
+        &status,
+        NULL
     );
 
     if (result != KMCP_SUCCESS) {
@@ -1681,7 +1682,8 @@ kmcp_error_t kmcp_http_get_resources(
         NULL,
         NULL,
         &response,
-        &status
+        &status,
+        NULL
     );
 
     if (result != KMCP_SUCCESS) {
@@ -1751,7 +1753,8 @@ kmcp_error_t kmcp_http_test_ssl_certificate(const char* url, bool accept_self_si
         NULL,
         NULL,
         &response,
-        &status
+        &status,
+        NULL
     );
 
     // Free response if any
@@ -1820,7 +1823,8 @@ kmcp_error_t kmcp_http_get_ssl_certificate_info(const char* url, char** cert_inf
         NULL,
         NULL,
         &response,
-        &status
+        &status,
+        NULL // Don't need content type for HEAD request
     );
 
     // Free response if any

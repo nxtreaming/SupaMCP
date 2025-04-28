@@ -1000,16 +1000,62 @@ const char* kmcp_config_parser_get_string(
         return default_value;
     }
 
+    // NOTE: Environment variable substitution is NOT done here to avoid memory leaks.
+    // Use kmcp_config_parser_get_string_allocated for substitution.
+    return str_value;
+}
+
+
+/**
+ * @brief Get a string value from the configuration, allocating memory for substitution.
+ *
+ * Retrieves a string value from the configuration file.
+ * Environment variables are substituted if enabled in the parser options.
+ * The caller is responsible for freeing the returned string using free().
+ *
+ * @param parser Configuration parser (must not be NULL)
+ * @param path JSON path to the value (must not be NULL)
+ * @param default_value Default value to return if the path is not found (will be duplicated if returned)
+ * @return char* Returns the allocated string value, or an allocated copy of default_value if not found, or NULL on error.
+ */
+char* kmcp_config_parser_get_string_allocated(
+    kmcp_config_parser_t* parser,
+    const char* path,
+    const char* default_value
+) {
+    if (!parser || !path) {
+        return default_value ? mcp_strdup(default_value) : NULL;
+    }
+
+    // Parse the path
+    json_path_t* json_path = parse_json_path(path);
+    if (!json_path) {
+        return default_value ? mcp_strdup(default_value) : NULL;
+    }
+
+    // Get the value
+    mcp_json_t* value = get_json_by_path(parser->json, json_path);
+    free_json_path(json_path);
+
+    if (!value || !mcp_json_is_string(value)) {
+        return default_value ? mcp_strdup(default_value) : NULL;
+    }
+
+    // Get the string value
+    const char* str_value = NULL;
+    if (mcp_json_get_string(value, &str_value) != 0 || !str_value) {
+        return default_value ? mcp_strdup(default_value) : NULL;
+    }
+
     // Substitute environment variables if enabled
     if (parser->options.enable_env_vars && strchr(str_value, '$')) {
         char* substituted = substitute_env_vars(str_value);
-        if (substituted) {
-            // TODO: Handle memory leak (we can't free the substituted string)
-            return substituted;
-        }
+        // If substitution fails, duplicate the original string
+        return substituted ? substituted : mcp_strdup(str_value);
+    } else {
+        // No substitution needed, just duplicate the original string
+        return mcp_strdup(str_value);
     }
-
-    return str_value;
 }
 
 /**
@@ -1240,10 +1286,15 @@ kmcp_error_t kmcp_config_parser_get_profiles(
                 if (server && mcp_json_is_string(server)) {
                     const char* server_name = NULL;
                     if (mcp_json_get_string(server, &server_name) == 0 && server_name) {
-                        // Note: kmcp_profile_add_server requires a server config, not just a name
-                        // We'll need to get the server config from somewhere else
-                        // For now, we'll just log the server name
-                        mcp_log_info("Would add server '%s' to profile '%s'", server_name, profile_name);
+                        // TODO: Implement proper server addition to profiles.
+                        // This requires correlating the 'server_name' found here with the
+                        // full kmcp_server_config_t structures parsed by kmcp_config_parser_get_servers.
+                        // This might involve:
+                        // 1. Parsing servers *before* profiles.
+                        // 2. Storing parsed server configs temporarily (e.g., in a hash map by name).
+                        // 3. Looking up the kmcp_server_config_t using server_name here.
+                        // 4. Calling kmcp_profile_add_server with the found config (or a clone).
+                        mcp_log_info("Profile '%s' requires server '%s' (linking not implemented yet)", profile_name, server_name);
                     }
                 }
             }

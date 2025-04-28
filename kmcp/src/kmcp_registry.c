@@ -238,7 +238,8 @@ kmcp_error_t kmcp_registry_refresh_cache(kmcp_registry_t* registry) {
         NULL,
         NULL,
         &response,
-        &status
+        &status,
+        NULL
     );
 
     if (result != KMCP_SUCCESS) {
@@ -391,7 +392,8 @@ kmcp_error_t kmcp_registry_search_servers(kmcp_registry_t* registry, const char*
         NULL,
         NULL,
         &response,
-        &status
+        &status,
+        NULL
     );
 
     if (result != KMCP_SUCCESS) {
@@ -459,7 +461,8 @@ kmcp_error_t kmcp_registry_get_server_info(kmcp_registry_t* registry, const char
         NULL,
         NULL,
         &response,
-        &status
+        &status,
+        NULL
     );
 
     if (result != KMCP_SUCCESS) {
