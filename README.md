@@ -22,7 +22,7 @@ A cross-platform implementation of the Model Context Protocol (MCP) server/clien
 
 The project is organized into three main components:
 
-1. **Common Library (mcp_common)**: Contains shared functionality used by both the server and client.
+1. **Common Library (mcpcore)**: Contains shared functionality used by both the server and client.
    - JSON parsing and manipulation
    - JSON-RPC message formatting and parsing
    - Transport layer (stdio, TCP, HTTP, WebSocket)
@@ -83,7 +83,7 @@ cmake --install . --config Release
 
 The build process will create:
 
-1. A static library `libmcp_common.a` (or `mcp_common.lib` on Windows)
+1. A static library `libmcpcore.a` (or `mcpcore.lib` on Windows)
 2. The server executable `mcp_server`
 3. The client executable `mcp_client`
 

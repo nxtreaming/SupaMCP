@@ -22,9 +22,9 @@ if(WIN32)
     add_custom_command(
         TARGET copy_kmcp_lib POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
-        $<TARGET_FILE:mcp_common>
-        ${CMAKE_CURRENT_SOURCE_DIR}/build/lib/mcp_common.dll
-        DEPENDS mcp_common
+        $<TARGET_FILE:mcpcore>
+        ${CMAKE_CURRENT_SOURCE_DIR}/build/lib/mcpcore.dll
+        DEPENDS mcpcore
     )
 elseif(APPLE)
     add_custom_command(
@@ -37,9 +37,9 @@ elseif(APPLE)
     add_custom_command(
         TARGET copy_kmcp_lib POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
-        $<TARGET_FILE:mcp_common>
-        ${CMAKE_CURRENT_SOURCE_DIR}/build/lib/libmcp_common.dylib
-        DEPENDS mcp_common
+        $<TARGET_FILE:mcpcore>
+        ${CMAKE_CURRENT_SOURCE_DIR}/build/lib/libmcpcore.dylib
+        DEPENDS mcpcore
     )
 else()
     add_custom_command(
@@ -52,8 +52,8 @@ else()
     add_custom_command(
         TARGET copy_kmcp_lib POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
-        $<TARGET_FILE:mcp_common>
-        ${CMAKE_CURRENT_SOURCE_DIR}/build/lib/libmcp_common.so
-        DEPENDS mcp_common
+        $<TARGET_FILE:mcpcore>
+        ${CMAKE_CURRENT_SOURCE_DIR}/build/lib/libmcpcore.so
+        DEPENDS mcpcore
     )
 endif()

@@ -202,17 +202,17 @@ set(COMMON_SOURCES
 )
 
 # Create common library
-add_library(mcp_common SHARED ${COMMON_SOURCES})
-target_include_directories(mcp_common PUBLIC
+add_library(mcpcore SHARED ${COMMON_SOURCES})
+target_include_directories(mcpcore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include       # Public API headers
     ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Make client headers public too
 )
-target_link_libraries(mcp_common PUBLIC websockets ssl crypto)
+target_link_libraries(mcpcore PUBLIC websockets ssl crypto)
 
-# Windows-specific settings for mcp_common
+# Windows-specific settings for mcpcore
 if(MSVC)
     # Generate import library
-    set_target_properties(mcp_common PROPERTIES
+    set_target_properties(mcpcore PROPERTIES
         WINDOWS_EXPORT_ALL_SYMBOLS ON
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
@@ -221,7 +221,7 @@ if(MSVC)
 endif()
 
 # Make module source directories as private include paths so internal headers can be found
-target_include_directories(mcp_common PRIVATE
+target_include_directories(mcpcore PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/common
     ${CMAKE_CURRENT_SOURCE_DIR}/src/common/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/json
@@ -259,7 +259,7 @@ endif()
 
 # Create KMCP library
 add_library(kmcp SHARED ${KMCP_SOURCES})
-target_link_libraries(kmcp PRIVATE mcp_common)
+target_link_libraries(kmcp PRIVATE mcpcore)
 target_include_directories(kmcp PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/kmcp/include)
@@ -289,18 +289,18 @@ set(CLIENT_SOURCES
 
 # Create server executable
 add_executable(mcp_server ${SERVER_SOURCES})
-target_link_libraries(mcp_server PRIVATE mcp_common kmcp)
+target_link_libraries(mcp_server PRIVATE mcpcore kmcp)
 
 # Create client executable
 add_executable(mcp_client ${CLIENT_SOURCES})
-target_link_libraries(mcp_client PRIVATE mcp_common)
+target_link_libraries(mcp_client PRIVATE mcpcore)
 
 # Link platform-specific libraries
 if(WIN32)
-    target_link_libraries(mcp_common INTERFACE ws2_32) # Use INTERFACE so consumers link it too
+    target_link_libraries(mcpcore INTERFACE ws2_32) # Use INTERFACE so consumers link it too
 else()
     # Link pthreads and dl (for dynamic loading) on non-Windows
-    target_link_libraries(mcp_common INTERFACE Threads::Threads dl) # Use modern Threads target and INTERFACE
+    target_link_libraries(mcpcore INTERFACE Threads::Threads dl) # Use modern Threads target and INTERFACE
 endif()
 
 # Install
@@ -320,7 +320,7 @@ set(BENCHMARK_HEADERS
 
 # Create benchmark executable
 add_executable(mcp_benchmark_cli ${BENCHMARK_SOURCES} ${BENCHMARK_HEADERS})
-target_link_libraries(mcp_benchmark_cli PRIVATE mcp_common)
+target_link_libraries(mcp_benchmark_cli PRIVATE mcpcore)
 # Benchmark needs access to its own headers
 target_include_directories(mcp_benchmark_cli PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/benchmark

@@ -11,7 +11,7 @@ set(KMCP_INTEGRATION_TEST_SOURCES
 add_executable(kmcp_integration_tests ${KMCP_INTEGRATION_TEST_SOURCES})
 
 # Link with KMCP library
-target_link_libraries(kmcp_integration_tests kmcp mcp_common)
+target_link_libraries(kmcp_integration_tests kmcp mcpcore)
 
 # Add include directories
 target_include_directories(kmcp_integration_tests PRIVATE
@@ -25,7 +25,7 @@ add_test(NAME kmcp_integration_tests COMMAND kmcp_integration_tests)
 
 # Add individual integration test executables for easier debugging
 add_executable(integration_kmcp_client_profile_manager_test kmcp_client_profile_manager_integration_test.c kmcp_server_manager_stub.c)
-target_link_libraries(integration_kmcp_client_profile_manager_test kmcp mcp_common)
+target_link_libraries(integration_kmcp_client_profile_manager_test kmcp mcpcore)
 target_include_directories(integration_kmcp_client_profile_manager_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/include/kmcp

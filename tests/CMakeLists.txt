@@ -37,10 +37,10 @@ add_executable(test_lru_only test_lru_only.c test_mcp_cache_lru.c test_mcp_cache
 
 # Link the test runner against Unity and our common library
 # mcp_common now contains all necessary library code definitions.
-target_link_libraries(mcp_tests PRIVATE unity_lib mcp_common)
+target_link_libraries(mcp_tests PRIVATE unity_lib mcpcore)
 
 # Link the LRU test runner against Unity and our common library
-target_link_libraries(test_lru_only PRIVATE unity_lib mcp_common)
+target_link_libraries(test_lru_only PRIVATE unity_lib mcpcore)
 
 # Add include directories needed by tests
 target_include_directories(mcp_tests PRIVATE
