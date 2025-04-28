@@ -3,8 +3,8 @@
 # Add unit test sources
 set(KMCP_UNIT_TEST_SOURCES
     kmcp_unit_test_runner.c
-    kmcp_profile_manager_test.c
     kmcp_server_manager_stub.c
+    run_tests.c
 )
 
 # Add unit test executable
@@ -25,21 +25,10 @@ target_include_directories(kmcp_unit_tests PRIVATE
 add_test(NAME kmcp_unit_tests COMMAND kmcp_unit_tests)
 
 # Add individual unit test executables for easier debugging
-add_executable(unit_kmcp_profile_manager_test kmcp_profile_manager_test.c kmcp_server_manager_stub.c)
-target_link_libraries(unit_kmcp_profile_manager_test kmcp mcpcore)
-target_include_directories(unit_kmcp_profile_manager_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/client/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
-)
-target_compile_definitions(unit_kmcp_profile_manager_test PRIVATE STANDALONE_TEST)
+# (Currently no individual unit tests defined)
 
 # Add individual unit tests
-add_test(NAME unit_kmcp_profile_manager_test COMMAND unit_kmcp_profile_manager_test)
+# (Currently no individual unit tests defined)
 
 # Set test properties
-set_tests_properties(
-    unit_kmcp_profile_manager_test
-    PROPERTIES LABELS "unit_tests"
-)
+# (Currently no test properties defined)

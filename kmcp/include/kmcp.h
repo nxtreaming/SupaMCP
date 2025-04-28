@@ -35,7 +35,6 @@
 #include "kmcp_config_parser.h"
 #include "kmcp_process.h"
 #include "kmcp_http_client.h"
-#include "kmcp_profile_manager.h"
 #include "kmcp_event.h"
 
 #ifdef __cplusplus

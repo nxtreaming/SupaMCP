@@ -27,14 +27,6 @@
 #define KMCP_ERROR_CONFIG_INVALID KMCP_ERROR_INVALID_PARAMETER
 
 // Forward declarations for missing functions
-
-// Profile manager functions - using the correct function names from kmcp_profile_manager.h
-// These are the actual function names in the header file
-kmcp_error_t kmcp_profile_create(kmcp_profile_manager_t* manager, const char* name);
-kmcp_error_t kmcp_profile_activate(kmcp_profile_manager_t* manager, const char* name);
-// Note: There's no direct function to set profile description in the header
-// We'll need to implement a workaround
-kmcp_error_t kmcp_profile_add_server(kmcp_profile_manager_t* manager, const char* profile_name, kmcp_server_config_t* config);
 static const char* mcp_json_type_name(mcp_json_type_t type) {
     switch (type) {
         case MCP_JSON_NULL: return "null";
@@ -1203,112 +1195,7 @@ kmcp_error_t kmcp_config_parser_save(
     return KMCP_SUCCESS;
 }
 
-/**
- * @brief Parse profile configurations
- *
- * Parses profile configurations from the configuration file.
- * The configuration file should contain a "profiles" object with profile configurations.
- *
- * @param parser Configuration parser (must not be NULL)
- * @param manager Profile manager (must not be NULL)
- * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure
- */
-kmcp_error_t kmcp_config_parser_get_profiles(
-    kmcp_config_parser_t* parser,
-    kmcp_profile_manager_t* manager
-) {
-    if (!parser || !manager) {
-        mcp_log_error("Invalid parameters");
-        return KMCP_ERROR_INVALID_PARAMETER;
-    }
 
-    // Get profiles object
-    mcp_json_t* profiles = mcp_json_object_get_property(parser->json, "profiles");
-    if (!profiles || !mcp_json_is_object(profiles)) {
-        mcp_log_info("No profiles found in configuration file");
-        return KMCP_SUCCESS; // Not an error, just no profiles
-    }
-
-    // Get all profile names
-    char** profile_names = NULL;
-    size_t profile_count = 0;
-    if (mcp_json_object_get_property_names(profiles, &profile_names, &profile_count) != 0 || profile_count == 0) {
-        mcp_log_info("No profiles found in configuration file");
-        return KMCP_SUCCESS; // Not an error, just no profiles
-    }
-
-    // Process each profile
-    for (size_t i = 0; i < profile_count; i++) {
-        const char* profile_name = profile_names[i];
-        mcp_json_t* profile = mcp_json_object_get_property(profiles, profile_name);
-        if (!profile || !mcp_json_is_object(profile)) {
-            mcp_log_warn("Profile '%s' is not a valid object, skipping", profile_name);
-            continue;
-        }
-
-        // Create profile
-        kmcp_error_t result = kmcp_profile_create(manager, profile_name);
-        if (result != KMCP_SUCCESS) {
-            mcp_log_error("Failed to create profile '%s': %s", profile_name, kmcp_error_message(result));
-            continue;
-        }
-
-        // Get profile properties
-        // Check if profile is active
-        mcp_json_t* active = mcp_json_object_get_property(profile, "active");
-        if (active && mcp_json_is_boolean(active)) {
-            bool is_active = false;
-            if (mcp_json_get_boolean(active, &is_active) == 0 && is_active) {
-                result = kmcp_profile_activate(manager, profile_name);
-                if (result != KMCP_SUCCESS) {
-                    mcp_log_error("Failed to set profile '%s' as active: %s", profile_name, kmcp_error_message(result));
-                }
-            }
-        }
-
-        // Get profile description
-        mcp_json_t* description = mcp_json_object_get_property(profile, "description");
-        if (description && mcp_json_is_string(description)) {
-            const char* desc_str = NULL;
-            if (mcp_json_get_string(description, &desc_str) == 0 && desc_str) {
-                // Note: There's no direct function to set profile description in kmcp_profile_manager.h
-                // We'll just log the description for now
-                mcp_log_info("Profile '%s' description: %s", profile_name, desc_str);
-            }
-        }
-
-        // Get profile servers
-        mcp_json_t* servers = mcp_json_object_get_property(profile, "servers");
-        if (servers && mcp_json_is_array(servers)) {
-            size_t server_count = mcp_json_array_get_size(servers);
-            for (size_t j = 0; j < server_count; j++) {
-                mcp_json_t* server = mcp_json_array_get_item(servers, j < INT_MAX ? (int)j : INT_MAX);
-                if (server && mcp_json_is_string(server)) {
-                    const char* server_name = NULL;
-                    if (mcp_json_get_string(server, &server_name) == 0 && server_name) {
-                        // TODO: Implement proper server addition to profiles.
-                        // This requires correlating the 'server_name' found here with the
-                        // full kmcp_server_config_t structures parsed by kmcp_config_parser_get_servers.
-                        // This might involve:
-                        // 1. Parsing servers *before* profiles.
-                        // 2. Storing parsed server configs temporarily (e.g., in a hash map by name).
-                        // 3. Looking up the kmcp_server_config_t using server_name here.
-                        // 4. Calling kmcp_profile_add_server with the found config (or a clone).
-                        mcp_log_info("Profile '%s' requires server '%s' (linking not implemented yet)", profile_name, server_name);
-                    }
-                }
-            }
-        }
-    }
-
-    // Free profile names
-    for (size_t i = 0; i < profile_count; i++) {
-        free(profile_names[i]);
-    }
-    free(profile_names);
-
-    return KMCP_SUCCESS;
-}
 
 /**
  * @brief Parse server configurations

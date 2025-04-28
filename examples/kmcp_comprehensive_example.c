@@ -23,7 +23,7 @@
 #include "kmcp.h"
 #include "kmcp_client.h"
 #include "kmcp_server_manager.h"
-#include "kmcp_profile_manager.h"
+
 #include "kmcp_registry.h"
 #include "kmcp_tool_sdk.h"
 #include "kmcp_config_parser.h"
@@ -207,113 +207,11 @@ static void example_basic_client(const char* config_file) {
 }
 
 /**
- * @brief Example 2: Profile management
+ * @brief Example 2: Profile management (removed)
  */
 static void example_profile_management(void) {
     print_section("Profile Management");
-
-    // Create profile manager
-    printf("Creating profile manager...\n");
-    kmcp_profile_manager_t* manager = kmcp_profile_manager_create();
-    if (!manager) {
-        printf("Failed to create profile manager\n");
-        return;
-    }
-
-    // Create profiles
-    printf("\nCreating profiles...\n");
-    kmcp_error_t result = kmcp_profile_create(manager, "development");
-    if (result != KMCP_SUCCESS) {
-        printf("Failed to create development profile: %s\n", kmcp_error_message(result));
-        kmcp_profile_manager_close(manager);
-        return;
-    }
-
-    result = kmcp_profile_create(manager, "production");
-    if (result != KMCP_SUCCESS) {
-        printf("Failed to create production profile: %s\n", kmcp_error_message(result));
-        kmcp_profile_manager_close(manager);
-        return;
-    }
-
-    // Create server configurations
-    printf("\nAdding servers to profiles...\n");
-    kmcp_server_config_t dev_server;
-    memset(&dev_server, 0, sizeof(dev_server));
-    dev_server.name = "dev_server";
-    dev_server.is_http = true;
-    dev_server.url = "http://localhost:8080";
-
-    kmcp_server_config_t prod_server;
-    memset(&prod_server, 0, sizeof(prod_server));
-    prod_server.name = "prod_server";
-    prod_server.is_http = true;
-    prod_server.url = "https://api.example.com";
-    prod_server.api_key = "api_key_123456";
-
-    // Add servers to profiles
-    result = kmcp_profile_add_server(manager, "development", &dev_server);
-    if (result != KMCP_SUCCESS) {
-        printf("Failed to add server to development profile: %s\n", kmcp_error_message(result));
-        kmcp_profile_manager_close(manager);
-        return;
-    }
-
-    result = kmcp_profile_add_server(manager, "production", &prod_server);
-    if (result != KMCP_SUCCESS) {
-        printf("Failed to add server to production profile: %s\n", kmcp_error_message(result));
-        kmcp_profile_manager_close(manager);
-        return;
-    }
-
-    // Get profile count
-    size_t profile_count = kmcp_profile_get_count(manager);
-    printf("\nTotal profiles: %zu\n", profile_count);
-
-    // Get profile names
-    char** profile_names = NULL;
-    size_t count = 0;
-    result = kmcp_profile_get_names(manager, &profile_names, &count);
-    if (result != KMCP_SUCCESS || !profile_names) {
-        printf("Failed to get profile names\n");
-        kmcp_profile_manager_close(manager);
-        return;
-    }
-
-    // Print profile names
-    printf("\nProfile names:\n");
-    for (size_t i = 0; i < count; i++) {
-        printf("  %s\n", profile_names[i]);
-        free(profile_names[i]);
-    }
-    free(profile_names);
-
-    // Activate development profile
-    printf("\nActivating development profile...\n");
-    result = kmcp_profile_activate(manager, "development");
-    if (result != KMCP_SUCCESS) {
-        printf("Failed to activate development profile: %s\n", kmcp_error_message(result));
-        kmcp_profile_manager_close(manager);
-        return;
-    }
-
-    // Print active profile
-    const char* active_profile = kmcp_profile_get_active(manager);
-    printf("Active profile: %s\n", active_profile ? active_profile : "None");
-
-    // Save profiles to file
-    printf("\nSaving profiles to file...\n");
-    result = kmcp_profile_save(manager, "profiles.json");
-    if (result != KMCP_SUCCESS) {
-        printf("Failed to save profiles: %s\n", kmcp_error_message(result));
-        kmcp_profile_manager_close(manager);
-        return;
-    }
-
-    printf("Profiles saved to profiles.json\n");
-
-    // Close profile manager
-    kmcp_profile_manager_close(manager);
+    printf("Profile management functionality has been removed.\n");
 }
 
 /**

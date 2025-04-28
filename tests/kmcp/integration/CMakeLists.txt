@@ -3,8 +3,8 @@
 # Add integration test sources
 set(KMCP_INTEGRATION_TEST_SOURCES
     kmcp_integration_test_runner.c
-    kmcp_client_profile_manager_integration_test.c
     kmcp_server_manager_stub.c
+    run_tests.c
 )
 
 # Add integration test executable
@@ -25,22 +25,10 @@ target_include_directories(kmcp_integration_tests PRIVATE
 add_test(NAME kmcp_integration_tests COMMAND kmcp_integration_tests)
 
 # Add individual integration test executables for easier debugging
-add_executable(integration_kmcp_client_profile_manager_test kmcp_client_profile_manager_integration_test.c kmcp_server_manager_stub.c)
-target_link_libraries(integration_kmcp_client_profile_manager_test kmcp mcpcore)
-target_include_directories(integration_kmcp_client_profile_manager_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/client/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../unit
-)
-target_compile_definitions(integration_kmcp_client_profile_manager_test PRIVATE STANDALONE_TEST)
+# (Currently no individual integration tests defined)
 
 # Add individual integration tests
-add_test(NAME integration_kmcp_client_profile_manager_test COMMAND integration_kmcp_client_profile_manager_test)
+# (Currently no individual integration tests defined)
 
 # Set test properties
-set_tests_properties(
-    integration_kmcp_client_profile_manager_test
-    PROPERTIES LABELS "integration_tests"
-)
+# (Currently no test properties defined)

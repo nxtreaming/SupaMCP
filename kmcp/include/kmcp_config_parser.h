@@ -16,7 +16,6 @@
 #include "kmcp_server_manager.h"
 #include "kmcp_client.h"
 #include "kmcp_tool_access.h"
-#include "kmcp_profile_manager.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -136,23 +135,7 @@ kmcp_error_t kmcp_config_parser_get_access(
     kmcp_tool_access_t* access
 );
 
-/**
- * @brief Parse profile configurations
- *
- * Parses profile configurations from the configuration file.
- * The configuration file should contain a "profiles" object with profile configurations.
- *
- * @param parser Configuration parser (must not be NULL)
- * @param manager Profile manager (must not be NULL)
- * @return kmcp_error_t Returns KMCP_SUCCESS on success, or an error code on failure:
- *         - KMCP_ERROR_INVALID_PARAMETER if any parameter is NULL
- *         - KMCP_ERROR_PARSE_FAILED if the configuration file cannot be parsed
- *         - Other error codes for specific failures
- */
-kmcp_error_t kmcp_config_parser_get_profiles(
-    kmcp_config_parser_t* parser,
-    kmcp_profile_manager_t* manager
-);
+
 
 /**
  * @brief Validate configuration file

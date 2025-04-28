@@ -78,7 +78,6 @@ Include the KMCP header files in your C code:
 
 ```c
 #include "kmcp.h"
-#include "kmcp_profile_manager.h"  // For profile management
 #include "kmcp_registry.h"        // For registry integration
 #include "kmcp_tool_sdk.h"        // For tool development
 ```
@@ -171,71 +170,54 @@ free(content);
 free(content_type);
 ```
 
-### 4. Use Profile Management
+### 4. Use Server Manager Directly
 
 ```c
-// Create a profile manager
-kmcp_profile_manager_t* manager = kmcp_profile_manager_create();
+// Create a server manager
+kmcp_server_manager_t* manager = kmcp_server_create();
 if (!manager) {
-    printf("Failed to create profile manager\n");
+    printf("Failed to create server manager\n");
     return 1;
 }
 
-// Create a profile
-kmcp_error_t result = kmcp_profile_create(manager, "development");
-if (result != KMCP_SUCCESS) {
-    printf("Failed to create profile: %s\n", kmcp_error_message(result));
-    kmcp_profile_manager_close(manager);
-    return 1;
-}
-
-// Add a server to the profile
+// Add a server to the manager
 kmcp_server_config_t server_config;
 memset(&server_config, 0, sizeof(server_config));
-server_config.name = strdup("local-dev");
-server_config.command = strdup("path/to/mcp_server");
-server_config.args_count = 2;
+server_config.name = "local-dev";
+server_config.command = "path/to/mcp_server";
+server_config.is_http = false;
+server_config.args_count = 3;
 server_config.args = (char**)malloc(server_config.args_count * sizeof(char*));
 server_config.args[0] = strdup("--tcp");
 server_config.args[1] = strdup("--port");
 server_config.args[2] = strdup("8080");
 
-result = kmcp_profile_add_server(manager, "development", &server_config);
+kmcp_error_t result = kmcp_server_add(manager, &server_config);
 
-// Free server configuration
-free(server_config.name);
-free(server_config.command);
+// Free server configuration arguments
 for (size_t i = 0; i < server_config.args_count; i++) {
     free(server_config.args[i]);
 }
 free(server_config.args);
 
 if (result != KMCP_SUCCESS) {
-    printf("Failed to add server to profile: %s\n", kmcp_error_message(result));
-    kmcp_profile_manager_close(manager);
+    printf("Failed to add server to manager: %s\n", kmcp_error_message(result));
+    kmcp_server_destroy(manager);
     return 1;
 }
 
-// Activate the profile
-result = kmcp_profile_activate(manager, "development");
+// Connect to servers
+result = kmcp_server_connect(manager);
 if (result != KMCP_SUCCESS) {
-    printf("Failed to activate profile: %s\n", kmcp_error_message(result));
-    kmcp_profile_manager_close(manager);
-    return 1;
-}
-
-// Get the server manager for the profile
-kmcp_server_manager_t* server_manager = kmcp_profile_get_server_manager(manager, "development");
-if (!server_manager) {
-    printf("Failed to get server manager for profile\n");
-    kmcp_profile_manager_close(manager);
+    printf("Failed to connect to servers: %s\n", kmcp_error_message(result));
+    kmcp_server_destroy(manager);
     return 1;
 }
 
 // Use the server manager...
 
-// Close the profile manager
-kmcp_profile_manager_close(manager);
+// Destroy the server manager
+kmcp_server_destroy(manager);
 ```
 
 ### 5. Use Registry Integration
@@ -464,7 +446,6 @@ int main() {
 - Read the [API Reference](api_reference.md) for more API details
 - Check the [Configuration Guide](configuration_guide.md) for more configuration options
 - Refer to the [Usage Examples](usage_examples.md) for more usage scenarios
-- Learn about [Profile Management](profile_management_guide.md) for managing multiple server configurations
 - Explore [Registry Integration](registry_guide.md) for discovering and connecting to MCP servers
 - Develop custom tools with the [Tool SDK Guide](tool_sdk_guide.md)
 - Troubleshoot issues with the [Troubleshooting Guide](troubleshooting_guide.md)

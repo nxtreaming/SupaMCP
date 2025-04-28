@@ -21,8 +21,6 @@
 #include <unistd.h>
 #endif
 
-// Server connection structure is defined in kmcp_server_connection.h
-
 /**
  * @brief Complete definition of server manager structure
  */

@@ -3,8 +3,8 @@
 # Add system test sources
 set(KMCP_SYSTEM_TEST_SOURCES
     kmcp_system_test_runner.c
-    kmcp_profile_management_test.c
     kmcp_server_manager_stub.c
+    run_tests.c
 )
 
 # Add system test executable
@@ -25,22 +25,10 @@ target_include_directories(kmcp_system_tests PRIVATE
 add_test(NAME kmcp_system_tests COMMAND kmcp_system_tests)
 
 # Add individual system test executables for easier debugging
-add_executable(system_kmcp_profile_management_test kmcp_profile_management_test.c kmcp_server_manager_stub.c)
-target_link_libraries(system_kmcp_profile_management_test kmcp mcpcore)
-target_include_directories(system_kmcp_profile_management_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/client/include
-    ${CMAKE_SOURCE_DIR}/include/kmcp
-    ${CMAKE_SOURCE_DIR}/src/kmcp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../unit
-)
-target_compile_definitions(system_kmcp_profile_management_test PRIVATE STANDALONE_TEST)
+# (Currently no individual system tests defined)
 
 # Add individual system tests
-add_test(NAME system_kmcp_profile_management_test COMMAND system_kmcp_profile_management_test)
+# (Currently no individual system tests defined)
 
 # Set test properties
-set_tests_properties(
-    system_kmcp_profile_management_test
-    PROPERTIES LABELS "system_tests"
-)
+# (Currently no test properties defined)
