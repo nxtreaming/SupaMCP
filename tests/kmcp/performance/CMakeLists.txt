@@ -11,11 +11,12 @@ set(KMCP_PERFORMANCE_TEST_SOURCES
 add_executable(kmcp_performance_tests ${KMCP_PERFORMANCE_TEST_SOURCES})
 
 # Link with KMCP library
-target_link_libraries(kmcp_performance_tests kmcp mcp_common)
+target_link_libraries(kmcp_performance_tests kmcp mcpcore)
 
 # Add include directories
 target_include_directories(kmcp_performance_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/client/include
     ${CMAKE_SOURCE_DIR}/kmcp/include
     ${CMAKE_SOURCE_DIR}/kmcp/src
 )
@@ -25,9 +26,10 @@ add_test(NAME kmcp_performance_tests COMMAND kmcp_performance_tests)
 
 # Add individual performance test executables for easier debugging
 add_executable(perf_kmcp_tool_call_throughput_test kmcp_tool_call_throughput_test.c kmcp_server_manager_stub.c)
-target_link_libraries(perf_kmcp_tool_call_throughput_test kmcp mcp_common)
+target_link_libraries(perf_kmcp_tool_call_throughput_test kmcp mcpcore)
 target_include_directories(perf_kmcp_tool_call_throughput_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/client/include
     ${CMAKE_SOURCE_DIR}/include/kmcp
     ${CMAKE_SOURCE_DIR}/src/kmcp
     ${CMAKE_CURRENT_SOURCE_DIR}/../unit

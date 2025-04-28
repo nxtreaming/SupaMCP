@@ -6,6 +6,7 @@ enable_testing()
 # Include directories
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/client/include
     ${CMAKE_SOURCE_DIR}/include/kmcp
     ${CMAKE_SOURCE_DIR}/src
 )

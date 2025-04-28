@@ -78,7 +78,8 @@ int main(int argc, char* argv[]) {
         NULL,
         NULL,
         &response,
-        &status
+        &status,
+        NULL
     );
 
     if (result == KMCP_SUCCESS) {

@@ -11,11 +11,12 @@ set(KMCP_UNIT_TEST_SOURCES
 add_executable(kmcp_unit_tests ${KMCP_UNIT_TEST_SOURCES})
 
 # Link with KMCP library
-target_link_libraries(kmcp_unit_tests kmcp mcp_common)
+target_link_libraries(kmcp_unit_tests kmcp mcpcore)
 
 # Add include directories
 target_include_directories(kmcp_unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/client/include
     ${CMAKE_SOURCE_DIR}/kmcp/include
     ${CMAKE_SOURCE_DIR}/kmcp/src
 )
@@ -25,9 +26,10 @@ add_test(NAME kmcp_unit_tests COMMAND kmcp_unit_tests)
 
 # Add individual unit test executables for easier debugging
 add_executable(unit_kmcp_profile_manager_test kmcp_profile_manager_test.c kmcp_server_manager_stub.c)
-target_link_libraries(unit_kmcp_profile_manager_test kmcp mcp_common)
+target_link_libraries(unit_kmcp_profile_manager_test kmcp mcpcore)
 target_include_directories(unit_kmcp_profile_manager_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/client/include
     ${CMAKE_SOURCE_DIR}/include/kmcp
     ${CMAKE_SOURCE_DIR}/src/kmcp
 )

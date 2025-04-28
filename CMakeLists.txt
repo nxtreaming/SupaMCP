@@ -262,6 +262,7 @@ add_library(kmcp SHARED ${KMCP_SOURCES})
 target_link_libraries(kmcp PRIVATE mcpcore)
 target_include_directories(kmcp PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/client/include
     ${CMAKE_CURRENT_SOURCE_DIR}/kmcp/include)
 
 # Windows-specific settings for kmcp

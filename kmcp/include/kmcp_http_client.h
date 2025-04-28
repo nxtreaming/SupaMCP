@@ -105,7 +105,8 @@ kmcp_error_t kmcp_http_client_send(
     const char* content_type,
     const char* body,
     char** response,
-    int* status
+    int* status,
+    char** response_content_type_out // Added missing parameter
 );
 
 /**
