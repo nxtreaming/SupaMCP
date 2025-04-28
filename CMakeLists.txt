@@ -247,7 +247,6 @@ set(KMCP_SOURCES
     kmcp/src/kmcp_profile_manager.c
     kmcp/src/kmcp_registry.c
     kmcp/src/kmcp_tool_sdk.c
-    kmcp/src/kmcp_cli.c
     kmcp/src/kmcp_event.c
 )
 
@@ -357,11 +356,6 @@ add_subdirectory(python)
 # Add kmcp subdirectory
 add_subdirectory(kmcp)
 
-# Create KMCP CLI executable
-add_executable(kmcp_cli kmcp/src/kmcp_cli_main.c)
-target_link_libraries(kmcp_cli PRIVATE kmcp mcp_common)
-
 # Install KMCP library, headers, and CLI
 install(TARGETS kmcp DESTINATION lib)
-install(TARGETS kmcp_cli DESTINATION bin)
 install(DIRECTORY kmcp/include/ DESTINATION include/kmcp)
