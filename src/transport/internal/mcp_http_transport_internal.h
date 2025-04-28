@@ -85,21 +85,13 @@ typedef struct {
 } http_session_data_t;
 
 // Forward declarations for functions in mcp_http_transport.c
-int http_transport_start(mcp_transport_t* transport,
-                        mcp_transport_message_callback_t message_callback,
-                        void* user_data,
-                        mcp_transport_error_callback_t error_callback);
-int http_transport_stop(mcp_transport_t* transport);
-int http_transport_destroy(mcp_transport_t* transport);
 void* http_event_thread_func(void* arg);
 
 // Forward declarations for functions in mcp_http_server_handlers.c
-void process_http_request(struct lws* wsi, http_transport_data_t* data,
-                         const char* request, size_t len);
 void handle_sse_request(struct lws* wsi, http_transport_data_t* data);
 int add_cors_headers(struct lws* wsi, http_transport_data_t* data,
                     unsigned char** p, unsigned char* end);
-int root_handler(struct lws* wsi, enum lws_callback_reasons reason,
+int lws_root_handler(struct lws* wsi, enum lws_callback_reasons reason,
                 void* user, void* in, size_t len);
 
 // Forward declarations for functions in mcp_http_server_sse.c

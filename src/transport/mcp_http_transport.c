@@ -21,6 +21,14 @@
 #include <stdio.h>
 #include <time.h>
 
+// Forward declarations for helper functions
+static int http_transport_start(mcp_transport_t* transport,
+    mcp_transport_message_callback_t message_callback,
+    void* user_data,
+    mcp_transport_error_callback_t error_callback);
+static int http_transport_stop(mcp_transport_t* transport);
+static int http_transport_destroy(mcp_transport_t* transport);
+
 // Create HTTP transport
 mcp_transport_t* mcp_transport_http_create(const mcp_http_config_t* config) {
     if (config == NULL || config->host == NULL) {
@@ -134,7 +142,7 @@ mcp_transport_t* mcp_transport_http_create(const mcp_http_config_t* config) {
 }
 
 // Start HTTP transport
-int http_transport_start(mcp_transport_t* transport,
+static int http_transport_start(mcp_transport_t* transport,
                         mcp_transport_message_callback_t message_callback,
                         void* user_data,
                         mcp_transport_error_callback_t error_callback) {
@@ -245,7 +253,7 @@ int http_transport_start(mcp_transport_t* transport,
 }
 
 // Stop HTTP transport
-int http_transport_stop(mcp_transport_t* transport) {
+static int http_transport_stop(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
@@ -281,7 +289,7 @@ int http_transport_stop(mcp_transport_t* transport) {
 }
 
 // Destroy HTTP transport
-int http_transport_destroy(mcp_transport_t* transport) {
+static int http_transport_destroy(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }

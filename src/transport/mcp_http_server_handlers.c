@@ -16,7 +16,7 @@
 #include <stdio.h>
 
 // Root path handler
-int root_handler(struct lws* wsi, enum lws_callback_reasons reason,
+int lws_root_handler(struct lws* wsi, enum lws_callback_reasons reason,
                void* user, void* in, size_t len) {
     (void)user; // Unused parameter
     (void)len;  // Unused parameter
@@ -143,126 +143,6 @@ int add_cors_headers(struct lws* wsi, http_transport_data_t* data,
     }
 
     return 0;
-}
-
-// Process HTTP request
-void process_http_request(struct lws* wsi, http_transport_data_t* data,
-                        const char* request, size_t len) {
-    mcp_log_info("Processing HTTP request: %.*s", (int)len, request);
-
-    if (data->message_callback == NULL) {
-        mcp_log_error("No message callback registered");
-        return;
-    }
-
-    // Call message callback
-    int error_code = 0;
-    char* response = data->message_callback(data->callback_user_data, request, len, &error_code);
-
-    mcp_log_info("Message callback returned: error_code=%d, response=%s",
-                error_code, response ? response : "NULL");
-
-    if (response == NULL) {
-        // Send error response with proper JSON-RPC 2.0 format
-        char error_buf[512];
-        const char* error_message = "Internal server error";
-
-        // Map error codes to standard JSON-RPC error codes and messages
-        switch (error_code) {
-            case -32700:
-                error_message = "Parse error";
-                break;
-            case -32600:
-                error_message = "Invalid request";
-                break;
-            case -32601:
-                error_message = "Method not found";
-                break;
-            case -32602:
-                error_message = "Invalid params";
-                break;
-            case -32603:
-                error_message = "Internal error";
-                break;
-            default:
-                if (error_code <= -32000 && error_code >= -32099) {
-                    error_message = "Server error";
-                }
-                break;
-        }
-
-        snprintf(error_buf, sizeof(error_buf),
-                 "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":%d,\"message\":\"%s\"},\"id\":null}",
-                 error_code, error_message);
-
-        mcp_log_info("Sending error response: %s", error_buf);
-
-        // Prepare response headers
-        unsigned char buffer[LWS_PRE + 1024];
-        unsigned char* p = &buffer[LWS_PRE];
-        unsigned char* end = &buffer[sizeof(buffer) - 1];
-
-        // Add headers
-        if (lws_add_http_common_headers(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
-                                       "application/json", strlen(error_buf), &p, end)) {
-            mcp_log_error("Failed to add HTTP headers");
-            return;
-        }
-
-        // Add CORS headers
-        if (add_cors_headers(wsi, data, &p, end) != 0) {
-            mcp_log_error("Failed to add CORS headers for error response");
-            return;
-        }
-
-        if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
-            mcp_log_error("Failed to finalize HTTP headers");
-            return;
-        }
-
-        // Write response body
-        int bytes_written = lws_write(wsi, (unsigned char*)error_buf, strlen(error_buf), LWS_WRITE_HTTP);
-        mcp_log_info("Wrote %d bytes", bytes_written);
-    } else {
-        mcp_log_info("Sending success response: %s", response);
-
-        // Prepare response headers
-        unsigned char buffer[LWS_PRE + 1024];
-        unsigned char* p = &buffer[LWS_PRE];
-        unsigned char* end = &buffer[sizeof(buffer) - 1];
-
-        // Add headers
-        if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
-                                       "application/json", strlen(response), &p, end)) {
-            mcp_log_error("Failed to add HTTP headers");
-            free(response);
-            return;
-        }
-
-        // Add CORS headers
-        if (add_cors_headers(wsi, data, &p, end) != 0) {
-            mcp_log_error("Failed to add CORS headers for success response");
-            free(response);
-            return;
-        }
-
-        if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
-            mcp_log_error("Failed to finalize HTTP headers");
-            free(response);
-            return;
-        }
-
-        // Write response body
-        int bytes_written = lws_write(wsi, (unsigned char*)response, strlen(response), LWS_WRITE_HTTP);
-        mcp_log_info("Wrote %d bytes", bytes_written);
-
-        // Free response
-        free(response);
-    }
-
-    // Complete HTTP transaction
-    lws_http_transaction_completed(wsi);
-    mcp_log_info("HTTP transaction completed");
 }
 
 // Handle SSE request

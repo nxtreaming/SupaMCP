@@ -116,7 +116,7 @@ struct lws_protocols http_protocols[] = {
     },
     {
         "http-root",
-        root_handler,
+        lws_root_handler,
         0,  // user data size
         0,  // rx buffer size (0 = default)
     },
