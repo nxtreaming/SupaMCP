@@ -144,7 +144,7 @@ int main(int argc, char* argv[]) {
     kmcp_server_manager_t* manager = kmcp_client_get_manager(client);
     if (!manager) {
         mcp_log_error("Failed to get server manager");
-        kmcp_client_close(client);
+        kmcp_client_destroy(client);
         return 1;
     }
 
@@ -177,7 +177,7 @@ int main(int argc, char* argv[]) {
 
     // Close client
     mcp_log_info("Closing client...");
-    kmcp_client_close(client);
+    kmcp_client_destroy(client);
     mcp_log_info("Client closed");
 
     // Close logging

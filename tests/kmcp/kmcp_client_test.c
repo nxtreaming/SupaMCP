@@ -44,12 +44,12 @@ static int test_client_create_destroy() {
     kmcp_server_manager_t* manager = kmcp_client_get_manager(client);
     if (!manager) {
         printf("FAIL: Failed to get server manager\n");
-        kmcp_client_close(client);
+        kmcp_client_destroy(client);
         return 1;
     }
 
-    // Close client
-    kmcp_client_close(client);
+    // Destroy client
+    kmcp_client_destroy(client);
 
     printf("PASS: Client creation and destruction tests passed\n");
     return 0;
@@ -101,13 +101,13 @@ static int test_client_create_from_file() {
     kmcp_server_manager_t* manager = kmcp_client_get_manager(client);
     if (!manager) {
         printf("FAIL: Failed to get server manager\n");
-        kmcp_client_close(client);
+        kmcp_client_destroy(client);
         remove(config_file);
         return 1;
     }
 
-    // Close client
-    kmcp_client_close(client);
+    // Destroy client
+    kmcp_client_destroy(client);
 
     // Clean up
     remove(config_file);

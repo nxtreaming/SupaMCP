@@ -158,7 +158,7 @@ static void example_basic_client(const char* config_file) {
     kmcp_server_manager_t* manager = kmcp_client_get_manager(client);
     if (!manager) {
         printf("Failed to get server manager\n");
-        kmcp_client_close(client);
+        kmcp_client_destroy(client);
         return;
     }
 
@@ -202,7 +202,7 @@ static void example_basic_client(const char* config_file) {
 
     // Close client
     printf("\nClosing KMCP client...\n");
-    kmcp_client_close(client);
+    kmcp_client_destroy(client);
     printf("KMCP client closed\n");
 }
 

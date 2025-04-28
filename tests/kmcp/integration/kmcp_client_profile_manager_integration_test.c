@@ -96,8 +96,8 @@ static int test_client_profile_manager_create(void) {
     kmcp_server_manager_t* profile_server_manager = kmcp_profile_get_server_manager(manager, "test-profile");
     TEST_ASSERT(profile_server_manager != NULL);
 
-    // Close the client
-    kmcp_client_close(client);
+    // Destroy the client
+    kmcp_client_destroy(client);
 
     // Close the profile manager
     kmcp_profile_manager_close(manager);
@@ -184,8 +184,8 @@ static int test_client_profile_manager_use(void) {
     // We expect this to fail since we're using a dummy server
     TEST_ASSERT(result != KMCP_SUCCESS);
 
-    // Close the client
-    kmcp_client_close(client);
+    // Destroy the client
+    kmcp_client_destroy(client);
 
     // Close the profile manager
     kmcp_profile_manager_close(manager);
@@ -299,8 +299,8 @@ static int test_client_profile_manager_switch(void) {
     // Use the production server manager with the client
     kmcp_client_set_manager(client, prod_server_manager);
 
-    // Close the client
-    kmcp_client_close(client);
+    // Destroy the client
+    kmcp_client_destroy(client);
 
     // Close the profile manager
     kmcp_profile_manager_close(manager);

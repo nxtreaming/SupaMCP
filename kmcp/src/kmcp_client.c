@@ -645,11 +645,11 @@ kmcp_server_manager_t* kmcp_client_get_manager(kmcp_client_t* client) {
 }
 
 /**
- * @brief Close the client and free all resources
+ * @brief Destroy the client and free all resources
  *
- * @param client Client to close (can be NULL)
+ * @param client Client to destry (can be NULL)
  */
-void kmcp_client_close(kmcp_client_t* client) {
+void kmcp_client_destroy(kmcp_client_t* client) {
     // This function is a wrapper around the internal client close functionality
     if (!client) {
         return;

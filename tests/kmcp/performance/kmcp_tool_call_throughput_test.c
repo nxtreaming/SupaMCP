@@ -135,8 +135,8 @@ static int test_tool_call_throughput(void) {
     printf("Tool call throughput: %.2f calls/second\n", calls_per_second);
     printf("Average response time: %.2f ms\n", elapsed_time / (double)num_calls);
 
-    // Close the client
-    kmcp_client_close(client);
+    // Destroy the client
+    kmcp_client_destroy(client);
 
     // Close logging
     mcp_log_close();

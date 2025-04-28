@@ -140,16 +140,16 @@ KMCP_API kmcp_error_t kmcp_client_get_resource(
 KMCP_API kmcp_server_manager_t* kmcp_client_get_manager(kmcp_client_t* client);
 
 /**
- * @brief Close the client
+ * @brief Destroy the client
  *
- * Closes the client and frees all associated resources.
+ * Destroys the client and frees all associated resources.
  * This includes disconnecting from all servers and freeing memory.
  *
  * @param client Client (can be NULL, in which case this function does nothing)
  *
  * @note After calling this function, the client pointer is no longer valid and should not be used.
  */
-KMCP_API void kmcp_client_close(kmcp_client_t* client);
+KMCP_API void kmcp_client_destroy(kmcp_client_t* client);
 
 /**
  * @brief Free memory allocated by KMCP

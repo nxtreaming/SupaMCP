@@ -1170,16 +1170,9 @@ kmcp_error_t kmcp_config_parser_save(
 
     // Write JSON to file
     size_t json_len = strlen(json_str);
-    size_t written = fwrite(json_str, 1, json_len, file);
+    fwrite(json_str, 1, json_len, file);
     fclose(file);
     free(json_str);
-
-    /*
-    if (written != json_len) {
-        mcp_log_error("Failed to write JSON to file: %s", file_path);
-        return KMCP_ERROR_IO;
-    }
-    */
 
     return KMCP_SUCCESS;
 }
