@@ -6,19 +6,19 @@ This directory contains documentation for the MCP Server, a high-performance ser
 
 ## Contents
 
-- [KMCP Module](kmcp.md): Documentation for the KMCP module, a lightweight MCP client library that provides a high-level interface for communicating with MCP servers.
 - [Template Optimization](template_optimization.md): Documentation for the optimized template implementation, which provides significant performance improvements for template matching and parameter extraction.
 - [Cache Implementation](cache_implementation.md): Documentation for the resource cache implementation, which stores and retrieves content items to improve performance and reduce load on backend systems.
 - [JSON Utility Functions](json_utils.md): Documentation for the JSON utility functions, which provide a convenient API for working with JSON data.
+- [HTTP Protocol](http_protocol.md): Documentation for the HTTP protocol implementation in MCP Server.
 
 ## Getting Started
 
 If you're new to the MCP Server, we recommend starting with the following documents:
 
-1. [KMCP Module](kmcp.md): Learn about the KMCP module and how to use it to communicate with MCP servers.
-2. [Template Optimization](template_optimization.md): Learn about the optimized template implementation and how it improves performance.
-3. [Cache Implementation](cache_implementation.md): Learn about the resource cache implementation and how it improves performance.
-4. [JSON Utility Functions](json_utils.md): Learn about the JSON utility functions and how they make working with JSON data easier.
+1. [Template Optimization](template_optimization.md): Learn about the optimized template implementation and how it improves performance.
+2. [Cache Implementation](cache_implementation.md): Learn about the resource cache implementation and how it improves performance.
+3. [JSON Utility Functions](json_utils.md): Learn about the JSON utility functions and how they make working with JSON data easier.
+4. [HTTP Protocol](http_protocol.md): Learn about the HTTP protocol implementation in MCP Server.
 
 ## Contributing
 

@@ -77,5 +77,4 @@ add_test(NAME RunUnitTests COMMAND mcp_tests)
 # Define a CTest test case for LRU cache tests only
 add_test(NAME RunLRUTests COMMAND test_lru_only)
 
-# Add KMCP tests
-add_subdirectory(kmcp)
+# KMCP tests have been removed

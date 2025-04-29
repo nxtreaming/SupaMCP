@@ -235,47 +235,7 @@ target_include_directories(mcpcore PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gateway
 )
 
-# KMCP library sources
-set(KMCP_SOURCES
-    kmcp/src/kmcp_server_manager.c
-    kmcp/src/kmcp_client.c
-    kmcp/src/kmcp_tool_access.c
-    kmcp/src/kmcp_config_parser.c
-    kmcp/src/kmcp_http_client.c
-    kmcp/src/kmcp_error.c
-    kmcp/src/kmcp_version.c
-    kmcp/src/kmcp_registry.c
-    kmcp/src/kmcp_tool_sdk.c
-    kmcp/src/kmcp_event.c
-)
-
-# Add platform-specific process implementation
-if(WIN32)
-    list(APPEND KMCP_SOURCES kmcp/src/kmcp_process_win.c)
-else()
-    list(APPEND KMCP_SOURCES kmcp/src/kmcp_process_posix.c)
-endif()
-
-# Create KMCP library
-add_library(kmcp SHARED ${KMCP_SOURCES})
-target_link_libraries(kmcp PRIVATE mcpcore)
-target_include_directories(kmcp PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/client/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/kmcp/include)
-
-# Windows-specific settings for kmcp
-if(MSVC)
-    # Generate import library
-    set_target_properties(kmcp PROPERTIES
-        WINDOWS_EXPORT_ALL_SYMBOLS ON
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-        ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-    )
-    target_compile_definitions(kmcp PRIVATE -DKMCP_EXPORTS)
-    target_compile_definitions(kmcp PUBLIC -DKMCP_DLL)
-endif()
+# KMCP library has been removed
 
 # Server-specific source files
 set(SERVER_SOURCES
@@ -289,7 +249,7 @@ set(CLIENT_SOURCES
 
 # Create server executable
 add_executable(mcp_server ${SERVER_SOURCES})
-target_link_libraries(mcp_server PRIVATE mcpcore kmcp)
+target_link_libraries(mcp_server PRIVATE mcpcore)
 
 # Create client executable
 add_executable(mcp_client ${CLIENT_SOURCES})
@@ -350,12 +310,4 @@ add_subdirectory(tests)
 # Add examples subdirectory (optional, if examples exist)
 add_subdirectory(examples)
 
-# Add Python bindings
-add_subdirectory(python)
-
-# Add kmcp subdirectory
-add_subdirectory(kmcp)
-
-# Install KMCP library, headers, and CLI
-install(TARGETS kmcp DESTINATION lib)
-install(DIRECTORY kmcp/include/ DESTINATION include/kmcp)
+# Python bindings and KMCP module have been removed

@@ -206,51 +206,7 @@ else()
     target_link_libraries(advanced_rate_limiter_demo PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
-# KMCP Example
-add_executable(kmcp_example_app kmcp_example.c)
-target_include_directories(kmcp_example_app PRIVATE ../kmcp/src) # Add KMCP include path
-target_link_libraries(kmcp_example_app PRIVATE mcpcore kmcp)
-# Link platform-specific libraries needed by the transport
-if(WIN32)
-    target_link_libraries(kmcp_example_app PRIVATE ws2_32) # Use PRIVATE keyword
-else()
-    target_link_libraries(kmcp_example_app PRIVATE Threads::Threads) # Use PRIVATE keyword
-endif()
-
-# KMCP SSL Example
-add_executable(kmcp_ssl_example kmcp_ssl_example.c)
-target_include_directories(kmcp_ssl_example PRIVATE ../kmcp/src) # Add KMCP include path
-target_link_libraries(kmcp_ssl_example PRIVATE mcpcore kmcp)
-# Link platform-specific libraries needed by the transport
-if(WIN32)
-    target_link_libraries(kmcp_ssl_example PRIVATE ws2_32) # Use PRIVATE keyword
-else()
-    target_link_libraries(kmcp_ssl_example PRIVATE Threads::Threads) # Use PRIVATE keyword
-endif()
-
-
-
-# KMCP Tool SDK Example
-add_executable(kmcp_tool_example kmcp_tool_example.c)
-target_include_directories(kmcp_tool_example PRIVATE ../include ../include/kmcp) # Add include paths
-target_link_libraries(kmcp_tool_example PRIVATE mcpcore kmcp)
-# Link platform-specific libraries needed by the transport
-if(WIN32)
-    target_link_libraries(kmcp_tool_example PRIVATE ws2_32) # Use PRIVATE keyword
-else()
-    target_link_libraries(kmcp_tool_example PRIVATE Threads::Threads) # Use PRIVATE keyword
-endif()
-
-# KMCP Comprehensive Example
-add_executable(kmcp_comprehensive_example kmcp_comprehensive_example.c)
-target_include_directories(kmcp_comprehensive_example PRIVATE ../include ../include/kmcp) # Add include paths
-target_link_libraries(kmcp_comprehensive_example PRIVATE mcpcore kmcp)
-# Link platform-specific libraries needed by the transport
-if(WIN32)
-    target_link_libraries(kmcp_comprehensive_example PRIVATE ws2_32) # Use PRIVATE keyword
-else()
-    target_link_libraries(kmcp_comprehensive_example PRIVATE Threads::Threads) # Use PRIVATE keyword
-endif()
+# KMCP examples have been removed
 
 # HTTP Server Example with SSE
 add_executable(http_server http_server.c http_static_res.c)
@@ -272,7 +228,7 @@ else()
 endif()
 
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client kmcp_example_app kmcp_ssl_example kmcp_tool_example kmcp_comprehensive_example http_server DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server DESTINATION bin/examples)
 
 # Create directory for HTTP static files
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/examples/http_static)
