@@ -76,12 +76,34 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     // 1. Read the 4-byte length prefix
     int read_result = mcp_socket_recv_exact(sock, length_buf, 4, stop_flag);
     if (read_result != 0) {
-        if (!stop_flag || !*stop_flag) {
-            // it's the expected action, Log warn only if not stopped intentionally
-            mcp_log_warn("mcp_framing_recv_message: Failed to read length prefix (result: %d, error: %d)",
-                         read_result, mcp_socket_get_last_error());
-        } else {
+        // During normal shutdown, we don't want to log a warning
+        // Check if this is a normal socket close/shutdown
+        int error_code = mcp_socket_get_last_error();
+
+        // Special case: error code 0 during shutdown is normal
+        if (error_code == 0) {
+            // This is a common case during normal shutdown
+            mcp_log_debug("mcp_framing_recv_message: Socket closed during read (error: 0)");
+        }
+#ifdef _WIN32
+        else if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN ||
+            error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
+            // Normal socket close during shutdown, log as debug
+            mcp_log_debug("mcp_framing_recv_message: Socket closed/reset during read (error: %d)", error_code);
+        }
+#else // POSIX
+        else if (error_code == ECONNRESET || error_code == ENOTCONN) {
+            // Normal socket close during shutdown, log as debug
+            mcp_log_debug("mcp_framing_recv_message: Socket closed/reset during read (error: %d)", error_code);
+        }
+#endif
+        else if (stop_flag && *stop_flag) {
+            // It's an intentional stop, log as debug
             mcp_log_debug("mcp_framing_recv_message: Aborted while reading length prefix.");
+        } else {
+            // It's an unexpected error, log as warn
+            mcp_log_warn("mcp_framing_recv_message: Failed to read length prefix (result: %d, error: %d)",
+                         read_result, error_code);
         }
         return -1; // Error, connection closed, or aborted
     }
@@ -119,12 +141,34 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     // 5. Read the Message Body
     read_result = mcp_socket_recv_exact(sock, message_buf, message_length_host, stop_flag);
     if (read_result != 0) {
-        if (!stop_flag || !*stop_flag) {
-            // it's the normal expected action, not error logs.
-            mcp_log_warn("mcp_framing_recv_message: Failed to read message body (length %u, result: %d, error: %d)",
-                          message_length_host, read_result, mcp_socket_get_last_error());
-        } else {
+        // During normal shutdown, we don't want to log a warning
+        // Check if this is a normal socket close/shutdown
+        int error_code = mcp_socket_get_last_error();
+
+        // Special case: error code 0 during shutdown is normal
+        if (error_code == 0) {
+            // This is a common case during normal shutdown
+            mcp_log_debug("mcp_framing_recv_message: Socket closed during body read (error: 0)");
+        }
+#ifdef _WIN32
+        else if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN ||
+            error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
+            // Normal socket close during shutdown, log as debug
+            mcp_log_debug("mcp_framing_recv_message: Socket closed/reset during body read (error: %d)", error_code);
+        }
+#else // POSIX
+        else if (error_code == ECONNRESET || error_code == ENOTCONN) {
+            // Normal socket close during shutdown, log as debug
+            mcp_log_debug("mcp_framing_recv_message: Socket closed/reset during body read (error: %d)", error_code);
+        }
+#endif
+        else if (stop_flag && *stop_flag) {
+            // It's an intentional stop, log as debug
             mcp_log_debug("mcp_framing_recv_message: Aborted while reading message body.");
+        } else {
+            // It's an unexpected error, log as warn
+            mcp_log_warn("mcp_framing_recv_message: Failed to read message body (length %u, result: %d, error: %d)",
+                          message_length_host, read_result, error_code);
         }
         free(message_buf); // Clean up allocated buffer on error
         return -1; // Error, connection closed, or aborted

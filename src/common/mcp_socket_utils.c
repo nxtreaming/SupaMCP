@@ -178,9 +178,17 @@ int mcp_socket_send_exact(socket_t sock, const char* buf, size_t len, volatile b
 
         if (bytes_sent == MCP_SOCKET_ERROR) {
             int error_code = mcp_socket_get_last_error();
+
+            // Special case: error code 0 during shutdown is normal
+            if (error_code == 0) {
+                // This is a common case during normal shutdown
+                mcp_log_debug("send_exact: Socket closed (socket %d, error: 0)", (int)sock);
+                return -1; // Treat as error
+            }
 #ifdef _WIN32
-            if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
-                mcp_log_warn("send_exact failed: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
+            else if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
+                // Normal socket close during shutdown, log as debug instead of warning
+                mcp_log_debug("send_exact: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
                 return -1; // Treat as error
             }
             if (error_code == WSAEWOULDBLOCK) {
@@ -190,8 +198,9 @@ int mcp_socket_send_exact(socket_t sock, const char* buf, size_t len, volatile b
                 continue;
             }
 #else // POSIX
-            if (error_code == EPIPE || error_code == ECONNRESET || error_code == ENOTCONN) {
-                mcp_log_warn("send_exact failed: Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
+            else if (error_code == EPIPE || error_code == ECONNRESET || error_code == ENOTCONN) {
+                // Normal socket close during shutdown, log as debug instead of warning
+                mcp_log_debug("send_exact: Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
                 return -1; // Treat as error
             }
             if (error_code == EINTR) {
@@ -238,9 +247,17 @@ int mcp_socket_recv_exact(socket_t sock, char* buf, size_t len, volatile bool* s
 
         if (bytes_read == MCP_SOCKET_ERROR) {
             int error_code = mcp_socket_get_last_error();
+
+            // Special case: error code 0 during shutdown is normal
+            if (error_code == 0) {
+                // This is a common case during normal shutdown
+                mcp_log_debug("recv_exact: Socket closed (socket %d, error: 0)", (int)sock);
+                return -1; // Connection closed/error
+            }
 #ifdef _WIN32
-            if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
-                mcp_log_warn("recv_exact failed: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
+            else if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
+                // Normal socket close during shutdown, log as debug instead of warning
+                mcp_log_debug("recv_exact: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
                 return -1; // Connection closed/error
             }
             if (error_code == WSAEWOULDBLOCK) {
@@ -248,8 +265,9 @@ int mcp_socket_recv_exact(socket_t sock, char* buf, size_t len, volatile bool* s
                 continue;
             }
 #else // POSIX
-            if (error_code == ECONNRESET || error_code == ENOTCONN) {
-                mcp_log_warn("recv_exact failed: Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
+            else if (error_code == ECONNRESET || error_code == ENOTCONN) {
+                // Normal socket close during shutdown, log as debug instead of warning
+                mcp_log_debug("recv_exact: Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
                 return -1; // Connection closed/error
             }
             if (error_code == EINTR) {
@@ -301,8 +319,16 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
 
         if (result == MCP_SOCKET_ERROR) {
             int error_code = mcp_socket_get_last_error();
-            if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
-                mcp_log_warn("send_vectors (Win) failed: Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
+
+            // Special case: error code 0 during shutdown is normal
+            if (error_code == 0) {
+                // This is a common case during normal shutdown
+                mcp_log_debug("send_vectors (Win): Socket closed (socket %d, error: 0)", (int)sock);
+                return -1;
+            }
+            else if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
+                // Normal socket close during shutdown, log as debug instead of warning
+                mcp_log_debug("send_vectors (Win): Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
                 return -1;
             }
             if (error_code == WSAEWOULDBLOCK) {
@@ -355,8 +381,16 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
 
         if (bytes_sent == MCP_SOCKET_ERROR) {
             int error_code = mcp_socket_get_last_error();
-            if (error_code == EPIPE || error_code == ECONNRESET || error_code == ENOTCONN) {
-                mcp_log_warn("send_vectors (POSIX) failed: Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
+
+            // Special case: error code 0 during shutdown is normal
+            if (error_code == 0) {
+                // This is a common case during normal shutdown
+                mcp_log_debug("send_vectors (POSIX): Socket closed (socket %d, error: 0)", (int)sock);
+                return -1;
+            }
+            else if (error_code == EPIPE || error_code == ECONNRESET || error_code == ENOTCONN) {
+                // Normal socket close during shutdown, log as debug instead of warning
+                mcp_log_debug("send_vectors (POSIX): Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
                 return -1;
             }
             if (error_code == EINTR) {
@@ -536,7 +570,8 @@ int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_
                 return 1; // Readable
             }
             if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-                mcp_log_warn("poll reported error event %d on socket %d", pfd.revents, (int)sock);
+                // Use debug level for normal socket events during shutdown
+                mcp_log_debug("poll reported event %d on socket %d", pfd.revents, (int)sock);
                 return -1; // Socket error indicated by poll
             }
             // Should not happen if result > 0

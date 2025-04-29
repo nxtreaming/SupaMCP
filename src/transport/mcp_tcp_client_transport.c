@@ -89,6 +89,7 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
 
     // Shutdown the socket to potentially unblock the receiver thread
     if (data->sock != MCP_INVALID_SOCKET) {
+        mcp_log_info("Shutting down socket %d", (int)data->sock);
 #ifdef _WIN32
         shutdown(data->sock, SD_BOTH);
 #else
