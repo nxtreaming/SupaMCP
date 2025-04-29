@@ -29,10 +29,23 @@
 #include "mcp_http_transport.h"
 #include "mcp_profiler.h"
 #include "mcp_json.h"
+#include "mcp_socket_utils.h"
 #include "gateway.h"
 #include "mcp_thread_local.h"
 #include "mcp_connection_pool.h"
 #include "server/internal/server_internal.h"
+
+// HTTP client tool
+extern int register_http_client_tool(mcp_server_t* server);
+extern mcp_error_code_t http_client_tool_handler(
+    mcp_server_t* server,
+    const char* name,
+    const mcp_json_t* params,
+    void* user_data,
+    mcp_content_item_t*** content,
+    size_t* content_count,
+    bool* is_error,
+    char** error_message);
 
 // Global server instance for signal handling
 static mcp_server_t* g_server = NULL;
@@ -264,6 +277,14 @@ static mcp_error_code_t server_tool_handler(
         }
     }
 
+    // Execute tool logic
+    if (strcmp(name, "http_client") == 0) {
+        // Special case for HTTP client tool - delegate to its handler
+        mcp_log_info("Delegating to HTTP client tool handler");
+        return http_client_tool_handler(server, name, params, user_data, content, content_count, is_error, error_message);
+    }
+
+    // For other tools, require the 'text' parameter
     if (text_node == NULL || mcp_json_get_type(text_node) != MCP_JSON_STRING ||
         mcp_json_get_string(text_node, &input_text) != 0 || input_text == NULL) {
         mcp_log_warn("Tool '%s': Missing or invalid 'text' string parameter.", name);
@@ -273,7 +294,7 @@ static mcp_error_code_t server_tool_handler(
         goto cleanup;
     }
 
-    // Execute tool logic
+    // Handle standard tools
     if (strcmp(name, "echo") == 0) {
         result_data = mcp_strdup(input_text);
         mcp_log_info("Echo tool called with text: %s", input_text);
@@ -490,6 +511,10 @@ static void cleanup(void) {
     mcp_profile_report(stdout); // Print profile report on exit if enabled
 #endif
 
+    // Cleanup socket library
+    mcp_socket_cleanup();
+    mcp_log_info("Socket library cleaned up");
+
     // Destroy connection pools before freeing the backend list
     if (g_backends != NULL) {
         mcp_log_info("Destroying backend connection pools...");
@@ -667,6 +692,13 @@ int main(int argc, char** argv) {
 
     mcp_log_info("Starting MCP server...");
 
+    // Initialize socket library
+    if (mcp_socket_init() != 0) {
+        mcp_log_error("Failed to initialize socket library");
+        return 1;
+    }
+    mcp_log_info("Socket library initialized");
+
     mcp_server_config_t server_config = {
         .name = "example-mcp-server",
         .version = "1.0.0",
@@ -798,6 +830,13 @@ int main(int argc, char** argv) {
     }
 
     mcp_log_info("Added example resources and tools.");
+
+    // Register HTTP client tool
+    if (register_http_client_tool(g_server) != 0) {
+        mcp_log_error("Failed to register HTTP client tool");
+    } else {
+        mcp_log_info("HTTP client tool registered successfully");
+    }
 
     // Create transport based on config
     mcp_transport_t* transport = NULL;

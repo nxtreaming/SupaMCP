@@ -240,6 +240,7 @@ target_include_directories(mcpcore PRIVATE
 # Server-specific source files
 set(SERVER_SOURCES
     src/main.c
+    src/tools/http_client_tool.c
 )
 
 # Client-specific source files

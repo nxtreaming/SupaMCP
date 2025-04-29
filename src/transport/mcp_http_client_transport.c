@@ -353,11 +353,11 @@ static int http_client_transport_send(mcp_transport_t* transport, const void* da
         return -1;
     }
 
-    // Check response status
+    // Log response status
     if (response->status_code != 200) {
-        mcp_log_error("HTTP request failed with status code %d", response->status_code);
-        http_response_free(response);
-        return -1;
+        mcp_log_warn("HTTP response status code: %d (not 200 OK)", response->status_code);
+    } else {
+        mcp_log_info("HTTP response status code: 200 OK");
     }
 
     // Process response
@@ -398,10 +398,17 @@ static int http_client_transport_send(mcp_transport_t* transport, const void* da
         }
 
         // Log the cleaned response data for debugging
-        // For HTTP transport, we don't call the message callback here
-        // because we're handling the response directly in mcp_client_send_request
-        // This avoids the "Received response with unexpected ID" warning
         mcp_log_debug("HTTP client transport received response: %s", clean_json);
+
+        // Call the message callback with the response
+        if (transport->message_callback) {
+            int error_code = 0;
+            char* response_str = transport->message_callback(transport->callback_user_data, clean_json, strlen(clean_json), &error_code);
+            // Free the response string if one was returned
+            if (response_str) {
+                free(response_str);
+            }
+        }
 
         // Free the JSON data
         free(clean_json);

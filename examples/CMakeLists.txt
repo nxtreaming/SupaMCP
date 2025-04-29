@@ -229,9 +229,3 @@ endif()
 
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server DESTINATION bin/examples)
-
-# Create directory for HTTP static files
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/examples/http_static)
-
-# Copy HTTP static files
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/http_static/ DESTINATION ${CMAKE_BINARY_DIR}/examples/http_static/)

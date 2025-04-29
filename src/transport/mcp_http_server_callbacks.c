@@ -834,9 +834,31 @@ static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* d
                 return -1;
             }
 
-            // Write response body
-            int bytes_written = lws_write(wsi, (unsigned char*)response, strlen(response), LWS_WRITE_HTTP);
-            mcp_log_info("Wrote %d bytes", bytes_written);
+            // Write response body in chunks if it's too large
+            size_t response_len = strlen(response);
+            size_t chunk_size = 4096; // 4KB chunks
+            size_t offset = 0;
+            int bytes_written = 0;
+
+            while (offset < response_len) {
+                size_t current_chunk_size = (response_len - offset < chunk_size) ? response_len - offset : chunk_size;
+                int result = lws_write(wsi, (unsigned char*)(response + offset), current_chunk_size, LWS_WRITE_HTTP);
+
+                if (result < 0) {
+                    mcp_log_error("Failed to write response chunk: %d", result);
+                    break;
+                }
+
+                bytes_written += result;
+                offset += current_chunk_size;
+
+                // Request a callback when the socket is writable again
+                if (offset < response_len) {
+                    lws_callback_on_writable(wsi);
+                }
+            }
+
+            mcp_log_info("Wrote %d bytes of %zu total", bytes_written, response_len);
 
             // Free the response
             free(response);
