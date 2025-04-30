@@ -27,9 +27,9 @@ bool reconnection_in_progress = false;
  */
 void* tcp_client_receive_thread_func(void* arg) {
     // --- Initialize Thread-Local Arena for this receiver thread ---
-    if (mcp_arena_init_current_thread(1024 * 1024) != 0) { // Using 1MB default
+    if (mcp_arena_init_current_thread(1024 * 1024) != 0) {
         mcp_log_error("Failed to initialize thread-local arena for client receiver thread. Exiting.");
-        return NULL; // Indicate error (void* return)
+        return NULL;
     }
     mcp_log_debug("Thread-local arena initialized for client receiver thread.");
 
@@ -38,7 +38,8 @@ void* tcp_client_receive_thread_func(void* arg) {
     uint32_t message_length_host;
     char* message_buf = NULL;
     int frame_result;
-    bool error_signaled = false; // Track if error callback was already called in this loop iteration
+    // Track if error callback was already called in this loop iteration
+    bool error_signaled = false;
 
     // Add initial connection health check
     mcp_log_debug("TCP Client receive thread started for socket %d", (int)data->sock);
@@ -46,7 +47,7 @@ void* tcp_client_receive_thread_func(void* arg) {
     // Check if this is a thread startup during reconnection
     if (reconnection_in_progress) {
         mcp_log_info("Skipping initial ping due to reconnection");
-        reconnection_in_progress = false; // Reset flag
+        reconnection_in_progress = false;
 
         // Only enter receive mode, do not send ping
         goto receive_loop;
@@ -146,7 +147,8 @@ receive_loop:
         mcp_log_debug("mcp_framing_recv_message returned: %d", frame_result);
 
         if (frame_result != 0) {
-            if (data->running) { // Only log/callback during normal operation
+            // Only log/callback during normal operation
+            if (data->running) {
                 int last_error = mcp_socket_get_last_error();
                 mcp_log_error("mcp_framing_recv_message failed for socket %d. Result: %d, Last Error: %d",
                               (int)data->sock, frame_result, last_error);
@@ -196,7 +198,7 @@ receive_loop:
         // Caller (this function) is responsible for freeing the buffer allocated by mcp_framing_recv_message
         free(message_buf);
         message_buf = NULL;
-    } // End of main loop
+    }
 
     mcp_log_debug("TCP Client receive thread exiting for socket %d", (int)data->sock);
     data->connected = false;
@@ -204,12 +206,12 @@ receive_loop:
     // Final check if buffer was released (should be NULL here)
     if (message_buf != NULL) {
         mcp_log_warn("message_buf was not NULL at thread exit, freeing.");
-        free(message_buf); // Free if somehow not freed earlier
+        free(message_buf);
     }
 
     // --- Cleanup Thread-Local Arena ---
     mcp_arena_destroy_current_thread();
     mcp_log_debug("Thread-local arena cleaned up for client receiver thread.");
 
-    return NULL; // Return NULL for void* compatibility
+    return NULL;
 }

@@ -11,7 +11,7 @@
 #ifdef _WIN32
     #include <windows.h>
     #include <mstcpip.h>
-#else // POSIX
+#else
     #include <sys/time.h>
     #include <poll.h>
     #include <unistd.h>
@@ -23,7 +23,7 @@
 void mcp_sleep_ms(uint32_t milliseconds) {
 #ifdef _WIN32
     Sleep(milliseconds);
-#else // POSIX
+#else
     usleep(milliseconds * 1000);
 #endif
 }
@@ -69,7 +69,7 @@ int mcp_socket_set_non_blocking(socket_t sock) {
         mcp_log_error("ioctlsocket(FIONBIO) failed: %d", mcp_socket_get_last_error());
         return -1;
     }
-#else // POSIX
+#else
     int flags = fcntl(sock, F_GETFL, 0);
     if (flags == -1) {
         mcp_log_error("fcntl(F_GETFL) failed: %d (%s)", errno, strerror(errno));
@@ -197,7 +197,7 @@ int mcp_socket_send_exact(socket_t sock, const char* buf, size_t len, volatile b
                 // Consider waiting or retrying if using non-blocking internally
                 continue;
             }
-#else // POSIX
+#else
             else if (error_code == EPIPE || error_code == ECONNRESET || error_code == ENOTCONN) {
                 // Normal socket close during shutdown, log as debug instead of warning
                 mcp_log_debug("send_exact: Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
@@ -264,7 +264,7 @@ int mcp_socket_recv_exact(socket_t sock, char* buf, size_t len, volatile bool* s
                 mcp_log_warn("recv_exact got WOULDBLOCK on blocking socket?");
                 continue;
             }
-#else // POSIX
+#else
             else if (error_code == ECONNRESET || error_code == ENOTCONN) {
                 // Normal socket close during shutdown, log as debug instead of warning
                 mcp_log_debug("recv_exact: Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
@@ -369,7 +369,7 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
         }
     } // end while
 
-#else // POSIX
+#else
     while (total_sent < total_to_send) {
         // Abort if stop_flag is provided and is true
         if (stop_flag && *stop_flag) {
@@ -521,7 +521,7 @@ int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_
         }
     } // end while
 
-#else // POSIX
+#else
     struct pollfd pfd;
     pfd.fd = sock;
     pfd.events = POLLIN;

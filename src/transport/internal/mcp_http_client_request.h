@@ -16,7 +16,6 @@ typedef struct {
     char* content_type;          // Content type
 } http_response_t;
 
-// Function declarations
 http_response_t* http_post_request(const char* url, const char* content_type,
                                   const void* data, size_t size,
                                   const char* api_key, uint32_t timeout_ms);

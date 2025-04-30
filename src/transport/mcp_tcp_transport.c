@@ -15,15 +15,20 @@ static int tcp_transport_start(
     void* user_data,
     mcp_transport_error_callback_t error_callback
 ) {
+    if (transport == NULL || transport->transport_data == NULL)
+        return -1;
+
     // Store callbacks IN THE MAIN TRANSPORT STRUCT
     transport->message_callback = message_callback;
     transport->callback_user_data = user_data;
     transport->error_callback = error_callback;
 
-    if (transport == NULL || transport->transport_data == NULL) return -1;
     mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)transport->transport_data;
 
-    if (data->running) return 0; // Already running
+    if (data->running) {
+        mcp_log_warn("TCP server transport is already running.");
+        return 0;
+    }
 
     // Initialize socket library
     if (mcp_socket_init() != 0) {
@@ -35,8 +40,7 @@ static int tcp_transport_start(
     // SOMAXCONN is a reasonable default backlog
     data->listen_socket = mcp_socket_create_listener(data->host, data->port, SOMAXCONN);
     if (data->listen_socket == MCP_INVALID_SOCKET) {
-        // Error logged within mcp_socket_create_listener
-        mcp_socket_cleanup(); // Cleanup on failure
+        mcp_socket_cleanup();
         return -1;
     }
 
@@ -59,7 +63,7 @@ static int tcp_transport_start(
     if (pipe(data->stop_pipe) != 0) {
         mcp_log_error("Stop pipe creation failed: %s", strerror(errno));
         mcp_socket_close(data->listen_socket);
-        mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
+        mcp_mutex_destroy(data->client_mutex);
         data->running = false;
         return -1;
     }
@@ -67,9 +71,8 @@ static int tcp_transport_start(
     int flags = fcntl(data->stop_pipe[0], F_GETFL, 0);
     if (flags == -1 || fcntl(data->stop_pipe[0], F_SETFL, flags | O_NONBLOCK) == -1) {
         mcp_log_error("Failed to set stop pipe read end non-blocking: %s", strerror(errno));
-
         mcp_socket_close(data->listen_socket);
-        mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
+        mcp_mutex_destroy(data->client_mutex);
         data->running = false;
         mcp_socket_cleanup();
         return -1;
@@ -80,7 +83,7 @@ static int tcp_transport_start(
     if (mcp_thread_create(&data->accept_thread, tcp_accept_thread_func, transport) != 0) {
         mcp_log_error("Failed to create accept thread.");
         mcp_socket_close(data->listen_socket);
-        mcp_mutex_destroy(data->client_mutex); // Use abstracted destroy
+        mcp_mutex_destroy(data->client_mutex);
         data->running = false;
         mcp_socket_cleanup();
         return -1;
@@ -91,10 +94,13 @@ static int tcp_transport_start(
 }
 
 static int tcp_transport_stop(mcp_transport_t* transport) {
-    if (transport == NULL || transport->transport_data == NULL) return -1;
+    if (transport == NULL || transport->transport_data == NULL)
+        return -1;
+
     mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)transport->transport_data;
 
-    if (!data->running) return 0;
+    if (!data->running)
+        return 0;
 
     mcp_log_info("Stopping TCP Transport...");
     data->running = false;
@@ -126,9 +132,9 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
 #endif
 
     // Wait for the accept thread to finish using abstraction
-    if (data->accept_thread) { // Check if thread handle is valid
+    if (data->accept_thread) {
         mcp_thread_join(data->accept_thread, NULL);
-        data->accept_thread = 0; // Reset handle after join
+        data->accept_thread = 0;
     }
     mcp_log_debug("Accept thread stopped.");
 
@@ -155,8 +161,8 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
             //     mcp_thread_join(data->clients[i].thread_handle, NULL);
             //     data->clients[i].thread_handle = 0; // Reset handle
             // }
-        } // end if(data->clients[i].state != CLIENT_STATE_INACTIVE)
-    } // end for loop
+        }
+    }
     mcp_mutex_unlock(data->client_mutex);
 
     // Clean up mutex and stop pipe
@@ -172,12 +178,12 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
 
 // Note: Server transport does not implement send or sendv functions
 // Responses are sent directly by the client handler threads
-
 static void tcp_transport_destroy(mcp_transport_t* transport) {
      if (transport == NULL || transport->transport_data == NULL) return;
      mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)transport->transport_data;
 
-     tcp_transport_stop(transport); // Ensure everything is stopped and cleaned (including mutex)
+     // Ensure everything is stopped and cleaned (including mutex)
+     tcp_transport_stop(transport);
 
      free(data->host);
      // Destroy the buffer pool
@@ -185,25 +191,27 @@ static void tcp_transport_destroy(mcp_transport_t* transport) {
      free(data);
      transport->transport_data = NULL;
      // Generic destroy will free the transport struct itself
-     free(transport); // Free the main transport struct allocated in create
+     free(transport);
 }
 
 mcp_transport_t* mcp_transport_tcp_create(
     const char* host,
     uint16_t port,
     uint32_t idle_timeout_ms) {
-    if (host == NULL) return NULL;
+    if (host == NULL)
+        return NULL;
 
     mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
-    if (transport == NULL) return NULL;
+    if (transport == NULL)
+        return NULL;
 
-    mcp_tcp_transport_data_t* tcp_data = (mcp_tcp_transport_data_t*)calloc(1, sizeof(mcp_tcp_transport_data_t)); // Use calloc for zero-init
+    mcp_tcp_transport_data_t* tcp_data = (mcp_tcp_transport_data_t*)calloc(1, sizeof(mcp_tcp_transport_data_t));
     if (tcp_data == NULL) {
         free(transport);
          return NULL;
     }
 
-    tcp_data->host = mcp_strdup(host); // Use helper
+    tcp_data->host = mcp_strdup(host);
     if (tcp_data->host == NULL) {
         free(tcp_data);
         free(transport);
@@ -214,15 +222,15 @@ mcp_transport_t* mcp_transport_tcp_create(
     tcp_data->idle_timeout_ms = idle_timeout_ms; // Store timeout
     tcp_data->listen_socket = MCP_INVALID_SOCKET;
     tcp_data->running = false;
-    tcp_data->buffer_pool = NULL; // Initialize pool pointer
-    tcp_data->client_mutex = NULL; // Initialize mutex pointer
-    tcp_data->accept_thread = 0;   // Initialize thread handle
+    tcp_data->buffer_pool = NULL;
+    tcp_data->client_mutex = NULL;
+    tcp_data->accept_thread = 0;
 
     // Explicitly initialize all client slots
     for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
-        tcp_data->clients[i].state = CLIENT_STATE_INACTIVE; // Initialize state
+        tcp_data->clients[i].state = CLIENT_STATE_INACTIVE;
         tcp_data->clients[i].socket = MCP_INVALID_SOCKET;
-        tcp_data->clients[i].thread_handle = 0; // Initialize thread handle
+        tcp_data->clients[i].thread_handle = 0;
         // Other fields are zeroed by calloc
     }
 

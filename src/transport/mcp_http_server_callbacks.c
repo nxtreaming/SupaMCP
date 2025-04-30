@@ -3,7 +3,6 @@
 #       define _CRT_SECURE_NO_WARNINGS
 #   endif
 
-// Include our Windows socket compatibility header first
 #include <win_socket_compat.h>
 
 // On Windows, strcasecmp is _stricmp
@@ -15,7 +14,6 @@
 #include <string.h>
 #include <stdio.h>
 
-// Forward declarations for helper functions
 static void handle_http_call_reason(struct lws* wsi, enum lws_callback_reasons reason);
 static int handle_wsi_create(struct lws* wsi, http_session_data_t* session);
 static int handle_http_sse_request(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session);

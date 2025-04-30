@@ -3,7 +3,6 @@
 #       define _CRT_SECURE_NO_WARNINGS
 #   endif
 
-// Include our Windows socket compatibility header first
 #include <win_socket_compat.h>
 
 // On Windows, strcasecmp is _stricmp

@@ -1,10 +1,7 @@
 #ifndef MCP_TCP_TRANSPORT_INTERNAL_H
 #define MCP_TCP_TRANSPORT_INTERNAL_H
 
-// Include the centralized socket utilities first
 #include "mcp_socket_utils.h"
-
-// Now include other project headers and standard libraries
 #include "mcp_transport.h"
 #include "mcp_log.h"
 #include "mcp_types.h"
@@ -21,10 +18,10 @@
 #include <errno.h>
 
 // Constants
-#define MAX_TCP_CLIENTS 64 // Max concurrent client connections for the server
-#define POOL_BUFFER_SIZE (1024 * 64) // 64KB buffer size (Increased)
-#define POOL_NUM_BUFFERS 64         // Increased number of buffers to match max clients
-#define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Example: 1MB limit
+#define MAX_TCP_CLIENTS 64                      // Max concurrent client connections for the server
+#define POOL_BUFFER_SIZE (1024 * 64)            // 64KB buffer size (Increased)
+#define POOL_NUM_BUFFERS 64                     // Increased number of buffers to match max clients
+#define MAX_MCP_MESSAGE_SIZE (1024 * 1024)      // 1MB limit
 
 // Client connection states
 typedef enum {
@@ -60,12 +57,7 @@ typedef struct {
 #endif
 } mcp_tcp_transport_data_t;
 
-// --- Internal Function Prototypes ---
-
-// From mcp_tcp_acceptor.c
 void* tcp_accept_thread_func(void* arg);
-
-// From mcp_tcp_client_handler.c
 void* tcp_client_handler_thread_func(void* arg);
 
 #endif // MCP_TCP_TRANSPORT_INTERNAL_H

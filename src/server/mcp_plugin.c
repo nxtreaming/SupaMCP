@@ -9,7 +9,7 @@
 // Platform-specific includes for dynamic library loading
 #ifdef _WIN32
 #include <windows.h>
-#else // Linux/macOS
+#else
 #include <dlfcn.h>
 #endif
 

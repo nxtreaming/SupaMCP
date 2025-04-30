@@ -5,7 +5,6 @@
 #include "transport_interfaces.h"
 
 // Define the internal structure for the transport handle
-// This is included by mcp_transport.c and specific implementations like mcp_stdio_transport.c
 #ifdef _MSC_VER
 #   pragma warning(push)
 #   pragma warning(disable : 4201) // Disable warning for nameless struct/union

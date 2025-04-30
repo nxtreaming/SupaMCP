@@ -3,7 +3,6 @@
 #       define _CRT_SECURE_NO_WARNINGS
 #   endif
 
-// Include our Windows socket compatibility header first
 #include <win_socket_compat.h>
 
 // On Windows, strcasecmp is _stricmp
@@ -21,7 +20,6 @@
 #include <stdio.h>
 #include <time.h>
 
-// Forward declarations for helper functions
 static int http_transport_start(mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
     void* user_data,

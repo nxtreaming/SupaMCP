@@ -2,8 +2,6 @@
 #include <stdlib.h>
 #include "mcp_log.h"
 
-// Generic transport functions that dispatch to implementation-specific function pointers
-
 int mcp_transport_start(
     mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
@@ -11,7 +9,7 @@ int mcp_transport_start(
     mcp_transport_error_callback_t error_callback
 ) {
     if (!transport) {
-        return -1; // Invalid transport
+        return -1;
     }
 
     // Store callback info
@@ -22,12 +20,12 @@ int mcp_transport_start(
     // Dispatch to the appropriate start function based on transport type
     if (transport->type == MCP_TRANSPORT_TYPE_SERVER) {
         if (!transport->server.start) {
-            return -1; // Missing start function
+            return -1;
         }
         return transport->server.start(transport, message_callback, user_data, error_callback);
-    } else { // MCP_TRANSPORT_TYPE_CLIENT
+    } else {
         if (!transport->client.start) {
-            return -1; // Missing start function
+            return -1;
         }
         return transport->client.start(transport, message_callback, user_data, error_callback);
     }
@@ -35,18 +33,18 @@ int mcp_transport_start(
 
 int mcp_transport_stop(mcp_transport_t* transport) {
     if (!transport) {
-        return -1; // Invalid transport
+        return -1;
     }
 
     // Dispatch to the appropriate stop function based on transport type
     if (transport->type == MCP_TRANSPORT_TYPE_SERVER) {
         if (!transport->server.stop) {
-            return -1; // Missing stop function
+            return -1;
         }
         return transport->server.stop(transport);
-    } else { // MCP_TRANSPORT_TYPE_CLIENT
+    } else {
         if (!transport->client.stop) {
-            return -1; // Missing stop function
+            return -1;
         }
         return transport->client.stop(transport);
     }
@@ -55,7 +53,7 @@ int mcp_transport_stop(mcp_transport_t* transport) {
 // Send function - only available for client transports
 int mcp_transport_send(mcp_transport_t* transport, const void* data, size_t size) {
     if (!transport || !data || size == 0) {
-        return -1; // Invalid parameters
+        return -1;
     }
 
     // Check if this is a client transport
@@ -71,11 +69,12 @@ int mcp_transport_send(mcp_transport_t* transport, const void* data, size_t size
         // Create a single buffer structure on the stack and use sendv if available
         if (transport->client.sendv) {
             mcp_buffer_t buffer;
+
             buffer.data = data;
             buffer.size = size;
             return transport->client.sendv(transport, &buffer, 1);
         }
-        return -1; // No send function available
+        return -1;
     }
 
     // Call the client transport's send function
@@ -85,7 +84,7 @@ int mcp_transport_send(mcp_transport_t* transport, const void* data, size_t size
 // Vectored send function - only available for client transports
 int mcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
     if (!transport || !buffers || buffer_count == 0) {
-        return -1; // Invalid parameters
+        return -1;
     }
 
     // Check if this is a client transport
@@ -103,12 +102,12 @@ int mcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers,
             for (size_t i = 0; i < buffer_count; i++) {
                 int result = transport->client.send(transport, buffers[i].data, buffers[i].size);
                 if (result != 0) {
-                    return result; // Return error code
+                    return result;
                 }
             }
-            return 0; // All sends successful
+            return 0;
         }
-        return -1; // No send function available
+        return -1;
     }
 
     // Call the client transport's sendv function
@@ -126,7 +125,7 @@ void mcp_transport_destroy(mcp_transport_t* transport) {
         if (transport->server.destroy) {
             transport->server.destroy(transport);
         }
-    } else { // MCP_TRANSPORT_TYPE_CLIENT
+    } else {
         if (transport->client.destroy) {
             transport->client.destroy(transport);
         }
@@ -135,6 +134,7 @@ void mcp_transport_destroy(mcp_transport_t* transport) {
     // We don't free the transport structure here because the specific destroy functions already do that
 }
 
+// Receive function - only available for client transports
 int mcp_transport_receive(
     mcp_transport_t* transport,
     char** data, // [out]
@@ -142,11 +142,11 @@ int mcp_transport_receive(
     uint32_t timeout_ms
 ) {
     if (!transport || !data || !size) {
-        return -1; // Invalid transport or invalid arguments
+        return -1;
     }
 
     // Check if this is a client transport
-    if (transport->type != MCP_TRANSPORT_TYPE_CLIENT) {
+    if (transport->type == MCP_TRANSPORT_TYPE_SERVER) {
         // Server transports don't support synchronous receive operations
         mcp_log_error("mcp_transport_receive called on a server transport, which doesn't support synchronous receive operations");
         return -1;
@@ -155,7 +155,7 @@ int mcp_transport_receive(
     // Check if the receive function is available
     if (!transport->client.receive) {
         mcp_log_error("mcp_transport_receive called on a client transport that doesn't implement the receive function");
-        return -1; // No receive function available
+        return -1;
     }
 
     // Call the client transport's receive function
@@ -164,7 +164,7 @@ int mcp_transport_receive(
 
 const char* mcp_transport_get_client_ip(mcp_transport_t* transport) {
     if (!transport) {
-        return NULL; // Invalid transport
+        return NULL;
     }
 
     // For now, just return a default IP address

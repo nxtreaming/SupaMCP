@@ -24,7 +24,6 @@
 static char* g_last_http_response = NULL;
 static mcp_mutex_t* g_http_response_mutex = NULL;
 
-// Include socket headers
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -115,10 +114,10 @@ mcp_transport_t* mcp_transport_http_client_create_with_config(const mcp_http_cli
     data->mutex = mcp_mutex_create();
     if (data->mutex == NULL) {
         mcp_log_error("Failed to create mutex for HTTP client transport");
-        if (data->host) free(data->host);
-        if (data->cert_path) free(data->cert_path);
-        if (data->key_path) free(data->key_path);
-        if (data->api_key) free(data->api_key);
+        free(data->host);
+        free(data->cert_path);
+        free(data->key_path);
+        free(data->api_key);
         free(data);
         free(transport);
         return NULL;
@@ -126,7 +125,7 @@ mcp_transport_t* mcp_transport_http_client_create_with_config(const mcp_http_cli
 
     // Initialize transport structure
     transport->type = MCP_TRANSPORT_TYPE_CLIENT;
-    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_HTTP;  // Set protocol type to HTTP
+    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_HTTP;
     transport->client.start = http_client_transport_start;
     transport->client.stop = http_client_transport_stop;
     transport->client.send = http_client_transport_send;
@@ -161,10 +160,10 @@ static int http_client_transport_destroy(mcp_transport_t* transport) {
     }
 
     // Free resources
-    if (data->host) free(data->host);
-    if (data->cert_path) free(data->cert_path);
-    if (data->key_path) free(data->key_path);
-    if (data->api_key) free(data->api_key);
+    free(data->host);
+    free(data->cert_path);
+    free(data->key_path);
+    free(data->api_key);
 
     // Destroy mutex
     if (data->mutex) {

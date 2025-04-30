@@ -1,7 +1,6 @@
 #ifndef MCP_SERVER_INTERNAL_H
 #define MCP_SERVER_INTERNAL_H
 
-// Include our Windows socket compatibility header
 #ifdef _WIN32
 #include <win_socket_compat.h>
 #endif
@@ -29,7 +28,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#ifndef _WIN32 // Only include netinet/in.h if not Windows (winsock2.h covers htonl)
+#ifndef _WIN32
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #endif
@@ -85,14 +84,10 @@ struct mcp_server {
     mcp_object_pool_t* content_item_pool; /**< Object pool for mcp_content_item_t. */
 };
 
-// --- Internal Function Prototypes ---
-
-// From mcp_server_dispatch.c
 char* handle_message(mcp_server_t* server, const void* data, size_t size, int* error_code);
 // Note: handle_request now needs the auth context
 char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 
-// From mcp_server_handlers.c
 // Note: All specific handlers now need the auth context
 char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
@@ -100,22 +95,17 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 
-// From mcp_server_ping.c
 // Note: Ping might not need auth context, but keep signature consistent for now
 char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 
-// From mcp_performance_collector.c
 char* handle_get_performance_metrics_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 char* handle_reset_performance_metrics_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code);
 
-// From mcp_server_task.c
 typedef struct message_task_data_t message_task_data_t; // Forward declare task data struct
 void process_message_task(void* arg);
 char* transport_message_callback(void* user_data, const void* data, size_t size, int* error_code);
 
-// From mcp_server_response.c
 char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message);
 char* create_success_response(uint64_t id, char* result_str); // Takes ownership of result_str
-
 
 #endif // MCP_SERVER_INTERNAL_H
