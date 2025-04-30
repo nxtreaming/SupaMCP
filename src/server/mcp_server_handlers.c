@@ -747,9 +747,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
             if (!item_obj ||
                 mcp_json_object_set_property(item_obj, "type", mcp_json_string_create(type_str)) != 0 ||
                 (item->mime_type && mcp_json_object_set_property(item_obj, "mimeType", mcp_json_string_create(item->mime_type)) != 0) ||
-                (item->type == MCP_CONTENT_TYPE_TEXT && item->data && mcp_json_object_set_property(item_obj, "text", mcp_json_string_create((const char*)item->data)) != 0) ||
-                (item->type == MCP_CONTENT_TYPE_JSON && item->data && mcp_json_object_set_property(item_obj, "data", mcp_json_parse((const char*)item->data)) != 0) ||
-                (item->type != MCP_CONTENT_TYPE_TEXT && item->type != MCP_CONTENT_TYPE_JSON && item->data && mcp_json_object_set_property(item_obj, "data", mcp_json_string_create((const char*)item->data)) != 0) ||
+                (item->data && mcp_json_object_set_property(item_obj, "text", mcp_json_string_create((const char*)item->data)) != 0) ||
                 mcp_json_array_add_item(content_json, item_obj) != 0)
             {
                 mcp_json_destroy(item_obj);

@@ -190,11 +190,11 @@ mcp_error_code_t http_client_tool_handler(
             "{\"status_code\": %d, \"content_length\": %zu, \"success\": true}",
             response->status_code, response->size);
 
-    // Initialize metadata content item
+    // Initialize metadata content item - using text field instead of data for JSON compatibility
     (*content)[0]->type = MCP_CONTENT_TYPE_JSON;
     (*content)[0]->mime_type = mcp_strdup("application/json");
     (*content)[0]->data = mcp_strdup(metadata_json);
-    (*content)[0]->data_size = strlen(metadata_json);
+    (*content)[0]->data_size = strlen(metadata_json) + 1;
 
     if (!(*content)[0]->mime_type || !(*content)[0]->data) {
         *is_error = true;
@@ -559,7 +559,6 @@ static http_response_t* http_request(const char* method, const char* url,
         }
 
         if (headers_end) {
-
             // Extract headers
             size_t headers_size = headers_end_offset + 2; // Include the first \r\n
             mcp_log_info("Allocating %zu bytes for headers", headers_size + 1);

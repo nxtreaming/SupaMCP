@@ -845,7 +845,7 @@ static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* d
                 int result = lws_write(wsi, (unsigned char*)(response + offset), current_chunk_size, LWS_WRITE_HTTP);
 
                 if (result < 0) {
-                    mcp_log_error("Failed to write response chunk: %d", result);
+                    mcp_log_error("Failed to write response chunk: %d, %s", result, response);
                     break;
                 }
 

@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 // Include socket headers
 #ifdef _WIN32
@@ -185,22 +186,24 @@ http_response_t* http_post_request(const char* url, const char* content_type,
     request_len += snprintf(request + request_len, sizeof(request) - request_len, "\r\n");
 
     // Send request headers
-    if (send(sock, request, request_len, 0) != request_len) {
-        mcp_log_error("Failed to send HTTP request headers");
+    int sent_len = send(sock, request, request_len, 0);
+    if (sent_len != request_len) {
+        mcp_log_error("Failed to send HTTP request headers: actual: %d, expected: %d", sent_len, request_len);
         free(url_copy);
         mcp_socket_close(sock);
         return NULL;
     }
 
     // Send request body
-    if (send(sock, data, (int)size, 0) != (int)size) {
-        mcp_log_error("Failed to send HTTP request body");
+    sent_len = send(sock, data, (int)size, 0);
+    if (sent_len != (int)size) {
+        mcp_log_error("Failed to send HTTP request body: actual: %d, expected: %d", sent_len, size);
         free(url_copy);
         mcp_socket_close(sock);
         return NULL;
     }
 
-    // Read response
+    // Read response using select for proper timeout handling
     char buffer[4096];
     int bytes_read = 0;
     char* response_data = NULL;
@@ -212,8 +215,60 @@ http_response_t* http_post_request(const char* url, const char* content_type,
     bool headers_done = false;
     char header_buffer[4096] = {0};
     int header_pos = 0;
+    int content_length = -1;  // -1 means not specified
+    bool chunked_encoding = false;
 
-    while (!headers_done && (bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+    // Set up select timeout
+    fd_set readfds;
+    int select_result;
+    time_t start_time = time(NULL);
+    time_t current_time;
+
+    mcp_log_info("Waiting for server response with timeout: %u ms", timeout_ms);
+
+    while (!headers_done) {
+        // Calculate remaining timeout
+        current_time = time(NULL);
+        unsigned long elapsed_ms = (unsigned long)((current_time - start_time) * 1000);
+        if (elapsed_ms >= timeout_ms) {
+            mcp_log_error("Timeout waiting for HTTP response headers");
+            free(url_copy);
+            mcp_socket_close(sock);
+            return NULL;
+        }
+
+        // Set up select parameters
+        FD_ZERO(&readfds);
+        FD_SET(sock, &readfds);
+
+        // Calculate remaining timeout
+        unsigned long remaining_ms = timeout_ms - elapsed_ms;
+        tv.tv_sec = remaining_ms / 1000;
+        tv.tv_usec = (remaining_ms % 1000) * 1000;
+
+        // Wait for socket to be readable
+        select_result = select((int)sock + 1, &readfds, NULL, NULL, &tv);
+
+        if (select_result == -1) {
+            // Select error
+            mcp_log_error("Select failed with error: %d", mcp_socket_get_last_error());
+            free(url_copy);
+            mcp_socket_close(sock);
+            return NULL;
+        } else if (select_result == 0) {
+            // Select timeout
+            mcp_log_error("Select timed out waiting for HTTP response");
+            free(url_copy);
+            mcp_socket_close(sock);
+            return NULL;
+        }
+
+        // Socket is readable, receive data
+        bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
+        if (bytes_read <= 0) {
+            mcp_log_error("recv returned %d, error:%d", bytes_read, mcp_socket_get_last_error());
+            break;
+        }
         buffer[bytes_read] = '\0';
 
         // Copy to header buffer
@@ -236,17 +291,30 @@ http_response_t* http_post_request(const char* url, const char* content_type,
                     status_code = atoi(status_line + 9);
                 }
 
-                // Parse content type
+                // Parse headers
                 char* header_line = strtok(NULL, "\r\n");
                 while (header_line != NULL) {
+                    // Parse Content-Type
                     if (strncasecmp(header_line, "Content-Type:", 13) == 0) {
                         content_type_value = mcp_strdup(header_line + 14);
                         // Trim leading spaces
                         while (*content_type_value == ' ') {
                             content_type_value++;
                         }
-                        break;
                     }
+                    // Parse Content-Length
+                    else if (strncasecmp(header_line, "Content-Length:", 15) == 0) {
+                        content_length = atoi(header_line + 15);
+                        mcp_log_debug("Content-Length: %d", content_length);
+                    }
+                    // Parse Transfer-Encoding
+                    else if (strncasecmp(header_line, "Transfer-Encoding:", 18) == 0) {
+                        if (strstr(header_line + 18, "chunked") != NULL) {
+                            chunked_encoding = true;
+                            mcp_log_debug("Transfer-Encoding: chunked");
+                        }
+                    }
+
                     header_line = strtok(NULL, "\r\n");
                 }
 
@@ -268,20 +336,159 @@ http_response_t* http_post_request(const char* url, const char* content_type,
         }
     }
 
-    // Read body
+    // Read body with proper timeout handling
     if (headers_done) {
-        while ((bytes_read = recv(sock, buffer, sizeof(buffer), 0)) > 0) {
-            char* new_data = (char*)realloc(response_data, response_size + bytes_read);
-            if (new_data == NULL) {
-                free(response_data);
-                free(url_copy);
-                mcp_socket_close(sock);
-                return NULL;
-            }
+        // Reset start time for body reading
+        start_time = time(NULL);
 
-            response_data = new_data;
-            memcpy(response_data + response_size, buffer, bytes_read);
-            response_size += bytes_read;
+        // If we have Content-Length, we know exactly how much data to read
+        if (content_length > 0) {
+            mcp_log_debug("Reading body with Content-Length: %d (already read: %zu bytes)",
+                         content_length, response_size);
+
+            // Continue reading until we have the full content or timeout
+            while (response_size < (size_t)content_length) {
+                // Calculate remaining timeout
+                current_time = time(NULL);
+                unsigned long elapsed_ms = (unsigned long)((current_time - start_time) * 1000);
+                if (elapsed_ms >= timeout_ms) {
+                    mcp_log_warn("Timeout reading HTTP response body, returning partial response (%zu/%d bytes)",
+                                response_size, content_length);
+                    break;
+                }
+
+                // Check if we need to read more data
+                size_t remaining_bytes = content_length - response_size;
+                if (remaining_bytes == 0) {
+                    mcp_log_debug("Received complete response body (%zu bytes)", response_size);
+                    break;
+                }
+
+                // Set up select with a short timeout (100ms)
+                FD_ZERO(&readfds);
+                FD_SET(sock, &readfds);
+
+                // Use a short timeout for select to avoid blocking too long
+                struct timeval short_tv;
+                short_tv.tv_sec = 0;
+                short_tv.tv_usec = 100000;  // 100ms
+
+                select_result = select((int)sock + 1, &readfds, NULL, NULL, &short_tv);
+
+                if (select_result == -1) {
+                    // Select error
+                    mcp_log_error("Select failed during body read with error: %d", mcp_socket_get_last_error());
+                    break;
+                } else if (select_result == 0) {
+                    // Short timeout, just continue the loop
+                    continue;
+                }
+
+                // Socket is readable, receive data
+                size_t to_read = sizeof(buffer);
+                if (to_read > remaining_bytes) {
+                    to_read = remaining_bytes;
+                }
+
+                bytes_read = recv(sock, buffer, (int)to_read, 0);
+                if (bytes_read <= 0) {
+                    // End of data or error
+                    if (bytes_read < 0) {
+                        mcp_log_error("recv failed during body read with error: %d", mcp_socket_get_last_error());
+                    } else {
+                        mcp_log_debug("Connection closed by server after reading %zu/%d bytes",
+                                     response_size, content_length);
+                    }
+                    break;
+                }
+
+                // Allocate or expand buffer for response data
+                char* new_data = (char*)realloc(response_data, response_size + bytes_read);
+                if (new_data == NULL) {
+                    free(response_data);
+                    free(url_copy);
+                    mcp_log_error("Failed to allocate memory for HTTP response body");
+                    mcp_socket_close(sock);
+                    return NULL;
+                }
+
+                response_data = new_data;
+                memcpy(response_data + response_size, buffer, bytes_read);
+                response_size += bytes_read;
+
+                mcp_log_debug("Read %d bytes, total: %zu/%d", bytes_read, response_size, content_length);
+
+                // If we've read all the data, we're done
+                if (response_size >= (size_t)content_length) {
+                    mcp_log_debug("Received complete response body (%zu bytes)", response_size);
+                    break;
+                }
+            }
+        }
+        // For chunked encoding or unknown length, read until connection closed or timeout
+        else {
+            mcp_log_debug("Reading body with %s encoding",
+                         chunked_encoding ? "chunked" : "unknown length");
+
+            // For simplicity, we'll just read until the connection is closed or timeout
+            // A proper implementation would parse chunked encoding
+            while (1) {
+                // Calculate remaining timeout
+                current_time = time(NULL);
+                unsigned long elapsed_ms = (unsigned long)((current_time - start_time) * 1000);
+                if (elapsed_ms >= timeout_ms) {
+                    mcp_log_warn("Timeout reading HTTP response body, returning partial response");
+                    break;
+                }
+
+                // Set up select with a short timeout (100ms)
+                FD_ZERO(&readfds);
+                FD_SET(sock, &readfds);
+
+                // Use a short timeout for select to avoid blocking too long
+                struct timeval short_tv;
+                short_tv.tv_sec = 0;
+                short_tv.tv_usec = 100000;  // 100ms
+
+                select_result = select((int)sock + 1, &readfds, NULL, NULL, &short_tv);
+
+                if (select_result == -1) {
+                    // Select error
+                    mcp_log_error("Select failed during body read with error: %d", mcp_socket_get_last_error());
+                    break;
+                } else if (select_result == 0) {
+                    // Short timeout, just continue the loop
+                    continue;
+                }
+
+                // Socket is readable, receive data
+                bytes_read = recv(sock, buffer, sizeof(buffer), 0);
+                if (bytes_read <= 0) {
+                    // End of data or error
+                    if (bytes_read < 0) {
+                        mcp_log_error("recv failed during body read with error: %d", mcp_socket_get_last_error());
+                    } else {
+                        mcp_log_debug("Connection closed by server after reading %zu bytes", response_size);
+                    }
+                    break;
+                }
+
+                // Allocate or expand buffer for response data
+                char* new_data = (char*)realloc(response_data, response_size + bytes_read);
+                if (new_data == NULL) {
+                    free(response_data);
+                    free(url_copy);
+                    mcp_log_error("Failed to allocate memory for HTTP response body");
+                    mcp_socket_close(sock);
+                    return NULL;
+                }
+
+                response_data = new_data;
+                memcpy(response_data + response_size, buffer, bytes_read);
+                response_size += bytes_read;
+
+                mcp_log_debug("Read %d bytes, total: %zu", bytes_read, response_size);
+            }
         }
     }
 

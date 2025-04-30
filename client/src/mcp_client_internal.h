@@ -81,6 +81,22 @@ int mcp_client_send_request(
     char** error_message
 );
 
+/**
+ * @brief Send a request using HTTP transport and process the response directly.
+ *
+ * This function is specifically designed for HTTP transport, which uses a synchronous
+ * request-response model. It sends the request and processes the response in the same
+ * function call, without using the asynchronous callback mechanism used by other transports.
+ */
+int mcp_client_http_send_request(
+    mcp_client_t* client,
+    const char* request_json,
+    uint64_t request_id,
+    char** result,
+    mcp_error_code_t* error_code,
+    char** error_message
+);
+
 // From mcp_client_core.c
 char* mcp_client_receive_callback(void* user_data, const void* data, size_t size, int* error_code);
 void mcp_client_transport_error_callback(void* user_data, int error_code);

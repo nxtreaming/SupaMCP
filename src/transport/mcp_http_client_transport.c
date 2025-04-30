@@ -19,6 +19,11 @@
 #include <stdio.h>
 #include <time.h>
 
+// Global variable to store the most recent HTTP response
+// This is used to pass the response from http_client_transport_send to mcp_client_http_send_request
+static char* g_last_http_response = NULL;
+static mcp_mutex_t* g_http_response_mutex = NULL;
+
 // Include socket headers
 #ifdef _WIN32
 #include <winsock2.h>
@@ -172,6 +177,19 @@ static int http_client_transport_destroy(mcp_transport_t* transport) {
     // Free transport structure
     free(transport);
 
+    // Clean up global HTTP response if this is the last transport instance
+    if (g_http_response_mutex != NULL) {
+        mcp_mutex_lock(g_http_response_mutex);
+        if (g_last_http_response != NULL) {
+            free(g_last_http_response);
+            g_last_http_response = NULL;
+        }
+        mcp_mutex_unlock(g_http_response_mutex);
+
+        // Note: We don't destroy the mutex here because other transport instances might still be using it
+        // In a real application, you would want to track the number of instances and destroy the mutex when it reaches zero
+    }
+
     mcp_log_info("HTTP client transport destroyed");
 
     return 0;
@@ -218,6 +236,16 @@ static int http_client_transport_start(mcp_transport_t* transport,
         mcp_log_error("Failed to initialize socket library");
         data->running = false;
         return -1;
+    }
+
+    // Initialize global HTTP response mutex if not already initialized
+    if (g_http_response_mutex == NULL) {
+        g_http_response_mutex = mcp_mutex_create();
+        if (g_http_response_mutex == NULL) {
+            mcp_log_error("Failed to create HTTP response mutex");
+            data->running = false;
+            return -1;
+        }
     }
 
     // Start event thread for SSE
@@ -400,14 +428,30 @@ static int http_client_transport_send(mcp_transport_t* transport, const void* da
         // Log the cleaned response data for debugging
         mcp_log_debug("HTTP client transport received response: %s", clean_json);
 
-        // Call the message callback with the response
-        if (transport->message_callback) {
-            int error_code = 0;
-            char* response_str = transport->message_callback(transport->callback_user_data, clean_json, strlen(clean_json), &error_code);
-            // Free the response string if one was returned
-            if (response_str) {
-                free(response_str);
+        // DO NOT call the message callback with the response
+        // HTTP transport uses a synchronous model, so responses are handled directly
+        // in the mcp_client_http_send_request function, not through the async callback
+        mcp_log_debug("HTTP transport: Not calling message callback, using synchronous processing instead");
+
+        // Store the response in the global variable for mcp_client_http_send_request to use
+        if (g_http_response_mutex != NULL) {
+            mcp_mutex_lock(g_http_response_mutex);
+
+            // Free previous response if any
+            if (g_last_http_response != NULL) {
+                free(g_last_http_response);
+                g_last_http_response = NULL;
             }
+
+            // Store the new response
+            g_last_http_response = mcp_strdup(clean_json);
+            if (g_last_http_response == NULL) {
+                mcp_log_error("Failed to store HTTP response");
+            } else {
+                mcp_log_debug("Stored HTTP response for request ID %llu", (unsigned long long)request_id);
+            }
+
+            mcp_mutex_unlock(g_http_response_mutex);
         }
 
         // Free the JSON data
@@ -484,6 +528,30 @@ static int http_client_transport_sendv(mcp_transport_t* transport, const mcp_buf
     free(combined_buffer);
 
     return result;
+}
+
+/**
+ * @brief Gets the most recent HTTP response.
+ *
+ * This function returns a copy of the most recent HTTP response received by any HTTP client transport instance.
+ * The caller is responsible for freeing the returned string.
+ *
+ * @return A copy of the most recent HTTP response, or NULL if no response has been received.
+ */
+char* http_client_transport_get_last_response(void) {
+    char* response_copy = NULL;
+
+    if (g_http_response_mutex != NULL) {
+        mcp_mutex_lock(g_http_response_mutex);
+
+        if (g_last_http_response != NULL) {
+            response_copy = mcp_strdup(g_last_http_response);
+        }
+
+        mcp_mutex_unlock(g_http_response_mutex);
+    }
+
+    return response_copy;
 }
 
 /**

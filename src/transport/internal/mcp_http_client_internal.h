@@ -35,6 +35,16 @@ typedef struct http_client_transport_data {
     mcp_transport_error_callback_t error_callback;
 } http_client_transport_data_t;
 
+/**
+ * @brief Gets the most recent HTTP response.
+ *
+ * This function returns a copy of the most recent HTTP response received by any HTTP client transport instance.
+ * The caller is responsible for freeing the returned string.
+ *
+ * @return A copy of the most recent HTTP response, or NULL if no response has been received.
+ */
+char* http_client_transport_get_last_response(void);
+
 #ifdef __cplusplus
 }
 #endif
