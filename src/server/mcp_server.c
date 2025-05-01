@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include "gateway.h"
-#include "gateway_pool.h"
+#include "mcp_gateway.h"
+#include "mcp_gateway_pool.h"
 #include "mcp_arena.h"
 #include "mcp_object_pool.h"
 #include "mcp_memory_pool.h"

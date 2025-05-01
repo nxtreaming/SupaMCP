@@ -1,9 +1,9 @@
 #ifndef MCP_GATEWAY_ROUTING_H
 #define MCP_GATEWAY_ROUTING_H
 
-#include "gateway.h"
+#include "mcp_gateway.h"
 #include "mcp_types.h"
-#include "gateway_pool.h"
+#include "mcp_gateway_pool.h"
 
 #ifdef __cplusplus
 extern "C" {

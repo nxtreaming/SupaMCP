@@ -1,4 +1,4 @@
-#include "gateway_pool.h"
+#include "mcp_gateway_pool.h"
 #include "mcp_log.h"
 #include "mcp_hashtable.h"
 #include "mcp_client.h"

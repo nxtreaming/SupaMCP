@@ -1,5 +1,5 @@
-#include "gateway_routing.h"
-#include "gateway_pool.h"
+#include "mcp_gateway_routing.h"
+#include "mcp_gateway_pool.h"
 #include "mcp_client.h"
 #include "mcp_json.h"
 #include "mcp_log.h"

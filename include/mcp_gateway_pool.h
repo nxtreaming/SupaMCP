@@ -1,7 +1,7 @@
 #ifndef MCP_GATEWAY_POOL_H
 #define MCP_GATEWAY_POOL_H
 
-#include "gateway.h"
+#include "mcp_gateway.h"
 #include "mcp_client.h"
 #include "mcp_hashtable.h"
 

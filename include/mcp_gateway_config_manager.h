@@ -6,7 +6,7 @@
 #ifndef MCP_GATEWAY_CONFIG_MANAGER_H
 #define MCP_GATEWAY_CONFIG_MANAGER_H
 
-#include "gateway.h"
+#include "mcp_gateway.h"
 #include "mcp_types.h"
 
 #ifdef __cplusplus

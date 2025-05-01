@@ -3,9 +3,9 @@
  * @brief Implementation of thread-safe gateway configuration manager using read-write locks
  */
 
-#include "gateway_config_manager.h"
-#include "gateway.h"
-#include "gateway_routing.h"
+#include "mcp_gateway_config_manager.h"
+#include "mcp_gateway.h"
+#include "mcp_gateway_routing.h"
 #include "mcp_log.h"
 #include "mcp_rwlock.h"
 #include <stdlib.h>

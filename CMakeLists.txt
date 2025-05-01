@@ -194,11 +194,11 @@ set(COMMON_SOURCES
     src/connection_pool/mcp_connection_pool_maintenance.c
     src/connection_pool/mcp_connection_pool_health.c
     src/server/mcp_plugin.c
-    src/gateway/gateway_config.c
-    src/gateway/gateway_routing.c
-    src/gateway/gateway_pool.c
-    src/gateway/gateway_config_manager.c
-    src/gateway/gateway_socket_utils.c
+    src/gateway/mcp_gateway_config.c
+    src/gateway/mcp_gateway_routing.c
+    src/gateway/mcp_gateway_pool.c
+    src/gateway/mcp_gateway_config_manager.c
+    src/gateway/mcp_gateway_socket_utils.c
 )
 
 # Create common library

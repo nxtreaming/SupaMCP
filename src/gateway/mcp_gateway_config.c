@@ -1,4 +1,4 @@
-#include "gateway.h"
+#include "mcp_gateway.h"
 #include "mcp_json.h"
 #include "mcp_log.h"
 #include "mcp_types.h"

@@ -17,8 +17,8 @@
 #include <mcp_transport.h>
 #include <mcp_performance_metrics.h>
 #include <mcp_performance_collector.h>
-#include "gateway.h"
-#include "gateway_pool.h"
+#include "mcp_gateway.h"
+#include "mcp_gateway_pool.h"
 #include "mcp_auth.h"
 #include "mcp_hashtable.h"
 #include "mcp_object_pool.h"

@@ -1,5 +1,5 @@
 #include "internal/server_internal.h"
-#include "gateway_routing.h"
+#include "mcp_gateway_routing.h"
 #include "mcp_auth.h"
 #include "mcp_arena.h"
 #include "mcp_thread_local.h"
