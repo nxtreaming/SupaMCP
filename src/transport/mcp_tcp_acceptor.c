@@ -29,56 +29,67 @@ void* tcp_accept_thread_func(void* arg) {
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(data->listen_socket, &read_fds);
-        struct timeval tv = {1, 0}; // Check every 1 second
+        // Check every 1 second
+        struct timeval tv = {1, 0};
+
         int select_result = select(0, &read_fds, NULL, NULL, &tv);
 
-        if (!data->running) break; // Check stop flag after select
+        // Check stop flag after select
+        if (!data->running)
+            break;
 
         if (select_result == MCP_SOCKET_ERROR) {
-            mcp_log_error("select() failed in accept thread: %d", mcp_socket_get_last_error()); // Use new function
-            break; // Exit thread on select error
+            mcp_log_error("select() failed in accept thread: %d", mcp_socket_get_last_error());
+            break;
         } else if (select_result == 0) {
-            continue; // Timeout, loop again to check running flag
+            // Timeout, loop again to check running flag
+            continue;
         }
         // If select_result > 0, the listen socket is readable (connection pending)
-#else // POSIX
+#else
         struct pollfd pfd[2];
         pfd[0].fd = data->listen_socket;
         pfd[0].events = POLLIN;
         pfd[1].fd = data->stop_pipe[0]; // Read end of the stop pipe
         pfd[1].events = POLLIN;
 
-        int poll_result = poll(pfd, 2, -1); // Wait indefinitely until event or signal
+        // Wait indefinitely until event or signal
+        int poll_result = poll(pfd, 2, -1);
 
-        if (!data->running) break; // Check stop flag after poll
+        // Check stop flag after poll
+        if (!data->running)
+            break;
 
         if (poll_result < 0) {
-            if (errno == EINTR) continue; // Interrupted by signal, loop again
+            // Interrupted by signal, loop again
+            if (errno == EINTR)
+                continue;
             mcp_log_error("poll() failed in accept thread: %s", strerror(errno));
-            break; // Exit thread on poll error
+            break;
         }
 
         // Check if stop pipe has data
         if (pfd[1].revents & POLLIN) {
             mcp_log_info("Stop signal received on pipe, accept thread exiting.");
-            break; // Stop signal received
+            break;
         }
 
         // Check if listen socket has connection
         if (!(pfd[0].revents & POLLIN)) {
-            continue; // No incoming connection, loop again
+            // No incoming connection, loop again
+            continue;
         }
 #endif
 
         // Accept the connection using the new utility function
         client_socket = mcp_socket_accept(data->listen_socket, (struct sockaddr*)&client_addr, &client_addr_len);
-
         if (client_socket == MCP_INVALID_SOCKET) {
             // Error logging is handled within mcp_socket_accept
             if (data->running) {
                 mcp_log_debug("mcp_socket_accept returned invalid socket, continuing accept loop.");
             }
-            continue; // Continue listening even if one accept fails
+            // Continue listening even if one accept fails
+            continue;
         }
 
         // Find an available client slot
@@ -87,7 +98,7 @@ void* tcp_accept_thread_func(void* arg) {
         for (int i = 0; i < MAX_TCP_CLIENTS; ++i) {
             if (data->clients[i].state == CLIENT_STATE_INACTIVE) {
                 client_index = i;
-                data->clients[i].state = CLIENT_STATE_INITIALIZING; // Mark as initializing
+                data->clients[i].state = CLIENT_STATE_INITIALIZING;
                 data->clients[i].socket = client_socket;
                 data->clients[i].address = client_addr;
                 data->clients[i].transport = transport; // Pass transport handle
@@ -138,7 +149,7 @@ void* tcp_accept_thread_func(void* arg) {
             }
             mcp_mutex_unlock(data->client_mutex);
         }
-    } // End while(data->running)
+    }
 
     mcp_log_info("Accept thread finished.");
     return NULL;

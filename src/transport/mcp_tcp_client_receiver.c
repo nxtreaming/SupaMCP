@@ -159,11 +159,12 @@ receive_loop:
             } else {
                 mcp_log_debug("Client receive thread for socket %d interrupted or stopped during framing recv.", (int)data->sock);
             }
-            data->connected = false; // Mark as disconnected
+            data->connected = false;
             // message_buf should be NULL if framing function failed before allocation
-            free(message_buf); // Free buffer if allocated before error
+            free(message_buf);
             message_buf = NULL;
-            break; // Exit loop on any error/close/abort
+            // Exit loop on any error/close/abort
+            break;
         }
 
         // --- 2. Process received message ---

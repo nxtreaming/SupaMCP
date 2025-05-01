@@ -156,9 +156,14 @@ int mcp_client_send_and_wait(
         }
     } else {
         // Entry removed before check. Rely on output params set by callback.
-        if (*error_code != MCP_ERROR_NONE) final_status = -1;
-        else if (*result != NULL) final_status = 0;
-        else { mcp_log_error("Request %llu not found and no result/error set.", (unsigned long long)pending_req.id); final_status = -1; }
+        if (*error_code != MCP_ERROR_NONE)
+            final_status = -1;
+        else if (*result != NULL)
+            final_status = 0;
+        else {
+            mcp_log_error("Request %llu not found and no result/error set.", (unsigned long long)pending_req.id);
+            final_status = -1;
+        }
     }
 
     // Remove entry from hash table after waiting/timeout/error
@@ -261,10 +266,7 @@ int mcp_client_http_send_request(
         // We need to access the response data from the HTTP client transport
 
         // Get the last HTTP response using the dedicated function
-        char* http_response = NULL;
-
-        // Get the response
-        http_response = http_client_transport_get_last_response();
+        char* http_response = http_response = http_client_transport_get_last_response();
         if (http_response != NULL) {
             // Parse the response JSON
             uint64_t response_id;
@@ -273,7 +275,8 @@ int mcp_client_http_send_request(
             char* response_result = NULL;
 
             mcp_log_debug("HTTP transport: Using stored response: %s", http_response);
-            int parse_result = mcp_json_parse_response(http_response, &response_id, &response_error_code, &response_error_message, &response_result);
+            int parse_result = mcp_json_parse_response(http_response, &response_id, &response_error_code,
+                                                       &response_error_message, &response_result);
 
             // Free the response copy
             free(http_response);
@@ -290,7 +293,8 @@ int mcp_client_http_send_request(
                     return (*error_code == MCP_ERROR_NONE) ? 0 : -1;
                 } else {
                     // Response ID doesn't match request ID
-                    mcp_log_error("HTTP transport: Response ID %llu doesn't match request ID %llu", (unsigned long long)response_id, (unsigned long long)request_id);
+                    mcp_log_error("HTTP transport: Response ID %llu doesn't match request ID %llu",
+                                  (unsigned long long)response_id, (unsigned long long)request_id);
                     *error_code = MCP_ERROR_INTERNAL_ERROR;
                     *error_message = mcp_strdup("Response ID doesn't match request ID");
                     free(response_error_message);

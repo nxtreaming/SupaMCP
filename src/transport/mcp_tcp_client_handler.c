@@ -66,8 +66,10 @@ void* tcp_client_handler_thread_func(void* arg) {
         }
 
         // --- 1. Wait for Data or Timeout ---
-        uint32_t wait_ms = tcp_data->idle_timeout_ms; // Start with full timeout for select/poll
-        if (wait_ms == 0) wait_ms = 30000; // If idle timeout is not set, use 30 seconds as default
+        // Start with full timeout for select/poll
+        uint32_t wait_ms = tcp_data->idle_timeout_ms;
+        if (wait_ms == 0)
+            wait_ms = 30000; // If idle timeout is not set, use 30 seconds as default
 
         if (client_conn->socket == MCP_INVALID_SOCKET) {
             mcp_log_debug("Exiting handler thread for invalid socket");
@@ -90,8 +92,10 @@ void* tcp_client_handler_thread_func(void* arg) {
         }
 
         // Check wait_result based on new function's return values
-        if (wait_result == -1) { // Error or stop signal
-            if (!client_conn->should_stop) { // Avoid logging error if we are stopping anyway
+        if (wait_result == -1) {
+            // Error or stop signal
+            // Avoid logging error if we are stopping anyway
+            if (!client_conn->should_stop) {
                 int last_error = mcp_socket_get_last_error();
                 mcp_log_error("mcp_socket_wait_readable failed for socket %d: Error %d", (int)client_conn->socket, last_error);
             } else {
@@ -99,7 +103,8 @@ void* tcp_client_handler_thread_func(void* arg) {
             }
             mcp_log_debug("Handler %d: Exiting due to socket error or stop signal (wait).", (int)client_conn->socket);
             goto client_cleanup;
-        } else if (wait_result == 0) { // Timeout
+        } else if (wait_result == 0) {
+            // Timeout
             if (tcp_data->idle_timeout_ms > 0 && time(NULL) >= deadline) {
                 mcp_log_info("Idle timeout exceeded for socket %d. Closing connection.", (int)client_conn->socket);
                 mcp_log_debug("Handler %d: Exiting due to idle timeout.", (int)client_conn->socket);
@@ -122,7 +127,8 @@ void* tcp_client_handler_thread_func(void* arg) {
         mcp_log_debug("mcp_framing_recv_message returned: %d", frame_result);
 
         if (frame_result != 0) {
-            if (!client_conn->should_stop) { // Avoid logging error if we are stopping anyway
+            // Avoid logging error if we are stopping anyway
+            if (!client_conn->should_stop) {
                 int last_error = mcp_socket_get_last_error();
                 mcp_log_error("mcp_framing_recv_message failed for socket %d. Result: %d, Last Error: %d",
                               (int)client_conn->socket, frame_result, last_error);
@@ -130,10 +136,12 @@ void* tcp_client_handler_thread_func(void* arg) {
                 mcp_log_debug("mcp_framing_recv_message aborted by stop signal for socket %d.", (int)client_conn->socket);
             }
             // message_buf should be NULL if framing function failed before allocation
-            free(message_buf); // Free buffer if allocated before error
+            // Free buffer if allocated before error
+            free(message_buf);
             message_buf = NULL;
             mcp_log_debug("Handler %d: Exiting due to framing error or stop signal.", (int)client_conn->socket);
-            goto client_cleanup; // Exit loop on any error/close/abort
+            // Exit loop on any error/close/abort
+            goto client_cleanup;
         }
 
         // Update activity time after successful receive
@@ -142,7 +150,7 @@ void* tcp_client_handler_thread_func(void* arg) {
         // --- 3. Process Message via Callback ---
         // message_buf is allocated by mcp_framing_recv_message and includes null terminator
         if (message_length_host > 0 && message_buf[message_length_host - 1] != '\0') {
-            message_buf[message_length_host] = '\0'; // Add terminator
+            message_buf[message_length_host] = '\0';
             mcp_log_debug("Adding NULL terminator after message body");
         } else if (message_length_host > 0 && message_buf[message_length_host - 1] == '\0') {
             mcp_log_debug("Message already ends with NULL terminator");
@@ -151,7 +159,8 @@ void* tcp_client_handler_thread_func(void* arg) {
         // Check and debug non-printable characters
         size_t effective_length = message_length_host;
         if (message_length_host > 0 && message_buf[message_length_host - 1] == '\0') {
-            effective_length = message_length_host - 1; // Exclude terminator
+            // Exclude terminator
+            effective_length = message_length_host - 1;
         }
 
         for (size_t i = 0; i < effective_length; i++) {
@@ -169,8 +178,8 @@ void* tcp_client_handler_thread_func(void* arg) {
         char* response_str = NULL;
         int callback_error_code = 0;
         if (transport->message_callback != NULL) {
-            mcp_log_debug("Calling message callback for processing...");
-            response_str = transport->message_callback(transport->callback_user_data, message_buf, message_length_host, &callback_error_code);
+            response_str = transport->message_callback(transport->callback_user_data, message_buf,
+                                                       message_length_host, &callback_error_code);
             mcp_log_debug("Message callback returned: error_code=%d, response=%s",
                          callback_error_code,
                          response_str ? "non-NULL" : "NULL");
@@ -189,8 +198,9 @@ void* tcp_client_handler_thread_func(void* arg) {
             if (response_len > 0 && response_len <= MAX_MCP_MESSAGE_SIZE) {
                 // Re-check state and socket validity before sending
                 if (client_conn->state != CLIENT_STATE_ACTIVE || client_conn->socket == MCP_INVALID_SOCKET) {
-                    mcp_log_debug("Handler %d: Detected non-active state or invalid socket before send.", (int)client_conn->socket);
-                    free(response_str); // Need to free response_str before exiting
+                    mcp_log_debug("Handler %d: Detected non-active state or invalid socket before send.",
+                                  (int)client_conn->socket);
+                    free(response_str);
                     response_str = NULL;
                     goto client_cleanup;
                 }
@@ -199,41 +209,45 @@ void* tcp_client_handler_thread_func(void* arg) {
                 int send_result = mcp_framing_send_message(
                     client_conn->socket,
                     response_str,
-                    (uint32_t)response_len, // Cast response_len to uint32_t
+                    (uint32_t)response_len,
                     &client_conn->should_stop
                 );
 
                 // Check stop signal *immediately* after send returns (send_result will be -1 if stopped)
                 if (client_conn->should_stop) {
                     mcp_log_debug("Handler %d: Stop signal detected immediately after send.", (int)client_conn->socket);
-                    free(response_str); // Need to free response_str before exiting
+                    free(response_str);
                     response_str = NULL;
                     goto client_cleanup;
                 }
 
-                if (send_result != 0) { // Check for non-zero (error/abort)
+                // Check for non-zero (error/abort)
+                if (send_result != 0) {
                     if (!client_conn->should_stop) {
                         int last_error = mcp_socket_get_last_error();
                         mcp_log_error("mcp_framing_send_message failed for socket %d. Result: %d, Last Error: %d",
                                       (int)client_conn->socket, send_result, last_error);
                     } else {
-                        mcp_log_debug("mcp_framing_send_message aborted by stop signal for socket %d.", (int)client_conn->socket);
+                        mcp_log_debug("mcp_framing_send_message aborted by stop signal for socket %d.",
+                                      (int)client_conn->socket);
                     }
-                    free(response_str); // Free original response string on error
+                    free(response_str);
                     mcp_log_debug("Handler %d: Exiting due to socket error or stop signal (send).", (int)client_conn->socket);
                     goto client_cleanup;
                 }
                 // Update activity time after successful send
                 client_conn->last_activity_time = time(NULL);
             } else if (response_len > MAX_MCP_MESSAGE_SIZE) {
-                mcp_log_error("Response generated by callback is too large (%zu bytes) for socket %d", response_len, (int)client_conn->socket);
+                mcp_log_error("Response generated by callback is too large (%zu bytes) for socket %d",
+                              response_len, (int)client_conn->socket);
                 // Don't send, but still need to free the response string
             }
             // Free the original response string after handling it
             free(response_str);
             response_str = NULL;
         } else if (callback_error_code != 0) {
-            mcp_log_warn("Message callback indicated error (%d) but returned no response string for socket %d", callback_error_code, (int)client_conn->socket);
+            mcp_log_warn("Message callback indicated error (%d) but returned no response string for socket %d",
+                         callback_error_code, (int)client_conn->socket);
             // No response_str to free in this case
         }
 
@@ -241,7 +255,7 @@ void* tcp_client_handler_thread_func(void* arg) {
         // message_buf is always allocated by malloc in mcp_framing_recv_message
         free(message_buf);
         message_buf = NULL;
-    } // End of main while loop
+    }
 
 client_cleanup:
     // --- Cleanup on Exit ---
@@ -277,7 +291,8 @@ client_cleanup:
         mcp_log_debug("Client connection slot marked as INACTIVE");
     } else {
         // Log if cleanup was skipped because state was already inactive
-        mcp_log_debug("Handler %d: Cleanup skipped, state already INACTIVE.", (int)client_conn->socket); // Socket might be invalid here, use cautiously
+        // Socket might be invalid here, use cautiously
+        mcp_log_debug("Handler %d: Cleanup skipped, state already INACTIVE.", (int)client_conn->socket);
     }
 
     mcp_mutex_unlock(tcp_data->client_mutex);
