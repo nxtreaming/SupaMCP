@@ -1,7 +1,7 @@
 #ifndef MCP_GATEWAY_SOCKET_UTILS_H
 #define MCP_GATEWAY_SOCKET_UTILS_H
 
-#include "mcp_connection_pool.h" // For SOCKET type
+#include "mcp_connection_pool.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -35,7 +35,6 @@ int gateway_send_message(SOCKET sock, const char* message, int timeout_ms);
  * @return 0 on success, -1 on socket error, -2 on timeout, -3 on connection closed, -4 on invalid length/size error.
  */
 int gateway_receive_message(SOCKET sock, char** message_out, size_t* message_len_out, size_t max_size, int timeout_ms);
-
 
 #ifdef __cplusplus
 }

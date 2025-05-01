@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// --- Platform-Specific Socket Definitions ---
 #ifdef _WIN32
 // Include our Windows socket compatibility header
 #include "win_socket_compat.h"
@@ -38,21 +37,15 @@
     #endif
 #endif
 
-// Platform-specific sleep function is now implemented in the .c file
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-// --- Platform Utilities ---
 
 /**
  * @brief Pauses execution for the specified number of milliseconds.
  * @param milliseconds The duration to sleep in milliseconds.
  */
 void mcp_sleep_ms(uint32_t milliseconds);
-
-// --- Initialization and Cleanup ---
 
 /**
  * @brief Initializes the socket library (required on Windows).
@@ -66,8 +59,6 @@ int mcp_socket_init(void);
  * Call once at application shutdown.
  */
 void mcp_socket_cleanup(void);
-
-// --- Socket Operations ---
 
 /**
  * @brief Closes a socket descriptor.
@@ -149,8 +140,6 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
  */
 int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_flag);
 
-// --- Server Specific (Consider moving later if needed) ---
-
 /**
  * @brief Creates a listening socket bound to the specified host and port.
  * @param host The host address to bind to (e.g., "0.0.0.0" for all interfaces).
@@ -168,7 +157,6 @@ socket_t mcp_socket_create_listener(const char* host, uint16_t port, int backlog
  * @return The connected client socket descriptor on success, MCP_INVALID_SOCKET on failure.
  */
 socket_t mcp_socket_accept(socket_t listen_sock, struct sockaddr* client_addr, socklen_t* addr_len);
-
 
 #ifdef __cplusplus
 }

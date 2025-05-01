@@ -68,8 +68,6 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
 /** @brief Log a FATAL level message. */
 #define mcp_log_fatal(...) mcp_log_log(MCP_LOG_LEVEL_FATAL, __FILE__, __LINE__, __VA_ARGS__)
 
-// --- Configuration Functions ---
-
 /**
  * @brief Sets the minimum log level to output.
  * @param level The minimum level. Messages below this level will be ignored.

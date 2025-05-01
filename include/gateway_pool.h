@@ -63,7 +63,6 @@ void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_bac
  */
 void gateway_pool_release_connection(gateway_pool_manager_t* manager, const mcp_backend_info_t* backend_info, void* connection_handle);
 
-
 #ifdef __cplusplus
 }
 #endif

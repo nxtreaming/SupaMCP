@@ -104,7 +104,6 @@ mcp_error_code_t load_gateway_config(
  */
 void mcp_free_backend_list(mcp_backend_info_t* backend_list, size_t backend_count);
 
-
 #ifdef __cplusplus
 }
 #endif

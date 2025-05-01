@@ -6,7 +6,6 @@
 #include <time.h>
 
 #ifdef _WIN32
-// Forward declare HANDLE type without including windows.h in the header
 typedef void* HANDLE;
 #else
 #include <pthread.h>
@@ -95,6 +94,5 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri);
  * @return The number of entries removed.
  */
 size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache);
-
 
 #endif // MCP_CACHE_H

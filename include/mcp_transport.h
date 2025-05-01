@@ -34,7 +34,6 @@ typedef struct {
     size_t size;      /**< Size of the data buffer in bytes. */
 } mcp_buffer_t;
 
-
 /**
  * @brief Callback function type for received messages.
  *
@@ -55,7 +54,6 @@ typedef char* (*mcp_transport_message_callback_t)(void* user_data, const void* d
  * @param error_code An error code indicating the nature of the transport error.
  */
 typedef void (*mcp_transport_error_callback_t)(void* user_data, int error_code);
-
 
 /**
  * @brief Starts the transport layer and begins listening/processing messages.
@@ -111,7 +109,6 @@ int mcp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers,
  * @return 0 on success, non-zero on error.
  */
 int mcp_transport_send(mcp_transport_t* transport, const void* data, size_t size);
-
 
 /**
  * @brief Destroys the transport handle and frees associated resources.
@@ -178,18 +175,6 @@ mcp_transport_protocol_t mcp_transport_get_protocol(mcp_transport_t* transport);
  * @param protocol The transport protocol type.
  */
 void mcp_transport_set_protocol(mcp_transport_t* transport, mcp_transport_protocol_t protocol);
-
-
-// --- Concrete Transport Creation Function Declarations ---
-// These functions are declared in separate headers (e.g., mcp_stdio_transport.h)
-// and implemented in their respective source files. They return the generic
-// mcp_transport_t handle.
-
-/* Example (declarations moved to specific headers):
-mcp_transport_t* mcp_stdio_transport_create(void);
-mcp_transport_t* mcp_tcp_transport_create(const char* host, uint16_t port);
-mcp_transport_t* mcp_websocket_transport_create(const char* url);
-*/
 
 #ifdef __cplusplus
 }

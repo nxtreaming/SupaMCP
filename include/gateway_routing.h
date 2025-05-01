@@ -50,7 +50,6 @@ char* gateway_forward_request(
     int* error_code
 );
 
-
 #ifdef __cplusplus
 }
 #endif

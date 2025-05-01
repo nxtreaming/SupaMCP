@@ -10,7 +10,6 @@
 #include <pthread.h>
 #endif
 
-// Forward declaration
 typedef struct mcp_thread_pool mcp_thread_pool_t;
 
 /**

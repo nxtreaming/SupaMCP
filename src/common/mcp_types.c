@@ -10,7 +10,7 @@
  */
 void mcp_resource_free(mcp_resource_t* resource) {
     if (resource == NULL) {
-        return; // Nothing to free
+        return;
     }
 
     // Free the duplicated strings within the struct (mcp_strdup uses malloc)
@@ -27,7 +27,7 @@ void mcp_resource_free(mcp_resource_t* resource) {
  */
 void mcp_resource_template_free(mcp_resource_template_t* tmpl) {
     if (tmpl == NULL) {
-        return; // Nothing to free
+        return;
     }
 
     // Free the duplicated strings within the struct (mcp_strdup uses malloc)
@@ -44,7 +44,7 @@ void mcp_resource_template_free(mcp_resource_template_t* tmpl) {
  */
 void mcp_tool_free(mcp_tool_t* tool) {
     if (tool == NULL) {
-        return; // Nothing to free
+        return;
     }
 
     // Free top-level strings (mcp_strdup uses malloc)
@@ -72,7 +72,7 @@ void mcp_tool_free(mcp_tool_t* tool) {
  */
 void mcp_content_item_free(mcp_content_item_t* item) {
     if (item == NULL) {
-        return; // Nothing to free
+        return;
     }
 
     // Free the duplicated mime type string (mcp_strdup uses malloc)
@@ -140,7 +140,7 @@ mcp_resource_t* mcp_resource_create(
     // Allocate the main structure
     mcp_resource_t* resource = (mcp_resource_t*)malloc(sizeof(mcp_resource_t));
     if (resource == NULL) {
-        return NULL; // Malloc failed
+        return NULL;
     }
 
     // Initialize all string pointers to NULL for safe cleanup on partial allocation failure
@@ -185,7 +185,7 @@ mcp_resource_t* mcp_resource_create(
         }
     }
 
-    return resource; // Success
+    return resource;
 }
 
 /**
@@ -198,10 +198,9 @@ mcp_resource_template_t* mcp_resource_template_create(
     const char* mime_type,
     const char* description
 ) {
-    // Allocate the main structure
     mcp_resource_template_t* tmpl = (mcp_resource_template_t*)malloc(sizeof(mcp_resource_template_t));
     if (tmpl == NULL) {
-        return NULL; // Malloc failed
+        return NULL;
     }
 
     // Initialize all string pointers to NULL for safe cleanup
@@ -246,7 +245,7 @@ mcp_resource_template_t* mcp_resource_template_create(
         }
     }
 
-    return tmpl; // Success
+    return tmpl;
 }
 
 /**
@@ -257,10 +256,9 @@ mcp_tool_t* mcp_tool_create(
     const char* name,
     const char* description
 ) {
-    // Allocate the main structure
     mcp_tool_t* tool = (mcp_tool_t*)malloc(sizeof(mcp_tool_t));
     if (tool == NULL) {
-        return NULL; // Malloc failed
+        return NULL;
     }
 
     // Initialize fields
@@ -291,7 +289,7 @@ mcp_tool_t* mcp_tool_create(
         }
     }
 
-    return tool; // Success
+    return tool;
 }
 
 /**
@@ -305,7 +303,7 @@ int mcp_tool_add_param(
     bool required
 ) {
     if (tool == NULL || name == NULL || type == NULL) {
-        return -1; // Invalid arguments
+        return -1;
     }
 
     // Create a temporary parameter struct on the stack to hold duplicated strings
@@ -318,14 +316,14 @@ int mcp_tool_add_param(
     // Duplicate name string
     new_param.name = mcp_strdup(name);
     if (new_param.name == NULL) {
-        return -1; // mcp_strdup failed
+        return -1;
     }
 
     // Duplicate type string
     new_param.type = mcp_strdup(type);
     if (new_param.type == NULL) {
         free(new_param.name); // Clean up already allocated name
-        return -1; // mcp_strdup failed
+        return -1;
     }
 
     // Duplicate description string if provided
@@ -334,7 +332,7 @@ int mcp_tool_add_param(
         if (new_param.description == NULL) {
             free(new_param.name);
             free(new_param.type);
-            return -1; // mcp_strdup failed
+            return -1;
         }
     }
 
@@ -358,7 +356,7 @@ int mcp_tool_add_param(
     tool->input_schema[tool->input_schema_count] = new_param;
     tool->input_schema_count++;
 
-    return 0; // Success
+    return 0;
 }
 
 /**
@@ -371,10 +369,9 @@ mcp_content_item_t* mcp_content_item_create(
     const void* data,
     size_t data_size
 ) {
-    // Allocate the main structure
     mcp_content_item_t* item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
     if (item == NULL) {
-        return NULL; // Malloc failed
+        return NULL;
     }
 
     // Initialize fields
@@ -404,7 +401,7 @@ mcp_content_item_t* mcp_content_item_create(
     }
     // If data is NULL or data_size is 0, item->data remains NULL and item->data_size remains 0
 
-    return item; // Success
+    return item;
 }
 
 /**
@@ -478,7 +475,7 @@ mcp_content_item_t* mcp_content_item_acquire_pooled(
     }
     // If data is NULL or data_size is 0, item->data remains NULL and item->data_size remains 0
 
-    return item; // Success
+    return item;
 }
 
 // --- Deprecated Message Creation Functions ---

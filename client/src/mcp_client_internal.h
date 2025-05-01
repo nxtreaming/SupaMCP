@@ -55,14 +55,10 @@ struct mcp_client {
     size_t pending_requests_count;    // Number of active entries in the hash table
 };
 
-// Forward declarations for internal functions that need to be shared between modules
-
-// From mcp_client_hash_table.c - wrapper functions to expose hash table functionality
 pending_request_entry_t* mcp_client_find_pending_request_entry(mcp_client_t* client, uint64_t id, bool find_empty_for_insert);
 int mcp_client_add_pending_request_entry(mcp_client_t* client, uint64_t id, pending_request_t* request);
 int mcp_client_remove_pending_request_entry(mcp_client_t* client, uint64_t id);
 
-// From mcp_client_request.c
 int mcp_client_send_and_wait(
     mcp_client_t* client,
     const char* request_json,
@@ -97,16 +93,13 @@ int mcp_client_http_send_request(
     char** error_message
 );
 
-// From mcp_client_core.c
 char* mcp_client_receive_callback(void* user_data, const void* data, size_t size, int* error_code);
 void mcp_client_transport_error_callback(void* user_data, int error_code);
 
-// From mcp_arena.h
 mcp_arena_t* mcp_arena_get_current(void);
 int mcp_arena_init_current_thread(size_t size);
 int mcp_arena_reset_current_thread(void);
 
-// From mcp_json_message.h
 int mcp_json_parse_resources(const char* json, mcp_resource_t*** resources, size_t* count);
 int mcp_json_parse_resource_templates(const char* json, mcp_resource_template_t*** templates, size_t* count);
 int mcp_json_parse_content(const char* json, mcp_content_item_t*** content, size_t* count);

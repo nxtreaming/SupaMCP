@@ -55,7 +55,6 @@ void mcp_buffer_pool_release(mcp_buffer_pool_t* pool, void* buffer);
  */
 size_t mcp_buffer_pool_get_buffer_size(const mcp_buffer_pool_t* pool);
 
-
 #ifdef __cplusplus
 }
 #endif

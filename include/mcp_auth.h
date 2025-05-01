@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-#include <time.h> // For time_t
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {

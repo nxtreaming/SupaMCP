@@ -6,13 +6,11 @@
 #include <stdbool.h>
 
 #ifdef _WIN32
-// Forward declare HANDLE type without including windows.h in the header
 typedef void* HANDLE;
 #else
 #include <pthread.h>
 #endif
 
-// Forward declaration
 typedef struct mcp_rate_limiter mcp_rate_limiter_t;
 
 /**

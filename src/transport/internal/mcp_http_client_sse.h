@@ -22,7 +22,6 @@ typedef struct {
     time_t timestamp;            // Event timestamp
 } sse_event_t;
 
-// Function declarations
 socket_t connect_to_sse_endpoint(http_client_transport_data_t* data);
 void process_sse_event(http_client_transport_data_t* data, const sse_event_t* event);
 sse_event_t* sse_event_create(const char* id, const char* event, const char* data);

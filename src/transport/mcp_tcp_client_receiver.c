@@ -6,7 +6,6 @@
 #include <errno.h>
 #include "mcp_thread_local.h"
 
-// Platform-specific includes needed for socket operations
 #ifdef _WIN32
 // Included via internal header
 #else

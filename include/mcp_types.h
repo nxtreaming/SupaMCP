@@ -249,8 +249,6 @@ void mcp_free_content(mcp_content_item_t** content, size_t count);
  */
 void mcp_free_tools(mcp_tool_t** tools, size_t count);
 
-// --- Create Functions ---
-
 /**
  * @brief Creates a new mcp_resource_t structure on the heap.
  *

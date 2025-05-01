@@ -83,7 +83,6 @@ int mcp_json_parse_message_or_batch(const char* json_str, mcp_message_t** messag
  */
 void mcp_json_free_message_array(mcp_message_t* messages, size_t count);
 
-
 #ifdef __cplusplus
 }
 #endif

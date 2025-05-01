@@ -7,8 +7,6 @@
 extern "C" {
 #endif
 
-// --- Formatting Functions ---
-
 /**
  * Format a JSON-RPC request
  *
@@ -48,9 +46,6 @@ char* mcp_json_format_response(uint64_t id, const char* result);
  * @return JSON string or NULL on error (must be freed by the caller)
  */
 char* mcp_json_format_error_response(uint64_t id, mcp_error_code_t error_code, const char* error_message);
-
-
-// --- Parsing Functions ---
 
 /**
  * Parse a JSON-RPC response

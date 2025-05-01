@@ -8,7 +8,6 @@
 extern "C" {
 #endif
 
-// Function declarations
 uint64_t extract_request_id(const char* json_data, size_t size);
 
 #ifdef __cplusplus

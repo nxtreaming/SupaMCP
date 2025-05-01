@@ -14,7 +14,7 @@
 #include <intrin.h>
 #else
 // GCC/Clang atomics are built-in
-#include <sched.h> // For sched_yield
+#include <sched.h>
 #endif
 
 #ifdef _MSC_VER

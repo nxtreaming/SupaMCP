@@ -85,7 +85,6 @@ void mcp_arena_destroy(mcp_arena_t* arena);
  */
 int mcp_arena_get_stats(mcp_arena_t* arena, size_t* out_total_allocated, size_t* out_total_block_size, size_t* out_block_count);
 
-
 #ifdef __cplusplus
 }
 #endif

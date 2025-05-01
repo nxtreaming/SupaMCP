@@ -4,17 +4,15 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-// Include platform-specific socket headers to define SOCKET and INVALID_SOCKET
 #ifdef _WIN32
     // Minimal include to get SOCKET type, avoiding potential conflicts with windows.h
     #include <winsock2.h>
     // INVALID_SOCKET is defined in winsock2.h
-#else // Linux/macOS etc.
+#else
     #include <sys/socket.h>
     typedef int SOCKET;
     #define INVALID_SOCKET (-1)
 #endif
-
 
 #ifdef __cplusplus
 extern "C" {
@@ -111,7 +109,6 @@ void mcp_connection_pool_destroy(mcp_connection_pool_t* pool);
  * @return 0 on success, -1 on failure (e.g., NULL pool pointer provided).
  */
 int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_connections, size_t* idle_connections, size_t* active_connections, size_t* health_checks_performed, size_t* failed_health_checks);
-
 
 #ifdef __cplusplus
 }

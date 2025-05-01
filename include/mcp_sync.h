@@ -8,8 +8,6 @@
 extern "C" {
 #endif
 
-// --- Mutex ---
-
 /** @brief Opaque mutex type. */
 typedef struct mcp_mutex_s mcp_mutex_t;
 
@@ -39,8 +37,6 @@ int mcp_mutex_lock(mcp_mutex_t* mutex);
  * @return 0 on success, non-zero on error.
  */
 int mcp_mutex_unlock(mcp_mutex_t* mutex);
-
-// --- Condition Variable ---
 
 /** @brief Opaque condition variable type. */
 typedef struct mcp_cond_s mcp_cond_t;
@@ -91,16 +87,12 @@ int mcp_cond_signal(mcp_cond_t* cond);
  */
 int mcp_cond_broadcast(mcp_cond_t* cond);
 
-// --- Thread ---
-
 /** @brief Platform-independent thread handle type. */
 #ifdef _WIN32
-typedef void* mcp_thread_t; // Use HANDLE (void*)
+typedef void* mcp_thread_t;
 #else
-// 在 macOS 上，pthread_t 是一个指针类型，而不是 unsigned long
-// 使用直接的 pthread_t 类型可以避免类型转换问题
 #include <pthread.h>
-typedef pthread_t mcp_thread_t; // 直接使用 pthread_t 类型
+typedef pthread_t mcp_thread_t;
 #endif
 
 /** @brief Thread function signature. */

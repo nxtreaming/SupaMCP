@@ -110,12 +110,6 @@ int mcp_plugin_unload(mcp_plugin_t* plugin);
  */
 const mcp_plugin_descriptor_t* mcp_plugin_get_descriptor(mcp_plugin_t* plugin);
 
-// Optional: Functions to manage a collection of loaded plugins
-// int mcp_plugin_manager_load_directory(const char* directory_path, void* server_context);
-// void mcp_plugin_manager_unload_all(void);
-// mcp_plugin_t* mcp_plugin_manager_find_by_name(const char* name);
-
-
 #ifdef __cplusplus
 }
 #endif

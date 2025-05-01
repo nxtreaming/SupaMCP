@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Platform-specific includes
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -237,7 +236,7 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
 #ifdef _WIN32
         iov[i].buf = (CHAR*)buffers[i].data;
         iov[i].len = (ULONG)buffers[i].size;
-#else // POSIX
+#else
         iov[i].iov_base = (void*)buffers[i].data;
         iov[i].iov_len = buffers[i].size;
 #endif

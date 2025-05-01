@@ -90,7 +90,6 @@ char* dyn_buf_finalize(dyn_buf_t* db);
  */
 void dyn_buf_free(dyn_buf_t* db);
 
-
 #ifdef __cplusplus
 }
 #endif
