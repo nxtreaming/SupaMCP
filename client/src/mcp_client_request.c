@@ -13,7 +13,6 @@
 #include <string.h>
 #include <stdio.h>
 
-// Platform specific includes for socket types
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -25,9 +24,6 @@
 #include <time.h>
 #include <errno.h>
 #endif
-
-// Include the header file for the function declaration
-extern char* http_client_transport_get_last_response(void);
 
 /**
  * @brief Internal function to send a request and wait for a response.
@@ -192,11 +188,11 @@ int mcp_client_send_and_wait(
 }
 
 /**
- * @brief Send a request using HTTP transport and process the response directly.
+ * @brief Send a request using HTTP transport and process the response.
  *
- * This function is specifically designed for HTTP transport, which uses a synchronous
- * request-response model. It sends the request and processes the response in the same
- * function call, without using the asynchronous callback mechanism used by other transports.
+ * For HTTP transport, we can use the same send_and_wait function as other transports.
+ * The HTTP transport will call the message callback directly from the send function,
+ * which will signal the condition variable and allow send_and_wait to return.
  *
  * @param client The MCP client instance.
  * @param request_json The JSON-RPC request string.
@@ -255,172 +251,7 @@ int mcp_client_http_send_request(
     // Try to receive the response
     // Note: This is a synchronous operation for HTTP transport
     status = mcp_transport_receive(client->transport, &response_data, &response_size, client->config.request_timeout_ms);
-
-    // If mcp_transport_receive returns -1, it means the HTTP transport doesn't support synchronous receive
-    // In this case, we need to use the actual response data from the HTTP client transport
-    if (status == -1 || response_data == NULL) {
-        // HTTP transport doesn't support synchronous receive, or no response was received
-        // We need to access the response data from the HTTP client transport
-
-        // Get the last HTTP response using the dedicated function
-        char* http_response = http_response = http_client_transport_get_last_response();
-        if (http_response != NULL) {
-            // Parse the response JSON
-            uint64_t response_id;
-            mcp_error_code_t response_error_code;
-            char* response_error_message = NULL;
-            char* response_result = NULL;
-
-            mcp_log_debug("HTTP transport: Using stored response: %s", http_response);
-            int parse_result = mcp_json_parse_response(http_response, &response_id, &response_error_code,
-                                                       &response_error_message, &response_result);
-
-            // Free the response copy
-            free(http_response);
-
-            if (parse_result == 0) {
-                // Check if the response ID matches the request ID
-                if (response_id == request_id) {
-                    // Set the output parameters
-                    *error_code = response_error_code;
-                    *error_message = response_error_message;
-                    *result = response_result;
-
-                    // Return success
-                    return (*error_code == MCP_ERROR_NONE) ? 0 : -1;
-                } else {
-                    // Response ID doesn't match request ID
-                    mcp_log_error("HTTP transport: Response ID %llu doesn't match request ID %llu",
-                                  (unsigned long long)response_id, (unsigned long long)request_id);
-                    *error_code = MCP_ERROR_INTERNAL_ERROR;
-                    *error_message = mcp_strdup("Response ID doesn't match request ID");
-                    free(response_error_message);
-                    free(response_result);
-
-                    // Return error
-                    return -1;
-                }
-            } else {
-                // Failed to parse response
-                mcp_log_error("HTTP transport: Failed to parse stored response");
-            }
-        }
-
-        // If we get here, either there was no stored response or parsing failed
-        // Fall back to extracting method from request and returning a dummy response
-        mcp_log_debug("HTTP transport: No valid stored response available, using fallback method");
-
-        const char* method = NULL;
-
-        // Extract method from request_json
-        // Format: {"id":X,"jsonrpc":"2.0","method":"METHOD","params":{...}}
-        const char* method_start = strstr(request_json, "\"method\":\"");
-        if (method_start) {
-            method_start += 10; // Skip "method":"
-            const char* method_end = strchr(method_start, '\"');
-            if (method_end) {
-                size_t method_len = method_end - method_start;
-                char* method_buf = (char*)malloc(method_len + 1);
-                if (method_buf) {
-                    memcpy(method_buf, method_start, method_len);
-                    method_buf[method_len] = '\0';
-                    method = method_buf;
-                }
-            }
-        }
-
-        // Create a response based on the method
-        if (method) {
-            if (strcmp(method, "list_resources") == 0) {
-                *result = mcp_strdup("{\"resources\":[{\"uri\":\"example://info\",\"name\":\"Info\",\"mimeType\":\"text/plain\"},{\"uri\":\"example://hello\",\"name\":\"Hello\",\"mimeType\":\"text/plain\"}]}");
-            } else if (strcmp(method, "list_tools") == 0) {
-                *result = mcp_strdup("{\"tools\":[{\"name\":\"reverse\",\"inputSchema\":{\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Text to reverse\"}},\"required\":[\"text\"],\"type\":\"object\"},\"description\":\"Reverse Tool\"},{\"name\":\"echo\",\"inputSchema\":{\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Text to echo\"}},\"required\":[\"text\"],\"type\":\"object\"},\"description\":\"Echo Tool\"},{\"name\":\"http_client\",\"inputSchema\":{\"properties\":{\"url\":{\"type\":\"string\",\"description\":\"URL to request\"},\"method\":{\"type\":\"string\",\"description\":\"HTTP method\"},\"headers\":{\"type\":\"string\",\"description\":\"Additional headers\"},\"body\":{\"type\":\"string\",\"description\":\"Request body\"},\"content_type\":{\"type\":\"string\",\"description\":\"Content type\"},\"timeout\":{\"type\":\"number\",\"description\":\"Timeout in seconds\"}},\"required\":[\"url\"],\"type\":\"object\"},\"description\":\"HTTP Client Tool\"}]}");
-            } else if (strcmp(method, "list_resource_templates") == 0 || strcmp(method, "list_templates") == 0) {
-                *result = mcp_strdup("{\"resourceTemplates\":[{\"uriTemplate\":\"example://{name}\",\"name\":\"Example Template\"}]}");
-            } else if (strcmp(method, "read_resource") == 0) {
-                *result = mcp_strdup("{\"content\":[{\"type\":\"text\",\"text\":\"Hello, World!\",\"mimeType\":\"text/plain\"}]}");
-            } else if (strcmp(method, "call_tool") == 0) {
-                // For call_tool, try to extract the tool name from the params
-                const char* tool_name = NULL;
-                const char* tool_name_start = strstr(request_json, "\"name\":\"");
-                if (tool_name_start) {
-                    tool_name_start += 8; // Skip "name":"
-                    const char* tool_name_end = strchr(tool_name_start, '\"');
-                    if (tool_name_end) {
-                        size_t tool_name_len = tool_name_end - tool_name_start;
-                        char* tool_name_buf = (char*)malloc(tool_name_len + 1);
-                        if (tool_name_buf) {
-                            memcpy(tool_name_buf, tool_name_start, tool_name_len);
-                            tool_name_buf[tool_name_len] = '\0';
-                            tool_name = tool_name_buf;
-                        }
-                    }
-                }
-
-                if (tool_name && strcmp(tool_name, "http_client") == 0) {
-                    // For http_client tool, dynamically build a more specific response
-                    // Extract URL from request to make the response more relevant
-                    const char* url = NULL;
-                    const char* url_start = strstr(request_json, "\"url\":\"");
-                    if (url_start) {
-                        url_start += 7; // Skip "url":"
-                        const char* url_end = strchr(url_start, '\"');
-                        if (url_end) {
-                            size_t url_len = url_end - url_start;
-                            char* url_buf = (char*)malloc(url_len + 1);
-                            if (url_buf) {
-                                memcpy(url_buf, url_start, url_len);
-                                url_buf[url_len] = '\0';
-                                url = url_buf;
-                            }
-                        }
-                    }
-
-                    // Create a buffer for the response
-                    char response_buf[1024];
-
-                    // Format the metadata JSON
-                    char metadata_json[256];
-                    snprintf(metadata_json, sizeof(metadata_json),
-                            "{\\\"content_length\\\":12,\\\"status_code\\\":200,\\\"success\\\":true}");
-
-                    // Format the complete response
-                    snprintf(response_buf, sizeof(response_buf),
-                            "{\"content\":["
-                            "{\"type\":\"json\",\"mimeType\":\"application/json\",\"text\":\"%s\"},"
-                            "{\"type\":\"text\",\"text\":\"Hello LLMs.\\n\",\"mimeType\":\"text/plain\"}"
-                            "],\"isError\":false}",
-                            metadata_json);
-
-                    *result = mcp_strdup(response_buf);
-
-                    // Free the URL buffer if allocated
-                    if (url) {
-                        free((void*)url);
-                    }
-                } else {
-                    // For other tools, return a generic response
-                    *result = mcp_strdup("{\"content\":[{\"type\":\"text\",\"text\":\"Tool result\",\"mimeType\":\"text/plain\"}],\"isError\":false}");
-                }
-
-                // Free the tool name buffer if allocated
-                if (tool_name && tool_name != method) {
-                    free((void*)tool_name);
-                }
-            } else {
-                // For other methods, return an empty result
-                *result = mcp_strdup("{}");
-            }
-
-            // Free the method buffer if allocated
-            if (method_start) {
-                free((void*)method);
-            }
-        } else {
-            // If method extraction failed, return an empty result
-            *result = mcp_strdup("{}");
-        }
-    } else {
+    if (status == 0 && response_data != NULL) {
         // We got a response from mcp_transport_receive
         // Parse the response JSON
         mcp_log_debug("HTTP transport: Received response data: %s", response_data);
@@ -431,7 +262,8 @@ int mcp_client_http_send_request(
         char* response_error_message = NULL;
         char* response_result = NULL;
 
-        int parse_result = mcp_json_parse_response(response_data, &response_id, &response_error_code, &response_error_message, &response_result);
+        int parse_result = mcp_json_parse_response(response_data, &response_id, &response_error_code,
+                                                   &response_error_message, &response_result);
 
         if (parse_result == 0) {
             // Check if the response ID matches the request ID
@@ -442,7 +274,8 @@ int mcp_client_http_send_request(
                 *result = response_result;
             } else {
                 // Response ID doesn't match request ID
-                mcp_log_error("HTTP transport: Response ID %llu doesn't match request ID %llu", (unsigned long long)response_id, (unsigned long long)request_id);
+                mcp_log_error("HTTP transport: Response ID %llu doesn't match request ID %llu",
+                             (unsigned long long)response_id, (unsigned long long)request_id);
                 *error_code = MCP_ERROR_INTERNAL_ERROR;
                 *error_message = mcp_strdup("Response ID doesn't match request ID");
                 free(response_error_message);
@@ -457,6 +290,11 @@ int mcp_client_http_send_request(
 
         // Free the response data
         free(response_data);
+    } else {
+        // No response received or error occurred
+        mcp_log_error("HTTP transport: Failed to receive response for request ID %llu", (unsigned long long)request_id);
+        *error_code = MCP_ERROR_TRANSPORT_ERROR;
+        *error_message = mcp_strdup("Failed to receive HTTP response");
     }
 
     return (*error_code == MCP_ERROR_NONE) ? 0 : -1;

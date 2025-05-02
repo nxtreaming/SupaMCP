@@ -78,11 +78,11 @@ int mcp_client_send_request(
 );
 
 /**
- * @brief Send a request using HTTP transport and process the response directly.
+ * @brief Send a request using HTTP transport and process the response.
  *
- * This function is specifically designed for HTTP transport, which uses a synchronous
- * request-response model. It sends the request and processes the response in the same
- * function call, without using the asynchronous callback mechanism used by other transports.
+ * For HTTP transport, we can use the same send_and_wait function as other transports.
+ * The HTTP transport will call the message callback directly from the send function,
+ * which will signal the condition variable and allow send_and_wait to return.
  */
 int mcp_client_http_send_request(
     mcp_client_t* client,

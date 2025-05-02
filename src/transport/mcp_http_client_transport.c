@@ -19,11 +19,6 @@
 #include <stdio.h>
 #include <time.h>
 
-// Global variable to store the most recent HTTP response
-// This is used to pass the response from http_client_transport_send to mcp_client_http_send_request
-static char* g_last_http_response = NULL;
-static mcp_mutex_t* g_http_response_mutex = NULL;
-
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -92,6 +87,10 @@ mcp_transport_t* mcp_transport_http_client_create_with_config(const mcp_http_cli
     // Initialize socket to invalid
     data->sse_socket = MCP_INVALID_SOCKET;
 
+    // Initialize response handling
+    data->last_response = NULL;
+    data->last_request_id = 0;
+
     // Copy configuration
     data->host = mcp_strdup(config->host);
     data->port = config->port;
@@ -110,7 +109,7 @@ mcp_transport_t* mcp_transport_http_client_create_with_config(const mcp_http_cli
         data->api_key = mcp_strdup(config->api_key);
     }
 
-    // Create mutex
+    // Create mutex (only used for SSE)
     data->mutex = mcp_mutex_create();
     if (data->mutex == NULL) {
         mcp_log_error("Failed to create mutex for HTTP client transport");
@@ -165,6 +164,12 @@ static int http_client_transport_destroy(mcp_transport_t* transport) {
     free(data->key_path);
     free(data->api_key);
 
+    // Clean up response handling
+    if (data->last_response) {
+        free(data->last_response);
+        data->last_response = NULL;
+    }
+
     // Destroy mutex
     if (data->mutex) {
         mcp_mutex_destroy(data->mutex);
@@ -175,19 +180,6 @@ static int http_client_transport_destroy(mcp_transport_t* transport) {
 
     // Free transport structure
     free(transport);
-
-    // Clean up global HTTP response if this is the last transport instance
-    if (g_http_response_mutex != NULL) {
-        mcp_mutex_lock(g_http_response_mutex);
-        if (g_last_http_response != NULL) {
-            free(g_last_http_response);
-            g_last_http_response = NULL;
-        }
-        mcp_mutex_unlock(g_http_response_mutex);
-
-        // Note: We don't destroy the mutex here because other transport instances might still be using it
-        // In a real application, you would want to track the number of instances and destroy the mutex when it reaches zero
-    }
 
     mcp_log_info("HTTP client transport destroyed");
 
@@ -235,16 +227,6 @@ static int http_client_transport_start(mcp_transport_t* transport,
         mcp_log_error("Failed to initialize socket library");
         data->running = false;
         return -1;
-    }
-
-    // Initialize global HTTP response mutex if not already initialized
-    if (g_http_response_mutex == NULL) {
-        g_http_response_mutex = mcp_mutex_create();
-        if (g_http_response_mutex == NULL) {
-            mcp_log_error("Failed to create HTTP response mutex");
-            data->running = false;
-            return -1;
-        }
     }
 
     // Start event thread for SSE
@@ -427,31 +409,25 @@ static int http_client_transport_send(mcp_transport_t* transport, const void* da
         // Log the cleaned response data for debugging
         mcp_log_debug("HTTP client transport received response: %s", clean_json);
 
-        // DO NOT call the message callback with the response
-        // HTTP transport uses a synchronous model, so responses are handled directly
-        // in the mcp_client_http_send_request function, not through the async callback
-        mcp_log_debug("HTTP transport: Not calling message callback, using synchronous processing instead");
+        // For HTTP transport, we don't call the message callback directly
+        // Instead, we store the response in the transport data structure
+        // and let the receive function return it to the caller
 
-        // Store the response in the global variable for mcp_client_http_send_request to use
-        if (g_http_response_mutex != NULL) {
-            mcp_mutex_lock(g_http_response_mutex);
-
-            // Free previous response if any
-            if (g_last_http_response != NULL) {
-                free(g_last_http_response);
-                g_last_http_response = NULL;
-            }
-
-            // Store the new response
-            g_last_http_response = mcp_strdup(clean_json);
-            if (g_last_http_response == NULL) {
-                mcp_log_error("Failed to store HTTP response");
-            } else {
-                mcp_log_debug("Stored HTTP response for request ID %llu", (unsigned long long)request_id);
-            }
-
-            mcp_mutex_unlock(g_http_response_mutex);
+        // Free previous response if any
+        if (data_struct->last_response != NULL) {
+            free(data_struct->last_response);
+            data_struct->last_response = NULL;
         }
+
+        // Store the new response
+        data_struct->last_response = mcp_strdup(clean_json);
+        data_struct->last_request_id = request_id;
+
+        mcp_log_debug("HTTP transport: Stored response for request ID %llu", (unsigned long long)request_id);
+
+        // For HTTP transport, we don't call the message callback
+        // Instead, we store the response in the transport data structure
+        // and let the client retrieve it directly through the receive function
 
         // Free the JSON data
         free(clean_json);
@@ -530,35 +506,11 @@ static int http_client_transport_sendv(mcp_transport_t* transport, const mcp_buf
 }
 
 /**
- * @brief Gets the most recent HTTP response.
- *
- * This function returns a copy of the most recent HTTP response received by any HTTP client transport instance.
- * The caller is responsible for freeing the returned string.
- *
- * @return A copy of the most recent HTTP response, or NULL if no response has been received.
- */
-char* http_client_transport_get_last_response(void) {
-    char* response_copy = NULL;
-
-    if (g_http_response_mutex != NULL) {
-        mcp_mutex_lock(g_http_response_mutex);
-
-        if (g_last_http_response != NULL) {
-            response_copy = mcp_strdup(g_last_http_response);
-        }
-
-        mcp_mutex_unlock(g_http_response_mutex);
-    }
-
-    return response_copy;
-}
-
-/**
  * @brief Receives data from an HTTP client transport.
  *
- * This function is not used in the HTTP client transport, as responses are handled
- * directly in the send function. This is because HTTP is a request-response protocol,
- * and we get the response immediately after sending the request.
+ * This function retrieves the response stored by the send function.
+ * For HTTP transport, the response is already available when this function is called,
+ * because HTTP is a synchronous request-response protocol.
  */
 static int http_client_transport_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms) {
     (void)timeout_ms; // Unused parameter
@@ -583,10 +535,24 @@ static int http_client_transport_receive(mcp_transport_t* transport, char** data
     *data = NULL;
     *size = 0;
 
-    // HTTP client transport doesn't support synchronous receive
-    // Responses are handled directly in the send function
-    mcp_log_debug("HTTP client transport doesn't support synchronous receive");
+    // Get the stored response
+    if (data_struct->last_response != NULL) {
+        // Make a copy of the response
+        *data = mcp_strdup(data_struct->last_response);
+        if (*data != NULL) {
+            *size = strlen(*data);
+            mcp_log_debug("HTTP client transport receive: Retrieved stored response (%zu bytes)", *size);
 
+            // Free the stored response to avoid memory leaks
+            free(data_struct->last_response);
+            data_struct->last_response = NULL;
+            data_struct->last_request_id = 0;
+
+            return 0;
+        }
+    }
+
+    mcp_log_debug("HTTP client transport receive: No stored response available");
     return -1;
 }
 

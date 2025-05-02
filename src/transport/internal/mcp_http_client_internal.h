@@ -23,7 +23,7 @@ typedef struct http_client_transport_data {
 
     volatile bool running;       // Whether the transport is running
     mcp_thread_t event_thread;   // Thread for SSE events
-    mcp_mutex_t* mutex;          // Mutex for thread safety
+    mcp_mutex_t* mutex;          // Mutex for thread safety (only used for SSE events)
 
     // SSE event handling
     char* last_event_id;         // Last event ID received
@@ -33,17 +33,11 @@ typedef struct http_client_transport_data {
     mcp_transport_message_callback_t message_callback;
     void* callback_user_data;
     mcp_transport_error_callback_t error_callback;
-} http_client_transport_data_t;
 
-/**
- * @brief Gets the most recent HTTP response.
- *
- * This function returns a copy of the most recent HTTP response received by any HTTP client transport instance.
- * The caller is responsible for freeing the returned string.
- *
- * @return A copy of the most recent HTTP response, or NULL if no response has been received.
- */
-char* http_client_transport_get_last_response(void);
+    // Response handling
+    char* last_response;         // Last HTTP response received
+    uint64_t last_request_id;    // ID of the last request sent
+} http_client_transport_data_t;
 
 #ifdef __cplusplus
 }
