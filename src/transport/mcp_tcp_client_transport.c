@@ -42,13 +42,14 @@ static int tcp_client_transport_start(
     data->sock = mcp_socket_connect(data->host, data->port, 5000);
     if (data->sock == MCP_INVALID_SOCKET) {
         mcp_log_error("Failed to connect to server %s:%u", data->host, data->port);
-
         // If reconnection is enabled, start reconnection process
         if (data->reconnect_enabled) {
             mcp_log_info("Starting reconnection process");
             start_reconnection_process(transport);
-            data->running = true; // Mark as running even though not connected yet
-            return 0; // Return success, reconnection will happen in background
+            // Mark as running even though not connected yet
+            data->running = true;
+            // Return success, reconnection will happen in background
+            return 0;
         }
 
         // Otherwise, fail
@@ -137,7 +138,6 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* dat
 
     if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) {
         mcp_log_error("Client transport not running or connected for send.");
-
         // If reconnection is enabled and we're not already reconnecting, start reconnection
         if (data->reconnect_enabled && data->connection_state != MCP_CONNECTION_STATE_RECONNECTING) {
             mcp_log_info("Starting reconnection process before send");
@@ -181,7 +181,7 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
         return -1;
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
-    if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) { // Use new invalid socket macro
+    if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) {
         mcp_log_error("Client transport not running or connected for sendv. running=%d, connected=%d, sock=%d",
                      data->running, data->connected, (int)data->sock);
 

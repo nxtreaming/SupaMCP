@@ -18,7 +18,8 @@
  *       and potentially more granular permission management.
  */
 int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char* credentials, mcp_auth_context_t** context_out) {
-    if (!context_out || !server) return -1; // Added server check
+    if (!context_out || !server)
+        return -1;
     *context_out = NULL; // Ensure output is NULL on failure
 
     mcp_log_debug("mcp_auth_verify called. Type: %d", auth_type);
@@ -27,7 +28,8 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
     if (auth_type == MCP_AUTH_NONE && server->config.api_key == NULL) {
         // Only allow AUTH_NONE if no API key is configured on the server
         mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
-        if (!context) return -1;
+        if (!context)
+            return -1;
         context->type = MCP_AUTH_NONE;
         context->identifier = mcp_strdup("anonymous");
         context->allowed_resources = (char**)malloc(sizeof(char*));
@@ -53,7 +55,7 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
         }
         *context_out = context;
         mcp_log_debug("Authenticated as 'anonymous' (MCP_AUTH_NONE allowed).");
-        return 0; // Success for AUTH_NONE when no server key is set
+        return 0;
     }
 
     // --- API Key Authentication ---
@@ -61,7 +63,8 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
         // Check if server has an API key configured
         if (server->config.api_key == NULL || strlen(server->config.api_key) == 0) {
             mcp_log_warn("API Key authentication requested, but no API key configured on server.");
-            return -1; // Fail if key requested but none set on server
+            // Fail if key requested but none set on server
+            return -1;
         }
         // Check if provided credentials match the configured key
         if (credentials && strcmp(credentials, server->config.api_key) == 0) {
@@ -69,8 +72,10 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
             mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
             if (!context) { mcp_log_error("Failed to allocate auth context."); return -1; }
             context->type = MCP_AUTH_API_KEY;
-            context->identifier = mcp_strdup("authenticated_client"); // Generic identifier
-            context->expiry = 0; // Non-expiring
+            // Generic identifier
+            context->identifier = mcp_strdup("authenticated_client");
+            // Non-expiring
+            context->expiry = 0;
 
             // Grant full permissions ('*')
             context->allowed_resources_count = 1;
@@ -85,7 +90,8 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
 
             // Check allocations
             if (!context->identifier || !context->allowed_resources[0] || !context->allowed_tools[0]) {
-                mcp_auth_context_free(context); // Cleanup partial allocation
+                // Cleanup partial allocation
+                mcp_auth_context_free(context);
                 return -1;
             }
 
@@ -108,14 +114,14 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
  * @brief Checks resource access permission using simple wildcard matching.
  */
 bool mcp_auth_check_resource_access(const mcp_auth_context_t* context, const char* resource_uri) {
-    if (!context || !resource_uri) {
-        return false; // Cannot check access without context or URI
-    }
+    if (!context || !resource_uri)
+        return false;
 
     // Check expiry if applicable
     if (context->expiry != 0 && time(NULL) > context->expiry) {
         mcp_log_warn("Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
-        return false; // Context expired
+        // Context expired
+        return false;
     }
 
     // Check against allowed patterns using the utility function
@@ -123,27 +129,29 @@ bool mcp_auth_check_resource_access(const mcp_auth_context_t* context, const cha
         if (context->allowed_resources[i] && mcp_wildcard_match(context->allowed_resources[i], resource_uri)) {
             mcp_log_debug("Access granted for '%s' to resource '%s' (match: %s)",
                     context->identifier ? context->identifier : "unknown", resource_uri, context->allowed_resources[i]);
-            return true; // Found a matching allowed pattern
+            // Found a matching allowed pattern
+            return true;
         }
     }
 
     mcp_log_info("Access denied for '%s' to resource '%s'. No matching rule found.",
             context->identifier ? context->identifier : "unknown", resource_uri);
-    return false; // No matching pattern found
+    // No matching pattern found
+    return false;
 }
 
 /**
  * @brief Checks tool access permission using simple wildcard matching.
  */
 bool mcp_auth_check_tool_access(const mcp_auth_context_t* context, const char* tool_name) {
-    if (!context || !tool_name) {
-        return false; // Cannot check access without context or tool name
-    }
+    if (!context || !tool_name)
+        return false;
 
     // Check expiry if applicable
     if (context->expiry != 0 && time(NULL) > context->expiry) {
         mcp_log_warn("Auth context for '%s' expired.", context->identifier ? context->identifier : "unknown");
-        return false; // Context expired
+        // Context expired
+        return false;
     }
 
     // Check against allowed patterns using the utility function
@@ -151,22 +159,23 @@ bool mcp_auth_check_tool_access(const mcp_auth_context_t* context, const char* t
         if (context->allowed_tools[i] && mcp_wildcard_match(context->allowed_tools[i], tool_name)) {
             mcp_log_debug("Access granted for '%s' to tool '%s' (match: %s)",
                     context->identifier ? context->identifier : "unknown", tool_name, context->allowed_tools[i]);
-            return true; // Found a matching allowed pattern
+            // Found a matching allowed pattern
+            return true;
         }
     }
 
     mcp_log_info("Access denied for '%s' to tool '%s'. No matching rule found.",
             context->identifier ? context->identifier : "unknown", tool_name);
-    return false; // No matching pattern found
+    // No matching pattern found
+    return false;
 }
 
 /**
  * @brief Frees the authentication context.
  */
 void mcp_auth_context_free(mcp_auth_context_t* context) {
-    if (!context) {
+    if (!context)
         return;
-    }
 
     // Free identifier string
     free(context->identifier);

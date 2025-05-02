@@ -41,7 +41,8 @@ struct mcp_resource_cache {
 // Free function for cache entries (used by hash table)
 static void free_cache_entry(void* value) {
     mcp_cache_entry_t* entry = (mcp_cache_entry_t*)value;
-    if (!entry) return;
+    if (!entry)
+        return;
 
     // Free the key duplicate used for LRU list
     free(entry->key);
@@ -62,7 +63,8 @@ mcp_resource_cache_t* mcp_cache_create(size_t capacity, time_t default_ttl_secon
     }
 
     mcp_resource_cache_t* cache = (mcp_resource_cache_t*)malloc(sizeof(mcp_resource_cache_t));
-    if (!cache) return NULL;
+    if (!cache)
+        return NULL;
 
     // Initialize read-write lock
     cache->rwlock = mcp_rwlock_create();
@@ -106,7 +108,8 @@ mcp_resource_cache_t* mcp_cache_create(size_t capacity, time_t default_ttl_secon
 
 // Helper function to properly clean up a cache entry
 static void cleanup_cache_entry(mcp_resource_cache_t* cache, mcp_cache_entry_t* entry) {
-    if (!cache || !entry) return;
+    if (!cache || !entry)
+        return;
 
     if (entry->content) {
         for (size_t i = 0; i < entry->content_count; ++i) {
@@ -132,7 +135,8 @@ static void cleanup_cache_entry(mcp_resource_cache_t* cache, mcp_cache_entry_t* 
 
 // Helper function to clean up all entries in the cache
 static void cleanup_all_cache_entries(mcp_resource_cache_t* cache) {
-    if (!cache || !cache->table) return;
+    if (!cache || !cache->table)
+        return;
 
     // Iterate through all buckets
     for (size_t i = 0; i < cache->table->capacity; i++) {
@@ -150,7 +154,8 @@ static void cleanup_all_cache_entries(mcp_resource_cache_t* cache) {
 }
 
 void mcp_cache_destroy(mcp_resource_cache_t* cache) {
-    if (!cache) return;
+    if (!cache)
+        return;
 
     // Clean up all entries first
     cleanup_all_cache_entries(cache);
@@ -172,7 +177,8 @@ void mcp_cache_destroy(mcp_resource_cache_t* cache) {
 
 // Helper function to update LRU position
 static void update_lru_position(mcp_resource_cache_t* cache, mcp_cache_entry_t* entry) {
-    if (!cache || !entry || !entry->lru_node) return;
+    if (!cache || !entry || !entry->lru_node)
+        return;
     
     // Move the entry to the front of the LRU list (most recently used)
     mcp_list_move_to_front(cache->lru_list, entry->lru_node);
@@ -180,18 +186,22 @@ static void update_lru_position(mcp_resource_cache_t* cache, mcp_cache_entry_t* 
 
 // Helper function to evict the least recently used entry
 static bool evict_lru_entry(mcp_resource_cache_t* cache) {
-    if (!cache || !cache->lru_list || mcp_list_is_empty(cache->lru_list)) return false;
+    if (!cache || !cache->lru_list || mcp_list_is_empty(cache->lru_list))
+        return false;
     
     // Get the least recently used entry (from the back of the list)
     mcp_list_node_t* lru_node = cache->lru_list->tail;
-    if (!lru_node) return false;
+    if (!lru_node)
+        return false;
     
     mcp_cache_entry_t* entry = (mcp_cache_entry_t*)lru_node->data;
-    if (!entry) return false;
+    if (!entry)
+        return false;
     
     // Get the key from the entry
     const char* key_to_evict = entry->key;
-    if (!key_to_evict) return false;
+    if (!key_to_evict)
+        return false;
     
     mcp_log_debug("Evicting LRU cache entry with key '%s'", key_to_evict);
     
@@ -203,7 +213,8 @@ static bool evict_lru_entry(mcp_resource_cache_t* cache) {
 }
 
 int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_t* pool, mcp_content_item_t*** content, size_t* content_count) {
-    if (!cache || !uri || !pool || !content || !content_count) return -1;
+    if (!cache || !uri || !pool || !content || !content_count)
+        return -1;
 
     // Store the pool for future use
     cache->pool = pool;
@@ -247,14 +258,16 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
                 }
 
                 if (!copy_error) {
-                    *content = content_copy_ptrs; // Return the array of pointers to pooled items
+                    // Return the array of pointers to pooled items
+                    *content = content_copy_ptrs;
                     *content_count = entry->content_count;
-                    entry->last_accessed = now; // Update last accessed time
+                    // Update last accessed time
+                    entry->last_accessed = now;
                     
                     // Update LRU position (move to front of list)
                     update_lru_position(cache, entry);
                     
-                    result = 0; // Success
+                    result = 0;
                 } else {
                     // Release partially acquired/copied items back to pool on error
                     for (size_t i = 0; i < copied_count; ++i) {
@@ -268,7 +281,7 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
                              mcp_object_pool_release(pool, content_copy_ptrs[i]);
                         }
                     }
-                    free(content_copy_ptrs); // Free the array of pointers
+                    free(content_copy_ptrs);
                     // result remains -1 (error)
                 }
             }
@@ -291,7 +304,8 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
 }
 
 int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_t* pool, mcp_content_item_t** content, size_t content_count, int ttl_seconds) {
-    if (!cache || !uri || !pool || !content || content_count == 0) return -1;
+    if (!cache || !uri || !pool || !content || content_count == 0)
+        return -1;
 
     // If capacity is zero, don't store anything but return success
     if (cache->capacity == 0) {
@@ -332,7 +346,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     if (!entry) {
         mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
-        return -1; // Allocation failure
+        return -1;
     }
 
     // Duplicate the key for the LRU list
@@ -341,7 +355,7 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
         free(entry);
         mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
-        return -1; // Allocation failure
+        return -1;
     }
 
     // Allocate space for the array of content item POINTERS
@@ -351,16 +365,20 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
         free(entry);
         mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
-        return -1; // Allocation failure
+        return -1;
     }
 
     // Initialize entry
-    entry->content_count = 0; // Will be incremented as items are copied
+    // Will be incremented as items are copied
+    entry->content_count = 0;
     entry->last_accessed = time(NULL);
     time_t effective_ttl = (ttl_seconds == 0) ? cache->default_ttl_seconds : (time_t)ttl_seconds;
-    entry->expiry_time = (effective_ttl < 0) ? 0 : entry->last_accessed + effective_ttl; // 0 means never expires
-    entry->is_pooled = true; // Mark as pooled since we're using the pool
-    entry->lru_node = NULL; // Will be set after adding to LRU list
+    // 0 means never expires
+    entry->expiry_time = (effective_ttl < 0) ? 0 : entry->last_accessed + effective_ttl;
+    // Mark as pooled since we're using the pool
+    entry->is_pooled = true;
+    // Will be set after adding to LRU list
+    entry->lru_node = NULL;
 
     // Acquire pooled items and copy content into them
     bool copy_error = false;
@@ -387,18 +405,20 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
                      mcp_object_pool_release(pool, entry->content[j]);
                  }
             }
-            break; // Exit loop on acquisition/copy failure
+            // Exit loop on acquisition/copy failure
+            break;
         }
-        entry->content_count++; // Increment count only after successful copy
+        // Increment count only after successful copy
+        entry->content_count++;
     }
 
     if (copy_error) {
         free(entry->key);
-        free(entry->content); // Free the array of pointers
-        free(entry);          // Free the entry struct
+        free(entry->content);
+        free(entry);
         mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
-        return -1; // Allocation failure during content copy
+        return -1;
     }
 
     // Add entry to LRU list (at the front, as it's most recently used)
@@ -442,8 +462,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
             }
         }
         free(entry->key);
-        free(entry->content); // Free the array of pointers
-        free(entry);          // Free the entry struct
+        free(entry->content);
+        free(entry);
     }
 
     // Release write lock
@@ -453,7 +473,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
 }
 
 int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
-    if (!cache || !uri) return -1;
+    if (!cache || !uri)
+        return -1;
 
     // Acquire write lock - exclusive access for invalidation
     mcp_rwlock_write_lock(cache->rwlock);
@@ -478,7 +499,7 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
 
     // Release write lock
     mcp_rwlock_write_unlock(cache->rwlock);
-    return -1; // Entry not found
+    return -1;
 }
 
 // Create a struct to hold all the data needed for the callback
@@ -503,7 +524,8 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
         if (*(data->keys_count) >= *(data->keys_capacity)) {
             // Resize the keys array if needed
             size_t new_capacity = *(data->keys_capacity) * 2;
-            if (new_capacity == 0) new_capacity = 16; // Handle initial zero capacity
+            if (new_capacity == 0)
+                new_capacity = 16; // Handle initial zero capacity
             char** new_keys = (char**)realloc(data->keys_to_remove, new_capacity * sizeof(char*));
             if (!new_keys) {
                 mcp_log_error("Failed to realloc keys_to_remove in prune_expired");
@@ -537,7 +559,8 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
 }
 
 size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
-    if (!cache) return 0;
+    if (!cache)
+        return 0;
 
     // Acquire write lock - exclusive access for pruning
     mcp_rwlock_write_lock(cache->rwlock);
@@ -549,7 +572,7 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     char** keys_to_remove = NULL;
     mcp_cache_entry_t** entries_to_cleanup = NULL;
     size_t keys_count = 0;
-    size_t keys_capacity = 16; // Initial capacity
+    size_t keys_capacity = 16;
 
     keys_to_remove = (char**)malloc(keys_capacity * sizeof(char*));
     if (!keys_to_remove) {

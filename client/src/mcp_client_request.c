@@ -29,7 +29,6 @@
 // Include the header file for the function declaration
 extern char* http_client_transport_get_last_response(void);
 
-
 /**
  * @brief Internal function to send a request and wait for a response.
  *
@@ -45,13 +44,12 @@ int mcp_client_send_and_wait(
     mcp_error_code_t* error_code,
     char** error_message
 ) {
-    if (client == NULL || request_json == NULL || result == NULL || error_code == NULL || error_message == NULL) {
+    if (client == NULL || request_json == NULL || result == NULL ||
+        error_code == NULL || error_message == NULL)
         return -1;
-    }
 
-    if (client->transport == NULL) {
+    if (client->transport == NULL)
         return -1;
-    }
 
     // Initialize result and error message
     *result = NULL;
@@ -81,7 +79,7 @@ int mcp_client_send_and_wait(
     // --- Asynchronous Receive Logic ---
     // 1. Prepare pending request structure
     pending_request_t pending_req;
-    pending_req.id = request_id; // Use the provided ID
+    pending_req.id = request_id;
     pending_req.status = PENDING_REQUEST_WAITING;
     pending_req.result_ptr = result;
     pending_req.error_code_ptr = error_code;
@@ -97,22 +95,19 @@ int mcp_client_send_and_wait(
     int add_status = mcp_client_add_pending_request_entry(client, pending_req.id, &pending_req);
     if (add_status != 0) {
         mcp_mutex_unlock(client->pending_requests_mutex);
-        mcp_cond_destroy(pending_req.cv); // Destroy the CV we initialized if add failed
+        mcp_cond_destroy(pending_req.cv);
         mcp_log_error("Failed to add request %llu to hash table.\n", (unsigned long long)pending_req.id);
-        return -1; // Failed to add to hash table
+        return -1;
     }
     mcp_mutex_unlock(client->pending_requests_mutex);
 
     // 3. Wait for response or timeout
     mcp_log_debug("Waiting for response to request ID %llu", (unsigned long long)pending_req.id);
-    int wait_result = 0; // 0=signaled, 1=timeout (Windows), ETIMEDOUT=timeout (POSIX), -1=error
+    // 0=signaled, 1=timeout (Windows), ETIMEDOUT=timeout (POSIX), -1=error
+    int wait_result = 0;
+
     mcp_mutex_lock(client->pending_requests_mutex);
     pending_request_entry_t* req_entry_wrapper = mcp_client_find_pending_request_entry(client, pending_req.id, false);
-
-    if (!req_entry_wrapper) {
-        mcp_log_error("Failed to find pending request entry for ID %llu", (unsigned long long)pending_req.id);
-    }
-
     if (req_entry_wrapper && req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
         if (client->config.request_timeout_ms > 0) {
             wait_result = mcp_cond_timedwait(req_entry_wrapper->request.cv, client->pending_requests_mutex, client->config.request_timeout_ms);
@@ -129,7 +124,7 @@ int mcp_client_send_and_wait(
             mcp_log_error("mcp_cond_wait/timedwait failed with code: %d (%s)", wait_result, strerror(wait_result));
             // Keep status as WAITING or whatever callback set if error occurred during wait
         }
-#else // Windows or other systems where ETIMEDOUT isn't the timeout indicator
+#else
         // Assume the abstraction returns a specific value (e.g., 1) for timeout, 0 for success, -1 for error
         if (wait_result == 1) { // Assuming 1 indicates timeout from the abstraction
             req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
@@ -142,7 +137,7 @@ int mcp_client_send_and_wait(
     // else: Request was processed/removed before we could wait, or send failed initially.
 
     // Determine final outcome based on request status
-    int final_status = -1; // Default to error
+    int final_status = -1;
     if (req_entry_wrapper) {
         mcp_log_debug("Request ID %llu status: %d", (unsigned long long)pending_req.id, req_entry_wrapper->request.status);
         if(req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) {
@@ -155,6 +150,7 @@ int mcp_client_send_and_wait(
             final_status = -1; // Error (set by callback or wait error)
         }
     } else {
+        mcp_log_error("Failed to find pending request entry for ID %llu", (unsigned long long)pending_req.id);
         // Entry removed before check. Rely on output params set by callback.
         if (*error_code != MCP_ERROR_NONE)
             final_status = -1;
@@ -168,17 +164,20 @@ int mcp_client_send_and_wait(
 
     // Remove entry from hash table after waiting/timeout/error
     if (req_entry_wrapper) {
-        mcp_client_remove_pending_request_entry(client, pending_req.id); // CV destroyed inside remove
+        // CV destroyed inside remove
+        mcp_client_remove_pending_request_entry(client, pending_req.id);
     }
     mcp_mutex_unlock(client->pending_requests_mutex);
 
     // 4. Return status based on final outcome
-    if (final_status == -2) { // Timeout case
+    if (final_status == -2) {
+        // Timeout case
         mcp_log_error("Request %llu timed out.\n", (unsigned long long)pending_req.id);
         *error_code = MCP_ERROR_TRANSPORT_ERROR;
         *error_message = mcp_strdup("Request timed out");
         return -1;
-    } else if (final_status != 0) { // Other error
+    } else if (final_status != 0) {
+        // Other error
          mcp_log_error("Error processing response for request %llu.\n", (unsigned long long)pending_req.id);
          if (*error_code != MCP_ERROR_NONE && *error_message == NULL) {
              *error_message = mcp_strdup("Unknown internal error occurred");
@@ -189,7 +188,6 @@ int mcp_client_send_and_wait(
          return -1;
     }
 
-    // Success (final_status == 0)
     return 0;
 }
 
@@ -216,9 +214,9 @@ int mcp_client_http_send_request(
     mcp_error_code_t* error_code,
     char** error_message
 ) {
-    if (client == NULL || request_json == NULL || result == NULL || error_code == NULL || error_message == NULL) {
+    if (client == NULL || request_json == NULL || result == NULL ||
+        error_code == NULL || error_message == NULL)
         return -1;
-    }
 
     // Initialize output parameters
     *result = NULL;
@@ -260,7 +258,6 @@ int mcp_client_http_send_request(
 
     // If mcp_transport_receive returns -1, it means the HTTP transport doesn't support synchronous receive
     // In this case, we need to use the actual response data from the HTTP client transport
-
     if (status == -1 || response_data == NULL) {
         // HTTP transport doesn't support synchronous receive, or no response was received
         // We need to access the response data from the HTTP client transport
@@ -476,9 +473,9 @@ int mcp_client_send_request(
     mcp_error_code_t* error_code,
     char** error_message
 ) {
-    if (client == NULL || method == NULL || result == NULL || error_code == NULL || error_message == NULL) {
+    if (client == NULL || method == NULL || result == NULL ||
+        error_code == NULL || error_message == NULL)
         return -1;
-    }
 
     // Generate next request ID
     mcp_mutex_lock(client->pending_requests_mutex);
@@ -492,7 +489,6 @@ int mcp_client_send_request(
     // NOTE: we can use mcp_json_format_request_direct() here if we want to simplify
     // request_json = mcp_json_format_request_direct(current_id, method, params_to_use);
     request_json = mcp_json_format_request(current_id, method, params_to_use);
-
     if (request_json == NULL) {
         mcp_log_error("Failed to format request JSON for method '%s'", method);
         return -1;

@@ -10,10 +10,12 @@
 static mcp_arena_block_t* create_block(size_t size) {
     // Use thread cache for the block structure
     mcp_arena_block_t* block = (mcp_arena_block_t*)mcp_thread_cache_alloc(sizeof(mcp_arena_block_t));
+
     if (!block) {
         // Fall back to malloc if thread cache allocation fails
         block = (mcp_arena_block_t*)malloc(sizeof(mcp_arena_block_t));
-        if (!block) return NULL;
+        if (!block)
+            return NULL;
     }
 
     // Use thread cache for the data buffer if it fits in one of our pools
@@ -54,7 +56,8 @@ static void destroy_block_chain(mcp_arena_block_t* block) {
 }
 
 void mcp_arena_init(mcp_arena_t* arena, size_t initial_size) {
-    if (!arena) return;
+    if (!arena)
+        return;
 
     // Use default size if 0 is passed
     if (initial_size == 0) {
@@ -70,7 +73,8 @@ void mcp_arena_init(mcp_arena_t* arena, size_t initial_size) {
 }
 
 void mcp_arena_cleanup(mcp_arena_t* arena) {
-    if (!arena) return;
+    if (!arena)
+        return;
     destroy_block_chain(arena->current_block);
     arena->current_block = NULL;
     // Reset statistics on cleanup
@@ -89,7 +93,8 @@ void* mcp_arena_alloc(mcp_arena_t* arena, size_t size) {
                 return NULL;
             }
             arena = mcp_arena_get_current();
-            if (!arena) return NULL;
+            if (!arena)
+                return NULL;
         }
     }
 
@@ -100,7 +105,8 @@ void* mcp_arena_alloc(mcp_arena_t* arena, size_t size) {
     if (!arena->current_block || arena->current_block->used + aligned_size > arena->current_block->size) {
         size_t block_size = aligned_size > arena->default_block_size ? aligned_size : arena->default_block_size;
         mcp_arena_block_t* new_block = create_block(block_size);
-        if (!new_block) return NULL;
+        if (!new_block)
+            return NULL;
 
         // Link new block at head of chain
         new_block->next = arena->current_block;
@@ -121,7 +127,9 @@ void* mcp_arena_alloc(mcp_arena_t* arena, size_t size) {
 }
 
 void mcp_arena_reset(mcp_arena_t* arena) {
-    if (!arena) return;
+    if (!arena)
+        return;
+
     mcp_arena_block_t* block = arena->current_block;
     while (block) {
         block->used = 0;
@@ -136,7 +144,8 @@ void mcp_arena_destroy(mcp_arena_t* arena) {
 }
 
 int mcp_arena_get_stats(mcp_arena_t* arena, size_t* out_total_allocated, size_t* out_total_block_size, size_t* out_block_count) {
-    if (!arena) return -1;
+    if (!arena)
+        return -1;
 
     if (out_total_allocated) {
         *out_total_allocated = arena->total_allocated;

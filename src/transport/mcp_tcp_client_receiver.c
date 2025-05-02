@@ -78,18 +78,8 @@ void* tcp_client_receive_thread_func(void* arg) {
     // 3. Convert to network byte order (Big-Endian)
     const uint32_t length_network_order = htonl(content_length);
 
-    // 4. Detailed logging
-    mcp_log_debug("Ping message content (%u bytes): '%s'", content_length, ping_content);
-    mcp_log_debug("Preparing message with length prefix");
-    mcp_log_debug("Length prefix: %02X %02X %02X %02X",
-                (unsigned char)((char*)&length_network_order)[0],
-                (unsigned char)((char*)&length_network_order)[1],
-                (unsigned char)((char*)&length_network_order)[2],
-                (unsigned char)((char*)&length_network_order)[3]);
-
-    // 5. Send message using vectored I/O to avoid creating a temporary buffer
+    // 4. Send message using vectored I/O to avoid creating a temporary buffer
     if (data->connected) {
-        // Prepare buffers for vectored send
         mcp_iovec_t iov[2];
         int iovcnt = 0;
 
@@ -100,7 +90,7 @@ void* tcp_client_receive_thread_func(void* arg) {
         iov[iovcnt].buf = (char*)ping_content;
         iov[iovcnt].len = (ULONG)content_length;
         iovcnt++;
-#else // POSIX
+#else
         iov[iovcnt].iov_base = (char*)&length_network_order;
         iov[iovcnt].iov_len = sizeof(length_network_order);
         iovcnt++;
@@ -111,17 +101,16 @@ void* tcp_client_receive_thread_func(void* arg) {
 
         // Send using the socket utility function
         int send_status = mcp_socket_send_vectors(data->sock, iov, iovcnt, NULL);
-
         if (send_status != 0) {
             mcp_log_error("Failed to send ping message (status: %d)", send_status);
-            mcp_arena_destroy_current_thread(); // Clean up arena before exiting
+            mcp_arena_destroy_current_thread();
             return NULL;
         }
 
         mcp_log_info("Ping message sent successfully");
     } else {
         mcp_log_error("Cannot send ping, connection already closed");
-        mcp_arena_destroy_current_thread(); // Clean up arena before exiting
+        mcp_arena_destroy_current_thread();
         return NULL;
     }
 
@@ -170,7 +159,6 @@ receive_loop:
         // --- 2. Process received message ---
         // message_buf is allocated by mcp_framing_recv_message and includes null terminator
         mcp_log_debug("Received message from server (%u bytes): '%s'", message_length_host, message_buf);
-
         if (transport->message_callback != NULL) {
             mcp_log_debug("Calling client message callback...");
             int callback_error_code = 0;
@@ -184,8 +172,8 @@ receive_loop:
             mcp_log_debug("Client message callback returned: error_code=%d, response=%s",
                          callback_error_code,
                          unused_response ? "non-NULL" : "NULL");
-
-            free(unused_response); // Client doesn't need this response
+            // Client doesn't need this response
+            free(unused_response);
 
             if (callback_error_code != 0) {
                 mcp_log_warn("Client message callback error: %d", callback_error_code);

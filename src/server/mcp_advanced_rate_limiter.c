@@ -173,7 +173,8 @@ static unsigned long hash_key(const char* str) {
  * @brief Frees a client entry and its associated data.
  */
 static void free_client_entry(client_entry_t* entry) {
-    if (!entry) return;
+    if (!entry)
+        return;
 
     // Free the key string
     free(entry->key);
@@ -190,7 +191,8 @@ static void free_client_entry(client_entry_t* entry) {
  * @brief Frees a rule entry and its associated data.
  */
 static void free_rule_entry(rule_entry_t* entry) {
-    if (!entry) return;
+    if (!entry)
+        return;
 
     // Free the key pattern string
     free(entry->rule.key_pattern);
@@ -204,7 +206,8 @@ static void free_rule_entry(rule_entry_t* entry) {
  * @brief Cleans up algorithm-specific data in a client entry.
  */
 static void cleanup_algorithm_data(client_entry_t* entry) {
-    if (!entry) return;
+    if (!entry)
+        return;
 
     // Clean up based on algorithm type
     switch (entry->algorithm) {
@@ -226,7 +229,8 @@ static void cleanup_algorithm_data(client_entry_t* entry) {
  * @brief Initializes algorithm-specific data in a client entry.
  */
 static bool initialize_algorithm_data(client_entry_t* entry, const mcp_rate_limit_rule_t* rule) {
-    if (!entry || !rule) return false;
+    if (!entry || !rule)
+        return false;
 
     // Store the algorithm type
     entry->algorithm = rule->algorithm;
@@ -281,10 +285,12 @@ static bool initialize_algorithm_data(client_entry_t* entry, const mcp_rate_limi
  * - Contains match with * at both ends (e.g., "*admin*")
  */
 static bool key_matches_pattern(const char* key, const char* pattern) {
-    if (!key || !pattern) return false;
+    if (!key || !pattern)
+        return false;
 
     // Exact match
-    if (strcmp(pattern, key) == 0) return true;
+    if (strcmp(pattern, key) == 0)
+        return true;
 
     size_t pattern_len = strlen(pattern);
     size_t key_len = strlen(key);
@@ -308,7 +314,8 @@ static bool key_matches_pattern(const char* key, const char* pattern) {
     if (pattern_len > 2 && pattern[0] == '*' && pattern[pattern_len - 1] == '*') {
         // Extract the substring to search for
         char* substring = (char*)malloc(pattern_len - 1);
-        if (!substring) return false;
+        if (!substring)
+            return false;
 
         // Copy the substring (without the * at start and end)
         strncpy(substring, pattern + 1, pattern_len - 2);
@@ -329,7 +336,8 @@ static bool key_matches_pattern(const char* key, const char* pattern) {
 static const mcp_rate_limit_rule_t* find_matching_rule(mcp_advanced_rate_limiter_t* limiter,
                                                      mcp_rate_limit_key_type_t key_type,
                                                      const char* key) {
-    if (!limiter || !key || key_type >= 4) return NULL;
+    if (!limiter || !key || key_type >= 4)
+        return NULL;
 
     // Get the rule list for this key type
     rule_entry_t* rule = limiter->rules[key_type];
@@ -357,11 +365,13 @@ static const mcp_rate_limit_rule_t* find_matching_rule(mcp_advanced_rate_limiter
  * @brief Resizes the client hash table.
  */
 static bool resize_client_table(mcp_advanced_rate_limiter_t* limiter, size_t new_capacity) {
-    if (!limiter || new_capacity == 0) return false;
+    if (!limiter || new_capacity == 0)
+        return false;
 
     // Allocate new buckets
     client_entry_t** new_buckets = (client_entry_t**)calloc(new_capacity, sizeof(client_entry_t*));
-    if (!new_buckets) return false;
+    if (!new_buckets)
+        return false;
 
     // Rehash all entries
     for (size_t i = 0; i < limiter->client_capacity; i++) {
@@ -399,14 +409,16 @@ static client_entry_t* find_or_create_client_entry(mcp_advanced_rate_limiter_t* 
                                                  const char* key,
                                                  mcp_rate_limit_key_type_t key_type,
                                                  bool* created) {
-    if (!limiter || !key || key_type >= 4) return NULL;
+    if (!limiter || !key || key_type >= 4)
+        return NULL;
 
     // Compute hash and bucket index
     unsigned long hash = hash_key(key);
     size_t index = hash % limiter->client_capacity;
 
     // Set created flag to false initially
-    if (created) *created = false;
+    if (created)
+        *created = false;
 
     // Look for existing entry
     client_entry_t* entry = limiter->client_buckets[index];
@@ -427,7 +439,8 @@ static client_entry_t* find_or_create_client_entry(mcp_advanced_rate_limiter_t* 
 
     // Create new entry
     entry = (client_entry_t*)calloc(1, sizeof(client_entry_t));
-    if (!entry) return NULL;
+    if (!entry)
+        return NULL;
 
     // Initialize entry
     entry->key = mcp_strdup(key);
@@ -462,7 +475,8 @@ static client_entry_t* find_or_create_client_entry(mcp_advanced_rate_limiter_t* 
     }
 
     // Set created flag to true
-    if (created) *created = true;
+    if (created)
+        *created = true;
 
     return entry;
 }
@@ -472,7 +486,8 @@ static client_entry_t* find_or_create_client_entry(mcp_advanced_rate_limiter_t* 
  * @brief Checks if a request is allowed using the fixed window algorithm.
  */
 static bool check_fixed_window(client_entry_t* entry, const mcp_rate_limit_rule_t* rule, time_t current_time) {
-    if (!entry || !rule) return false;
+    if (!entry || !rule)
+        return false;
 
     fixed_window_data_t* data = &entry->data.fixed_window;
 
@@ -499,7 +514,8 @@ static bool check_fixed_window(client_entry_t* entry, const mcp_rate_limit_rule_
  * @brief Checks if a request is allowed using the sliding window algorithm.
  */
 static bool check_sliding_window(client_entry_t* entry, const mcp_rate_limit_rule_t* rule, time_t current_time) {
-    if (!entry || !rule) return false;
+    if (!entry || !rule)
+        return false;
 
     sliding_window_data_t* data = &entry->data.sliding_window;
 
@@ -535,7 +551,8 @@ static bool check_sliding_window(client_entry_t* entry, const mcp_rate_limit_rul
  * @brief Checks if a request is allowed using the token bucket algorithm.
  */
 static bool check_token_bucket(client_entry_t* entry, const mcp_rate_limit_rule_t* rule, time_t current_time) {
-    if (!entry || !rule) return false;
+    if (!entry || !rule)
+        return false;
 
     token_bucket_data_t* data = &entry->data.token_bucket;
 
@@ -565,7 +582,8 @@ static bool check_token_bucket(client_entry_t* entry, const mcp_rate_limit_rule_
  * @brief Checks if a request is allowed using the leaky bucket algorithm.
  */
 static bool check_leaky_bucket(client_entry_t* entry, const mcp_rate_limit_rule_t* rule, time_t current_time) {
-    if (!entry || !rule) return false;
+    if (!entry || !rule)
+        return false;
 
     leaky_bucket_data_t* data = &entry->data.leaky_bucket;
 
@@ -616,7 +634,8 @@ mcp_advanced_rate_limiter_t* mcp_advanced_rate_limiter_create(const mcp_advanced
 
     // Initialize client hash table
     limiter->client_capacity = capacity_hint * RATE_LIMIT_HASH_TABLE_CAPACITY_FACTOR;
-    if (limiter->client_capacity < 16) limiter->client_capacity = 16; // Minimum capacity
+    if (limiter->client_capacity < 16)
+        limiter->client_capacity = 16; // Minimum capacity
 
     limiter->client_buckets = (client_entry_t**)calloc(limiter->client_capacity, sizeof(client_entry_t*));
     if (!limiter->client_buckets) {
@@ -666,7 +685,8 @@ mcp_advanced_rate_limiter_t* mcp_advanced_rate_limiter_create(const mcp_advanced
 }
 
 void mcp_advanced_rate_limiter_destroy(mcp_advanced_rate_limiter_t* limiter) {
-    if (!limiter) return;
+    if (!limiter)
+        return;
 
     // Acquire write lock
     mcp_rwlock_write_lock(limiter->lock);
@@ -1081,7 +1101,6 @@ mcp_rate_limit_rule_t mcp_advanced_rate_limiter_create_leaky_bucket_rule(
     mcp_rate_limit_key_type_t key_type,
     double leak_rate_per_second,
     size_t burst_capacity) {
-
     mcp_rate_limit_rule_t rule;
     memset(&rule, 0, sizeof(mcp_rate_limit_rule_t));
 

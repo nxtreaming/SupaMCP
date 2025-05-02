@@ -11,7 +11,7 @@
 #include <stdbool.h>
 
 // Initial capacity for pending requests hash table (must be power of 2)
-#define INITIAL_PENDING_REQUESTS_CAPACITY 16
+#define INITIAL_PENDING_REQUESTS_CAPACITY 64
 // Max load factor before resizing hash table
 #define HASH_TABLE_MAX_LOAD_FACTOR 0.75
 

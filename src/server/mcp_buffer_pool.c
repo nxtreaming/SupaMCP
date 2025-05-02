@@ -25,9 +25,8 @@ struct mcp_buffer_pool {
 };
 
 mcp_buffer_pool_t* mcp_buffer_pool_create(size_t buffer_size, size_t num_buffers) {
-    if (buffer_size == 0 || num_buffers == 0) {
-        return NULL; // Invalid parameters
-    }
+    if (buffer_size == 0 || num_buffers == 0)
+        return NULL;
 
     // Allocate the main pool structure
     mcp_buffer_pool_t* pool = (mcp_buffer_pool_t*)malloc(sizeof(mcp_buffer_pool_t));
@@ -54,7 +53,7 @@ mcp_buffer_pool_t* mcp_buffer_pool_create(size_t buffer_size, size_t num_buffers
         mcp_buffer_node_t* node = (mcp_buffer_node_t*)malloc(block_size);
         if (node == NULL) {
             mcp_log_error("Failed to allocate buffer block %zu/%zu for pool.", i + 1, num_buffers);
-            mcp_buffer_pool_destroy(pool); // Clean up partially created pool
+            mcp_buffer_pool_destroy(pool);
             return NULL;
         }
 
@@ -79,10 +78,11 @@ void mcp_buffer_pool_destroy(mcp_buffer_pool_t* pool) {
     mcp_buffer_node_t* current = pool->free_list;
     while (current != NULL) {
         mcp_buffer_node_t* next = current->next;
-        free(current); // Free the entire block (node header + buffer data)
+        free(current);
         current = next;
     }
-    pool->free_list = NULL; // Mark list as empty
+    // Mark list as empty
+    pool->free_list = NULL;
 
     // Unlock mutex
     mcp_mutex_unlock(pool->mutex);
@@ -95,9 +95,8 @@ void mcp_buffer_pool_destroy(mcp_buffer_pool_t* pool) {
 }
 
 void* mcp_buffer_pool_acquire(mcp_buffer_pool_t* pool) {
-    if (pool == NULL) {
+    if (pool == NULL)
         return NULL;
-    }
 
     void* buffer = NULL;
 
@@ -126,9 +125,8 @@ void* mcp_buffer_pool_acquire(mcp_buffer_pool_t* pool) {
 }
 
 void mcp_buffer_pool_release(mcp_buffer_pool_t* pool, void* buffer) {
-    if (pool == NULL || buffer == NULL) {
-        return; // Invalid arguments
-    }
+    if (pool == NULL || buffer == NULL)
+        return;
 
     // Calculate the address of the node header from the buffer pointer
     mcp_buffer_node_t* node = (mcp_buffer_node_t*)((char*)buffer - sizeof(mcp_buffer_node_t));
@@ -145,9 +143,9 @@ void mcp_buffer_pool_release(mcp_buffer_pool_t* pool, void* buffer) {
 }
 
 size_t mcp_buffer_pool_get_buffer_size(const mcp_buffer_pool_t* pool) {
-    if (pool == NULL) {
+    if (pool == NULL)
         return 0;
-    }
+
     // No mutex needed for read-only access to buffer_size after creation
     return pool->buffer_size;
 }
