@@ -26,7 +26,7 @@
 #endif
 
 /**
- * @brief Internal function to send a request and wait for a response.
+ * @brief Internal function to send a TCP request and wait for a response.
  *
  * This function handles the core logic of sending a formatted request,
  * managing the pending request state, waiting for the response via condition
@@ -65,11 +65,9 @@ int mcp_client_send_and_wait(
 
     // Send the buffers using vectored I/O
     int send_status = mcp_transport_sendv(client->transport, send_buffers, 2);
-    mcp_log_debug("mcp_transport_sendv returned: %d for request ID %llu", send_status, (unsigned long long)request_id);
-
     if (send_status != 0) {
         mcp_log_error("mcp_transport_sendv failed with status %d", send_status);
-        return -1; // Send failed
+        return -1;
     }
 
     // --- Asynchronous Receive Logic ---
@@ -122,7 +120,8 @@ int mcp_client_send_and_wait(
         }
 #else
         // Assume the abstraction returns a specific value (e.g., 1) for timeout, 0 for success, -1 for error
-        if (wait_result == 1) { // Assuming 1 indicates timeout from the abstraction
+        // Assuming 1 indicates timeout from the abstraction
+        if (wait_result == 1) {
             req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
         } else if (wait_result != 0) {
             mcp_log_error("mcp_cond_wait/timedwait failed with code: %d", wait_result);
@@ -138,12 +137,15 @@ int mcp_client_send_and_wait(
         mcp_log_debug("Request ID %llu status: %d", (unsigned long long)pending_req.id, req_entry_wrapper->request.status);
         if(req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) {
             mcp_log_debug("Request ID %llu completed successfully", (unsigned long long)pending_req.id);
-            final_status = 0; // Success
+            // Success
+            final_status = 0;
         } else if (req_entry_wrapper->request.status == PENDING_REQUEST_TIMEOUT) {
             mcp_log_error("Request ID %llu timed out", (unsigned long long)pending_req.id);
-            final_status = -2; // Timeout
+            // Timeout
+            final_status = -2;
         } else {
-            final_status = -1; // Error (set by callback or wait error)
+            // Error (set by callback or wait error)
+            final_status = -1;
         }
     } else {
         mcp_log_error("Failed to find pending request entry for ID %llu", (unsigned long long)pending_req.id);
@@ -232,8 +234,6 @@ int mcp_client_http_send_request(
 
     // Send the buffers using vectored I/O
     int status = mcp_transport_sendv(client->transport, send_buffers, 2);
-    mcp_log_debug("HTTP transport: Sent request ID %llu, status: %d", (unsigned long long)request_id, status);
-
     if (status != 0) {
         mcp_log_error("HTTP transport: Failed to send request ID %llu, status: %d", (unsigned long long)request_id, status);
         *error_code = MCP_ERROR_TRANSPORT_ERROR;
@@ -241,18 +241,16 @@ int mcp_client_http_send_request(
         return -1;
     }
 
-    // For HTTP transport, the response is processed in the http_client_transport_send function
-    // We need to extract the response from the transport layer
-
     // Create a buffer to receive the response
     char* response_data = NULL;
     size_t response_size = 0;
 
-    // Try to receive the response
-    // Note: This is a synchronous operation for HTTP transport
+    // For HTTP transport, the response is processed in the http_client_transport_send function
+    // We need to extract the response from the transport layer
+
+    // Try to receive the response, This is a synchronous operation for HTTP transport
     status = mcp_transport_receive(client->transport, &response_data, &response_size, client->config.request_timeout_ms);
     if (status == 0 && response_data != NULL) {
-        // We got a response from mcp_transport_receive
         // Parse the response JSON
         mcp_log_debug("HTTP transport: Received response data: %s", response_data);
 
@@ -264,7 +262,6 @@ int mcp_client_http_send_request(
 
         int parse_result = mcp_json_parse_response(response_data, &response_id, &response_error_code,
                                                    &response_error_message, &response_result);
-
         if (parse_result == 0) {
             // Check if the response ID matches the request ID
             if (response_id == request_id) {
