@@ -385,7 +385,7 @@ int mcp_server_stop(mcp_server_t* server) {
         // Wait for active requests to complete or timeout
         if (server->active_requests > 0) {
             uint32_t timeout_ms = server->config.graceful_shutdown_timeout_ms > 0 ?
-                                server->config.graceful_shutdown_timeout_ms : 5000; // Default 5 seconds
+                                server->config.graceful_shutdown_timeout_ms : 1000; // Default 1 second
 
             // Calculate absolute timeout time
             #ifdef _WIN32

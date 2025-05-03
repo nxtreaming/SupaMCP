@@ -544,20 +544,39 @@ static void cleanup(void) {
  * Signal handler
  */
 static void signal_handler(int sig) {
-    mcp_log_info("Received signal %d, initiating shutdown...", sig);
-    // Setting g_server to NULL might be used by the main loop to exit,
-    mcp_log_info("Signal handler called, g_server=%p", g_server);
-    // but atexit(cleanup) is the primary cleanup mechanism.
-    // A more robust approach might use a dedicated shutdown flag.
-    if (g_server) {
-         mcp_log_info("Calling mcp_server_stop");
-         mcp_server_stop(g_server); // Attempt graceful stop
+    static volatile int shutdown_in_progress = 0;
+
+    // Prevent multiple signal handlers from running simultaneously
+    if (shutdown_in_progress) {
+        mcp_log_info("Shutdown already in progress, forcing exit...");
+        exit(1); // Force exit if we get a second signal
     }
-    // Let atexit handle the rest, or call cleanup() directly if atexit is unreliable.
-    // cleanup(); // Optional direct call
-    // exit(0); // Exit might be too abrupt, let main loop exit if possible
-    mcp_log_info("Setting g_server to NULL to signal main loop to exit");
-    g_server = NULL; // Signal main loop to exit
+
+    shutdown_in_progress = 1;
+
+    mcp_log_info("Received signal %d, initiating shutdown...", sig);
+
+    if (g_server) {
+        mcp_log_info("Stopping server...");
+        mcp_server_stop(g_server); // Attempt graceful stop
+
+        // Wait briefly for server to stop
+        mcp_log_info("Waiting for server to stop (max 1 second)...");
+
+        // Wait up to 1 second for server to stop gracefully
+#ifdef _WIN32
+        Sleep(1000); // Wait 1 second
+#else
+        sleep(1);    // Wait 1 second
+#endif
+
+        // Call cleanup directly to ensure resources are freed
+        cleanup();
+    }
+
+    // Force exit to ensure we don't hang
+    mcp_log_info("Exiting process...");
+    exit(0);
 }
 
 #ifndef _WIN32

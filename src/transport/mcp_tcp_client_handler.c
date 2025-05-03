@@ -284,9 +284,6 @@ client_cleanup:
         // Mark slot as INACTIVE
         client_conn->state = CLIENT_STATE_INACTIVE;
 
-        // Reset thread handle (no need to close/destroy here, as it's managed by mcp_thread_create/join)
-        client_conn->thread_handle = 0;
-
         // Log that client_conn slot is now inactive
         mcp_log_debug("Client connection slot marked as INACTIVE");
     } else {
