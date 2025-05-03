@@ -77,22 +77,6 @@ int mcp_client_send_request(
     char** error_message
 );
 
-/**
- * @brief Send a request using HTTP transport and process the response.
- *
- * For HTTP transport, we can use the same send_and_wait function as other transports.
- * The HTTP transport will call the message callback directly from the send function,
- * which will signal the condition variable and allow send_and_wait to return.
- */
-int mcp_client_http_send_request(
-    mcp_client_t* client,
-    const char* request_json,
-    uint64_t request_id,
-    char** result,
-    mcp_error_code_t* error_code,
-    char** error_message
-);
-
 char* mcp_client_receive_callback(void* user_data, const void* data, size_t size, int* error_code);
 void mcp_client_transport_error_callback(void* user_data, int error_code);
 

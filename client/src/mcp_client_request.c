@@ -26,11 +26,20 @@
 #endif
 
 /**
- * @brief Internal function to send a TCP request and wait for a response.
+ * @brief Internal function to send a request and wait for a response.
  *
  * This function handles the core logic of sending a formatted request,
  * managing the pending request state, waiting for the response via condition
  * variables, and handling timeouts or errors.
+ *
+ * @param client The MCP client instance
+ * @param request_json The JSON-RPC request string
+ * @param request_id The request ID
+ * @param result Pointer to store the result string
+ * @param error_code Pointer to store the error code
+ * @param error_message Pointer to store the error message
+ * @param is_http Flag indicating if this is an HTTP transport request
+ * @return 0 on success, -1 on failure, -2 on timeout
  */
 int mcp_client_send_and_wait(
     mcp_client_t* client,
@@ -63,242 +72,205 @@ int mcp_client_send_and_wait(
     send_buffers[1].data = request_json;
     send_buffers[1].size = json_len;
 
+    // Check if this is an HTTP transport
+    mcp_transport_protocol_t transport_protocol = mcp_transport_get_protocol(client->transport);
+    bool is_http = (transport_protocol == MCP_TRANSPORT_PROTOCOL_HTTP);
+
+    // For non-HTTP transports, set up the asynchronous request handling
+    pending_request_t pending_req;
+    pending_request_entry_t* req_entry_wrapper = NULL;
+
+    if (!is_http) {
+        // --- Asynchronous Receive Logic for non-HTTP transports ---
+        // 1. Prepare pending request structure
+        pending_req.id = request_id;
+        pending_req.status = PENDING_REQUEST_WAITING;
+        pending_req.result_ptr = result;
+        pending_req.error_code_ptr = error_code;
+        pending_req.error_message_ptr = error_message;
+        pending_req.cv = mcp_cond_create();
+        if (pending_req.cv == NULL) {
+            mcp_log_error("Failed to create condition variable for request %llu.", (unsigned long long)request_id);
+            return -1;
+        }
+
+        // 2. Add to pending requests map (protected by mutex)
+        mcp_mutex_lock(client->pending_requests_mutex);
+        int add_status = mcp_client_add_pending_request_entry(client, pending_req.id, &pending_req);
+        if (add_status != 0) {
+            mcp_mutex_unlock(client->pending_requests_mutex);
+            mcp_cond_destroy(pending_req.cv);
+            mcp_log_error("Failed to add request %llu to hash table.", (unsigned long long)request_id);
+            return -1;
+        }
+        mcp_mutex_unlock(client->pending_requests_mutex);
+    }
+
     // Send the buffers using vectored I/O
     int send_status = mcp_transport_sendv(client->transport, send_buffers, 2);
     if (send_status != 0) {
         mcp_log_error("mcp_transport_sendv failed with status %d", send_status);
+
+        // Clean up the pending request if it was created
+        if (!is_http) {
+            mcp_mutex_lock(client->pending_requests_mutex);
+            mcp_client_remove_pending_request_entry(client, request_id);
+            mcp_mutex_unlock(client->pending_requests_mutex);
+        }
+
         return -1;
     }
 
-    // --- Asynchronous Receive Logic ---
-    // 1. Prepare pending request structure
-    pending_request_t pending_req;
-    pending_req.id = request_id;
-    pending_req.status = PENDING_REQUEST_WAITING;
-    pending_req.result_ptr = result;
-    pending_req.error_code_ptr = error_code;
-    pending_req.error_message_ptr = error_message;
-    pending_req.cv = mcp_cond_create();
-    if (pending_req.cv == NULL) {
-        mcp_log_error("Failed to create condition variable for request %llu.", (unsigned long long)pending_req.id);
-        return -1;
+    // For HTTP transport, handle the response synchronously
+    if (is_http) {
+        // Create a buffer to receive the response
+        char* response_data = NULL;
+        size_t response_size = 0;
+
+        // Try to receive the response, This is a synchronous operation for HTTP transport
+        int status = mcp_transport_receive(client->transport, &response_data, &response_size, client->config.request_timeout_ms);
+        if (status == 0 && response_data != NULL) {
+            // Parse the response JSON
+            mcp_log_debug("HTTP transport: Received response data: %s", response_data);
+
+            // Extract the result from the response
+            uint64_t response_id;
+            mcp_error_code_t response_error_code;
+            char* response_error_message = NULL;
+            char* response_result = NULL;
+
+            int parse_result = mcp_json_parse_response(response_data, &response_id, &response_error_code,
+                                                      &response_error_message, &response_result);
+            if (parse_result == 0) {
+                // Check if the response ID matches the request ID
+                if (response_id == request_id) {
+                    // Set the output parameters
+                    *error_code = response_error_code;
+                    *error_message = response_error_message;
+                    *result = response_result;
+                } else {
+                    // Response ID doesn't match request ID
+                    mcp_log_error("HTTP transport: Response ID %llu doesn't match request ID %llu",
+                                 (unsigned long long)response_id, (unsigned long long)request_id);
+                    *error_code = MCP_ERROR_INTERNAL_ERROR;
+                    *error_message = mcp_strdup("Response ID doesn't match request ID");
+                    free(response_error_message);
+                    free(response_result);
+                }
+            } else {
+                // Failed to parse response
+                mcp_log_error("HTTP transport: Failed to parse response: %s", response_data);
+                *error_code = MCP_ERROR_PARSE_ERROR;
+                *error_message = mcp_strdup("Failed to parse response");
+            }
+
+            // Free the response data
+            free(response_data);
+        } else {
+            // No response received or error occurred
+            mcp_log_error("HTTP transport: Failed to receive response for request ID %llu", (unsigned long long)request_id);
+            *error_code = MCP_ERROR_TRANSPORT_ERROR;
+            *error_message = mcp_strdup("Failed to receive HTTP response");
+        }
+
+        return (*error_code == MCP_ERROR_NONE) ? 0 : -1;
     }
 
-    // 2. Add to pending requests map (protected by mutex)
-    mcp_mutex_lock(client->pending_requests_mutex);
-    int add_status = mcp_client_add_pending_request_entry(client, pending_req.id, &pending_req);
-    if (add_status != 0) {
-        mcp_mutex_unlock(client->pending_requests_mutex);
-        mcp_cond_destroy(pending_req.cv);
-        mcp_log_error("Failed to add request %llu to hash table.\n", (unsigned long long)pending_req.id);
-        return -1;
-    }
-    mcp_mutex_unlock(client->pending_requests_mutex);
-
-    // 3. Wait for response or timeout
-    mcp_log_debug("Waiting for response to request ID %llu", (unsigned long long)pending_req.id);
-    // 0=signaled, 1=timeout (Windows), ETIMEDOUT=timeout (POSIX), -1=error
+    // For non-HTTP transports, wait for the response asynchronously
+    mcp_log_debug("Waiting for response to request ID %llu", (unsigned long long)request_id);
     int wait_result = 0;
+    int final_status = -1;
 
     mcp_mutex_lock(client->pending_requests_mutex);
-    pending_request_entry_t* req_entry_wrapper = mcp_client_find_pending_request_entry(client, pending_req.id, false);
+    req_entry_wrapper = mcp_client_find_pending_request_entry(client, request_id, false);
     if (req_entry_wrapper && req_entry_wrapper->request.status == PENDING_REQUEST_WAITING) {
+        // Wait for the response with or without timeout
         if (client->config.request_timeout_ms > 0) {
             wait_result = mcp_cond_timedwait(req_entry_wrapper->request.cv, client->pending_requests_mutex, client->config.request_timeout_ms);
         } else {
             wait_result = mcp_cond_wait(req_entry_wrapper->request.cv, client->pending_requests_mutex);
         }
 
-        // Update status based on wait_result *before* checking request status
-        // Check for timeout using platform-specific or abstraction-defined value
-#ifdef ETIMEDOUT // Only check ETIMEDOUT if it's defined (i.e., on POSIX)
+        // Handle timeout and other wait errors
+#ifdef ETIMEDOUT
         if (wait_result == ETIMEDOUT) {
             req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
         } else if (wait_result != 0) {
             mcp_log_error("mcp_cond_wait/timedwait failed with code: %d (%s)", wait_result, strerror(wait_result));
-            // Keep status as WAITING or whatever callback set if error occurred during wait
         }
 #else
-        // Assume the abstraction returns a specific value (e.g., 1) for timeout, 0 for success, -1 for error
-        // Assuming 1 indicates timeout from the abstraction
         if (wait_result == 1) {
             req_entry_wrapper->request.status = PENDING_REQUEST_TIMEOUT;
         } else if (wait_result != 0) {
             mcp_log_error("mcp_cond_wait/timedwait failed with code: %d", wait_result);
         }
 #endif
-        // If wait_result == 0, the request status should have been updated by the callback
     }
-    // else: Request was processed/removed before we could wait, or send failed initially.
 
-    // Determine final outcome based on request status
-    int final_status = -1;
+    // Determine the final outcome based on request status
     if (req_entry_wrapper) {
-        mcp_log_debug("Request ID %llu status: %d", (unsigned long long)pending_req.id, req_entry_wrapper->request.status);
-        if(req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) {
-            mcp_log_debug("Request ID %llu completed successfully", (unsigned long long)pending_req.id);
-            // Success
+        mcp_log_debug("Request ID %llu status: %d", (unsigned long long)request_id, req_entry_wrapper->request.status);
+        if (req_entry_wrapper->request.status == PENDING_REQUEST_COMPLETED) {
+            mcp_log_debug("Request ID %llu completed successfully", (unsigned long long)request_id);
             final_status = 0;
         } else if (req_entry_wrapper->request.status == PENDING_REQUEST_TIMEOUT) {
-            mcp_log_error("Request ID %llu timed out", (unsigned long long)pending_req.id);
-            // Timeout
+            mcp_log_error("Request ID %llu timed out", (unsigned long long)request_id);
             final_status = -2;
         } else {
-            // Error (set by callback or wait error)
             final_status = -1;
         }
+
+        // Remove entry from hash table
+        mcp_client_remove_pending_request_entry(client, request_id);
     } else {
-        mcp_log_error("Failed to find pending request entry for ID %llu", (unsigned long long)pending_req.id);
+        mcp_log_error("Failed to find pending request entry for ID %llu", (unsigned long long)request_id);
         // Entry removed before check. Rely on output params set by callback.
         if (*error_code != MCP_ERROR_NONE)
             final_status = -1;
         else if (*result != NULL)
             final_status = 0;
         else {
-            mcp_log_error("Request %llu not found and no result/error set.", (unsigned long long)pending_req.id);
+            mcp_log_error("Request %llu not found and no result/error set.", (unsigned long long)request_id);
             final_status = -1;
         }
     }
-
-    // Remove entry from hash table after waiting/timeout/error
-    if (req_entry_wrapper) {
-        // CV destroyed inside remove
-        mcp_client_remove_pending_request_entry(client, pending_req.id);
-    }
     mcp_mutex_unlock(client->pending_requests_mutex);
 
-    // 4. Return status based on final outcome
+    // Set appropriate error information based on the final status
     if (final_status == -2) {
         // Timeout case
-        mcp_log_error("Request %llu timed out.\n", (unsigned long long)pending_req.id);
+        mcp_log_error("Request %llu timed out.", (unsigned long long)request_id);
         *error_code = MCP_ERROR_TRANSPORT_ERROR;
         *error_message = mcp_strdup("Request timed out");
         return -1;
     } else if (final_status != 0) {
         // Other error
-         mcp_log_error("Error processing response for request %llu.\n", (unsigned long long)pending_req.id);
-         if (*error_code != MCP_ERROR_NONE && *error_message == NULL) {
-             *error_message = mcp_strdup("Unknown internal error occurred");
-         } else if (*error_code == MCP_ERROR_NONE) {
-             *error_code = MCP_ERROR_INTERNAL_ERROR;
-             *error_message = mcp_strdup("Internal error processing response");
-         }
-         return -1;
+        mcp_log_error("Error processing response for request %llu.", (unsigned long long)request_id);
+        if (*error_code != MCP_ERROR_NONE && *error_message == NULL) {
+            *error_message = mcp_strdup("Unknown internal error occurred");
+        } else if (*error_code == MCP_ERROR_NONE) {
+            *error_code = MCP_ERROR_INTERNAL_ERROR;
+            *error_message = mcp_strdup("Internal error processing response");
+        }
+        return -1;
     }
 
     return 0;
 }
 
 /**
- * @brief Send a request using HTTP transport and process the response.
+ * @brief Send a request to the MCP server and receive a response
  *
- * For HTTP transport, we can use the same send_and_wait function as other transports.
- * The HTTP transport will call the message callback directly from the send function,
- * which will signal the condition variable and allow send_and_wait to return.
+ * This function formats a JSON-RPC request with the given method and parameters,
+ * sends it to the server, and waits for a response.
  *
- * @param client The MCP client instance.
- * @param request_json The JSON-RPC request string.
- * @param request_id The request ID.
- * @param result Pointer to store the result string.
- * @param error_code Pointer to store the error code.
- * @param error_message Pointer to store the error message.
- * @return 0 on success, -1 on failure.
- */
-int mcp_client_http_send_request(
-    mcp_client_t* client,
-    const char* request_json,
-    uint64_t request_id,
-    char** result,
-    mcp_error_code_t* error_code,
-    char** error_message
-) {
-    if (client == NULL || request_json == NULL || result == NULL ||
-        error_code == NULL || error_message == NULL)
-        return -1;
-
-    // Initialize output parameters
-    *result = NULL;
-    *error_code = MCP_ERROR_NONE;
-    *error_message = NULL;
-
-    // Calculate JSON length - excluding null terminator, as required by server
-    size_t json_len = strlen(request_json);
-    uint32_t net_len = htonl((uint32_t)json_len);
-
-    // Prepare buffers for vectored send
-    mcp_buffer_t send_buffers[2];
-    send_buffers[0].data = &net_len;
-    send_buffers[0].size = sizeof(net_len);
-    send_buffers[1].data = request_json;
-    send_buffers[1].size = json_len;
-
-    // Send the buffers using vectored I/O
-    int status = mcp_transport_sendv(client->transport, send_buffers, 2);
-    if (status != 0) {
-        mcp_log_error("HTTP transport: Failed to send request ID %llu, status: %d", (unsigned long long)request_id, status);
-        *error_code = MCP_ERROR_TRANSPORT_ERROR;
-        *error_message = mcp_strdup("Failed to send HTTP request");
-        return -1;
-    }
-
-    // Create a buffer to receive the response
-    char* response_data = NULL;
-    size_t response_size = 0;
-
-    // For HTTP transport, the response is processed in the http_client_transport_send function
-    // We need to extract the response from the transport layer
-
-    // Try to receive the response, This is a synchronous operation for HTTP transport
-    status = mcp_transport_receive(client->transport, &response_data, &response_size, client->config.request_timeout_ms);
-    if (status == 0 && response_data != NULL) {
-        // Parse the response JSON
-        mcp_log_debug("HTTP transport: Received response data: %s", response_data);
-
-        // Extract the result from the response
-        uint64_t response_id;
-        mcp_error_code_t response_error_code;
-        char* response_error_message = NULL;
-        char* response_result = NULL;
-
-        int parse_result = mcp_json_parse_response(response_data, &response_id, &response_error_code,
-                                                   &response_error_message, &response_result);
-        if (parse_result == 0) {
-            // Check if the response ID matches the request ID
-            if (response_id == request_id) {
-                // Set the output parameters
-                *error_code = response_error_code;
-                *error_message = response_error_message;
-                *result = response_result;
-            } else {
-                // Response ID doesn't match request ID
-                mcp_log_error("HTTP transport: Response ID %llu doesn't match request ID %llu",
-                             (unsigned long long)response_id, (unsigned long long)request_id);
-                *error_code = MCP_ERROR_INTERNAL_ERROR;
-                *error_message = mcp_strdup("Response ID doesn't match request ID");
-                free(response_error_message);
-                free(response_result);
-            }
-        } else {
-            // Failed to parse response
-            mcp_log_error("HTTP transport: Failed to parse response: %s", response_data);
-            *error_code = MCP_ERROR_PARSE_ERROR;
-            *error_message = mcp_strdup("Failed to parse response");
-        }
-
-        // Free the response data
-        free(response_data);
-    } else {
-        // No response received or error occurred
-        mcp_log_error("HTTP transport: Failed to receive response for request ID %llu", (unsigned long long)request_id);
-        *error_code = MCP_ERROR_TRANSPORT_ERROR;
-        *error_message = mcp_strdup("Failed to receive HTTP response");
-    }
-
-    return (*error_code == MCP_ERROR_NONE) ? 0 : -1;
-}
-
-/**
- * Send a request to the MCP server and receive a response
+ * @param client The MCP client instance
+ * @param method The JSON-RPC method to call
+ * @param params The JSON-RPC parameters (can be NULL)
+ * @param result Pointer to store the result string
+ * @param error_code Pointer to store the error code
+ * @param error_message Pointer to store the error message
+ * @return 0 on success, -1 on failure
  */
 int mcp_client_send_request(
     mcp_client_t* client,
@@ -321,25 +293,15 @@ int mcp_client_send_request(
     char* request_json = NULL;
     const char* params_to_use = (params != NULL) ? params : "{}";
 
-    // NOTE: we can use mcp_json_format_request_direct() here if we want to simplify
-    // request_json = mcp_json_format_request_direct(current_id, method, params_to_use);
+    // Format the request JSON
     request_json = mcp_json_format_request(current_id, method, params_to_use);
     if (request_json == NULL) {
         mcp_log_error("Failed to format request JSON for method '%s'", method);
         return -1;
     }
 
-    // Check if the transport is HTTP
-    mcp_transport_protocol_t transport_protocol = mcp_transport_get_protocol(client->transport);
-    int status = 0;
-
-    if (transport_protocol == MCP_TRANSPORT_PROTOCOL_HTTP) {
-        // For HTTP transport, use a specialized function that handles HTTP's synchronous nature
-        status = mcp_client_http_send_request(client, request_json, current_id, result, error_code, error_message);
-    } else {
-        // For other transports, use the internal send_and_wait function
-        status = mcp_client_send_and_wait(client, request_json, current_id, result, error_code, error_message);
-    }
+    // Use the unified send_and_wait function for all transport types
+    int status = mcp_client_send_and_wait(client, request_json, current_id, result, error_code, error_message);
 
     // Free the formatted request JSON string
     free(request_json);

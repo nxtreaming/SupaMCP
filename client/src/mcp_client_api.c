@@ -7,7 +7,54 @@
 #include <string.h>
 
 /**
- * List resources from the MCP server
+ * @brief Initialize thread-local arena for JSON parsing
+ *
+ * This helper function ensures that the thread-local arena is initialized
+ * for JSON parsing operations. It's used by all API functions that need
+ * to parse JSON responses.
+ *
+ * @return 0 on success, -1 on failure
+ */
+static int ensure_thread_local_arena() {
+    // Initialize thread cache if needed
+    if (!mcp_thread_cache_is_initialized()) {
+        if (!mcp_thread_cache_init()) {
+            mcp_log_error("Failed to initialize thread cache");
+            return -1;
+        }
+    }
+
+    // Check if arena is already initialized
+    mcp_arena_t* current_arena = mcp_arena_get_current();
+    if (current_arena == NULL) {
+        // Initialize arena if not already done
+        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena");
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Reset the thread-local arena after use
+ *
+ * This helper function resets the thread-local arena after JSON parsing
+ * operations are complete.
+ */
+static void reset_thread_local_arena() {
+    mcp_log_debug("Resetting thread-local arena");
+    mcp_arena_reset_current_thread();
+}
+
+/**
+ * @brief List resources from the MCP server
+ *
+ * @param client The MCP client instance
+ * @param resources Pointer to store the array of resources
+ * @param count Pointer to store the number of resources
+ * @return 0 on success, -1 on failure
  */
 int mcp_client_list_resources(
     mcp_client_t* client,
@@ -22,16 +69,9 @@ int mcp_client_list_resources(
     *resources = NULL;
     *count = 0;
 
-    // Initialize thread-local arena for JSON parsing
-    if (!mcp_thread_cache_is_initialized()) {
-        mcp_thread_cache_init();
-    }
-    mcp_arena_t* current_arena = mcp_arena_get_current();
-    if (current_arena == NULL) {
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            return -1;
-        }
+    // Ensure thread-local arena is initialized
+    if (ensure_thread_local_arena() != 0) {
+        return -1;
     }
 
     // Send request
@@ -44,7 +84,7 @@ int mcp_client_list_resources(
 
     if (send_result != 0) {
         mcp_log_error("Failed to send list_resources request: %d", send_result);
-        free(error_message); // Free error message if send failed
+        free(error_message);
         return -1;
     }
 
@@ -54,42 +94,36 @@ int mcp_client_list_resources(
     if (error_code != MCP_ERROR_NONE) {
         mcp_log_error("Server returned error for list_resources: %d (%s)", error_code, error_message ? error_message : "N/A");
         free(error_message);
-        free(result); // Free the result JSON containing the error object
+        free(result);
         return -1;
     }
 
-    // Make sure the thread-local arena is initialized for parsing
-    if (mcp_arena_get_current() == NULL) {
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            free(error_message);
-            free(result);
-            return -1;
-        }
-    }
-
-    //Note: We can use mcp_json_parse_resources_indirect() here if we want to simplify
-    //int parse_result = mcp_json_parse_resources_indirect(result, resources, count);
+    // Parse the resources from the response
     int parse_result = mcp_json_parse_resources(result, resources, count);
 
     // Reset the arena after parsing
-    mcp_arena_reset_current_thread();
+    reset_thread_local_arena();
 
     if (parse_result != 0) {
         mcp_log_error("Failed to parse list_resources response: %d", parse_result);
-        free(error_message); // Should be NULL here anyway
+        free(error_message);
         free(result);
         return -1;
     }
 
     // Free the allocated strings before returning
     free(result);
-    free(error_message); // Should be NULL
+    free(error_message);
     return 0;
 }
 
 /**
- * List resource templates from the MCP server
+ * @brief List resource templates from the MCP server
+ *
+ * @param client The MCP client instance
+ * @param templates Pointer to store the array of templates
+ * @param count Pointer to store the number of templates
+ * @return 0 on success, -1 on failure
  */
 int mcp_client_list_resource_templates(
     mcp_client_t* client,
@@ -104,23 +138,19 @@ int mcp_client_list_resource_templates(
     *templates = NULL;
     *count = 0;
 
-    // Initialize thread-local arena for JSON parsing
-    if (!mcp_thread_cache_is_initialized()) {
-        mcp_thread_cache_init();
-    }
-    mcp_arena_t* current_arena = mcp_arena_get_current();
-    if (current_arena == NULL) {
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            return -1;
-        }
+    // Ensure thread-local arena is initialized
+    if (ensure_thread_local_arena() != 0) {
+        return -1;
     }
 
     // Send request
     char* result = NULL;
     mcp_error_code_t error_code;
     char* error_message = NULL;
-    if (mcp_client_send_request(client, "list_resource_templates", NULL, &result, &error_code, &error_message) != 0) {
+
+    int send_result = mcp_client_send_request(client, "list_resource_templates", NULL, &result, &error_code, &error_message);
+    if (send_result != 0) {
+        mcp_log_error("Failed to send list_resource_templates request: %d", send_result);
         free(error_message);
         return -1;
     }
@@ -133,24 +163,11 @@ int mcp_client_list_resource_templates(
         return -1;
     }
 
-    // Make sure the thread-local arena is initialized for parsing
-    mcp_arena_t* arena_ptr = mcp_arena_get_current();
-    if (arena_ptr == NULL) {
-        mcp_log_debug("Initializing thread-local arena for template parsing");
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            free(error_message);
-            free(result);
-            return -1;
-        }
-    }
-
     // Parse result
     int parse_result = mcp_json_parse_resource_templates(result, templates, count);
 
     // Reset the arena after parsing
-    mcp_log_debug("Resetting thread-local arena after template parsing");
-    mcp_arena_reset_current_thread();
+    reset_thread_local_arena();
 
     if (parse_result != 0) {
         mcp_log_error("Failed to parse list_resource_templates response.");
@@ -166,7 +183,13 @@ int mcp_client_list_resource_templates(
 }
 
 /**
- * Read a resource from the MCP server
+ * @brief Read a resource from the MCP server
+ *
+ * @param client The MCP client instance
+ * @param uri The URI of the resource to read
+ * @param content Pointer to store the array of content items
+ * @param count Pointer to store the number of content items
+ * @return 0 on success, -1 on failure
  */
 int mcp_client_read_resource(
     mcp_client_t* client,
@@ -182,21 +205,15 @@ int mcp_client_read_resource(
     *content = NULL;
     *count = 0;
 
-    // Initialize thread-local arena for JSON parsing
-    if (!mcp_thread_cache_is_initialized()) {
-        mcp_thread_cache_init();
-    }
-    mcp_arena_t* current_arena = mcp_arena_get_current();
-    if (current_arena == NULL) {
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            return -1;
-        }
+    // Ensure thread-local arena is initialized
+    if (ensure_thread_local_arena() != 0) {
+        return -1;
     }
 
     // Create params
     char* params = mcp_json_format_read_resource_params(uri);
     if (params == NULL) {
+        mcp_log_error("Failed to format read_resource params for URI '%s'", uri);
         return -1;
     }
 
@@ -204,7 +221,10 @@ int mcp_client_read_resource(
     char* result = NULL;
     mcp_error_code_t error_code;
     char* error_message = NULL;
-    if (mcp_client_send_request(client, "read_resource", params, &result, &error_code, &error_message) != 0) {
+
+    int send_result = mcp_client_send_request(client, "read_resource", params, &result, &error_code, &error_message);
+    if (send_result != 0) {
+        mcp_log_error("Failed to send read_resource request: %d", send_result);
         free(params);
         free(error_message);
         return -1;
@@ -219,24 +239,11 @@ int mcp_client_read_resource(
         return -1;
     }
 
-    // Make sure the thread-local arena is initialized for parsing
-    mcp_arena_t* arena_ptr = mcp_arena_get_current();
-    if (arena_ptr == NULL) {
-        mcp_log_debug("Initializing thread-local arena for content parsing");
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            free(error_message);
-            free(result);
-            return -1;
-        }
-    }
-
     // Parse result
     int parse_result = mcp_json_parse_content(result, content, count);
 
     // Reset the arena after parsing
-    mcp_log_debug("Resetting thread-local arena after content parsing");
-    mcp_arena_reset_current_thread();
+    reset_thread_local_arena();
 
     if (parse_result != 0) {
         mcp_log_error("Failed to parse read_resource response.");
@@ -252,7 +259,12 @@ int mcp_client_read_resource(
 }
 
 /**
- * List tools from the MCP server
+ * @brief List tools from the MCP server
+ *
+ * @param client The MCP client instance
+ * @param tools Pointer to store the array of tools
+ * @param count Pointer to store the number of tools
+ * @return 0 on success, -1 on failure
  */
 int mcp_client_list_tools(
     mcp_client_t* client,
@@ -267,23 +279,19 @@ int mcp_client_list_tools(
     *tools = NULL;
     *count = 0;
 
-    // Initialize thread-local arena for JSON parsing
-    if (!mcp_thread_cache_is_initialized()) {
-        mcp_thread_cache_init();
-    }
-    mcp_arena_t* current_arena = mcp_arena_get_current();
-    if (current_arena == NULL) {
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            return -1;
-        }
+    // Ensure thread-local arena is initialized
+    if (ensure_thread_local_arena() != 0) {
+        return -1;
     }
 
     // Send request
     char* result = NULL;
     mcp_error_code_t error_code;
     char* error_message = NULL;
-    if (mcp_client_send_request(client, "list_tools", NULL, &result, &error_code, &error_message) != 0) {
+
+    int send_result = mcp_client_send_request(client, "list_tools", NULL, &result, &error_code, &error_message);
+    if (send_result != 0) {
+        mcp_log_error("Failed to send list_tools request: %d", send_result);
         free(error_message);
         return -1;
     }
@@ -296,27 +304,14 @@ int mcp_client_list_tools(
         return -1;
     }
 
-    // Make sure the thread-local arena is initialized for parsing
-    mcp_arena_t* arena_ptr = mcp_arena_get_current();
-    if (arena_ptr == NULL) {
-        mcp_log_debug("Initializing thread-local arena for tools parsing");
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            free(error_message);
-            free(result);
-            return -1;
-        }
-    }
-
     // Parse result
     int parse_result = mcp_json_parse_tools(result, tools, count);
 
     // Reset the arena after parsing
-    mcp_log_debug("Resetting thread-local arena after tools parsing");
-    mcp_arena_reset_current_thread();
+    reset_thread_local_arena();
 
     if (parse_result != 0) {
-         mcp_log_error("Failed to parse list_tools response.");
+        mcp_log_error("Failed to parse list_tools response.");
         free(error_message);
         free(result);
         return -1;
@@ -329,7 +324,15 @@ int mcp_client_list_tools(
 }
 
 /**
- * Call a tool on the MCP server
+ * @brief Call a tool on the MCP server
+ *
+ * @param client The MCP client instance
+ * @param name The name of the tool to call
+ * @param arguments The JSON arguments to pass to the tool (can be NULL)
+ * @param content Pointer to store the array of content items
+ * @param count Pointer to store the number of content items
+ * @param is_error Pointer to store whether the tool result is an error
+ * @return 0 on success, -1 on failure
  */
 int mcp_client_call_tool(
     mcp_client_t* client,
@@ -348,21 +351,15 @@ int mcp_client_call_tool(
     *count = 0;
     *is_error = false;
 
-    // Initialize thread-local arena for JSON parsing
-    if (!mcp_thread_cache_is_initialized()) {
-        mcp_thread_cache_init();
-    }
-    mcp_arena_t* current_arena = mcp_arena_get_current();
-    if (current_arena == NULL) {
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            return -1;
-        }
+    // Ensure thread-local arena is initialized
+    if (ensure_thread_local_arena() != 0) {
+        return -1;
     }
 
     // Create params
-    char* params = mcp_json_format_call_tool_params(name, arguments);
+    char* params = mcp_json_format_call_tool_params(name, arguments ? arguments : "{}");
     if (params == NULL) {
+        mcp_log_error("Failed to format call_tool params for tool '%s'", name);
         return -1;
     }
 
@@ -370,7 +367,10 @@ int mcp_client_call_tool(
     char* result = NULL;
     mcp_error_code_t error_code;
     char* error_message = NULL;
-    if (mcp_client_send_request(client, "call_tool", params, &result, &error_code, &error_message) != 0) {
+
+    int send_result = mcp_client_send_request(client, "call_tool", params, &result, &error_code, &error_message);
+    if (send_result != 0) {
+        mcp_log_error("Failed to send call_tool request for tool '%s': %d", name, send_result);
         free(params);
         free(error_message);
         return -1;
@@ -379,33 +379,20 @@ int mcp_client_call_tool(
 
     // Check for error
     if (error_code != MCP_ERROR_NONE) {
-         mcp_log_error("Server returned error for call_tool '%s': %d (%s)", name, error_code, error_message ? error_message : "N/A");
+        mcp_log_error("Server returned error for call_tool '%s': %d (%s)", name, error_code, error_message ? error_message : "N/A");
         free(error_message);
         free(result);
         return -1;
-    }
-
-    // Make sure the thread-local arena is initialized for parsing
-    mcp_arena_t* arena_ptr = mcp_arena_get_current();
-    if (arena_ptr == NULL) {
-        mcp_log_debug("Initializing thread-local arena for tool result parsing");
-        if (mcp_arena_init_current_thread(MCP_ARENA_DEFAULT_SIZE) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena");
-            free(error_message);
-            free(result);
-            return -1;
-        }
     }
 
     // Parse result
     int parse_result = mcp_json_parse_tool_result(result, content, count, is_error);
 
     // Reset the arena after parsing
-    mcp_log_debug("Resetting thread-local arena after tool result parsing");
-    mcp_arena_reset_current_thread();
+    reset_thread_local_arena();
 
     if (parse_result != 0) {
-         mcp_log_error("Failed to parse call_tool response for tool '%s'.", name);
+        mcp_log_error("Failed to parse call_tool response for tool '%s'.", name);
         free(error_message);
         free(result);
         return -1;
