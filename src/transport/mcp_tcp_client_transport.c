@@ -1,4 +1,5 @@
 #include "internal/tcp_client_transport_internal.h"
+#include "mcp_framing.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +19,7 @@ static int tcp_client_transport_start(
 ) {
     if (!transport || !transport->transport_data)
         return -1;
+
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
     if (data->running) {
@@ -62,8 +64,8 @@ static int tcp_client_transport_start(
     data->connected = true;
     data->running = true;
     mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_CONNECTED);
-    mcp_log_info("TCP Client Transport connected to %s:%u (socket %d, connected=%d)", 
-        data->host, data->port, (int)data->sock, data->connected);
+    mcp_log_info("TCP Client Transport connected to %s:%u (socket %d, connected=%d)",
+                 data->host, data->port, (int)data->sock, data->connected);
 
     // Start receiver thread
     if (mcp_thread_create(&data->receive_thread, tcp_client_receive_thread_func, transport) != 0) {
@@ -84,6 +86,7 @@ static int tcp_client_transport_start(
 static int tcp_client_transport_stop(mcp_transport_t* transport) {
     if (!transport || !transport->transport_data)
         return -1;
+
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
     if (!data->running)
@@ -130,42 +133,59 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
     return 0;
 }
 
-// Implementation for the old send function
-static int tcp_client_transport_send(mcp_transport_t* transport, const void* data_buf, size_t size) {
-    if (!transport || !transport->transport_data || !data_buf || size == 0)
+/**
+ * @brief Common helper function to handle send errors and trigger reconnection if needed
+ *
+ * @param transport The transport handle
+ * @param error_msg Error message to log
+ * @return Always returns -1 to indicate error
+ */
+static int handle_send_error(mcp_transport_t* transport, const char* error_msg) {
+    if (!transport || !transport->transport_data)
         return -1;
+
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
-    if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) {
-        mcp_log_error("Client transport not running or connected for send.");
-        // If reconnection is enabled and we're not already reconnecting, start reconnection
-        if (data->reconnect_enabled && data->connection_state != MCP_CONNECTION_STATE_RECONNECTING) {
-            mcp_log_info("Starting reconnection process before send");
-            start_reconnection_process(transport);
-        }
+    mcp_log_error("%s", error_msg);
 
-        return -1;
+    // Mark as disconnected on send error
+    data->connected = false;
+
+    // Update connection state
+    mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
+
+    // Call error callback if set
+    if (transport->error_callback) {
+        transport->error_callback(transport->callback_user_data, mcp_socket_get_last_error());
     }
 
-    // Use the new unified exact send helper, pass NULL for stop_flag
-    // mcp_socket_send_exact returns 0 on success, -1 on error/abort
-    int result = mcp_socket_send_exact(data->sock, (const char*)data_buf, size, NULL);
-    if (result != 0) {
-        mcp_log_error("mcp_socket_send_exact failed (result: %d).", result);
-        // Mark as disconnected on send error
-        data->connected = false;
+    // If reconnection is enabled, start reconnection process
+    if (data->reconnect_enabled) {
+        mcp_log_info("Starting reconnection process after send failure");
+        start_reconnection_process(transport);
+    }
 
-        // Update connection state
-        mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
+    return -1;
+}
 
-        if(transport->error_callback) {
-            // Pass the last error code obtained via the utility function
-            transport->error_callback(transport->callback_user_data, mcp_socket_get_last_error());
-        }
+/**
+ * @brief Check if the transport is ready for sending data
+ *
+ * @param transport The transport handle
+ * @param operation_name Name of the operation for logging
+ * @return 0 if ready, -1 if not ready
+ */
+static int check_transport_ready(mcp_transport_t* transport, const char* operation_name) {
+    if (!transport || !transport->transport_data)
+        return -1;
 
-        // If reconnection is enabled, start reconnection process
-        if (data->reconnect_enabled) {
-            mcp_log_info("Starting reconnection process after send failure");
+    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
+    if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) {
+        mcp_log_error("Client transport not running or connected for %s. running=%d, connected=%d, sock=%d",
+                      operation_name, data->running, data->connected, (int)data->sock);
+        // If reconnection is enabled and we're not already reconnecting, start reconnection
+        if (data->reconnect_enabled && data->connection_state != MCP_CONNECTION_STATE_RECONNECTING) {
+            mcp_log_info("Starting reconnection process before %s", operation_name);
             start_reconnection_process(transport);
         }
 
@@ -175,22 +195,38 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* dat
     return 0;
 }
 
-// Implementation for the new vectored send function
+/**
+ * @brief Implementation for the standard send function
+ */
+static int tcp_client_transport_send(mcp_transport_t* transport, const void* data_buf, size_t size) {
+    if (!transport || !transport->transport_data || !data_buf || size == 0)
+        return -1;
+
+    // Check if transport is ready for sending
+    if (check_transport_ready(transport, "send") != 0) {
+        return -1;
+    }
+
+    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
+    // Use the unified exact send helper, pass NULL for stop_flag
+    // mcp_socket_send_exact returns 0 on success, -1 on error/abort
+    int result = mcp_socket_send_exact(data->sock, (const char*)data_buf, size, NULL);
+    if (result != 0) {
+        return handle_send_error(transport, "mcp_socket_send_exact failed");
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Implementation for the vectored send function
+ */
 static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
     if (!transport || !transport->transport_data || !buffers || buffer_count == 0)
         return -1;
-    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
-    if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) {
-        mcp_log_error("Client transport not running or connected for sendv. running=%d, connected=%d, sock=%d",
-                     data->running, data->connected, (int)data->sock);
-
-        // If reconnection is enabled and we're not already reconnecting, start reconnection
-        if (data->reconnect_enabled && data->connection_state != MCP_CONNECTION_STATE_RECONNECTING) {
-            mcp_log_info("Starting reconnection process before sendv");
-            start_reconnection_process(transport);
-        }
-
+    // Check if transport is ready for sending
+    if (check_transport_ready(transport, "sendv") != 0) {
         return -1;
     }
 
@@ -211,67 +247,107 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
 #endif
     }
 
-    // Use the new unified vectored send function, pass NULL for stop_flag
+    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
+    // Use the unified vectored send function, pass NULL for stop_flag
     // Note: iovcnt is int, potential overflow if buffer_count is huge
     int result = mcp_socket_send_vectors(data->sock, iov, (int)buffer_count, NULL);
     free(iov);
 
     // mcp_socket_send_vectors returns 0 on success, -1 on error/abort
     if (result != 0) {
-        mcp_log_error("mcp_socket_send_vectors failed (result: %d).", result);
-        // Mark as disconnected on send error
-        data->connected = false;
-
-        // Update connection state
-        mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
-
-        if(transport->error_callback) {
-            transport->error_callback(transport->callback_user_data, mcp_socket_get_last_error());
-        }
-
-        // If reconnection is enabled, start reconnection process
-        if (data->reconnect_enabled) {
-            mcp_log_info("Starting reconnection process after sendv failure");
-            start_reconnection_process(transport);
-        }
-
-        return -1;
+        return handle_send_error(transport, "mcp_socket_send_vectors failed");
     }
 
     return 0;
 }
 
-// Implementation for the synchronous receive function
+/**
+ * @brief Implementation for the synchronous receive function
+ *
+ * This function attempts to receive a message from the socket with a timeout.
+ * It's useful for HTTP-like protocols where we need to wait for a response
+ * after sending a request.
+ */
 static int tcp_client_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
-    (void)timeout_ms;
-     if (!transport || !transport->transport_data || !data_out || !size_out)
-         return -1;
-     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
+    if (!transport || !transport->transport_data || !data_out || !size_out)
+        return -1;
 
-     *data_out = NULL;
-     *size_out = 0;
+    // Initialize output parameters
+    *data_out = NULL;
+    *size_out = 0;
 
-     if (!data->running || !data->connected || data->sock == MCP_INVALID_SOCKET) {
-         mcp_log_error("Client transport not running or connected for receive.");
-         return -1;
-     }
+    // Check if transport is ready for receiving
+    if (check_transport_ready(transport, "receive") != 0) {
+        return -1;
+    }
 
-     // This synchronous receive is tricky with the async receiver thread model.
-     // It's generally better to use the callback mechanism.
-     // A simple implementation might just block here, but that conflicts
-     // with the receiver thread. For now, return an error indicating it's not supported.
-     mcp_log_error("Synchronous receive is not supported by this TCP client transport implementation.");
+    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
+    // Set socket timeout for receive operation
+    if (mcp_socket_set_timeout(data->sock, timeout_ms) != 0) {
+        mcp_log_error("Failed to set socket timeout for receive operation");
+        return -1;
+    }
 
-     return -1;
- }
+    // Receive the message using the framing protocol
+    uint32_t message_length = 0;
+    char* message_buf = NULL;
+
+    int frame_result = mcp_framing_recv_message(
+        data->sock,
+        &message_buf,
+        &message_length,
+        MAX_MCP_MESSAGE_SIZE,
+        NULL
+    );
+
+    // Restore socket timeout to blocking mode
+    mcp_socket_set_timeout(data->sock, 0);
+
+    if (frame_result != 0) {
+        // Check if this is a timeout (EAGAIN/EWOULDBLOCK/ETIMEDOUT)
+        int last_error = mcp_socket_get_last_error();
+
+        if (last_error == EAGAIN || last_error == EWOULDBLOCK || last_error == ETIMEDOUT) {
+            mcp_log_debug("Receive operation timed out after %u ms", timeout_ms);
+            return -2; // Special return code for timeout
+        }
+
+        // Handle other errors
+        mcp_log_error("Failed to receive message: %d (error: %d)", frame_result, last_error);
+
+        // Check if connection is still valid
+        if (last_error == ECONNRESET || last_error == ENOTCONN || last_error == EPIPE) {
+            // Connection lost, mark as disconnected
+            data->connected = false;
+            mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
+
+            // If reconnection is enabled, start reconnection process
+            if (data->reconnect_enabled) {
+                mcp_log_info("Starting reconnection process after receive failure");
+                start_reconnection_process(transport);
+            }
+        }
+
+        return -1;
+    }
+
+    // Successfully received a message
+    mcp_log_debug("Received message (%u bytes)", message_length);
+
+    // Set output parameters
+    *data_out = message_buf;
+    *size_out = message_length;
+
+    return 0;
+}
 
 static void tcp_client_transport_destroy(mcp_transport_t* transport) {
     if (!transport || !transport->transport_data)
         return;
-    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
     tcp_client_transport_stop(transport);
 
+    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
     free(data->host);
     // Destroy buffer pool
     mcp_buffer_pool_destroy(data->buffer_pool);

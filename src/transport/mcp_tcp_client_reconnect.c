@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
+#include <limits.h>
 
 // Define the default reconnection configuration
 const mcp_reconnect_config_t MCP_DEFAULT_RECONNECT_CONFIG = {
@@ -35,36 +36,63 @@ void mcp_tcp_client_update_connection_state(mcp_tcp_client_transport_data_t* dat
 }
 
 /**
- * @brief Calculates the delay for the next reconnection attempt using exponential backoff.
+ * @brief Calculates the delay for the next reconnection attempt using exponential backoff with jitter.
+ *
+ * This function implements an improved exponential backoff algorithm with jitter to prevent
+ * the "thundering herd" problem where multiple clients reconnect at the same time.
  *
  * @param config The reconnection configuration.
  * @param attempt The current reconnection attempt number.
  * @return The delay in milliseconds.
  */
 static uint32_t calculate_reconnect_delay(const mcp_reconnect_config_t* config, int attempt) {
-    // Calculate base delay with exponential backoff
-    float delay = (float)config->initial_reconnect_delay_ms * powf(config->backoff_factor, (float)(attempt - 1));
-
-    // Cap at maximum delay
-    if (delay > config->max_reconnect_delay_ms) {
-        delay = (float)config->max_reconnect_delay_ms;
+    // Ensure attempt is at least 1
+    if (attempt < 1) {
+        attempt = 1;
     }
 
-    // Add randomness if enabled (±20% variation)
+    // Calculate base delay with exponential backoff
+    float base_delay = (float)config->initial_reconnect_delay_ms * powf(config->backoff_factor, (float)(attempt - 1));
+
+    // Cap at maximum delay
+    if (base_delay > config->max_reconnect_delay_ms) {
+        base_delay = (float)config->max_reconnect_delay_ms;
+    }
+
+    // Final delay with or without jitter
+    float final_delay = base_delay;
+
+    // Add jitter if enabled (full jitter algorithm)
     if (config->randomize_delay) {
         // Ensure random number generator is seeded
         static bool seeded = false;
         if (!seeded) {
-            srand((unsigned int)time(NULL));
+            // Use a better seed that includes both time and thread ID for better randomness
+            unsigned int seed = (unsigned int)time(NULL);
+#ifdef _WIN32
+            seed ^= (unsigned int)GetCurrentThreadId();
+#else
+            seed ^= (unsigned int)pthread_self();
+#endif
+            srand(seed);
             seeded = true;
         }
 
-        // Generate random factor between 0.8 and 1.2
-        float random_factor = 0.8f + ((float)rand() / RAND_MAX) * 0.4f;
-        delay *= random_factor;
+        // Full jitter: random value between 0 and base_delay
+        // This provides better distribution and prevents synchronized reconnection attempts
+        final_delay = ((float)rand() / RAND_MAX) * base_delay;
+
+        // Ensure minimum delay is at least 10% of base delay
+        // This prevents very short delays that could lead to rapid reconnection attempts
+        if (final_delay < (base_delay * 0.1f)) {
+            final_delay = base_delay * 0.1f;
+        }
     }
 
-    return (uint32_t)delay;
+    mcp_log_debug("Reconnect delay: base=%u ms, with jitter=%u ms (attempt %d)",
+                 (uint32_t)base_delay, (uint32_t)final_delay, attempt);
+
+    return (uint32_t)final_delay;
 }
 
 /**
@@ -115,6 +143,9 @@ static int attempt_reconnect(mcp_tcp_client_transport_data_t* data) {
 /**
  * @brief Thread function for handling reconnection attempts with exponential backoff.
  *
+ * This function implements a more efficient reconnection algorithm with better
+ * thread synchronization and improved sleep logic.
+ *
  * @param arg Pointer to the mcp_transport_t handle.
  * @return NULL on exit.
  */
@@ -123,6 +154,13 @@ void* tcp_client_reconnect_thread_func(void* arg) {
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
     mcp_log_info("Reconnect thread started");
+
+    // Create a condition variable for more efficient waiting
+    mcp_cond_t* wait_cond = mcp_cond_create();
+    if (!wait_cond) {
+        mcp_log_error("Failed to create condition variable for reconnect thread");
+        return NULL;
+    }
 
     while (data->reconnect_thread_running) {
         // Lock mutex to access reconnection state
@@ -140,39 +178,32 @@ void* tcp_client_reconnect_thread_func(void* arg) {
         // Calculate delay for this attempt
         uint32_t delay_ms = calculate_reconnect_delay(&data->reconnect_config, data->reconnect_attempt);
 
-        // Unlock mutex while waiting
-        mcp_mutex_unlock(data->reconnect_mutex);
-
-        // Wait for the calculated delay
+        // Log the wait time
         mcp_log_info("Waiting %u ms before reconnection attempt %d", delay_ms, data->reconnect_attempt);
 
-        // Sleep with periodic checks to allow early termination
-        uint32_t sleep_chunk = 100; // Check every 100ms
-        uint32_t elapsed = 0;
-        while (elapsed < delay_ms && data->reconnect_thread_running) {
-            uint32_t chunk = (delay_ms - elapsed < sleep_chunk) ? (delay_ms - elapsed) : sleep_chunk;
-#ifdef _WIN32
-            Sleep(chunk);
-#else
-            usleep(chunk * 1000);
-#endif
-            elapsed += chunk;
-        }
+        // Wait using condition variable with timeout for more efficient waiting
+        // This allows the thread to be woken up early if needed
+        mcp_cond_timedwait(wait_cond, data->reconnect_mutex, delay_ms);
 
-        // Check if thread should still be running
+        // Check if we were interrupted or if the thread should exit
         if (!data->reconnect_thread_running) {
+            mcp_mutex_unlock(data->reconnect_mutex);
             break;
         }
-
-        // Lock mutex again to attempt reconnection
-        mcp_mutex_lock(data->reconnect_mutex);
 
         // Update state to reconnecting
         mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_RECONNECTING);
 
         // Attempt to reconnect
+        mcp_log_info("Attempting reconnection (attempt %d/%d)",
+                    data->reconnect_attempt,
+                    data->reconnect_config.max_reconnect_attempts > 0 ?
+                        data->reconnect_config.max_reconnect_attempts :
+                        INT_MAX);
+
         if (attempt_reconnect(data) == 0) {
             // Reconnection successful
+            mcp_log_info("Reconnection successful");
             mcp_mutex_unlock(data->reconnect_mutex);
             break;
         }
@@ -192,6 +223,9 @@ void* tcp_client_reconnect_thread_func(void* arg) {
 
         mcp_mutex_unlock(data->reconnect_mutex);
     }
+
+    // Clean up condition variable
+    mcp_cond_destroy(wait_cond);
 
     mcp_log_info("Reconnect thread exiting");
     return NULL;

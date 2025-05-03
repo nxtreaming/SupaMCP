@@ -103,6 +103,65 @@ int mcp_socket_set_nodelay(socket_t sock) {
     return 0;
 }
 
+/**
+ * @brief Sets the timeout for socket operations.
+ *
+ * This function sets both the send and receive timeouts for a socket.
+ * A timeout of 0 means blocking mode (no timeout).
+ *
+ * @param sock The socket descriptor.
+ * @param timeout_ms Timeout in milliseconds. 0 means no timeout (blocking mode).
+ * @return 0 on success, -1 on error.
+ */
+int mcp_socket_set_timeout(socket_t sock, uint32_t timeout_ms) {
+    if (sock == MCP_INVALID_SOCKET) {
+        return -1;
+    }
+
+#ifdef _WIN32
+    // Windows uses milliseconds directly
+    DWORD timeout = timeout_ms;
+    int result;
+
+    // Set receive timeout
+    result = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+    if (result == MCP_SOCKET_ERROR) {
+        mcp_log_error("setsockopt(SO_RCVTIMEO) failed: %d", mcp_socket_get_last_error());
+        return -1;
+    }
+
+    // Set send timeout
+    result = setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+    if (result == MCP_SOCKET_ERROR) {
+        mcp_log_error("setsockopt(SO_SNDTIMEO) failed: %d", mcp_socket_get_last_error());
+        return -1;
+    }
+#else
+    // POSIX uses struct timeval
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    int result;
+
+    // Set receive timeout
+    result = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    if (result == MCP_SOCKET_ERROR) {
+        mcp_log_error("setsockopt(SO_RCVTIMEO) failed: %d (%s)", errno, strerror(errno));
+        return -1;
+    }
+
+    // Set send timeout
+    result = setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+    if (result == MCP_SOCKET_ERROR) {
+        mcp_log_error("setsockopt(SO_SNDTIMEO) failed: %d (%s)", errno, strerror(errno));
+        return -1;
+    }
+#endif
+
+    mcp_log_debug("Socket timeout set to %u ms for socket %d", timeout_ms, (int)sock);
+    return 0;
+}
+
 // Basic blocking connect implementation (similar to original client)
 // TODO: Implement non-blocking connect with timeout as per header comment if needed.
 socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms) {

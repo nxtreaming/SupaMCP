@@ -16,6 +16,66 @@
 // Define global flag variable
 bool reconnection_in_progress = false;
 
+// Define standard ping messages
+static const char PING_MESSAGE_NO_AUTH[] = "{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"params\":{},\"id\":0}";
+static const char PING_MESSAGE_WITH_AUTH[] = "{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"params\":{\"apiKey\":\"TEST_API_KEY_123\"},\"id\":0}";
+
+/**
+ * @brief Send a ping message to the server
+ *
+ * @param data The TCP client transport data
+ * @return 0 on success, -1 on failure
+ */
+static int send_ping_message(mcp_tcp_client_transport_data_t* data) {
+    mcp_log_info("Preparing client ping message...");
+
+    // Ensure connection is established
+    if (!data->connected) {
+        mcp_log_error("Cannot send ping, socket not connected");
+        return -1;
+    }
+
+    // Use the version without authentication for servers that don't require it
+    const char* ping_content = PING_MESSAGE_NO_AUTH;
+    uint32_t ping_length = (uint32_t)strlen(ping_content);
+
+    // Calculate message length (including NULL terminator)
+    const uint32_t content_length = ping_length + 1; // +1 for terminator
+
+    // Convert to network byte order (Big-Endian)
+    const uint32_t length_network_order = htonl(content_length);
+
+    // Send message using vectored I/O to avoid creating a temporary buffer
+    mcp_iovec_t iov[2];
+    int iovcnt = 0;
+
+#ifdef _WIN32
+    iov[iovcnt].buf = (char*)&length_network_order;
+    iov[iovcnt].len = (ULONG)sizeof(length_network_order);
+    iovcnt++;
+    iov[iovcnt].buf = (char*)ping_content;
+    iov[iovcnt].len = (ULONG)content_length;
+    iovcnt++;
+#else
+    iov[iovcnt].iov_base = (char*)&length_network_order;
+    iov[iovcnt].iov_len = sizeof(length_network_order);
+    iovcnt++;
+    iov[iovcnt].iov_base = (char*)ping_content;
+    iov[iovcnt].iov_len = content_length;
+    iovcnt++;
+#endif
+
+    // Send using the socket utility function
+    int send_status = mcp_socket_send_vectors(data->sock, iov, iovcnt, NULL);
+    if (send_status != 0) {
+        mcp_log_error("Failed to send ping message (status: %d)", send_status);
+        return -1;
+    }
+
+    mcp_log_info("Ping message sent successfully");
+    return 0;
+}
+
 /**
  * @internal
  * @brief Background thread function responsible for receiving messages from the server.
@@ -47,74 +107,18 @@ void* tcp_client_receive_thread_func(void* arg) {
     if (reconnection_in_progress) {
         mcp_log_info("Skipping initial ping due to reconnection");
         reconnection_in_progress = false;
-
-        // Only enter receive mode, do not send ping
-        goto receive_loop;
-    }
-
-    // Send ping on first connection
-    mcp_log_info("Preparing client ping message...");
-
-    // Ensure connection is established
-    if (!data->connected) {
-        mcp_log_error("Cannot send ping, socket not connected");
-        mcp_arena_destroy_current_thread(); // Clean up arena before exiting
-        return NULL;
-    }
-
-    // 1. Define standard ping message (without authentication)
-    static const char ping_content_no_auth[] = "{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"params\":{},\"id\":0}";
-
-    // Alternative ping message with API key parameter
-    static const char ping_content_with_auth[] = "{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"params\":{\"apiKey\":\"TEST_API_KEY_123\"},\"id\":0}";
-
-    // Use the version without authentication for servers that don't require it
-    const char* ping_content = ping_content_no_auth;
-    uint32_t ping_length = (uint32_t)strlen(ping_content);
-
-    // 2. Calculate message length (including NULL terminator)
-    const uint32_t content_length = ping_length + 1; // +1 for terminator
-
-    // 3. Convert to network byte order (Big-Endian)
-    const uint32_t length_network_order = htonl(content_length);
-
-    // 4. Send message using vectored I/O to avoid creating a temporary buffer
-    if (data->connected) {
-        mcp_iovec_t iov[2];
-        int iovcnt = 0;
-
-#ifdef _WIN32
-        iov[iovcnt].buf = (char*)&length_network_order;
-        iov[iovcnt].len = (ULONG)sizeof(length_network_order);
-        iovcnt++;
-        iov[iovcnt].buf = (char*)ping_content;
-        iov[iovcnt].len = (ULONG)content_length;
-        iovcnt++;
-#else
-        iov[iovcnt].iov_base = (char*)&length_network_order;
-        iov[iovcnt].iov_len = sizeof(length_network_order);
-        iovcnt++;
-        iov[iovcnt].iov_base = (char*)ping_content;
-        iov[iovcnt].iov_len = content_length;
-        iovcnt++;
-#endif
-
-        // Send using the socket utility function
-        int send_status = mcp_socket_send_vectors(data->sock, iov, iovcnt, NULL);
-        if (send_status != 0) {
-            mcp_log_error("Failed to send ping message (status: %d)", send_status);
-            mcp_arena_destroy_current_thread();
+    } else {
+        // Send ping on first connection
+        if (send_ping_message(data) != 0) {
+            mcp_log_error("Failed to send initial ping message");
+            mcp_arena_destroy_current_thread(); // Clean up arena before exiting
             return NULL;
         }
-
-        mcp_log_info("Ping message sent successfully");
-    } else {
-        mcp_log_error("Cannot send ping, connection already closed");
-        mcp_arena_destroy_current_thread();
-        return NULL;
     }
 
-receive_loop:
+    // We'll use non-blocking socket operations with select() instead of a timeout
+    // This allows us to periodically check if we should exit without disconnecting
+
     // Main message reception loop
     while (data->running) {
         // Check connection status
@@ -123,21 +127,55 @@ receive_loop:
             break;
         }
 
-        // --- 1. Receive Framed Message ---
-        mcp_log_debug("Waiting to receive framed message from server...");
+        // --- 1. Use select() to wait for data with a timeout ---
+        fd_set read_fds;
+        struct timeval tv;
+
+        // Initialize the file descriptor set
+        FD_ZERO(&read_fds);
+        FD_SET(data->sock, &read_fds);
+
+        // Set the timeout to 1 second
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        // Wait for data or timeout
+        int select_result = select((int)data->sock + 1, &read_fds, NULL, NULL, &tv);
+
+        // Check select result
+        if (select_result == -1) {
+            // Select error
+            int last_error = mcp_socket_get_last_error();
+            mcp_log_error("select() failed with error: %d", last_error);
+            data->connected = false;
+            break;
+        } else if (select_result == 0) {
+            // Timeout - no data available
+            // Just continue the loop to check if we should exit
+            continue;
+        }
+
+        // Data is available, receive it
+        mcp_log_debug("Data available, receiving framed message from server...");
+
+        // Receive the message
         frame_result = mcp_framing_recv_message(
             data->sock,
             &message_buf, // Let framing function allocate buffer
             &message_length_host,
             MAX_MCP_MESSAGE_SIZE,
-            NULL // Pass NULL; rely on shutdown() in stop() to unblock recv
+            NULL // We don't use stop_flag here
         );
+
         mcp_log_debug("mcp_framing_recv_message returned: %d", frame_result);
 
+        // Handle receive errors
         if (frame_result != 0) {
+            // Get the error code
+            int last_error = mcp_socket_get_last_error();
+
             // Only log/callback during normal operation
             if (data->running) {
-                int last_error = mcp_socket_get_last_error();
                 mcp_log_error("mcp_framing_recv_message failed for socket %d. Result: %d, Last Error: %d",
                               (int)data->sock, frame_result, last_error);
                 if (transport->error_callback && !error_signaled) {
@@ -148,10 +186,13 @@ receive_loop:
             } else {
                 mcp_log_debug("Client receive thread for socket %d interrupted or stopped during framing recv.", (int)data->sock);
             }
+
             data->connected = false;
+
             // message_buf should be NULL if framing function failed before allocation
             free(message_buf);
             message_buf = NULL;
+
             // Exit loop on any error/close/abort
             break;
         }
@@ -186,6 +227,9 @@ receive_loop:
         // Caller (this function) is responsible for freeing the buffer allocated by mcp_framing_recv_message
         free(message_buf);
         message_buf = NULL;
+
+        // Reset error_signaled flag for next iteration
+        error_signaled = false;
     }
 
     mcp_log_debug("TCP Client receive thread exiting for socket %d", (int)data->sock);

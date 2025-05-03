@@ -92,6 +92,18 @@ int mcp_socket_set_non_blocking(socket_t sock);
 int mcp_socket_set_nodelay(socket_t sock);
 
 /**
+ * @brief Sets the timeout for socket operations.
+ *
+ * This function sets both the send and receive timeouts for a socket.
+ * A timeout of 0 means blocking mode (no timeout).
+ *
+ * @param sock The socket descriptor.
+ * @param timeout_ms Timeout in milliseconds. 0 means no timeout (blocking mode).
+ * @return 0 on success, -1 on error.
+ */
+int mcp_socket_set_timeout(socket_t sock, uint32_t timeout_ms);
+
+/**
  * @brief Connects to a server address. Handles non-blocking connect internally.
  * This is a blocking call from the perspective of the caller, but uses non-blocking internally.
  * @param host The hostname or IP address of the server.
