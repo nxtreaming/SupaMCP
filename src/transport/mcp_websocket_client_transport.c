@@ -19,10 +19,11 @@
 
 // Default buffer sizes and timeouts
 #define WS_CLIENT_DEFAULT_BUFFER_SIZE 4096
-#define WS_CLIENT_DEFAULT_CONNECT_TIMEOUT_MS 5000
+#define WS_CLIENT_DEFAULT_CONNECT_TIMEOUT_MS 10000  // Increased to 10 seconds
 #define WS_CLIENT_MAX_RECONNECT_ATTEMPTS 10
-#define WS_CLIENT_RECONNECT_DELAY_MS 1000
-#define WS_CLIENT_MAX_RECONNECT_DELAY_MS 30000
+#define WS_CLIENT_RECONNECT_DELAY_MS 2000          // Increased to 2 seconds
+#define WS_CLIENT_MAX_RECONNECT_DELAY_MS 60000     // Increased to 60 seconds
+#define WS_CLIENT_PING_INTERVAL_MS 30000           // Send ping every 30 seconds
 
 // Message types
 typedef enum {
@@ -73,6 +74,9 @@ typedef struct {
     int reconnect_attempts;         // Number of reconnection attempts
     time_t last_reconnect_time;     // Time of last reconnection attempt
     uint32_t reconnect_delay_ms;    // Current reconnection delay in milliseconds
+
+    // Ping parameters
+    time_t last_ping_time;          // Time of last ping sent
 } ws_client_data_t;
 
 // Forward declarations
@@ -168,6 +172,12 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
 
+            break;
+        }
+
+        case LWS_CALLBACK_CLIENT_RECEIVE_PONG: {
+            // Received pong from server
+            mcp_log_debug("Received pong from server");
             break;
         }
 
@@ -271,6 +281,26 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
         case LWS_CALLBACK_CLIENT_WRITEABLE: {
             // Ready to send data to server
+
+            // Disable automatic ping for now
+            /*
+            time_t now = time(NULL);
+            if (difftime(now, data->last_ping_time) * 1000 >= WS_CLIENT_PING_INTERVAL_MS) {
+                // Send a ping frame
+                unsigned char buf[LWS_PRE + 0];
+                int result = lws_write(wsi, &buf[LWS_PRE], 0, LWS_WRITE_PING);
+
+                if (result >= 0) {
+                    // Update last ping time
+                    data->last_ping_time = now;
+                    mcp_log_debug("Sent ping to server");
+                } else {
+                    mcp_log_error("Failed to send ping to server");
+                }
+            }
+            */
+
+            // Then check if we have any messages to send
             ws_message_item_t* item = ws_client_dequeue_message(data);
             if (item) {
                 // Send the message
@@ -471,9 +501,8 @@ static void ws_client_handle_reconnect(ws_client_data_t* data) {
     mcp_mutex_lock(data->connection_mutex);
 
     // Check if we've exceeded the maximum number of reconnection attempts
-    if (data->reconnect_attempts >= WS_CLIENT_MAX_RECONNECT_ATTEMPTS) {
-        mcp_log_error("WebSocket client exceeded maximum reconnection attempts (%d)",
-                     WS_CLIENT_MAX_RECONNECT_ATTEMPTS);
+    if (data->reconnect_attempts >= 10) { // Use constant value instead of macro
+        mcp_log_error("WebSocket client exceeded maximum reconnection attempts (%d)", 10);
         data->state = WS_CLIENT_STATE_ERROR;
         mcp_mutex_unlock(data->connection_mutex);
         return;
@@ -488,8 +517,8 @@ static void ws_client_handle_reconnect(ws_client_data_t* data) {
     } else {
         // Exponential backoff with a maximum delay
         data->reconnect_delay_ms *= 2;
-        if (data->reconnect_delay_ms > WS_CLIENT_MAX_RECONNECT_DELAY_MS) {
-            data->reconnect_delay_ms = WS_CLIENT_MAX_RECONNECT_DELAY_MS;
+        if (data->reconnect_delay_ms > 60000) { // Use constant value instead of macro (60 seconds)
+            data->reconnect_delay_ms = 60000;
         }
         data->reconnect_attempts++;
     }
@@ -497,7 +526,7 @@ static void ws_client_handle_reconnect(ws_client_data_t* data) {
     data->last_reconnect_time = now;
 
     mcp_log_info("WebSocket client reconnecting in %u ms (attempt %d of %d)",
-                data->reconnect_delay_ms, data->reconnect_attempts, WS_CLIENT_MAX_RECONNECT_ATTEMPTS);
+                data->reconnect_delay_ms, data->reconnect_attempts, 10); // Use constant value instead of macro
 
     mcp_mutex_unlock(data->connection_mutex);
 
@@ -508,6 +537,18 @@ static void ws_client_handle_reconnect(ws_client_data_t* data) {
     if (data->running) {
         ws_client_connect(data);
     }
+}
+
+// Helper function to request sending a ping
+static void ws_client_send_ping(ws_client_data_t* data) {
+    if (!data || !data->wsi || data->state != WS_CLIENT_STATE_CONNECTED) {
+        return;
+    }
+
+    // Request a writable callback to send a ping
+    lws_callback_on_writable(data->wsi);
+
+    mcp_log_debug("Requested ping to server");
 }
 
 // Client event loop thread function
@@ -523,11 +564,24 @@ static void* ws_client_event_thread(void* arg) {
         bool need_reconnect = (data->state == WS_CLIENT_STATE_DISCONNECTED ||
                               data->state == WS_CLIENT_STATE_ERROR) &&
                               data->reconnect && data->running;
+
+        // Disable ping check for now
+        /*
+        bool need_ping = data->state == WS_CLIENT_STATE_CONNECTED &&
+                         difftime(time(NULL), data->last_ping_time) * 1000 >= WS_CLIENT_PING_INTERVAL_MS;
+        */
         mcp_mutex_unlock(data->connection_mutex);
 
         if (need_reconnect) {
             ws_client_handle_reconnect(data);
         }
+
+        // Disable ping for now
+        /*
+        if (need_ping) {
+            ws_client_send_ping(data);
+        }
+        */
     }
 
     return NULL;
@@ -656,6 +710,9 @@ static int ws_client_transport_start(
     data->reconnect_attempts = 0;
     data->reconnect_delay_ms = WS_CLIENT_RECONNECT_DELAY_MS;
     data->last_reconnect_time = time(NULL);
+
+    // Initialize ping parameters
+    data->last_ping_time = time(NULL);
 
     // Set initial state
     data->state = WS_CLIENT_STATE_DISCONNECTED;

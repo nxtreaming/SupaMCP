@@ -19,9 +19,9 @@
 
 // Default buffer sizes and timeouts
 #define WS_SERVER_DEFAULT_BUFFER_SIZE 4096
-#define WS_SERVER_PING_INTERVAL_MS 30000
-#define WS_SERVER_PING_TIMEOUT_MS 10000
-#define WS_SERVER_CLEANUP_INTERVAL_MS 60000
+#define WS_SERVER_PING_INTERVAL_MS 60000    // Increased to 60 seconds
+#define WS_SERVER_PING_TIMEOUT_MS 30000     // Increased to 30 seconds
+#define WS_SERVER_CLEANUP_INTERVAL_MS 120000 // Increased to 120 seconds
 
 // Define maximum number of simultaneous WebSocket clients
 #define MAX_WEBSOCKET_CLIENTS 64
