@@ -15,6 +15,37 @@
 #include "libwebsockets.h"
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
+
+// Default buffer sizes and timeouts
+#define WS_CLIENT_DEFAULT_BUFFER_SIZE 4096
+#define WS_CLIENT_DEFAULT_CONNECT_TIMEOUT_MS 5000
+#define WS_CLIENT_MAX_RECONNECT_ATTEMPTS 10
+#define WS_CLIENT_RECONNECT_DELAY_MS 1000
+#define WS_CLIENT_MAX_RECONNECT_DELAY_MS 30000
+
+// Message types
+typedef enum {
+    WS_MESSAGE_TYPE_TEXT = 0,
+    WS_MESSAGE_TYPE_BINARY
+} ws_message_type_t;
+
+// Outgoing message queue item
+typedef struct ws_message_item {
+    unsigned char* data;           // Message data (including LWS_PRE padding)
+    size_t size;                   // Message size (excluding padding)
+    ws_message_type_t type;        // Message type (text or binary)
+    struct ws_message_item* next;  // Next message in queue
+} ws_message_item_t;
+
+// Connection state
+typedef enum {
+    WS_CLIENT_STATE_DISCONNECTED = 0,
+    WS_CLIENT_STATE_CONNECTING,
+    WS_CLIENT_STATE_CONNECTED,
+    WS_CLIENT_STATE_CLOSING,
+    WS_CLIENT_STATE_ERROR
+} ws_client_state_t;
 
 // WebSocket client transport data
 typedef struct {
@@ -28,15 +59,31 @@ typedef struct {
     size_t receive_buffer_used;     // Used receive buffer length
     mcp_transport_t* transport;     // Transport handle
     mcp_websocket_config_t config;  // WebSocket configuration
-    bool connected;                 // Connection state
+    ws_client_state_t state;        // Connection state
     bool reconnect;                 // Whether to reconnect on disconnect
     mcp_mutex_t* connection_mutex;  // Mutex for connection state
     mcp_cond_t* connection_cond;    // Condition variable for connection state
+
+    // Message queue for outgoing messages
+    ws_message_item_t* message_queue;     // Queue head
+    ws_message_item_t* message_queue_tail; // Queue tail
+    mcp_mutex_t* queue_mutex;             // Mutex for message queue
+
+    // Reconnection parameters
+    int reconnect_attempts;         // Number of reconnection attempts
+    time_t last_reconnect_time;     // Time of last reconnection attempt
+    uint32_t reconnect_delay_ms;    // Current reconnection delay in milliseconds
 } ws_client_data_t;
 
 // Forward declarations
 static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
                              void* user, void* in, size_t len);
+static int ws_client_connect(ws_client_data_t* data);
+static void ws_client_handle_reconnect(ws_client_data_t* data);
+static void ws_client_enqueue_message(ws_client_data_t* data, const void* message,
+                                     size_t size, ws_message_type_t type);
+static ws_message_item_t* ws_client_dequeue_message(ws_client_data_t* data);
+static void ws_client_free_message_queue(ws_client_data_t* data);
 
 // WebSocket protocol definitions
 static struct lws_protocols client_protocols[] = {
@@ -82,9 +129,15 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             // Signal that the connection is established
             mcp_mutex_lock(data->connection_mutex);
-            data->connected = true;
+            data->state = WS_CLIENT_STATE_CONNECTED;
+            data->reconnect_attempts = 0; // Reset reconnection attempts on successful connection
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
+
+            // Request a writable callback to send any queued messages
+            if (data->message_queue) {
+                lws_callback_on_writable(wsi);
+            }
 
             break;
         }
@@ -97,15 +150,9 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             // Signal that the connection failed
             mcp_mutex_lock(data->connection_mutex);
-            data->connected = false;
+            data->state = WS_CLIENT_STATE_ERROR;
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
-
-            // If reconnect is enabled, schedule a reconnection
-            if (data->reconnect && data->running) {
-                // In a real implementation, we would implement reconnection logic
-                // with exponential backoff
-            }
 
             break;
         }
@@ -117,15 +164,9 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             // Signal that the connection is closed
             mcp_mutex_lock(data->connection_mutex);
-            data->connected = false;
+            data->state = WS_CLIENT_STATE_DISCONNECTED;
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
-
-            // If reconnect is enabled, schedule a reconnection
-            if (data->reconnect && data->running) {
-                // In a real implementation, we would implement reconnection logic
-                // with exponential backoff
-            }
 
             break;
         }
@@ -136,7 +177,7 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             // Ensure buffer is large enough
             if (data->receive_buffer_used + len > data->receive_buffer_len) {
-                size_t new_len = data->receive_buffer_len == 0 ? 4096 : data->receive_buffer_len * 2;
+                size_t new_len = data->receive_buffer_len == 0 ? WS_CLIENT_DEFAULT_BUFFER_SIZE : data->receive_buffer_len * 2;
                 while (new_len < data->receive_buffer_used + len) {
                     new_len *= 2;
                 }
@@ -169,81 +210,12 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 }
                 mcp_log_debug("WebSocket client raw data (hex): %s", hex_buffer);
 
-                // Check if this might be a length-prefixed message
-                if (len >= 4) {
-                    // Interpret first 4 bytes as a 32-bit length (network byte order)
-                    uint32_t msg_len = 0;
-                    // Convert from network byte order (big endian) to host byte order
-                    msg_len = ((unsigned char)((char*)in)[0] << 24) |
-                              ((unsigned char)((char*)in)[1] << 16) |
-                              ((unsigned char)((char*)in)[2] << 8) |
-                              ((unsigned char)((char*)in)[3]);
+                // WebSocket messages don't have length prefixes - they're already properly framed by the WebSocket protocol
+                // For WebSocket, we should just copy the data directly to our buffer
 
-                    // Log the extracted length
-                    mcp_log_debug("Possible message length prefix: %u bytes (total received: %zu bytes)",
-                                 msg_len, len);
-
-                    // If this looks like a length-prefixed message, skip the length prefix
-                    if (msg_len <= len - 4 && msg_len > 0) {
-                        mcp_log_debug("Detected length-prefixed message, skipping 4-byte prefix");
-                        // Copy data without the length prefix
-                        memcpy(data->receive_buffer + data->receive_buffer_used,
-                               (char*)in + 4, len - 4);
-                        data->receive_buffer_used += (len - 4);
-
-                        // Log the actual message content
-                        if (len - 4 < 1000) {
-                            char content_buffer[1024] = {0};
-                            memcpy(content_buffer, (char*)in + 4, len - 4);
-                            content_buffer[len - 4] = '\0';
-                            mcp_log_debug("Message content after skipping prefix: '%s'", content_buffer);
-                        }
-
-                        // Continue with processing the message
-                        if (lws_is_final_fragment(wsi)) {
-                            // Ensure the buffer is null-terminated for string operations
-                            if (data->receive_buffer_used < data->receive_buffer_len) {
-                                data->receive_buffer[data->receive_buffer_used] = '\0';
-                            } else {
-                                // Resize buffer to add null terminator
-                                char* new_buffer = (char*)realloc(data->receive_buffer, data->receive_buffer_used + 1);
-                                if (!new_buffer) {
-                                    mcp_log_error("Failed to resize WebSocket client receive buffer for null terminator");
-                                    return -1;
-                                }
-                                data->receive_buffer = new_buffer;
-                                data->receive_buffer_len = data->receive_buffer_used + 1;
-                                data->receive_buffer[data->receive_buffer_used] = '\0';
-                            }
-
-                            // Process complete message
-                            if (data->transport && data->transport->message_callback) {
-                                // Initialize thread-local arena for JSON parsing
-                                mcp_log_debug("Initializing thread-local arena for client message processing");
-                                if (mcp_arena_init_current_thread(4096) != 0) {
-                                    mcp_log_error("Failed to initialize thread-local arena in WebSocket client callback");
-                                }
-
-                                int error_code = 0;
-                                char* response = data->transport->message_callback(
-                                    data->transport->callback_user_data,
-                                    data->receive_buffer,
-                                    data->receive_buffer_used,
-                                    &error_code
-                                );
-
-                                // Free the response if one was returned
-                                if (response) {
-                                    free(response);
-                                }
-                            }
-
-                            // Reset buffer
-                            data->receive_buffer_used = 0;
-                        }
-
-                        return 0;  // Skip the rest of the processing
-                    }
+                // Check if the first character is '{' which indicates a JSON message (most common case)
+                if (len > 0 && ((char*)in)[0] == '{') {
+                    mcp_log_debug("Detected JSON message");
                 }
             }
 
@@ -299,7 +271,36 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
         case LWS_CALLBACK_CLIENT_WRITEABLE: {
             // Ready to send data to server
-            // In a real implementation, we would dequeue and send messages here
+            ws_message_item_t* item = ws_client_dequeue_message(data);
+            if (item) {
+                // Send the message
+                enum lws_write_protocol write_protocol =
+                    (item->type == WS_MESSAGE_TYPE_BINARY) ? LWS_WRITE_BINARY : LWS_WRITE_TEXT;
+
+                int result = lws_write(wsi, item->data + LWS_PRE, item->size, write_protocol);
+
+                if (result < 0) {
+                    mcp_log_error("WebSocket client write failed");
+
+                    // Put the message back in the queue
+                    mcp_mutex_lock(data->queue_mutex);
+                    item->next = data->message_queue;
+                    data->message_queue = item;
+                    if (!data->message_queue_tail) {
+                        data->message_queue_tail = item;
+                    }
+                    mcp_mutex_unlock(data->queue_mutex);
+                } else {
+                    // Free the message
+                    free(item->data);
+                    free(item);
+
+                    // Request another writable callback if there are more messages
+                    if (data->message_queue) {
+                        lws_callback_on_writable(wsi);
+                    }
+                }
+            }
             break;
         }
 
@@ -310,12 +311,223 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
+// Helper function to enqueue a message
+static void ws_client_enqueue_message(ws_client_data_t* data, const void* message,
+                                     size_t size, ws_message_type_t type) {
+    if (!data || !message || size == 0 || !data->queue_mutex) {
+        return;
+    }
+
+    // Allocate message item
+    ws_message_item_t* item = (ws_message_item_t*)malloc(sizeof(ws_message_item_t));
+    if (!item) {
+        mcp_log_error("Failed to allocate WebSocket message item");
+        return;
+    }
+
+    // Allocate buffer with LWS_PRE padding
+    item->data = (unsigned char*)malloc(LWS_PRE + size);
+    if (!item->data) {
+        mcp_log_error("Failed to allocate WebSocket message buffer");
+        free(item);
+        return;
+    }
+
+    // Copy message data after padding
+    memcpy(item->data + LWS_PRE, message, size);
+    item->size = size;
+    item->type = type;
+    item->next = NULL;
+
+    // Add to queue
+    mcp_mutex_lock(data->queue_mutex);
+
+    if (data->message_queue_tail) {
+        data->message_queue_tail->next = item;
+        data->message_queue_tail = item;
+    } else {
+        data->message_queue = item;
+        data->message_queue_tail = item;
+    }
+
+    mcp_mutex_unlock(data->queue_mutex);
+
+    // Request a writable callback to send the message
+    if (data->wsi) {
+        lws_callback_on_writable(data->wsi);
+    }
+}
+
+// Helper function to dequeue a message
+static ws_message_item_t* ws_client_dequeue_message(ws_client_data_t* data) {
+    if (!data || !data->queue_mutex) {
+        return NULL;
+    }
+
+    ws_message_item_t* item = NULL;
+
+    mcp_mutex_lock(data->queue_mutex);
+
+    if (data->message_queue) {
+        item = data->message_queue;
+        data->message_queue = item->next;
+
+        if (!data->message_queue) {
+            data->message_queue_tail = NULL;
+        }
+
+        item->next = NULL;
+    }
+
+    mcp_mutex_unlock(data->queue_mutex);
+
+    return item;
+}
+
+// Helper function to free the message queue
+static void ws_client_free_message_queue(ws_client_data_t* data) {
+    if (!data || !data->queue_mutex) {
+        return;
+    }
+
+    mcp_mutex_lock(data->queue_mutex);
+
+    ws_message_item_t* item = data->message_queue;
+    while (item) {
+        ws_message_item_t* next = item->next;
+        if (item->data) {
+            free(item->data);
+        }
+        free(item);
+        item = next;
+    }
+
+    data->message_queue = NULL;
+    data->message_queue_tail = NULL;
+
+    mcp_mutex_unlock(data->queue_mutex);
+}
+
+// Helper function to connect to the WebSocket server
+static int ws_client_connect(ws_client_data_t* data) {
+    if (!data || !data->context) {
+        return -1;
+    }
+
+    // Update connection state
+    mcp_mutex_lock(data->connection_mutex);
+    data->state = WS_CLIENT_STATE_CONNECTING;
+    mcp_mutex_unlock(data->connection_mutex);
+
+    // Connect to server
+    struct lws_client_connect_info connect_info = {0};
+    connect_info.context = data->context;
+    connect_info.address = data->config.host;
+    connect_info.port = data->config.port;
+
+    // Make sure path starts with a slash
+    char path_buffer[256] = {0};
+    if (data->config.path) {
+        if (data->config.path[0] != '/') {
+            snprintf(path_buffer, sizeof(path_buffer), "/%s", data->config.path);
+            connect_info.path = path_buffer;
+        } else {
+            connect_info.path = data->config.path;
+        }
+    } else {
+        connect_info.path = "/";
+    }
+
+    connect_info.host = data->config.host;
+    connect_info.origin = data->config.origin ? data->config.origin : data->config.host;
+    connect_info.protocol = data->config.protocol ? data->config.protocol : "mcp-protocol";
+    connect_info.pwsi = &data->wsi;
+    connect_info.ssl_connection = data->config.use_ssl ? LCCSCF_USE_SSL : 0;
+    connect_info.local_protocol_name = "mcp-protocol";
+
+    if (!lws_client_connect_via_info(&connect_info)) {
+        mcp_log_error("Failed to connect to WebSocket server");
+
+        // Update connection state
+        mcp_mutex_lock(data->connection_mutex);
+        data->state = WS_CLIENT_STATE_ERROR;
+        mcp_mutex_unlock(data->connection_mutex);
+
+        return -1;
+    }
+
+    mcp_log_info("WebSocket client connecting to %s:%d%s",
+                data->config.host, data->config.port, data->config.path ? data->config.path : "/");
+
+    return 0;
+}
+
+// Helper function to handle reconnection
+static void ws_client_handle_reconnect(ws_client_data_t* data) {
+    if (!data || !data->reconnect || !data->running) {
+        return;
+    }
+
+    mcp_mutex_lock(data->connection_mutex);
+
+    // Check if we've exceeded the maximum number of reconnection attempts
+    if (data->reconnect_attempts >= WS_CLIENT_MAX_RECONNECT_ATTEMPTS) {
+        mcp_log_error("WebSocket client exceeded maximum reconnection attempts (%d)",
+                     WS_CLIENT_MAX_RECONNECT_ATTEMPTS);
+        data->state = WS_CLIENT_STATE_ERROR;
+        mcp_mutex_unlock(data->connection_mutex);
+        return;
+    }
+
+    // Calculate reconnection delay with exponential backoff
+    time_t now = time(NULL);
+    if (data->reconnect_attempts == 0 || difftime(now, data->last_reconnect_time) >= 60) {
+        // Reset reconnection delay if this is the first attempt or if it's been more than a minute
+        data->reconnect_delay_ms = WS_CLIENT_RECONNECT_DELAY_MS;
+        data->reconnect_attempts = 1;
+    } else {
+        // Exponential backoff with a maximum delay
+        data->reconnect_delay_ms *= 2;
+        if (data->reconnect_delay_ms > WS_CLIENT_MAX_RECONNECT_DELAY_MS) {
+            data->reconnect_delay_ms = WS_CLIENT_MAX_RECONNECT_DELAY_MS;
+        }
+        data->reconnect_attempts++;
+    }
+
+    data->last_reconnect_time = now;
+
+    mcp_log_info("WebSocket client reconnecting in %u ms (attempt %d of %d)",
+                data->reconnect_delay_ms, data->reconnect_attempts, WS_CLIENT_MAX_RECONNECT_ATTEMPTS);
+
+    mcp_mutex_unlock(data->connection_mutex);
+
+    // Sleep for the reconnection delay
+    mcp_sleep_ms(data->reconnect_delay_ms);
+
+    // Attempt to reconnect
+    if (data->running) {
+        ws_client_connect(data);
+    }
+}
+
 // Client event loop thread function
 static void* ws_client_event_thread(void* arg) {
     ws_client_data_t* data = (ws_client_data_t*)arg;
 
     while (data->running) {
+        // Service the WebSocket context
         lws_service(data->context, 50); // 50ms timeout
+
+        // Check if we need to reconnect
+        mcp_mutex_lock(data->connection_mutex);
+        bool need_reconnect = (data->state == WS_CLIENT_STATE_DISCONNECTED ||
+                              data->state == WS_CLIENT_STATE_ERROR) &&
+                              data->reconnect && data->running;
+        mcp_mutex_unlock(data->connection_mutex);
+
+        if (need_reconnect) {
+            ws_client_handle_reconnect(data);
+        }
     }
 
     return NULL;
@@ -331,23 +543,43 @@ static int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeou
     mcp_mutex_lock(data->connection_mutex);
 
     // If already connected, return immediately
-    if (data->connected) {
+    if (data->state == WS_CLIENT_STATE_CONNECTED) {
         mcp_mutex_unlock(data->connection_mutex);
         return 0;
     }
 
     // Wait for connection with timeout
     if (timeout_ms > 0) {
-        result = mcp_cond_timedwait(data->connection_cond, data->connection_mutex, timeout_ms);
+        // Wait with timeout
+        uint32_t remaining_timeout = timeout_ms;
+        uint32_t wait_chunk = 100; // Wait in smaller chunks to check for state changes
+
+        while (data->state != WS_CLIENT_STATE_CONNECTED &&
+               data->state != WS_CLIENT_STATE_ERROR &&
+               data->running &&
+               remaining_timeout > 0) {
+
+            uint32_t wait_time = (remaining_timeout < wait_chunk) ? remaining_timeout : wait_chunk;
+            result = mcp_cond_timedwait(data->connection_cond, data->connection_mutex, wait_time);
+
+            if (result != 0) {
+                // Timeout or error
+                break;
+            }
+
+            remaining_timeout -= wait_time;
+        }
     } else {
         // Wait indefinitely
-        while (!data->connected && data->running) {
+        while (data->state != WS_CLIENT_STATE_CONNECTED &&
+               data->state != WS_CLIENT_STATE_ERROR &&
+               data->running) {
             mcp_cond_wait(data->connection_cond, data->connection_mutex);
         }
     }
 
     // Check if connected
-    if (!data->connected) {
+    if (data->state != WS_CLIENT_STATE_CONNECTED) {
         result = -1;
     }
 
@@ -362,13 +594,14 @@ static int ws_client_transport_start(
     void* user_data,
     mcp_transport_error_callback_t error_callback
 ) {
-    // Suppress unused parameter warnings
-    (void)message_callback;
-    (void)user_data;
-    (void)error_callback;
     if (!transport || !transport->transport_data) {
         return -1;
     }
+
+    // Store callback information
+    transport->message_callback = message_callback;
+    transport->callback_user_data = user_data;
+    transport->error_callback = error_callback;
 
     ws_client_data_t* data = (ws_client_data_t*)transport->transport_data;
 
@@ -408,12 +641,30 @@ static int ws_client_transport_start(
         return -1;
     }
 
-    // Set running flag
+    // Initialize message queue mutex
+    data->queue_mutex = mcp_mutex_create();
+    if (!data->queue_mutex) {
+        mcp_log_error("Failed to create WebSocket client queue mutex");
+        mcp_mutex_destroy(data->connection_mutex);
+        mcp_cond_destroy(data->connection_cond);
+        lws_context_destroy(data->context);
+        data->context = NULL;
+        return -1;
+    }
+
+    // Initialize reconnection parameters
+    data->reconnect_attempts = 0;
+    data->reconnect_delay_ms = WS_CLIENT_RECONNECT_DELAY_MS;
+    data->last_reconnect_time = time(NULL);
+
+    // Set initial state
+    data->state = WS_CLIENT_STATE_DISCONNECTED;
     data->running = true;
 
     // Create event loop thread
     if (mcp_thread_create(&data->event_thread, ws_client_event_thread, data) != 0) {
         mcp_log_error("Failed to create WebSocket client event thread");
+        mcp_mutex_destroy(data->queue_mutex);
         mcp_mutex_destroy(data->connection_mutex);
         mcp_cond_destroy(data->connection_cond);
         lws_context_destroy(data->context);
@@ -422,39 +673,11 @@ static int ws_client_transport_start(
         return -1;
     }
 
-    // Connect to server
-    struct lws_client_connect_info connect_info = {0};
-    connect_info.context = data->context;
-    connect_info.address = data->config.host;
-    connect_info.port = data->config.port;
-
-    // Make sure path starts with a slash
-    char path_buffer[256] = {0};
-    if (data->config.path) {
-        if (data->config.path[0] != '/') {
-            snprintf(path_buffer, sizeof(path_buffer), "/%s", data->config.path);
-            connect_info.path = path_buffer;
-        } else {
-            connect_info.path = data->config.path;
-        }
-    } else {
-        connect_info.path = "/";
-    }
-
-    connect_info.host = data->config.host;
-    connect_info.origin = data->config.origin ? data->config.origin : data->config.host;
-    connect_info.protocol = data->config.protocol ? data->config.protocol : "mcp-protocol";
-    connect_info.pwsi = &data->wsi;
-    connect_info.ssl_connection = data->config.use_ssl ? LCCSCF_USE_SSL : 0;
-    connect_info.local_protocol_name = "mcp-protocol";
-
-    if (!lws_client_connect_via_info(&connect_info)) {
-        mcp_log_error("Failed to connect to WebSocket server");
+    // Initiate connection
+    if (ws_client_connect(data) != 0) {
+        mcp_log_error("Failed to initiate WebSocket client connection");
         // Don't return error here, as the event thread will handle reconnection
     }
-
-    mcp_log_info("WebSocket client connecting to %s:%d%s",
-                data->config.host, data->config.port, data->config.path ? data->config.path : "/");
 
     return 0;
 }
@@ -471,6 +694,12 @@ static int ws_client_transport_stop(mcp_transport_t* transport) {
     data->running = false;
     data->reconnect = false;
 
+    // Update connection state
+    mcp_mutex_lock(data->connection_mutex);
+    data->state = WS_CLIENT_STATE_CLOSING;
+    mcp_cond_signal(data->connection_cond);
+    mcp_mutex_unlock(data->connection_mutex);
+
     // Force libwebsockets to break out of its service loop
     if (data->context) {
         lws_cancel_service(data->context);
@@ -484,13 +713,21 @@ static int ws_client_transport_stop(mcp_transport_t* transport) {
         data->event_thread = 0;
     }
 
+    // Clean up message queue
+    ws_client_free_message_queue(data);
+
     // Clean up resources
     free(data->receive_buffer);
     data->receive_buffer = NULL;
     data->receive_buffer_len = 0;
     data->receive_buffer_used = 0;
 
-    // Destroy mutex and condition variable
+    // Destroy mutexes and condition variable
+    if (data->queue_mutex) {
+        mcp_mutex_destroy(data->queue_mutex);
+        data->queue_mutex = NULL;
+    }
+
     if (data->connection_mutex) {
         mcp_mutex_destroy(data->connection_mutex);
         data->connection_mutex = NULL;
@@ -520,35 +757,28 @@ static int ws_client_transport_send(mcp_transport_t* transport, const void* data
 
     ws_client_data_t* ws_data = (ws_client_data_t*)transport->transport_data;
 
-    // Wait for connection to be established (with 5 second timeout)
-    if (ws_client_wait_for_connection(ws_data, 5000) != 0) {
-        mcp_log_error("WebSocket client not connected or connection timeout");
+    // Check if client is running
+    if (!ws_data->running) {
+        mcp_log_error("WebSocket client is not running");
         return -1;
     }
 
-    if (!ws_data->connected || !ws_data->wsi) {
-        mcp_log_error("WebSocket client not connected");
-        return -1;
-    }
+    // Enqueue the message
+    ws_client_enqueue_message(ws_data, data, size, WS_MESSAGE_TYPE_TEXT);
 
-    // LWS requires some pre-padding for its headers
-    unsigned char* buf = (unsigned char*)malloc(LWS_PRE + size);
-    if (!buf) {
-        mcp_log_error("Failed to allocate WebSocket send buffer");
-        return -1;
-    }
+    // If we're connected, request a writable callback
+    mcp_mutex_lock(ws_data->connection_mutex);
+    bool is_connected = (ws_data->state == WS_CLIENT_STATE_CONNECTED);
+    mcp_mutex_unlock(ws_data->connection_mutex);
 
-    // Copy data to buffer after pre-padding
-    memcpy(buf + LWS_PRE, data, size);
-
-    // Send data
-    int result = lws_write(ws_data->wsi, buf + LWS_PRE, size, LWS_WRITE_TEXT);
-
-    free(buf);
-
-    if (result < 0) {
-        mcp_log_error("WebSocket client write failed");
-        return -1;
+    if (is_connected && ws_data->wsi) {
+        lws_callback_on_writable(ws_data->wsi);
+    } else {
+        // If not connected, try to connect or wait for reconnection
+        if (ws_client_wait_for_connection(ws_data, WS_CLIENT_DEFAULT_CONNECT_TIMEOUT_MS) != 0) {
+            mcp_log_warn("WebSocket client not connected, message queued for later delivery");
+            // Don't return error, as the message is queued and will be sent when connected
+        }
     }
 
     return 0;
@@ -562,14 +792,9 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
 
     ws_client_data_t* ws_data = (ws_client_data_t*)transport->transport_data;
 
-    // Wait for connection to be established (with 5 second timeout)
-    if (ws_client_wait_for_connection(ws_data, 5000) != 0) {
-        mcp_log_error("WebSocket client not connected or connection timeout");
-        return -1;
-    }
-
-    if (!ws_data->connected || !ws_data->wsi) {
-        mcp_log_error("WebSocket client not connected");
+    // Check if client is running
+    if (!ws_data->running) {
+        mcp_log_error("WebSocket client is not running");
         return -1;
     }
 
@@ -579,28 +804,39 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
         total_size += buffers[i].size;
     }
 
-    // LWS requires some pre-padding for its headers
-    unsigned char* buf = (unsigned char*)malloc(LWS_PRE + total_size);
-    if (!buf) {
-        mcp_log_error("Failed to allocate WebSocket send buffer");
+    // Allocate a temporary buffer to combine all the buffers
+    unsigned char* combined_buffer = (unsigned char*)malloc(total_size);
+    if (!combined_buffer) {
+        mcp_log_error("Failed to allocate WebSocket combined buffer");
         return -1;
     }
 
-    // Copy data to buffer after pre-padding
-    unsigned char* ptr = buf + LWS_PRE;
+    // Copy data to the combined buffer
+    unsigned char* ptr = combined_buffer;
     for (size_t i = 0; i < buffer_count; i++) {
         memcpy(ptr, buffers[i].data, buffers[i].size);
         ptr += buffers[i].size;
     }
 
-    // Send data
-    int result = lws_write(ws_data->wsi, buf + LWS_PRE, total_size, LWS_WRITE_TEXT);
+    // Enqueue the message
+    ws_client_enqueue_message(ws_data, combined_buffer, total_size, WS_MESSAGE_TYPE_TEXT);
 
-    free(buf);
+    // Free the temporary buffer
+    free(combined_buffer);
 
-    if (result < 0) {
-        mcp_log_error("WebSocket client write failed");
-        return -1;
+    // If we're connected, request a writable callback
+    mcp_mutex_lock(ws_data->connection_mutex);
+    bool is_connected = (ws_data->state == WS_CLIENT_STATE_CONNECTED);
+    mcp_mutex_unlock(ws_data->connection_mutex);
+
+    if (is_connected && ws_data->wsi) {
+        lws_callback_on_writable(ws_data->wsi);
+    } else {
+        // If not connected, try to connect or wait for reconnection
+        if (ws_client_wait_for_connection(ws_data, WS_CLIENT_DEFAULT_CONNECT_TIMEOUT_MS) != 0) {
+            mcp_log_warn("WebSocket client not connected, message queued for later delivery");
+            // Don't return error, as the message is queued and will be sent when connected
+        }
     }
 
     return 0;
@@ -621,6 +857,33 @@ static void ws_client_transport_destroy(mcp_transport_t* transport) {
     // Stop transport if running
     if (data->running) {
         ws_client_transport_stop(transport);
+    } else {
+        // If not running, make sure we clean up any resources that might not have been cleaned up
+
+        // Clean up message queue
+        if (data->queue_mutex) {
+            ws_client_free_message_queue(data);
+            mcp_mutex_destroy(data->queue_mutex);
+        }
+
+        // Clean up receive buffer
+        if (data->receive_buffer) {
+            free(data->receive_buffer);
+        }
+
+        // Clean up mutexes and condition variable
+        if (data->connection_mutex) {
+            mcp_mutex_destroy(data->connection_mutex);
+        }
+
+        if (data->connection_cond) {
+            mcp_cond_destroy(data->connection_cond);
+        }
+
+        // Clean up libwebsockets context
+        if (data->context) {
+            lws_context_destroy(data->context);
+        }
     }
 
     // Free config strings
@@ -657,8 +920,21 @@ mcp_transport_t* mcp_transport_websocket_client_create(const mcp_websocket_confi
     data->protocols = client_protocols;
     data->transport = transport;
     data->reconnect = true; // Enable reconnection by default
+
+    // Initialize connection state
+    data->state = WS_CLIENT_STATE_DISCONNECTED;
     data->connection_mutex = NULL;
     data->connection_cond = NULL;
+    data->queue_mutex = NULL;
+
+    // Initialize message queue
+    data->message_queue = NULL;
+    data->message_queue_tail = NULL;
+
+    // Initialize reconnection parameters
+    data->reconnect_attempts = 0;
+    data->reconnect_delay_ms = WS_CLIENT_RECONNECT_DELAY_MS;
+    data->last_reconnect_time = 0;
 
     // Set transport type and operations
     transport->type = MCP_TRANSPORT_TYPE_CLIENT;
