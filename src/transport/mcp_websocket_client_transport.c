@@ -93,7 +93,7 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
     // Debug log for all callback reasons except frequent ones
     if (reason != LWS_CALLBACK_CLIENT_WRITEABLE && reason != LWS_CALLBACK_CLIENT_RECEIVE) {
-        mcp_log_debug("WebSocket client callback: reason=%d", reason);
+        mcp_log_debug("WebSocket client callback: reason=%d (%s)", reason, websocket_get_callback_reason_string(reason));
     }
 
     switch (reason) {

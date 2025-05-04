@@ -46,7 +46,7 @@ typedef struct ws_message_item {
 
 /**
  * @brief Initialize WebSocket protocols
- * 
+ *
  * @param protocols Array to store protocol definitions
  * @param callback Callback function for WebSocket events
  */
@@ -57,7 +57,7 @@ void mcp_websocket_init_protocols(
 
 /**
  * @brief Enqueue a message to a WebSocket message queue
- * 
+ *
  * @param queue_head Pointer to queue head pointer
  * @param queue_tail Pointer to queue tail pointer
  * @param queue_mutex Mutex for queue access
@@ -77,7 +77,7 @@ int mcp_websocket_enqueue_message(
 
 /**
  * @brief Dequeue a message from a WebSocket message queue
- * 
+ *
  * @param queue_head Pointer to queue head pointer
  * @param queue_tail Pointer to queue tail pointer
  * @param queue_mutex Mutex for queue access
@@ -91,7 +91,7 @@ ws_message_item_t* mcp_websocket_dequeue_message(
 
 /**
  * @brief Free all messages in a WebSocket message queue
- * 
+ *
  * @param queue_head Pointer to queue head pointer
  * @param queue_tail Pointer to queue tail pointer
  * @param queue_mutex Mutex for queue access
@@ -104,7 +104,7 @@ void mcp_websocket_free_message_queue(
 
 /**
  * @brief Create a libwebsockets context
- * 
+ *
  * @param host Host to bind to (server) or connect to (client)
  * @param port Port to bind to (server) or connect to (client)
  * @param path WebSocket path
@@ -130,7 +130,7 @@ struct lws_context* mcp_websocket_create_context(
 
 /**
  * @brief Calculate total size of multiple buffers
- * 
+ *
  * @param buffers Array of buffers
  * @param buffer_count Number of buffers
  * @return size_t Total size
@@ -142,7 +142,7 @@ size_t mcp_websocket_calculate_total_size(
 
 /**
  * @brief Combine multiple buffers into a single buffer
- * 
+ *
  * @param buffers Array of buffers
  * @param buffer_count Number of buffers
  * @param combined_buffer Buffer to store combined data
@@ -155,6 +155,14 @@ int mcp_websocket_combine_buffers(
     void* combined_buffer,
     size_t combined_size
 );
+
+/**
+ * @brief Get a human-readable string for a libwebsockets callback reason
+ *
+ * @param reason The callback reason value
+ * @return const char* Human-readable string representation
+ */
+const char* websocket_get_callback_reason_string(enum lws_callback_reasons reason);
 
 #ifdef __cplusplus
 }
