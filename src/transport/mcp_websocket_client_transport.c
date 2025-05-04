@@ -56,6 +56,12 @@ typedef struct {
 
     // Ping parameters
     time_t last_ping_time;          // Time of last ping sent
+    time_t last_pong_time;          // Time of last pong received
+    time_t last_activity_time;      // Time of last activity (send or receive)
+    uint32_t ping_interval_ms;      // Ping interval in milliseconds
+    uint32_t ping_timeout_ms;       // Ping timeout in milliseconds
+    bool ping_in_progress;          // Whether a ping is currently in progress
+    uint32_t missed_pongs;          // Number of consecutive missed pongs
 } ws_client_data_t;
 
 // Forward declarations
@@ -67,6 +73,8 @@ static void ws_client_enqueue_message(ws_client_data_t* data, const void* messag
                                      size_t size, ws_message_type_t type);
 static ws_message_item_t* ws_client_dequeue_message(ws_client_data_t* data);
 static void ws_client_free_message_queue(ws_client_data_t* data);
+static void ws_client_update_activity(ws_client_data_t* data);
+static int ws_client_send_ping(ws_client_data_t* data);
 
 // WebSocket protocol definitions
 static struct lws_protocols client_protocols[3];
@@ -98,6 +106,14 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
             mcp_mutex_lock(data->connection_mutex);
             data->state = WS_CLIENT_STATE_CONNECTED;
             data->reconnect_attempts = 0; // Reset reconnection attempts on successful connection
+
+            // Reset ping-related state
+            data->ping_in_progress = false;
+            data->missed_pongs = 0;
+            data->last_ping_time = time(NULL);
+            data->last_pong_time = time(NULL);
+            data->last_activity_time = time(NULL);
+
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
 
@@ -141,12 +157,24 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         case LWS_CALLBACK_CLIENT_RECEIVE_PONG: {
             // Received pong from server
             mcp_log_debug("Received pong from server");
+
+            // Update pong time and activity time
+            data->last_pong_time = time(NULL);
+            ws_client_update_activity(data);
+
+            // Reset ping state
+            data->ping_in_progress = false;
+            data->missed_pongs = 0;
+
             break;
         }
 
         case LWS_CALLBACK_CLIENT_RECEIVE: {
             // Receive data
             mcp_log_debug("WebSocket client data received: %zu bytes", len);
+
+            // Update activity time
+            ws_client_update_activity(data);
 
             // Ensure buffer is large enough
             if (data->receive_buffer_used + len > data->receive_buffer_len) {
@@ -245,25 +273,65 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         case LWS_CALLBACK_CLIENT_WRITEABLE: {
             // Ready to send data to server
 
-            // Disable automatic ping for now
-            /*
+            // Update activity time
+            ws_client_update_activity(data);
+
+            // Check if we need to send a ping
             time_t now = time(NULL);
-            if (difftime(now, data->last_ping_time) * 1000 >= WS_CLIENT_PING_INTERVAL_MS) {
+            bool send_ping = false;
+
+            // If ping is in progress and we've exceeded the timeout, consider it missed
+            if (data->ping_in_progress) {
+                if (difftime(now, data->last_ping_time) * 1000 >= data->ping_timeout_ms) {
+                    mcp_log_warn("WebSocket ping timeout detected");
+                    data->ping_in_progress = false;
+                    data->missed_pongs++;
+
+                    // If we've missed too many pongs, trigger reconnection
+                    if (data->missed_pongs >= 3) {
+                        mcp_log_error("WebSocket connection appears dead after %d missed pongs, triggering reconnect",
+                                     data->missed_pongs);
+
+                        // Mark connection as disconnected to trigger reconnect
+                        mcp_mutex_lock(data->connection_mutex);
+                        data->state = WS_CLIENT_STATE_DISCONNECTED;
+                        mcp_mutex_unlock(data->connection_mutex);
+
+                        // Return error to close the connection
+                        return -1;
+                    }
+                }
+            }
+            // If no ping in progress, check if we need to send one based on inactivity
+            else if (data->state == WS_CLIENT_STATE_CONNECTED) {
+                // Only send ping if there's no message queue (don't interrupt normal messages)
+                if (!data->message_queue &&
+                    difftime(now, data->last_activity_time) * 1000 >= data->ping_interval_ms) {
+                    send_ping = true;
+                }
+            }
+
+            // Send ping if needed
+            if (send_ping) {
                 // Send a ping frame
                 unsigned char buf[LWS_PRE + 0];
                 int result = lws_write(wsi, &buf[LWS_PRE], 0, LWS_WRITE_PING);
 
                 if (result >= 0) {
-                    // Update last ping time
+                    // Update ping state
+                    data->ping_in_progress = true;
                     data->last_ping_time = now;
                     mcp_log_debug("Sent ping to server");
                 } else {
                     mcp_log_error("Failed to send ping to server");
                 }
-            }
-            */
 
-            // Then check if we have any messages to send
+                // Always request another writable callback to check for messages
+                lws_callback_on_writable(wsi);
+                break;
+            }
+
+            // Check if we have any messages to send
             ws_message_item_t* item = ws_client_dequeue_message(data);
             if (item) {
                 // Send the message
@@ -271,6 +339,11 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
                     (item->type == WS_MESSAGE_TYPE_BINARY) ? LWS_WRITE_BINARY : LWS_WRITE_TEXT;
 
                 int result = lws_write(wsi, item->data + LWS_PRE, item->size, write_protocol);
+
+                // Update activity time on successful write
+                if (result >= 0) {
+                    ws_client_update_activity(data);
+                }
 
                 if (result < 0) {
                     mcp_log_error("WebSocket client write failed");
@@ -408,6 +481,15 @@ static int ws_client_connect(ws_client_data_t* data) {
     return 0;
 }
 
+// Helper function to update activity time
+static void ws_client_update_activity(ws_client_data_t* data) {
+    if (!data) {
+        return;
+    }
+
+    data->last_activity_time = time(NULL);
+}
+
 // Helper function to handle reconnection
 static void ws_client_handle_reconnect(ws_client_data_t* data) {
     if (!data || !data->reconnect || !data->running) {
@@ -455,16 +537,24 @@ static void ws_client_handle_reconnect(ws_client_data_t* data) {
     }
 }
 
-// Helper function to request sending a ping
-static void ws_client_send_ping(ws_client_data_t* data) {
+// Helper function to send a ping directly using libwebsockets API
+static int ws_client_send_ping(ws_client_data_t* data) {
     if (!data || !data->wsi || data->state != WS_CLIENT_STATE_CONNECTED) {
-        return;
+        return -1;
     }
 
-    // Request a writable callback to send a ping
-    lws_callback_on_writable(data->wsi);
+    // Use libwebsockets' built-in ping mechanism
+    if (lws_callback_on_writable(data->wsi) < 0) {
+        mcp_log_error("Failed to request writable callback for ping");
+        return -1;
+    }
+
+    // Mark ping as in progress
+    data->ping_in_progress = true;
+    data->last_ping_time = time(NULL);
 
     mcp_log_debug("Requested ping to server");
+    return 0;
 }
 
 // Client event loop thread function
@@ -481,23 +571,20 @@ static void* ws_client_event_thread(void* arg) {
                               data->state == WS_CLIENT_STATE_ERROR) &&
                               data->reconnect && data->running;
 
-        // Disable ping check for now
-        /*
-        bool need_ping = data->state == WS_CLIENT_STATE_CONNECTED &&
-                         difftime(time(NULL), data->last_ping_time) * 1000 >= WS_CLIENT_PING_INTERVAL_MS;
-        */
+        // Check if we need to request a ping check
+        bool need_ping_check = data->state == WS_CLIENT_STATE_CONNECTED &&
+                              !data->ping_in_progress &&
+                              difftime(time(NULL), data->last_activity_time) * 1000 >= data->ping_interval_ms;
         mcp_mutex_unlock(data->connection_mutex);
 
         if (need_reconnect) {
             ws_client_handle_reconnect(data);
         }
 
-        // Disable ping for now
-        /*
-        if (need_ping) {
-            ws_client_send_ping(data);
+        // If we need to check ping, request a writable callback
+        if (need_ping_check && data->wsi) {
+            lws_callback_on_writable(data->wsi);
         }
-        */
     }
 
     return NULL;
@@ -632,6 +719,12 @@ static int ws_client_transport_start(
 
     // Initialize ping parameters
     data->last_ping_time = time(NULL);
+    data->last_pong_time = time(NULL);
+    data->last_activity_time = time(NULL);
+    data->ping_interval_ms = WS_PING_INTERVAL_MS;
+    data->ping_timeout_ms = WS_PING_TIMEOUT_MS;
+    data->ping_in_progress = false;
+    data->missed_pongs = 0;
 
     // Set initial state
     data->state = WS_CLIENT_STATE_DISCONNECTED;
