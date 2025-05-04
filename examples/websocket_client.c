@@ -9,6 +9,8 @@
 #include "mcp_websocket_transport.h"
 #include "mcp_log.h"
 #include "mcp_json_rpc.h"
+#include "mcp_socket_utils.h"
+#include "mcp_thread_local.h"
 
 // Global client instance for signal handling
 static mcp_client_t* g_client = NULL;
@@ -61,6 +63,12 @@ int main(int argc, char* argv[]) {
     // Initialize logging
     mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG);
 
+    // Initialize thread-local arena for JSON parsing
+    if (mcp_arena_init_current_thread(4096) != 0) {
+        printf("Failed to initialize thread-local arena\n");
+        return 1;
+    }
+
     // Create WebSocket transport configuration
     mcp_transport_config_t transport_config = {0};
     transport_config.ws.host = host;
@@ -95,22 +103,22 @@ int main(int argc, char* argv[]) {
     // Connection is established automatically when the client is created
     printf("Connecting to WebSocket server at %s:%d%s\n", host, port, path);
 
+    // Add a small delay to ensure connection is established
+    mcp_sleep_ms(1000);
+
     printf("Connected to server. Sending echo request...\n");
 
-    // Create echo request parameters
-    char* params = mcp_json_format_string(message);
-    if (!params) {
-        mcp_log_error("Failed to format message");
-        mcp_client_destroy(g_client);
-        return 1;
-    }
+    // Create echo request parameters - format as a JSON-RPC call_tool request
+    char params_buffer[1024];
+    snprintf(params_buffer, sizeof(params_buffer),
+        "{\"name\":\"echo\",\"arguments\":{\"message\":\"%s\"}}",
+        message);
 
     // Send echo request
     char* response = NULL;
     mcp_error_code_t error_code = MCP_ERROR_NONE;
     char* error_message = NULL;
-    int result = mcp_client_send_request(g_client, "echo", params, &response, &error_code, &error_message);
-    free(params);
+    int result = mcp_client_send_request(g_client, "call_tool", params_buffer, &response, &error_code, &error_message);
 
     // Handle error if any
     if (error_code != MCP_ERROR_NONE) {
@@ -143,6 +151,9 @@ int main(int argc, char* argv[]) {
 
     // Close log file
     mcp_log_close();
+
+    // Clean up thread-local arena
+    mcp_arena_destroy_current_thread();
 
     printf("Client shutdown complete\n");
     return 0;
