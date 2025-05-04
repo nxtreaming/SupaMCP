@@ -15,22 +15,37 @@
 #include "libwebsockets.h"
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
+
+// Default buffer sizes and timeouts
+#define WS_SERVER_DEFAULT_BUFFER_SIZE 4096
+#define WS_SERVER_PING_INTERVAL_MS 30000
+#define WS_SERVER_PING_TIMEOUT_MS 10000
+#define WS_SERVER_CLEANUP_INTERVAL_MS 60000
 
 // Define maximum number of simultaneous WebSocket clients
 #define MAX_WEBSOCKET_CLIENTS 64
 
+// Message types
+typedef enum {
+    WS_MESSAGE_TYPE_TEXT = 0,
+    WS_MESSAGE_TYPE_BINARY
+} ws_message_type_t;
+
 // WebSocket client connection state
 typedef enum {
-    WS_CLIENT_STATE_INACTIVE = 0,
-    WS_CLIENT_STATE_CONNECTING,
-    WS_CLIENT_STATE_ACTIVE,
-    WS_CLIENT_STATE_CLOSING
+    WS_CLIENT_STATE_INACTIVE = 0,   // Client slot is unused
+    WS_CLIENT_STATE_CONNECTING,     // Client is connecting
+    WS_CLIENT_STATE_ACTIVE,         // Client is connected and active
+    WS_CLIENT_STATE_CLOSING,        // Client is closing
+    WS_CLIENT_STATE_ERROR           // Client encountered an error
 } ws_client_state_t;
 
 // Response queue item
 typedef struct response_item {
-    char* data;                     // Response data
-    size_t len;                     // Response length
+    unsigned char* data;            // Response data (including LWS_PRE padding)
+    size_t size;                    // Response size (excluding padding)
+    ws_message_type_t type;         // Message type (text or binary)
     struct response_item* next;     // Next item in queue
 } response_item_t;
 
@@ -43,7 +58,10 @@ typedef struct {
     size_t receive_buffer_used;     // Used receive buffer length
     int client_id;                  // Client ID for tracking
     response_item_t* response_queue; // Queue of responses to send
+    response_item_t* response_queue_tail; // Tail of response queue for faster insertion
     mcp_mutex_t* queue_mutex;       // Mutex for response queue
+    time_t last_activity;           // Time of last activity for timeout detection
+    uint32_t ping_sent;             // Number of pings sent without response
 } ws_client_t;
 
 // WebSocket server transport data
@@ -56,14 +74,23 @@ typedef struct {
     ws_client_t clients[MAX_WEBSOCKET_CLIENTS]; // Clients list
     mcp_transport_t* transport;     // Transport handle
     mcp_websocket_config_t config;  // WebSocket configuration
+    time_t last_ping_time;          // Time of last ping check
+    time_t last_cleanup_time;       // Time of last inactive client cleanup
 } ws_server_data_t;
 
 // Forward declarations
 static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                              void* user, void* in, size_t len);
+static void ws_server_check_timeouts(ws_server_data_t* data);
+static void ws_server_cleanup_inactive_clients(ws_server_data_t* data);
+
+// Helper functions for client management
+static ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* wsi);
+static void ws_client_update_activity(ws_client_t* client);
+static int ws_client_send_ping(ws_client_t* client);
 
 // Helper functions for response queue management
-static void ws_client_queue_response(ws_client_t* client, const char* data, size_t len);
+static void ws_client_queue_response(ws_client_t* client, const void* data, size_t size, ws_message_type_t type);
 static response_item_t* ws_client_dequeue_response(ws_client_t* client);
 static void ws_client_free_response_queue(ws_client_t* client);
 
@@ -126,24 +153,30 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             }
 
             // Initialize client data
-            data->clients[client_index].wsi = wsi;
-            data->clients[client_index].state = WS_CLIENT_STATE_ACTIVE;
-            data->clients[client_index].receive_buffer = NULL;
-            data->clients[client_index].receive_buffer_len = 0;
-            data->clients[client_index].receive_buffer_used = 0;
-            data->clients[client_index].client_id = client_index;
-            data->clients[client_index].response_queue = NULL;
-            data->clients[client_index].queue_mutex = mcp_mutex_create();
+            ws_client_t* client = &data->clients[client_index];
+            client->wsi = wsi;
+            client->state = WS_CLIENT_STATE_ACTIVE;
+            client->receive_buffer = NULL;
+            client->receive_buffer_len = 0;
+            client->receive_buffer_used = 0;
+            client->client_id = client_index;
+            client->response_queue = NULL;
+            client->response_queue_tail = NULL;
+            client->queue_mutex = mcp_mutex_create();
+            client->last_activity = time(NULL);
+            client->ping_sent = 0;
 
-            if (!data->clients[client_index].queue_mutex) {
+            if (!client->queue_mutex) {
                 mcp_log_error("Failed to create client queue mutex");
-                data->clients[client_index].state = WS_CLIENT_STATE_INACTIVE;
+                client->state = WS_CLIENT_STATE_INACTIVE;
                 mcp_mutex_unlock(data->clients_mutex);
                 return -1;
             }
 
-            // Store client index in user data
-            lws_set_opaque_user_data(wsi, &data->clients[client_index]);
+            // Store client pointer in user data
+            lws_set_opaque_user_data(wsi, client);
+
+            mcp_log_info("Client %d connected", client_index);
 
             mcp_mutex_unlock(data->clients_mutex);
             break;
@@ -151,35 +184,68 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
         case LWS_CALLBACK_CLOSED: {
             // Client disconnected
-            mcp_log_info("WebSocket connection closed");
+            ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
+
+            if (client) {
+                mcp_log_info("Client %d disconnected", client->client_id);
+
+                mcp_mutex_lock(data->clients_mutex);
+
+                // Mark client as closing but don't free resources yet
+                // This allows any pending messages to be processed
+                client->state = WS_CLIENT_STATE_CLOSING;
+                client->wsi = NULL;
+                client->last_activity = time(NULL);
+
+                mcp_mutex_unlock(data->clients_mutex);
+            } else {
+                mcp_log_info("Unknown client disconnected");
+            }
+            break;
+        }
+
+        case LWS_CALLBACK_PROTOCOL_DESTROY: {
+            // Protocol is being destroyed, clean up all clients
+            mcp_log_info("WebSocket protocol being destroyed, cleaning up all clients");
 
             mcp_mutex_lock(data->clients_mutex);
 
-            // Find the client
             for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
-                if (data->clients[i].wsi == wsi) {
-                    // Clean up client data
-                    free(data->clients[i].receive_buffer);
-                    data->clients[i].receive_buffer = NULL;
-                    data->clients[i].receive_buffer_len = 0;
-                    data->clients[i].receive_buffer_used = 0;
+                ws_client_t* client = &data->clients[i];
+
+                if (client->state != WS_CLIENT_STATE_INACTIVE) {
+                    // Clean up client resources
+                    free(client->receive_buffer);
+                    client->receive_buffer = NULL;
+                    client->receive_buffer_len = 0;
+                    client->receive_buffer_used = 0;
 
                     // Free response queue
-                    ws_client_free_response_queue(&data->clients[i]);
+                    ws_client_free_response_queue(client);
 
                     // Destroy mutex
-                    if (data->clients[i].queue_mutex) {
-                        mcp_mutex_destroy(data->clients[i].queue_mutex);
-                        data->clients[i].queue_mutex = NULL;
+                    if (client->queue_mutex) {
+                        mcp_mutex_destroy(client->queue_mutex);
+                        client->queue_mutex = NULL;
                     }
 
-                    data->clients[i].state = WS_CLIENT_STATE_INACTIVE;
-                    data->clients[i].wsi = NULL;
-                    break;
+                    client->state = WS_CLIENT_STATE_INACTIVE;
+                    client->wsi = NULL;
                 }
             }
 
             mcp_mutex_unlock(data->clients_mutex);
+            break;
+        }
+
+        case LWS_CALLBACK_RECEIVE_PONG: {
+            // Received pong from client
+            ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
+
+            if (client) {
+                mcp_log_debug("Received pong from client %d", client->client_id);
+                ws_client_update_activity(client);
+            }
             break;
         }
 
@@ -210,6 +276,9 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 client->receive_buffer_len = new_len;
             }
 
+            // Update client activity timestamp
+            ws_client_update_activity(client);
+
             // Log the raw message data for debugging (including hex dump)
             if (len < 1000) {  // Only log if not too large
                 char debug_buffer[1024] = {0};
@@ -227,6 +296,11 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                     sprintf(hex_buffer + i*3, "%02x ", (unsigned char)((char*)in)[i]);
                 }
                 mcp_log_debug("WebSocket server raw data (hex): %s", hex_buffer);
+
+                // Check if this is a JSON message (most common case)
+                if (len > 0 && ((char*)in)[0] == '{') {
+                    mcp_log_debug("Detected JSON message");
+                }
 
                 // Check if this might be a length-prefixed message
                 if (len >= 4) {
@@ -250,15 +324,7 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                                (char*)in + 4, len - 4);
                         client->receive_buffer_used += (len - 4);
 
-                        // Log the actual message content
-                        if (len - 4 < 1000) {
-                            char content_buffer[1024] = {0};
-                            memcpy(content_buffer, (char*)in + 4, len - 4);
-                            content_buffer[len - 4] = '\0';
-                            mcp_log_debug("Message content after skipping prefix: '%s'", content_buffer);
-                        }
-
-                        // Continue with processing the message
+                        // Process the message immediately if it's a complete message
                         if (lws_is_final_fragment(wsi)) {
                             // Ensure the buffer is null-terminated for string operations
                             if (client->receive_buffer_used < client->receive_buffer_len) {
@@ -277,6 +343,12 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
                             // Process complete message
                             if (data->transport && data->transport->message_callback) {
+                                // Initialize thread-local arena for JSON parsing
+                                mcp_log_debug("Initializing thread-local arena for server message processing");
+                                if (mcp_arena_init_current_thread(4096) != 0) {
+                                    mcp_log_error("Failed to initialize thread-local arena in WebSocket server callback");
+                                }
+
                                 int error_code = 0;
                                 char* response = data->transport->message_callback(
                                     data->transport->callback_user_data,
@@ -288,7 +360,7 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                                 // If there's a response, queue it for sending
                                 if (response) {
                                     // Add response to client's queue
-                                    ws_client_queue_response(client, response, strlen(response));
+                                    ws_client_queue_response(client, response, strlen(response), WS_MESSAGE_TYPE_TEXT);
 
                                     // Free the response as it's been copied to the queue
                                     free(response);
@@ -304,7 +376,7 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 }
             }
 
-            // Normal copy if not a length-prefixed message
+            // Normal copy if not a length-prefixed message or if length prefix check failed
             memcpy(client->receive_buffer + client->receive_buffer_used, in, len);
             client->receive_buffer_used += len;
 
@@ -327,6 +399,12 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
                 // Process complete message
                 if (data->transport && data->transport->message_callback) {
+                    // Initialize thread-local arena for JSON parsing
+                    mcp_log_debug("Initializing thread-local arena for server message processing");
+                    if (mcp_arena_init_current_thread(4096) != 0) {
+                        mcp_log_error("Failed to initialize thread-local arena in WebSocket server callback");
+                    }
+
                     int error_code = 0;
                     char* response = data->transport->message_callback(
                         data->transport->callback_user_data,
@@ -338,7 +416,7 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                     // If there's a response, queue it for sending
                     if (response) {
                         // Add response to client's queue
-                        ws_client_queue_response(client, response, strlen(response));
+                        ws_client_queue_response(client, response, strlen(response), WS_MESSAGE_TYPE_TEXT);
 
                         // Free the response as it's been copied to the queue
                         free(response);
@@ -363,14 +441,21 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Dequeue a response
             response_item_t* item = ws_client_dequeue_response(client);
             if (item) {
-                // LWS requires some pre-padding for its headers
-                unsigned char* buf = (unsigned char*)malloc(LWS_PRE + item->len);
-                if (!buf) {
-                    mcp_log_error("Failed to allocate WebSocket send buffer");
+                // Send data (buffer already has LWS_PRE padding)
+                enum lws_write_protocol write_protocol =
+                    (item->type == WS_MESSAGE_TYPE_BINARY) ? LWS_WRITE_BINARY : LWS_WRITE_TEXT;
+
+                int result = lws_write(wsi, item->data + LWS_PRE, item->size, write_protocol);
+
+                if (result < 0) {
+                    mcp_log_error("WebSocket server write failed");
 
                     // Put the item back in the queue
                     mcp_mutex_lock(client->queue_mutex);
                     item->next = client->response_queue;
+                    if (!client->response_queue) {
+                        client->response_queue_tail = item;
+                    }
                     client->response_queue = item;
                     mcp_mutex_unlock(client->queue_mutex);
 
@@ -379,23 +464,12 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                     return 0;
                 }
 
-                // Copy data to buffer after pre-padding
-                memcpy(buf + LWS_PRE, item->data, item->len);
-
-                // Send data
-                int result = lws_write(wsi, buf + LWS_PRE, item->len, LWS_WRITE_TEXT);
-
-                // Free buffer
-                free(buf);
-
                 // Free response item
                 free(item->data);
                 free(item);
 
-                if (result < 0) {
-                    mcp_log_error("WebSocket server write failed");
-                    return -1;
-                }
+                // Update activity timestamp
+                ws_client_update_activity(client);
 
                 // Check if there are more responses to send
                 mcp_mutex_lock(client->queue_mutex);
@@ -455,8 +529,8 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 }
 
 // Helper function to add a response to the client's queue
-static void ws_client_queue_response(ws_client_t* client, const char* data, size_t len) {
-    if (!client || !data || len == 0) {
+static void ws_client_queue_response(ws_client_t* client, const void* data, size_t size, ws_message_type_t type) {
+    if (!client || !data || size == 0) {
         return;
     }
 
@@ -467,15 +541,18 @@ static void ws_client_queue_response(ws_client_t* client, const char* data, size
         return;
     }
 
-    // Copy response data
-    item->data = (char*)malloc(len);
+    // Allocate buffer with LWS_PRE padding
+    item->data = (unsigned char*)malloc(LWS_PRE + size);
     if (!item->data) {
         mcp_log_error("Failed to allocate response data");
         free(item);
         return;
     }
-    memcpy(item->data, data, len);
-    item->len = len;
+
+    // Copy data to buffer after pre-padding
+    memcpy(item->data + LWS_PRE, data, size);
+    item->size = size;
+    item->type = type;
     item->next = NULL;
 
     // Lock mutex
@@ -484,16 +561,17 @@ static void ws_client_queue_response(ws_client_t* client, const char* data, size
     // Add to queue (at the end)
     if (!client->response_queue) {
         client->response_queue = item;
+        client->response_queue_tail = item;
     } else {
-        response_item_t* current = client->response_queue;
-        while (current->next) {
-            current = current->next;
-        }
-        current->next = item;
+        client->response_queue_tail->next = item;
+        client->response_queue_tail = item;
     }
 
     // Unlock mutex
     mcp_mutex_unlock(client->queue_mutex);
+
+    // Update activity timestamp
+    ws_client_update_activity(client);
 
     // Request a callback when the socket is writable
     if (client->wsi) {
@@ -503,7 +581,7 @@ static void ws_client_queue_response(ws_client_t* client, const char* data, size
 
 // Helper function to remove and return the first response from the client's queue
 static response_item_t* ws_client_dequeue_response(ws_client_t* client) {
-    if (!client || !client->response_queue) {
+    if (!client) {
         return NULL;
     }
 
@@ -516,6 +594,12 @@ static response_item_t* ws_client_dequeue_response(ws_client_t* client) {
     if (client->response_queue) {
         item = client->response_queue;
         client->response_queue = item->next;
+
+        // Update tail pointer if queue is now empty
+        if (!client->response_queue) {
+            client->response_queue_tail = NULL;
+        }
+
         item->next = NULL;
     }
 
@@ -542,10 +626,147 @@ static void ws_client_free_response_queue(ws_client_t* client) {
         free(current);
         current = next;
     }
+
     client->response_queue = NULL;
+    client->response_queue_tail = NULL;
 
     // Unlock mutex
     mcp_mutex_unlock(client->queue_mutex);
+}
+
+// Helper function to find a client by WebSocket instance
+static ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* wsi) {
+    if (!data || !wsi) {
+        return NULL;
+    }
+
+    // First try to get the client from opaque user data (faster)
+    ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
+    if (client) {
+        return client;
+    }
+
+    // If not found, search through the client list
+    mcp_mutex_lock(data->clients_mutex);
+
+    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
+        if (data->clients[i].wsi == wsi) {
+            client = &data->clients[i];
+            break;
+        }
+    }
+
+    mcp_mutex_unlock(data->clients_mutex);
+
+    return client;
+}
+
+// Helper function to update client activity timestamp
+static void ws_client_update_activity(ws_client_t* client) {
+    if (!client) {
+        return;
+    }
+
+    client->last_activity = time(NULL);
+    client->ping_sent = 0; // Reset ping counter on activity
+}
+
+// Helper function to send a ping to a client
+static int ws_client_send_ping(ws_client_t* client) {
+    if (!client || !client->wsi || client->state != WS_CLIENT_STATE_ACTIVE) {
+        return -1;
+    }
+
+    // Increment ping counter
+    client->ping_sent++;
+
+    // Request a callback to send a ping
+    return lws_callback_on_writable(client->wsi);
+}
+
+// Helper function to check for client timeouts and send pings
+static void ws_server_check_timeouts(ws_server_data_t* data) {
+    if (!data) {
+        return;
+    }
+
+    time_t now = time(NULL);
+
+    // Only check every PING_INTERVAL_MS milliseconds
+    if (difftime(now, data->last_ping_time) * 1000 < WS_SERVER_PING_INTERVAL_MS) {
+        return;
+    }
+
+    data->last_ping_time = now;
+
+    mcp_mutex_lock(data->clients_mutex);
+
+    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
+        ws_client_t* client = &data->clients[i];
+
+        if (client->state == WS_CLIENT_STATE_ACTIVE && client->wsi) {
+            // Check if client has been inactive for too long
+            if (difftime(now, client->last_activity) * 1000 > WS_SERVER_PING_TIMEOUT_MS) {
+                // If we've sent too many pings without response, close the connection
+                if (client->ping_sent > 2) {
+                    mcp_log_warn("Client %d timed out, closing connection", client->client_id);
+                    client->state = WS_CLIENT_STATE_CLOSING;
+                    lws_set_timeout(client->wsi, PENDING_TIMEOUT_CLOSE_SEND, LWS_TO_KILL_ASYNC);
+                } else {
+                    // Send a ping to check if client is still alive
+                    mcp_log_debug("Sending ping to client %d", client->client_id);
+                    ws_client_send_ping(client);
+                }
+            }
+        }
+    }
+
+    mcp_mutex_unlock(data->clients_mutex);
+}
+
+// Helper function to clean up inactive clients
+static void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
+    if (!data) {
+        return;
+    }
+
+    time_t now = time(NULL);
+
+    // Only clean up every CLEANUP_INTERVAL_MS milliseconds
+    if (difftime(now, data->last_cleanup_time) * 1000 < WS_SERVER_CLEANUP_INTERVAL_MS) {
+        return;
+    }
+
+    data->last_cleanup_time = now;
+
+    mcp_mutex_lock(data->clients_mutex);
+
+    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
+        ws_client_t* client = &data->clients[i];
+
+        // Clean up clients in error state or closing state without a valid wsi
+        if ((client->state == WS_CLIENT_STATE_ERROR ||
+             (client->state == WS_CLIENT_STATE_CLOSING && !client->wsi)) &&
+            difftime(now, client->last_activity) > 10) { // 10 seconds grace period
+
+            mcp_log_info("Cleaning up inactive client %d", client->client_id);
+
+            // Free resources
+            free(client->receive_buffer);
+            client->receive_buffer = NULL;
+            client->receive_buffer_len = 0;
+            client->receive_buffer_used = 0;
+
+            // Free response queue
+            ws_client_free_response_queue(client);
+
+            // Reset client state
+            client->state = WS_CLIENT_STATE_INACTIVE;
+            client->wsi = NULL;
+        }
+    }
+
+    mcp_mutex_unlock(data->clients_mutex);
 }
 
 // Server event loop thread function
@@ -554,6 +775,12 @@ static void* ws_server_event_thread(void* arg) {
 
     while (data->running) {
         lws_service(data->context, 50); // 50ms timeout
+
+        // Check for client timeouts and send pings
+        ws_server_check_timeouts(data);
+
+        // Clean up inactive clients
+        ws_server_cleanup_inactive_clients(data);
     }
 
     return NULL;
@@ -566,13 +793,14 @@ static int ws_server_transport_start(
     void* user_data,
     mcp_transport_error_callback_t error_callback
 ) {
-    // Suppress unused parameter warnings
-    (void)message_callback;
-    (void)user_data;
-    (void)error_callback;
     if (!transport || !transport->transport_data) {
         return -1;
     }
+
+    // Store callback information
+    transport->message_callback = message_callback;
+    transport->callback_user_data = user_data;
+    transport->error_callback = error_callback;
 
     ws_server_data_t* data = (ws_server_data_t*)transport->transport_data;
 
@@ -617,8 +845,15 @@ static int ws_server_transport_start(
         data->clients[i].receive_buffer_used = 0;
         data->clients[i].client_id = i;
         data->clients[i].response_queue = NULL;
+        data->clients[i].response_queue_tail = NULL;
         data->clients[i].queue_mutex = NULL;
+        data->clients[i].last_activity = 0;
+        data->clients[i].ping_sent = 0;
     }
+
+    // Initialize timestamps
+    data->last_ping_time = time(NULL);
+    data->last_cleanup_time = time(NULL);
 
     // Create mutex
     data->clients_mutex = mcp_mutex_create();
@@ -783,6 +1018,10 @@ mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_confi
     data->config = *config;
     data->protocols = server_protocols;
     data->transport = transport;
+
+    // Initialize timestamps
+    data->last_ping_time = time(NULL);
+    data->last_cleanup_time = time(NULL);
 
     // Set transport type and operations
     transport->type = MCP_TRANSPORT_TYPE_SERVER;
