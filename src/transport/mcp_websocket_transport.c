@@ -5,6 +5,7 @@
 #endif
 
 #include "mcp_websocket_transport.h"
+#include "mcp_websocket_common.h"
 #include "internal/transport_internal.h"
 #include "internal/transport_interfaces.h"
 #include "mcp_log.h"
@@ -17,20 +18,8 @@
 #include <stdlib.h>
 #include <time.h>
 
-// Default buffer sizes and timeouts
-#define WS_SERVER_DEFAULT_BUFFER_SIZE 4096
-#define WS_SERVER_PING_INTERVAL_MS 60000    // Increased to 60 seconds
-#define WS_SERVER_PING_TIMEOUT_MS 30000     // Increased to 30 seconds
-#define WS_SERVER_CLEANUP_INTERVAL_MS 120000 // Increased to 120 seconds
-
 // Define maximum number of simultaneous WebSocket clients
 #define MAX_WEBSOCKET_CLIENTS 64
-
-// Message types
-typedef enum {
-    WS_MESSAGE_TYPE_TEXT = 0,
-    WS_MESSAGE_TYPE_BINARY
-} ws_message_type_t;
 
 // WebSocket client connection state
 typedef enum {
@@ -41,14 +30,6 @@ typedef enum {
     WS_CLIENT_STATE_ERROR           // Client encountered an error
 } ws_client_state_t;
 
-// Response queue item
-typedef struct response_item {
-    unsigned char* data;            // Response data (including LWS_PRE padding)
-    size_t size;                    // Response size (excluding padding)
-    ws_message_type_t type;         // Message type (text or binary)
-    struct response_item* next;     // Next item in queue
-} response_item_t;
-
 // WebSocket client connection information
 typedef struct {
     struct lws* wsi;                // libwebsockets connection handle
@@ -57,8 +38,8 @@ typedef struct {
     size_t receive_buffer_len;      // Receive buffer length
     size_t receive_buffer_used;     // Used receive buffer length
     int client_id;                  // Client ID for tracking
-    response_item_t* response_queue; // Queue of responses to send
-    response_item_t* response_queue_tail; // Tail of response queue for faster insertion
+    ws_message_item_t* response_queue; // Queue of responses to send
+    ws_message_item_t* response_queue_tail; // Tail of response queue for faster insertion
     mcp_mutex_t* queue_mutex;       // Mutex for response queue
     time_t last_activity;           // Time of last activity for timeout detection
     uint32_t ping_sent;             // Number of pings sent without response
@@ -91,27 +72,11 @@ static int ws_client_send_ping(ws_client_t* client);
 
 // Helper functions for response queue management
 static void ws_client_queue_response(ws_client_t* client, const void* data, size_t size, ws_message_type_t type);
-static response_item_t* ws_client_dequeue_response(ws_client_t* client);
+static ws_message_item_t* ws_client_dequeue_response(ws_client_t* client);
 static void ws_client_free_response_queue(ws_client_t* client);
 
 // WebSocket protocol definitions
-static struct lws_protocols server_protocols[] = {
-    {
-        "mcp-protocol",            // Protocol name
-        ws_server_callback,        // Callback function
-        0,                         // Per-connection user data size
-        4096,                      // Rx buffer size
-        0, NULL, 0                 // Reserved fields
-    },
-    {
-        "http-only",               // HTTP protocol for handshake
-        ws_server_callback,        // Callback function
-        0,                         // Per-connection user data size
-        4096,                      // Rx buffer size
-        0, NULL, 0                 // Reserved fields
-    },
-    { NULL, NULL, 0, 0, 0, NULL, 0 } // Terminator
-};
+static struct lws_protocols server_protocols[3];
 
 // Server callback function implementation
 static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
@@ -439,7 +404,7 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             }
 
             // Dequeue a response
-            response_item_t* item = ws_client_dequeue_response(client);
+            ws_message_item_t* item = ws_client_dequeue_response(client);
             if (item) {
                 // Send data (buffer already has LWS_PRE padding)
                 enum lws_write_protocol write_protocol =
@@ -534,41 +499,16 @@ static void ws_client_queue_response(ws_client_t* client, const void* data, size
         return;
     }
 
-    // Create new response item
-    response_item_t* item = (response_item_t*)malloc(sizeof(response_item_t));
-    if (!item) {
-        mcp_log_error("Failed to allocate response item");
+    // Use common function to enqueue message
+    if (mcp_websocket_enqueue_message(
+            &client->response_queue,
+            &client->response_queue_tail,
+            client->queue_mutex,
+            data,
+            size,
+            type) != 0) {
         return;
     }
-
-    // Allocate buffer with LWS_PRE padding
-    item->data = (unsigned char*)malloc(LWS_PRE + size);
-    if (!item->data) {
-        mcp_log_error("Failed to allocate response data");
-        free(item);
-        return;
-    }
-
-    // Copy data to buffer after pre-padding
-    memcpy(item->data + LWS_PRE, data, size);
-    item->size = size;
-    item->type = type;
-    item->next = NULL;
-
-    // Lock mutex
-    mcp_mutex_lock(client->queue_mutex);
-
-    // Add to queue (at the end)
-    if (!client->response_queue) {
-        client->response_queue = item;
-        client->response_queue_tail = item;
-    } else {
-        client->response_queue_tail->next = item;
-        client->response_queue_tail = item;
-    }
-
-    // Unlock mutex
-    mcp_mutex_unlock(client->queue_mutex);
 
     // Update activity timestamp
     ws_client_update_activity(client);
@@ -580,33 +520,16 @@ static void ws_client_queue_response(ws_client_t* client, const void* data, size
 }
 
 // Helper function to remove and return the first response from the client's queue
-static response_item_t* ws_client_dequeue_response(ws_client_t* client) {
+static ws_message_item_t* ws_client_dequeue_response(ws_client_t* client) {
     if (!client) {
         return NULL;
     }
 
-    response_item_t* item = NULL;
-
-    // Lock mutex
-    mcp_mutex_lock(client->queue_mutex);
-
-    // Remove first item from queue
-    if (client->response_queue) {
-        item = client->response_queue;
-        client->response_queue = item->next;
-
-        // Update tail pointer if queue is now empty
-        if (!client->response_queue) {
-            client->response_queue_tail = NULL;
-        }
-
-        item->next = NULL;
-    }
-
-    // Unlock mutex
-    mcp_mutex_unlock(client->queue_mutex);
-
-    return item;
+    // Use common function to dequeue message
+    return mcp_websocket_dequeue_message(
+        &client->response_queue,
+        &client->response_queue_tail,
+        client->queue_mutex);
 }
 
 // Helper function to free all responses in the client's queue
@@ -615,23 +538,11 @@ static void ws_client_free_response_queue(ws_client_t* client) {
         return;
     }
 
-    // Lock mutex
-    mcp_mutex_lock(client->queue_mutex);
-
-    // Free all items in queue
-    response_item_t* current = client->response_queue;
-    while (current) {
-        response_item_t* next = current->next;
-        free(current->data);
-        free(current);
-        current = next;
-    }
-
-    client->response_queue = NULL;
-    client->response_queue_tail = NULL;
-
-    // Unlock mutex
-    mcp_mutex_unlock(client->queue_mutex);
+    // Use common function to free message queue
+    mcp_websocket_free_message_queue(
+        &client->response_queue,
+        &client->response_queue_tail,
+        client->queue_mutex);
 }
 
 // Helper function to find a client by WebSocket instance
@@ -693,7 +604,7 @@ static void ws_server_check_timeouts(ws_server_data_t* data) {
     time_t now = time(NULL);
 
     // Only check every PING_INTERVAL_MS milliseconds
-    if (difftime(now, data->last_ping_time) * 1000 < WS_SERVER_PING_INTERVAL_MS) {
+    if (difftime(now, data->last_ping_time) * 1000 < WS_PING_INTERVAL_MS) {
         return;
     }
 
@@ -706,7 +617,7 @@ static void ws_server_check_timeouts(ws_server_data_t* data) {
 
         if (client->state == WS_CLIENT_STATE_ACTIVE && client->wsi) {
             // Check if client has been inactive for too long
-            if (difftime(now, client->last_activity) * 1000 > WS_SERVER_PING_TIMEOUT_MS) {
+            if (difftime(now, client->last_activity) * 1000 > WS_PING_TIMEOUT_MS) {
                 // If we've sent too many pings without response, close the connection
                 if (client->ping_sent > 2) {
                     mcp_log_warn("Client %d timed out, closing connection", client->client_id);
@@ -733,7 +644,7 @@ static void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
     time_t now = time(NULL);
 
     // Only clean up every CLEANUP_INTERVAL_MS milliseconds
-    if (difftime(now, data->last_cleanup_time) * 1000 < WS_SERVER_CLEANUP_INTERVAL_MS) {
+    if (difftime(now, data->last_cleanup_time) * 1000 < WS_CLEANUP_INTERVAL_MS) {
         return;
     }
 
@@ -804,33 +715,22 @@ static int ws_server_transport_start(
 
     ws_server_data_t* data = (ws_server_data_t*)transport->transport_data;
 
-    // Create libwebsockets context
-    struct lws_context_creation_info info = {0};
-    info.port = data->config.port;
-    info.iface = data->config.host;
-    info.protocols = data->protocols;
-    info.user = data;
-    info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE |
-                   LWS_SERVER_OPTION_VALIDATE_UTF8 |
-                   LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+    // Initialize protocols
+    mcp_websocket_init_protocols(server_protocols, ws_server_callback);
 
-    // Set mount for WebSocket path
-    static const struct lws_http_mount mount = {
-        .mountpoint = "/ws",
-        .mountpoint_len = 3,
-        .origin = "http://localhost",
-        .origin_protocol = LWSMPRO_CALLBACK,
-        .mount_next = NULL
-    };
-    info.mounts = &mount;
+    // Create libwebsockets context using common function
+    data->context = mcp_websocket_create_context(
+        data->config.host,
+        data->config.port,
+        data->config.path,
+        server_protocols,
+        data,
+        true, // is_server
+        data->config.use_ssl,
+        data->config.cert_path,
+        data->config.key_path
+    );
 
-    if (data->config.use_ssl) {
-        info.options |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
-        info.ssl_cert_filepath = data->config.cert_path;
-        info.ssl_private_key_filepath = data->config.key_path;
-    }
-
-    data->context = lws_create_context(&info);
     if (!data->context) {
         mcp_log_error("Failed to create WebSocket server context");
         return -1;
@@ -1018,6 +918,9 @@ mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_confi
     data->config = *config;
     data->protocols = server_protocols;
     data->transport = transport;
+
+    // Initialize protocols
+    mcp_websocket_init_protocols(server_protocols, ws_server_callback);
 
     // Initialize timestamps
     data->last_ping_time = time(NULL);

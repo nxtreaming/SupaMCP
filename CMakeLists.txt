@@ -136,6 +136,7 @@ set(COMMON_SOURCES
     src/transport/mcp_tcp_client_reconnect.c
     src/transport/mcp_tcp_pool_transport.c
     src/transport/mcp_tcp_server_utils.c
+    src/transport/mcp_websocket_common.c
     src/transport/mcp_websocket_transport.c
     src/transport/mcp_websocket_client_transport.c
     src/transport/mcp_http_transport.c
