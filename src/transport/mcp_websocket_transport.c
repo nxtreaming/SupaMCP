@@ -251,9 +251,6 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 memcpy(debug_buffer, in, copy_len);
                 debug_buffer[copy_len] = '\0';  // Ensure null termination
 
-                // Log as text
-                mcp_log_debug("WebSocket server raw data (text): '%s'", debug_buffer);
-
                 // Log as hex for the first 32 bytes
                 char hex_buffer[200] = {0};
                 size_t hex_len = len < 32 ? len : 32;
@@ -269,6 +266,9 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
                 // Check if this might be a length-prefixed message
                 if (len >= 4) {
+                    // Log as text£ºskip length prefix
+                    mcp_log_debug("WebSocket server raw data (text): '%s'", debug_buffer+4);
+
                     // Interpret first 4 bytes as a 32-bit length (network byte order)
                     uint32_t msg_len = 0;
                     // Convert from network byte order (big endian) to host byte order
