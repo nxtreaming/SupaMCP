@@ -164,7 +164,7 @@ set(COMMON_SOURCES
     src/common/mcp_template_optimized.c
     src/common/mcp_rwlock.c
     src/common/mcp_list.c
-    src/server/mcp_buffer_pool.c
+    src/common/mcp_buffer_pool.c
     src/server/mcp_cache_lru.c
     src/server/mcp_rate_limiter.c
     src/server/mcp_profiler.c

@@ -65,6 +65,26 @@ int mcp_transport_websocket_server_get_stats(mcp_transport_t* transport,
                                            uint32_t* rejected_connections,
                                            double* uptime_seconds);
 
+/**
+ * @brief Get memory statistics from a WebSocket server transport
+ *
+ * @param transport WebSocket server transport handle
+ * @param buffer_allocs Pointer to store the number of buffer allocations (can be NULL)
+ * @param buffer_reuses Pointer to store the number of buffer reuses from pool (can be NULL)
+ * @param buffer_misses Pointer to store the number of buffer pool misses (can be NULL)
+ * @param total_buffer_memory Pointer to store the total memory used for buffers (can be NULL)
+ * @param pool_size Pointer to store the size of the buffer pool (can be NULL)
+ * @param pool_buffer_size Pointer to store the size of each buffer in the pool (can be NULL)
+ * @return int 0 on success, -1 on error
+ */
+int mcp_transport_websocket_server_get_memory_stats(mcp_transport_t* transport,
+                                                  uint32_t* buffer_allocs,
+                                                  uint32_t* buffer_reuses,
+                                                  uint32_t* buffer_misses,
+                                                  size_t* total_buffer_memory,
+                                                  uint32_t* pool_size,
+                                                  size_t* pool_buffer_size);
+
 #ifdef __cplusplus
 }
 #endif

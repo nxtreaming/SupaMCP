@@ -12,6 +12,7 @@
 #include "mcp_sync.h"
 #include "mcp_socket_utils.h"
 #include "mcp_thread_local.h"
+#include "mcp_buffer_pool.h"
 
 #include "libwebsockets.h"
 #include <string.h>
@@ -60,6 +61,13 @@ typedef struct {
     time_t last_ping_time;          // Time of last ping check
     time_t last_cleanup_time;       // Time of last inactive client cleanup
     time_t start_time;              // Time when the server was started
+
+    // Buffer pool for efficient memory management
+    mcp_buffer_pool_t* buffer_pool; // Pool of reusable buffers
+    uint32_t buffer_allocs;         // Total number of buffer allocations
+    uint32_t buffer_reuses;         // Number of buffer reuses from pool
+    uint32_t buffer_misses;         // Number of times a buffer couldn't be acquired from pool
+    size_t total_buffer_memory;     // Total memory used for buffers
 } ws_server_data_t;
 
 // Forward declarations
@@ -81,7 +89,7 @@ static int ws_server_transport_sendv(mcp_transport_t* transport, const mcp_buffe
 static void ws_server_transport_destroy(mcp_transport_t* transport);
 static int ws_client_init(ws_client_t* client, int client_id, struct lws* wsi);
 static void ws_client_cleanup(ws_client_t* client, ws_server_data_t* server_data);
-static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size);
+static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_server_data_t* server_data);
 static int ws_client_process_message(ws_server_data_t* data, ws_client_t* client, struct lws* wsi);
 static int ws_client_handle_received_data(ws_server_data_t* data, ws_client_t* client,
                                          struct lws* wsi, void* in, size_t len, bool is_final);
@@ -160,10 +168,26 @@ static void ws_client_cleanup(ws_client_t* client, ws_server_data_t* server_data
     }
 
     // Free receive buffer
-    free(client->receive_buffer);
-    client->receive_buffer = NULL;
-    client->receive_buffer_len = 0;
-    client->receive_buffer_used = 0;
+    if (client->receive_buffer) {
+        // If buffer pool exists and buffer size matches pool buffer size, return to pool
+        if (server_data && server_data->buffer_pool &&
+            client->receive_buffer_len == WS_BUFFER_POOL_BUFFER_SIZE) {
+            mcp_buffer_pool_release(server_data->buffer_pool, client->receive_buffer);
+            mcp_log_debug("Returned buffer to pool for client %d", client->client_id);
+        } else {
+            // Otherwise free normally
+            free(client->receive_buffer);
+
+            // Update memory statistics
+            if (server_data) {
+                server_data->total_buffer_memory -= client->receive_buffer_len;
+            }
+        }
+
+        client->receive_buffer = NULL;
+        client->receive_buffer_len = 0;
+        client->receive_buffer_used = 0;
+    }
 
     // Reset client state
     client->state = WS_CLIENT_STATE_INACTIVE;
@@ -182,21 +206,79 @@ static void ws_client_cleanup(ws_client_t* client, ws_server_data_t* server_data
 }
 
 // Helper function to resize a client's receive buffer
-static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size) {
+static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_server_data_t* server_data) {
     if (!client) {
         return -1;
     }
 
     // Calculate new buffer size
-    size_t new_len = client->receive_buffer_len == 0 ? WS_DEFAULT_BUFFER_SIZE : client->receive_buffer_len * 2;
+    size_t new_len = client->receive_buffer_len == 0 ? WS_DEFAULT_BUFFER_SIZE : (int)(client->receive_buffer_len * WS_BUFFER_GROWTH_FACTOR);
     while (new_len < needed_size) {
-        new_len *= 2;
+        new_len = (size_t)(new_len * WS_BUFFER_GROWTH_FACTOR);
     }
 
-    // Allocate new buffer
-    char* new_buffer = (char*)realloc(client->receive_buffer, new_len);
+    // Round up to the nearest multiple of WS_DEFAULT_BUFFER_SIZE for better reuse
+    new_len = ((new_len + WS_DEFAULT_BUFFER_SIZE - 1) / WS_DEFAULT_BUFFER_SIZE) * WS_DEFAULT_BUFFER_SIZE;
+
+    char* new_buffer = NULL;
+
+    // Try to get buffer from pool if server_data is provided and buffer pool exists
+    if (server_data && server_data->buffer_pool && new_len <= WS_BUFFER_POOL_BUFFER_SIZE) {
+        // Try to get a buffer from the pool
+        new_buffer = (char*)mcp_buffer_pool_acquire(server_data->buffer_pool);
+
+        if (new_buffer) {
+            // Successfully got a buffer from the pool
+            server_data->buffer_reuses++;
+
+            // Copy existing data if any
+            if (client->receive_buffer && client->receive_buffer_used > 0) {
+                memcpy(new_buffer, client->receive_buffer, client->receive_buffer_used);
+            }
+
+            // Free old buffer if it exists
+            if (client->receive_buffer) {
+                // If old buffer was from pool, return it to pool
+                if (client->receive_buffer_len == WS_BUFFER_POOL_BUFFER_SIZE && server_data->buffer_pool) {
+                    mcp_buffer_pool_release(server_data->buffer_pool, client->receive_buffer);
+                } else {
+                    free(client->receive_buffer);
+                    server_data->total_buffer_memory -= client->receive_buffer_len;
+                }
+            }
+
+            // Update buffer information
+            client->receive_buffer = new_buffer;
+            client->receive_buffer_len = WS_BUFFER_POOL_BUFFER_SIZE;
+            return 0;
+        } else {
+            // Failed to get buffer from pool
+            server_data->buffer_misses++;
+        }
+    }
+
+    // Fall back to regular allocation if pool is not available or buffer is too large
+    if (client->receive_buffer) {
+        new_buffer = (char*)realloc(client->receive_buffer, new_len);
+
+        // Update memory statistics if server_data is provided
+        if (server_data) {
+            server_data->total_buffer_memory -= client->receive_buffer_len;
+            server_data->total_buffer_memory += new_len;
+            server_data->buffer_allocs++;
+        }
+    } else {
+        new_buffer = (char*)malloc(new_len);
+
+        // Update memory statistics if server_data is provided
+        if (server_data) {
+            server_data->total_buffer_memory += new_len;
+            server_data->buffer_allocs++;
+        }
+    }
+
     if (!new_buffer) {
-        mcp_log_error("Failed to allocate WebSocket receive buffer");
+        mcp_log_error("Failed to allocate WebSocket receive buffer of size %zu", new_len);
         return -1;
     }
 
@@ -299,7 +381,7 @@ static int ws_client_process_message(ws_server_data_t* data, ws_client_t* client
     if (client->receive_buffer_used < client->receive_buffer_len) {
         client->receive_buffer[client->receive_buffer_used] = '\0';
     } else {
-        if (ws_client_resize_buffer(client, client->receive_buffer_used + 1) != 0) {
+        if (ws_client_resize_buffer(client, client->receive_buffer_used + 1, data) != 0) {
             return -1;
         }
         client->receive_buffer[client->receive_buffer_used] = '\0';
@@ -349,7 +431,7 @@ static int ws_client_handle_received_data(ws_server_data_t* data, ws_client_t* c
 
     // Ensure buffer is large enough
     if (client->receive_buffer_used + len > client->receive_buffer_len) {
-        if (ws_client_resize_buffer(client, client->receive_buffer_used + len) != 0) {
+        if (ws_client_resize_buffer(client, client->receive_buffer_used + len, data) != 0) {
             return -1;
         }
     }
@@ -871,6 +953,22 @@ static int ws_server_transport_start(
     data->last_cleanup_time = now;
     data->start_time = now;
 
+    // Initialize buffer pool statistics
+    data->buffer_allocs = 0;
+    data->buffer_reuses = 0;
+    data->buffer_misses = 0;
+    data->total_buffer_memory = 0;
+
+    // Create buffer pool
+    data->buffer_pool = mcp_buffer_pool_create(WS_BUFFER_POOL_BUFFER_SIZE, WS_BUFFER_POOL_SIZE);
+    if (!data->buffer_pool) {
+        mcp_log_error("Failed to create WebSocket buffer pool");
+        // Continue without buffer pool, will fall back to regular malloc/free
+    } else {
+        mcp_log_info("WebSocket buffer pool created with %d buffers of %d bytes each",
+                    WS_BUFFER_POOL_SIZE, WS_BUFFER_POOL_BUFFER_SIZE);
+    }
+
     // Create mutex
     data->clients_mutex = mcp_mutex_create();
     if (!data->clients_mutex) {
@@ -933,6 +1031,14 @@ static int ws_server_transport_stop(mcp_transport_t* transport) {
 
     // Destroy mutex
     mcp_mutex_destroy(data->clients_mutex);
+
+    // Destroy buffer pool
+    if (data->buffer_pool) {
+        mcp_log_info("Destroying WebSocket buffer pool (allocs: %u, reuses: %u, misses: %u, memory: %zu bytes)",
+                    data->buffer_allocs, data->buffer_reuses, data->buffer_misses, data->total_buffer_memory);
+        mcp_buffer_pool_destroy(data->buffer_pool);
+        data->buffer_pool = NULL;
+    }
 
     // Destroy libwebsockets context
     if (data->context) {
@@ -1026,6 +1132,44 @@ int mcp_transport_websocket_server_get_stats(mcp_transport_t* transport,
         time_t now = time(NULL);
         *uptime_seconds = difftime(now, data->start_time); // difftime returns double, perfect for uptime
     }
+
+    mcp_mutex_unlock(data->clients_mutex);
+
+    return 0;
+}
+
+// Get WebSocket server memory statistics
+int mcp_transport_websocket_server_get_memory_stats(mcp_transport_t* transport,
+                                                  uint32_t* buffer_allocs,
+                                                  uint32_t* buffer_reuses,
+                                                  uint32_t* buffer_misses,
+                                                  size_t* total_buffer_memory,
+                                                  uint32_t* pool_size,
+                                                  size_t* pool_buffer_size) {
+    if (!transport || !transport->transport_data) {
+        return -1;
+    }
+
+    // Verify this is a WebSocket server transport
+    if (transport->type != MCP_TRANSPORT_TYPE_SERVER ||
+        transport->protocol_type != MCP_TRANSPORT_PROTOCOL_WEBSOCKET) {
+        return -1;
+    }
+
+    ws_server_data_t* data = (ws_server_data_t*)transport->transport_data;
+
+    // Lock mutex to ensure consistent data
+    mcp_mutex_lock(data->clients_mutex);
+
+    // Copy statistics
+    if (buffer_allocs) *buffer_allocs = data->buffer_allocs;
+    if (buffer_reuses) *buffer_reuses = data->buffer_reuses;
+    if (buffer_misses) *buffer_misses = data->buffer_misses;
+    if (total_buffer_memory) *total_buffer_memory = data->total_buffer_memory;
+
+    // Pool information
+    if (pool_size) *pool_size = WS_BUFFER_POOL_SIZE;
+    if (pool_buffer_size) *pool_buffer_size = WS_BUFFER_POOL_BUFFER_SIZE;
 
     mcp_mutex_unlock(data->clients_mutex);
 

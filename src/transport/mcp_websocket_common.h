@@ -23,6 +23,11 @@ extern "C" {
 #define WS_MAX_RECONNECT_DELAY_MS 30000 // 30 seconds (reduced from 60s for faster recovery)
 #define WS_MAX_PING_FAILURES 3         // Maximum number of ping failures before closing connection
 
+// Buffer pool configuration
+#define WS_BUFFER_POOL_SIZE 32         // Number of buffers in the pool
+#define WS_BUFFER_POOL_BUFFER_SIZE 8192 // Size of each buffer in the pool
+#define WS_BUFFER_GROWTH_FACTOR 1.5    // Factor to grow buffer when needed
+
 // Message types
 typedef enum {
     WS_MESSAGE_TYPE_TEXT = 0,
