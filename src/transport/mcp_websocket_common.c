@@ -46,105 +46,7 @@ void mcp_websocket_init_protocols(
     protocols[2].tx_packet_size = 0;
 }
 
-// Enqueue a message to a WebSocket message queue
-int mcp_websocket_enqueue_message(
-    ws_message_item_t** queue_head,
-    ws_message_item_t** queue_tail,
-    mcp_mutex_t* queue_mutex,
-    const void* message,
-    size_t size,
-    ws_message_type_t type
-) {
-    if (!queue_head || !queue_tail || !message || size == 0 || !queue_mutex) {
-        return -1;
-    }
-
-    // Allocate message item
-    ws_message_item_t* item = (ws_message_item_t*)malloc(sizeof(ws_message_item_t));
-    if (!item) {
-        mcp_log_error("Failed to allocate WebSocket message item");
-        return -1;
-    }
-
-    // Allocate buffer with LWS_PRE padding
-    item->data = (unsigned char*)malloc(LWS_PRE + size);
-    if (!item->data) {
-        mcp_log_error("Failed to allocate WebSocket message buffer");
-        free(item);
-        return -1;
-    }
-
-    // Copy message data
-    memcpy(item->data + LWS_PRE, message, size);
-    item->size = size;
-    item->type = type;
-    item->next = NULL;
-
-    // Add to queue
-    mcp_mutex_lock(queue_mutex);
-    if (*queue_tail) {
-        (*queue_tail)->next = item;
-        *queue_tail = item;
-    } else {
-        *queue_head = item;
-        *queue_tail = item;
-    }
-    mcp_mutex_unlock(queue_mutex);
-
-    return 0;
-}
-
-// Dequeue a message from a WebSocket message queue
-ws_message_item_t* mcp_websocket_dequeue_message(
-    ws_message_item_t** queue_head,
-    ws_message_item_t** queue_tail,
-    mcp_mutex_t* queue_mutex
-) {
-    if (!queue_head || !queue_tail || !queue_mutex) {
-        return NULL;
-    }
-
-    ws_message_item_t* item = NULL;
-
-    mcp_mutex_lock(queue_mutex);
-    if (*queue_head) {
-        item = *queue_head;
-        *queue_head = item->next;
-        if (!*queue_head) {
-            *queue_tail = NULL;
-        }
-        item->next = NULL;
-    }
-    mcp_mutex_unlock(queue_mutex);
-
-    return item;
-}
-
-// Free all messages in a WebSocket message queue
-void mcp_websocket_free_message_queue(
-    ws_message_item_t** queue_head,
-    ws_message_item_t** queue_tail,
-    mcp_mutex_t* queue_mutex
-) {
-    if (!queue_head || !queue_mutex) {
-        return;
-    }
-
-    mcp_mutex_lock(queue_mutex);
-    ws_message_item_t* item = *queue_head;
-    *queue_head = NULL;
-    *queue_tail = NULL;
-    mcp_mutex_unlock(queue_mutex);
-
-    while (item) {
-        ws_message_item_t* next = item->next;
-        if (item->data) {
-            free(item->data);
-        }
-        free(item);
-        item = next;
-    }
-}
+// Message queue functions removed to improve performance
 
 // Create a libwebsockets context
 struct lws_context* mcp_websocket_create_context(
@@ -170,14 +72,14 @@ struct lws_context* mcp_websocket_create_context(
     info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE |
                    LWS_SERVER_OPTION_VALIDATE_UTF8 |
                    LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
-    
+
     // Client-specific settings to optimize connection speed
     if (!is_server) {
         // Reduce connection setup time
         info.ka_time = 0; // Disable keep-alive probes during connection setup
         info.ka_interval = 0;
         info.ka_probes = 0;
-        
+
         // Set shorter timeout for connection establishment
         info.timeout_secs = 1; // Reduce from default (usually 5 seconds)
     }
@@ -192,11 +94,11 @@ struct lws_context* mcp_websocket_create_context(
             .mount_next = NULL
         };
         info.mounts = &mount;
-        
+
         // Add options to optimize server behavior
         info.timeout_secs = 1; // Reduce timeout to 1 second (default is 5)
         info.keepalive_timeout = 1; // Reduce keepalive timeout
-        
+
         // Add options to optimize server behavior
         info.options |= LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
     }

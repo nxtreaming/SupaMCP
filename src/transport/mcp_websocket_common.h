@@ -36,13 +36,7 @@ typedef enum {
     WS_STATE_CLOSING
 } ws_connection_state_t;
 
-// Message queue item
-typedef struct ws_message_item {
-    unsigned char* data;         // Message data (with LWS_PRE padding)
-    size_t size;                 // Message size
-    ws_message_type_t type;      // Message type
-    struct ws_message_item* next; // Next item in queue
-} ws_message_item_t;
+// Message queue removed to improve performance
 
 /**
  * @brief Initialize WebSocket protocols
@@ -55,52 +49,7 @@ void mcp_websocket_init_protocols(
     lws_callback_function* callback
 );
 
-/**
- * @brief Enqueue a message to a WebSocket message queue
- *
- * @param queue_head Pointer to queue head pointer
- * @param queue_tail Pointer to queue tail pointer
- * @param queue_mutex Mutex for queue access
- * @param message Message data
- * @param size Message size
- * @param type Message type
- * @return int 0 on success, -1 on failure
- */
-int mcp_websocket_enqueue_message(
-    ws_message_item_t** queue_head,
-    ws_message_item_t** queue_tail,
-    mcp_mutex_t* queue_mutex,
-    const void* message,
-    size_t size,
-    ws_message_type_t type
-);
-
-/**
- * @brief Dequeue a message from a WebSocket message queue
- *
- * @param queue_head Pointer to queue head pointer
- * @param queue_tail Pointer to queue tail pointer
- * @param queue_mutex Mutex for queue access
- * @return ws_message_item_t* Message item or NULL if queue is empty
- */
-ws_message_item_t* mcp_websocket_dequeue_message(
-    ws_message_item_t** queue_head,
-    ws_message_item_t** queue_tail,
-    mcp_mutex_t* queue_mutex
-);
-
-/**
- * @brief Free all messages in a WebSocket message queue
- *
- * @param queue_head Pointer to queue head pointer
- * @param queue_tail Pointer to queue tail pointer
- * @param queue_mutex Mutex for queue access
- */
-void mcp_websocket_free_message_queue(
-    ws_message_item_t** queue_head,
-    ws_message_item_t** queue_tail,
-    mcp_mutex_t* queue_mutex
-);
+// Message queue functions removed to improve performance
 
 /**
  * @brief Create a libwebsockets context
