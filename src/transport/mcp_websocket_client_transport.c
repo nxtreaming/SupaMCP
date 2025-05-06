@@ -108,6 +108,20 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
     switch (reason) {
         case LWS_CALLBACK_CLIENT_ESTABLISHED: {
+            /*
+            * 
+            * From libwebsockets docs: 
+            * https://libwebsockets.org/lws-api-doc-main/html/md_READMEs_README_coding.html
+            * 
+            * Your client connection is actually active only when you receive 
+            * LWS_CALLBACK_CLIENT_ESTABLISHED for it.
+            * There's a 5 second timeout for the connection, and it may give up or die for other reasons,
+            * if any of that happens you'll get a LWS_CALLBACK_CLIENT_CONNECTION_ERROR callback on protocol
+            * 0 instead for the wsi.
+            * After attempting the connection and getting back a non-NULL wsi you should loop
+            * calling lws_service() until one of the above callbacks occurs. 
+            * As usual, see test-client.c for example code.
+            */
             // Connection established
             mcp_log_info("WebSocket client connection established");
             data->wsi = wsi;
