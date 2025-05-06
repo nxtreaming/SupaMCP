@@ -500,6 +500,16 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 client->wsi = NULL;
                 client->last_activity = time(NULL);
 
+                // Reset ping counter
+                client->ping_sent = 0;
+
+                // If there's no pending data, clean up immediately
+                // This reduces resource usage and makes slots available faster
+                if (client->receive_buffer_used == 0) {
+                    mcp_log_debug("No pending data for client %d, cleaning up immediately", client->client_id);
+                    ws_client_cleanup(client, data);
+                }
+
                 mcp_mutex_unlock(data->clients_mutex);
             } else {
                 mcp_log_info("Unknown client disconnected");
@@ -601,6 +611,46 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             return -1;
         }
 
+        case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION: {
+            // This callback allows us to examine the HTTP headers and reject connections
+            mcp_log_debug("WebSocket filter protocol connection");
+
+            // Check if we're at or near capacity
+            if (data->active_clients >= MAX_WEBSOCKET_CLIENTS - 5) {
+                mcp_log_warn("WebSocket server near capacity (%d/%d), applying stricter filtering",
+                           data->active_clients, MAX_WEBSOCKET_CLIENTS);
+
+                // Here we could implement additional filtering logic
+                // For example, rate limiting based on IP, authentication checks, etc.
+            }
+            return 0;
+        }
+
+        case LWS_CALLBACK_FILTER_NETWORK_CONNECTION: {
+            // This is called when a client initiates a connection
+            mcp_log_debug("WebSocket filter network connection");
+
+            // Check if we're at capacity
+            if (data->active_clients >= MAX_WEBSOCKET_CLIENTS) {
+                mcp_log_warn("WebSocket server at capacity (%d/%d), rejecting connection",
+                           data->active_clients, MAX_WEBSOCKET_CLIENTS);
+                return -1; // Reject connection
+            }
+            return 0;
+        }
+
+        case LWS_CALLBACK_SERVER_NEW_CLIENT_INSTANTIATED: {
+            // A new client connection is being instantiated
+            mcp_log_debug("WebSocket new client instantiated");
+            return 0;
+        }
+
+        case LWS_CALLBACK_WSI_CREATE: {
+            // A new WebSocket instance is being created
+            mcp_log_debug("WebSocket instance created");
+            return 0;
+        }
+
         default:
             break;
     }
@@ -632,13 +682,17 @@ static void ws_server_check_timeouts(ws_server_data_t* data) {
             // Check if client has been inactive for too long
             if (difftime(now, client->last_activity) * 1000 > WS_PING_TIMEOUT_MS) {
                 // If we've sent too many pings without response, close the connection
-                if (client->ping_sent > 2) {
-                    mcp_log_warn("Client %d timed out, closing connection", client->client_id);
+                if (client->ping_sent >= WS_MAX_PING_FAILURES) {
+                    mcp_log_warn("Client %d timed out after %d ping failures, closing connection",
+                                client->client_id, client->ping_sent);
                     client->state = WS_CLIENT_STATE_CLOSING;
-                    lws_set_timeout(client->wsi, PENDING_TIMEOUT_CLOSE_SEND, LWS_TO_KILL_ASYNC);
+
+                    // Set a short timeout to force connection closure
+                    lws_set_timeout(client->wsi, PENDING_TIMEOUT_CLOSE_SEND, 1);
                 } else {
                     // Send a ping to check if client is still alive
-                    mcp_log_debug("Sending ping to client %d", client->client_id);
+                    mcp_log_debug("Sending ping to client %d (attempt %d/%d)",
+                                client->client_id, client->ping_sent + 1, WS_MAX_PING_FAILURES);
                     ws_client_send_ping(client);
                 }
             }
@@ -665,16 +719,37 @@ static void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
 
     mcp_mutex_lock(data->clients_mutex);
 
-    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
-        ws_client_t* client = &data->clients[i];
+    // Use bitmap to quickly skip inactive clients
+    for (int i = 0; i < (MAX_WEBSOCKET_CLIENTS / 32 + 1); i++) {
+        uint32_t word = data->client_bitmap[i];
 
-        // Clean up clients in error state or closing state without a valid wsi
-        if ((client->state == WS_CLIENT_STATE_ERROR ||
-             (client->state == WS_CLIENT_STATE_CLOSING && !client->wsi)) &&
-            difftime(now, client->last_activity) > 10) { // 10 seconds grace period
+        // Skip words with no active clients
+        if (word == 0) {
+            continue;
+        }
 
-            mcp_log_info("Cleaning up inactive client %d", client->client_id);
-            ws_client_cleanup(client, data);
+        // Process only active bits in this word
+        for (int j = 0; j < 32; j++) {
+            if ((word & (1 << j)) == 0) {
+                continue; // Skip inactive slots
+            }
+
+            int client_index = i * 32 + j;
+            if (client_index >= MAX_WEBSOCKET_CLIENTS) {
+                break; // Don't go beyond array bounds
+            }
+
+            ws_client_t* client = &data->clients[client_index];
+
+            // Clean up clients in error state or closing state without a valid wsi
+            if ((client->state == WS_CLIENT_STATE_ERROR ||
+                 (client->state == WS_CLIENT_STATE_CLOSING && !client->wsi)) &&
+                difftime(now, client->last_activity) > 5) { // 5 seconds grace period (reduced from 10s)
+
+                mcp_log_info("Cleaning up inactive client %d (state: %d, last activity: %.1f seconds ago)",
+                           client->client_id, client->state, difftime(now, client->last_activity));
+                ws_client_cleanup(client, data);
+            }
         }
     }
 
@@ -685,8 +760,39 @@ static void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
 static void* ws_server_event_thread(void* arg) {
     ws_server_data_t* data = (ws_server_data_t*)arg;
 
+    // Use a shorter service timeout for more responsive handling
+    // but not too short to avoid excessive CPU usage
+    const int service_timeout_ms = 20; // 20ms timeout (reduced from 50ms)
+
+    // Track last service time for performance monitoring
+    time_t last_service_time = time(NULL);
+    unsigned long service_count = 0;
+
+    mcp_log_info("WebSocket server event thread started");
+
     while (data->running) {
-        lws_service(data->context, 50); // 50ms timeout
+        // Service libwebsockets
+        int service_result = lws_service(data->context, service_timeout_ms);
+        if (service_result < 0) {
+            mcp_log_warn("lws_service returned error: %d", service_result);
+            // Don't exit the loop, just continue and try again
+        }
+
+        // Increment service counter
+        service_count++;
+
+        // Log performance stats every ~60 seconds
+        time_t now = time(NULL);
+        if (difftime(now, last_service_time) >= 60) {
+            double elapsed = difftime(now, last_service_time);
+            double rate = service_count / elapsed;
+            mcp_log_debug("WebSocket server performance: %.1f service calls/sec, %lu active clients",
+                         rate, data->active_clients);
+
+            // Reset counters
+            last_service_time = now;
+            service_count = 0;
+        }
 
         // Check for client timeouts and send pings
         ws_server_check_timeouts(data);
@@ -695,6 +801,7 @@ static void* ws_server_event_thread(void* arg) {
         ws_server_cleanup_inactive_clients(data);
     }
 
+    mcp_log_info("WebSocket server event thread exiting");
     return NULL;
 }
 

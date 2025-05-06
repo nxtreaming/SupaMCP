@@ -14,13 +14,14 @@ extern "C" {
 
 // Common buffer sizes and timeouts
 #define WS_DEFAULT_BUFFER_SIZE 4096
-#define WS_PING_INTERVAL_MS 60000      // 60 seconds
-#define WS_PING_TIMEOUT_MS 30000       // 30 seconds
-#define WS_CLEANUP_INTERVAL_MS 120000  // 120 seconds
-#define WS_DEFAULT_CONNECT_TIMEOUT_MS 15000  // 15 seconds
+#define WS_PING_INTERVAL_MS 30000      // 30 seconds (reduced from 60s for more responsive connection monitoring)
+#define WS_PING_TIMEOUT_MS 20000       // 20 seconds (reduced from 30s to detect dead connections faster)
+#define WS_CLEANUP_INTERVAL_MS 60000   // 60 seconds (reduced from 120s to free resources faster)
+#define WS_DEFAULT_CONNECT_TIMEOUT_MS 10000  // 10 seconds (reduced from 15s for faster connection establishment)
 #define WS_MAX_RECONNECT_ATTEMPTS 10
-#define WS_RECONNECT_DELAY_MS 3000     // 3 seconds
-#define WS_MAX_RECONNECT_DELAY_MS 60000 // 60 seconds
+#define WS_RECONNECT_DELAY_MS 2000     // 2 seconds (reduced from 3s for faster reconnection)
+#define WS_MAX_RECONNECT_DELAY_MS 30000 // 30 seconds (reduced from 60s for faster recovery)
+#define WS_MAX_PING_FAILURES 3         // Maximum number of ping failures before closing connection
 
 // Message types
 typedef enum {
