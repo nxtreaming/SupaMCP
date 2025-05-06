@@ -426,8 +426,21 @@ static int ws_client_connect(ws_client_data_t* data) {
     connect_info.origin = data->config.origin ? data->config.origin : data->config.host;
     connect_info.protocol = data->config.protocol ? data->config.protocol : "mcp-protocol";
     connect_info.pwsi = &data->wsi;
-    connect_info.ssl_connection = data->config.use_ssl ? LCCSCF_USE_SSL : 0;
+    
+    // Add flags to optimize connection speed and force immediate upgrade
+    connect_info.ssl_connection = data->config.use_ssl ? 
+        (LCCSCF_USE_SSL | LCCSCF_PIPELINE) : 
+        LCCSCF_PIPELINE;
+    
     connect_info.local_protocol_name = "mcp-protocol";
+    connect_info.retry_and_idle_policy = NULL; // Don't use retry policy
+    connect_info.userdata = data; // Store user data for callbacks
+    
+    // Force immediate connection
+    connect_info.ietf_version_or_minus_one = -1; // Use latest version
+    
+    // Set protocol version to force immediate upgrade
+    connect_info.alpn = "h2";
 
     if (!lws_client_connect_via_info(&connect_info)) {
         mcp_log_error("Failed to connect to WebSocket server");

@@ -170,6 +170,17 @@ struct lws_context* mcp_websocket_create_context(
     info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE |
                    LWS_SERVER_OPTION_VALIDATE_UTF8 |
                    LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+    
+    // Client-specific settings to optimize connection speed
+    if (!is_server) {
+        // Reduce connection setup time
+        info.ka_time = 0; // Disable keep-alive probes during connection setup
+        info.ka_interval = 0;
+        info.ka_probes = 0;
+        
+        // Set shorter timeout for connection establishment
+        info.timeout_secs = 1; // Reduce from default (usually 5 seconds)
+    }
 
     // Server-specific settings
     if (is_server) {
@@ -181,6 +192,13 @@ struct lws_context* mcp_websocket_create_context(
             .mount_next = NULL
         };
         info.mounts = &mount;
+        
+        // Add options to optimize server behavior
+        info.timeout_secs = 1; // Reduce timeout to 1 second (default is 5)
+        info.keepalive_timeout = 1; // Reduce keepalive timeout
+        
+        // Add options to optimize server behavior
+        info.options |= LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
     }
 
     // SSL settings
