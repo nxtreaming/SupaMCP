@@ -116,10 +116,41 @@ static bool create_client_connection(const char* host, uint16_t port, const char
 
     printf("Connecting to WebSocket server at %s:%d%s\n", host, port, path);
 
-    // Add a small delay to ensure connection is established
-    mcp_sleep_ms(1000);
+    // Wait for connection to be established with timeout
+    int max_wait_attempts = 100; // 100 * 100ms = 10 seconds (longer timeout)
+    int wait_attempts = 0;
+    int connection_state = 0;
 
-    printf("Connected to server.\n");
+    while (wait_attempts < max_wait_attempts) {
+        connection_state = mcp_client_is_connected(g_client);
+        if (connection_state == 1) {
+            printf("Connected to server (verified).\n");
+            return true;
+        }
+
+        // Wait a bit before checking again
+        mcp_sleep_ms(100);
+        wait_attempts++;
+
+        // Print progress every second
+        if (wait_attempts % 10 == 0) {
+            printf("Waiting for connection to be established... (%d seconds)\n", wait_attempts / 10);
+        }
+    }
+
+    if (connection_state != 1) {
+        printf("Error: Connection not established after %d seconds (state: %d).\n",
+               max_wait_attempts / 10, connection_state);
+
+        // Destroy the client since connection failed
+        if (g_client) {
+            mcp_client_destroy(g_client);
+            g_client = NULL;
+        }
+
+        return false;
+    }
+
     return true;
 }
 
@@ -144,8 +175,19 @@ static bool ensure_client_connected(const char* host, uint16_t port, const char*
         return create_client_connection(host, port, path);
     }
 
-    // If we have a client and transport, assume connection is valid
-    // The actual WebSocket connection state is managed internally by the transport
+    // Check the actual connection state using the client API
+    int connection_state = mcp_client_is_connected(g_client);
+    if (connection_state != 1) {
+        printf("Client connection is not established (state: %d). Reconnecting...\n", connection_state);
+
+        // Destroy the old client before creating a new one
+        if (g_client) {
+            mcp_client_destroy(g_client);
+            g_client = NULL;
+        }
+
+        return create_client_connection(host, port, path);
+    }
     return true;
 }
 

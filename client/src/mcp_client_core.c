@@ -5,6 +5,7 @@
 #include <mcp_memory_pool.h>
 #include <mcp_thread_cache.h>
 #include <mcp_arena.h>
+#include <mcp_websocket_transport.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,7 +26,7 @@
  * @brief Create an MCP client instance.
  */
 mcp_client_t* mcp_client_create(const mcp_client_config_t* config, mcp_transport_t* transport) {
-    if (config == NULL || transport == NULL) 
+    if (config == NULL || transport == NULL)
         return NULL;
 
     // Initialize the memory pool system if not already initialized
@@ -286,6 +287,34 @@ char* mcp_client_receive_callback(void* user_data, const void* data, size_t size
 }
 
 /**
+ * @brief Check if the client is connected to the server.
+ *
+ * This function checks the underlying transport connection status.
+ *
+ * @param client The client instance.
+ * @return 1 if connected, 0 if not connected, -1 on error.
+ */
+int mcp_client_is_connected(mcp_client_t* client) {
+    if (client == NULL || client->transport == NULL) {
+        return -1;
+    }
+
+    // Get the transport protocol
+    mcp_transport_protocol_t protocol = mcp_transport_get_protocol(client->transport);
+
+    // For WebSocket transport, use the specific function to check connection status
+    if (protocol == MCP_TRANSPORT_PROTOCOL_WEBSOCKET) {
+        // Call the WebSocket-specific function to check connection status
+        return mcp_transport_websocket_client_is_connected(client->transport);
+    }
+
+    // For other transports, we don't have a specific way to check connection status yet
+    // We could implement similar functions for other transport types in the future
+    // For now, just return 1 (connected) if the transport exists
+    return 1;
+}
+
+/**
  * Sends a pre-formatted request and receives the raw response.
  */
 int mcp_client_send_raw_request(
@@ -298,8 +327,8 @@ int mcp_client_send_raw_request(
     char** error_message_out // Changed name
 ) {
     if (client == NULL || method == NULL || params_json == NULL ||
-        response_json_out == NULL || error_code_out == NULL || 
-        error_message_out == NULL) 
+        response_json_out == NULL || error_code_out == NULL ||
+        error_message_out == NULL)
         return -1;
 
     // Create the full request JSON string using the provided components

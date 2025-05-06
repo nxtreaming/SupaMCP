@@ -1537,6 +1537,31 @@ static void ws_client_transport_destroy(mcp_transport_t* transport) {
     free(transport);
 }
 
+// Get WebSocket client connection state
+int mcp_transport_websocket_client_is_connected(mcp_transport_t* transport) {
+    if (!transport || !transport->transport_data) {
+        return -1;
+    }
+
+    ws_client_data_t* data = (ws_client_data_t*)transport->transport_data;
+
+    // Check if client is running
+    if (!data->running) {
+        return -1;
+    }
+
+    // Check connection state
+    mcp_mutex_lock(data->connection_mutex);
+
+    // Only consider connected if state is explicitly WS_CLIENT_STATE_CONNECTED
+    // Having a valid wsi is not enough, as it might be in the process of connecting
+    bool is_connected = (data->state == WS_CLIENT_STATE_CONNECTED);
+
+    mcp_mutex_unlock(data->connection_mutex);
+
+    return is_connected ? 1 : 0;
+}
+
 // Create WebSocket client transport
 mcp_transport_t* mcp_transport_websocket_client_create(const mcp_websocket_config_t* config) {
     if (!config || !config->host) {

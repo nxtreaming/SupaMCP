@@ -242,6 +242,16 @@ int mcp_client_send_batch_request(
  */
 void mcp_client_free_batch_responses(mcp_batch_response_t* responses, size_t count);
 
+/**
+ * @brief Check if the client is connected to the server.
+ *
+ * This function checks the underlying transport connection status.
+ *
+ * @param client The client instance.
+ * @return 1 if connected, 0 if not connected, -1 on error.
+ */
+int mcp_client_is_connected(mcp_client_t* client);
+
 
 #ifdef __cplusplus
 }

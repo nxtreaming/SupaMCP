@@ -39,6 +39,14 @@ mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_confi
  */
 mcp_transport_t* mcp_transport_websocket_client_create(const mcp_websocket_config_t* config);
 
+/**
+ * @brief Get the connection state of a WebSocket client transport
+ *
+ * @param transport WebSocket client transport handle
+ * @return int 1 if connected, 0 if not connected, -1 on error
+ */
+int mcp_transport_websocket_client_is_connected(mcp_transport_t* transport);
+
 #ifdef __cplusplus
 }
 #endif
