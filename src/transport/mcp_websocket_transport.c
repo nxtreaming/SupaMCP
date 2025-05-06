@@ -38,7 +38,6 @@ typedef struct {
     size_t receive_buffer_len;      // Receive buffer length
     size_t receive_buffer_used;     // Used receive buffer length
     int client_id;                  // Client ID for tracking
-    // Message queue removed to improve performance
     time_t last_activity;           // Time of last activity for timeout detection
     uint32_t ping_sent;             // Number of pings sent without response
 } ws_client_t;
@@ -62,16 +61,304 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                              void* user, void* in, size_t len);
 static void ws_server_check_timeouts(ws_server_data_t* data);
 static void ws_server_cleanup_inactive_clients(ws_server_data_t* data);
-
-// Helper functions for client management
 static ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* wsi);
 static void ws_client_update_activity(ws_client_t* client);
 static int ws_client_send_ping(ws_client_t* client);
-
-// Message queue functions removed to improve performance
+static void* ws_server_event_thread(void* arg);
+static int ws_server_transport_start(mcp_transport_t* transport,
+                                    mcp_transport_message_callback_t message_callback,
+                                    void* user_data,
+                                    mcp_transport_error_callback_t error_callback);
+static int ws_server_transport_stop(mcp_transport_t* transport);
+static int ws_server_transport_send(mcp_transport_t* transport, const void* data, size_t size);
+static int ws_server_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
+static void ws_server_transport_destroy(mcp_transport_t* transport);
+static int ws_client_init(ws_client_t* client, int client_id, struct lws* wsi);
+static void ws_client_cleanup(ws_client_t* client);
+static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size);
+static int ws_client_process_message(ws_server_data_t* data, ws_client_t* client, struct lws* wsi);
+static int ws_client_handle_received_data(ws_server_data_t* data, ws_client_t* client,
+                                         struct lws* wsi, void* in, size_t len, bool is_final);
+static int ws_client_send_response(ws_client_t* client, struct lws* wsi, const char* response, size_t response_len);
 
 // WebSocket protocol definitions
 static struct lws_protocols server_protocols[3];
+
+// Helper function to initialize a client
+static int ws_client_init(ws_client_t* client, int client_id, struct lws* wsi) {
+    if (!client) {
+        return -1;
+    }
+
+    client->wsi = wsi;
+    client->state = WS_CLIENT_STATE_ACTIVE;
+    client->receive_buffer = NULL;
+    client->receive_buffer_len = 0;
+    client->receive_buffer_used = 0;
+    client->client_id = client_id;
+    client->last_activity = time(NULL);
+    client->ping_sent = 0;
+
+    return 0;
+}
+
+// Helper function to clean up a client
+static void ws_client_cleanup(ws_client_t* client) {
+    if (!client) {
+        return;
+    }
+
+    // Free receive buffer
+    free(client->receive_buffer);
+    client->receive_buffer = NULL;
+    client->receive_buffer_len = 0;
+    client->receive_buffer_used = 0;
+
+    // Reset client state
+    client->state = WS_CLIENT_STATE_INACTIVE;
+    client->wsi = NULL;
+}
+
+// Helper function to resize a client's receive buffer
+static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size) {
+    if (!client) {
+        return -1;
+    }
+
+    // Calculate new buffer size
+    size_t new_len = client->receive_buffer_len == 0 ? WS_DEFAULT_BUFFER_SIZE : client->receive_buffer_len * 2;
+    while (new_len < needed_size) {
+        new_len *= 2;
+    }
+
+    // Allocate new buffer
+    char* new_buffer = (char*)realloc(client->receive_buffer, new_len);
+    if (!new_buffer) {
+        mcp_log_error("Failed to allocate WebSocket receive buffer");
+        return -1;
+    }
+
+    // Update buffer information
+    client->receive_buffer = new_buffer;
+    client->receive_buffer_len = new_len;
+    return 0;
+}
+
+// Helper function to update client activity timestamp
+static void ws_client_update_activity(ws_client_t* client) {
+    if (!client) {
+        return;
+    }
+
+    client->last_activity = time(NULL);
+    client->ping_sent = 0; // Reset ping counter on activity
+}
+
+// Helper function to send a ping to a client
+static int ws_client_send_ping(ws_client_t* client) {
+    if (!client || !client->wsi || client->state != WS_CLIENT_STATE_ACTIVE) {
+        return -1;
+    }
+
+    // Increment ping counter
+    client->ping_sent++;
+
+    // Request a callback to send a ping
+    return lws_callback_on_writable(client->wsi);
+}
+
+// Helper function to find a client by WebSocket instance
+static ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* wsi) {
+    if (!data || !wsi) {
+        return NULL;
+    }
+
+    // First try to get the client from opaque user data (faster)
+    ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
+    if (client) {
+        return client;
+    }
+
+    // If not found, search through the client list
+    mcp_mutex_lock(data->clients_mutex);
+
+    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
+        if (data->clients[i].wsi == wsi) {
+            client = &data->clients[i];
+            break;
+        }
+    }
+
+    mcp_mutex_unlock(data->clients_mutex);
+
+    return client;
+}
+
+// Helper function to send a response to a client
+static int ws_client_send_response(ws_client_t* client, struct lws* wsi, const char* response, size_t response_len) {
+    if (!client || !wsi || !response || response_len == 0) {
+        return -1;
+    }
+
+    // Allocate buffer with LWS_PRE padding
+    unsigned char* buffer = (unsigned char*)malloc(LWS_PRE + response_len);
+    if (!buffer) {
+        mcp_log_error("Failed to allocate WebSocket response buffer");
+        return -1;
+    }
+
+    // Copy response data
+    memcpy(buffer + LWS_PRE, response, response_len);
+
+    // Send data directly
+    int result = lws_write(wsi, buffer + LWS_PRE, response_len, LWS_WRITE_TEXT);
+
+    // Free buffer
+    free(buffer);
+
+    if (result < 0) {
+        mcp_log_error("WebSocket server direct write failed");
+        return -1;
+    }
+
+    // Update activity timestamp
+    ws_client_update_activity(client);
+
+    return 0;
+}
+
+// Helper function to process a complete message
+static int ws_client_process_message(ws_server_data_t* data, ws_client_t* client, struct lws* wsi) {
+    if (!data || !client || !wsi) {
+        return -1;
+    }
+
+    // Ensure the buffer is null-terminated for string operations
+    if (client->receive_buffer_used < client->receive_buffer_len) {
+        client->receive_buffer[client->receive_buffer_used] = '\0';
+    } else {
+        if (ws_client_resize_buffer(client, client->receive_buffer_used + 1) != 0) {
+            return -1;
+        }
+        client->receive_buffer[client->receive_buffer_used] = '\0';
+    }
+
+    // Process complete message
+    if (data->transport && data->transport->message_callback) {
+        // Initialize thread-local arena for JSON parsing
+        mcp_log_debug("Initializing thread-local arena for server message processing");
+        if (mcp_arena_init_current_thread(4096) != 0) {
+            mcp_log_error("Failed to initialize thread-local arena in WebSocket server callback");
+        }
+
+        int error_code = 0;
+        char* response = data->transport->message_callback(
+            data->transport->callback_user_data,
+            client->receive_buffer,
+            client->receive_buffer_used,
+            &error_code
+        );
+
+        // If there's a response, send it directly
+        if (response) {
+            size_t response_len = strlen(response);
+            ws_client_send_response(client, wsi, response, response_len);
+
+            // Free the response
+            free(response);
+        }
+    }
+
+    // Reset buffer
+    client->receive_buffer_used = 0;
+
+    return 0;
+}
+
+// Helper function to handle received data
+static int ws_client_handle_received_data(ws_server_data_t* data, ws_client_t* client,
+                                         struct lws* wsi, void* in, size_t len, bool is_final) {
+    if (!data || !client || !wsi || !in || len == 0) {
+        return -1;
+    }
+
+    // Update client activity timestamp
+    ws_client_update_activity(client);
+
+    // Ensure buffer is large enough
+    if (client->receive_buffer_used + len > client->receive_buffer_len) {
+        if (ws_client_resize_buffer(client, client->receive_buffer_used + len) != 0) {
+            return -1;
+        }
+    }
+
+    // Log the raw message data for debugging (if not too large)
+    #ifdef MCP_VERBOSE_DEBUG
+    if (len < 1000) {
+        char debug_buffer[1024] = {0};
+        size_t copy_len = len < 1000 ? len : 1000;
+        memcpy(debug_buffer, in, copy_len);
+        debug_buffer[copy_len] = '\0';
+
+        // Log as hex for the first 32 bytes
+        char hex_buffer[200] = {0};
+        size_t hex_len = len < 32 ? len : 32;
+        for (size_t i = 0; i < hex_len; i++) {
+            sprintf(hex_buffer + i*3, "%02x ", (unsigned char)((char*)in)[i]);
+        }
+        mcp_log_debug("WebSocket server raw data (hex): %s", hex_buffer);
+
+        // Check if this is a JSON message
+        if (len > 0 && ((char*)in)[0] == '{') {
+            mcp_log_debug("Detected JSON message");
+        }
+    }
+    #endif
+
+    // Check if this might be a length-prefixed message
+    if (len >= 4) {
+        // Interpret first 4 bytes as a 32-bit length (network byte order)
+        uint32_t msg_len = 0;
+        // Convert from network byte order (big endian) to host byte order
+        msg_len = ((unsigned char)((char*)in)[0] << 24) |
+                  ((unsigned char)((char*)in)[1] << 16) |
+                  ((unsigned char)((char*)in)[2] << 8) |
+                  ((unsigned char)((char*)in)[3]);
+
+        #ifdef MCP_VERBOSE_DEBUG
+        // Log the extracted length
+        mcp_log_debug("Possible message length prefix: %u bytes (total received: %zu bytes)",
+                     msg_len, len);
+        #endif
+
+        // If this looks like a length-prefixed message, skip the length prefix
+        if (msg_len <= len - 4 && msg_len > 0) {
+            mcp_log_debug("Detected length-prefixed message, skipping 4-byte prefix");
+            // Copy data without the length prefix
+            memcpy(client->receive_buffer + client->receive_buffer_used,
+                   (char*)in + 4, len - 4);
+            client->receive_buffer_used += (len - 4);
+
+            // Process the message immediately if it's a complete message
+            if (is_final) {
+                return ws_client_process_message(data, client, wsi);
+            }
+
+            return 0;  // Skip the rest of the processing
+        }
+    }
+
+    // Normal copy if not a length-prefixed message or if length prefix check failed
+    memcpy(client->receive_buffer + client->receive_buffer_used, in, len);
+    client->receive_buffer_used += len;
+
+    // Check if this is a complete message
+    if (is_final) {
+        return ws_client_process_message(data, client, wsi);
+    }
+
+    return 0;
+}
 
 // Server callback function implementation
 static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
@@ -85,8 +372,10 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         return 0;
     }
 
-    // Debug log for all callback reasons except frequent ones
-    if (reason != LWS_CALLBACK_SERVER_WRITEABLE && reason != LWS_CALLBACK_RECEIVE) {
+    // Debug log for important callback reasons only
+    if (reason != LWS_CALLBACK_SERVER_WRITEABLE &&
+        reason != LWS_CALLBACK_RECEIVE &&
+        reason != LWS_CALLBACK_RECEIVE_PONG) {
         mcp_log_debug("WebSocket server callback: reason=%d (%s)", reason, websocket_get_callback_reason_string(reason));
     }
 
@@ -114,14 +403,7 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             // Initialize client data
             ws_client_t* client = &data->clients[client_index];
-            client->wsi = wsi;
-            client->state = WS_CLIENT_STATE_ACTIVE;
-            client->receive_buffer = NULL;
-            client->receive_buffer_len = 0;
-            client->receive_buffer_used = 0;
-            client->client_id = client_index;
-            client->last_activity = time(NULL);
-            client->ping_sent = 0;
+            ws_client_init(client, client_index, wsi);
 
             // Store client pointer in user data
             lws_set_opaque_user_data(wsi, client);
@@ -162,18 +444,8 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
                 ws_client_t* client = &data->clients[i];
-
                 if (client->state != WS_CLIENT_STATE_INACTIVE) {
-                    // Clean up client resources
-                    free(client->receive_buffer);
-                    client->receive_buffer = NULL;
-                    client->receive_buffer_len = 0;
-                    client->receive_buffer_used = 0;
-
-                    // No response queue to free anymore
-
-                    client->state = WS_CLIENT_STATE_INACTIVE;
-                    client->wsi = NULL;
+                    ws_client_cleanup(client);
                 }
             }
 
@@ -202,209 +474,8 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 return -1;
             }
 
-            // Ensure buffer is large enough
-            if (client->receive_buffer_used + len > client->receive_buffer_len) {
-                size_t new_len = client->receive_buffer_len == 0 ? 4096 : client->receive_buffer_len * 2;
-                while (new_len < client->receive_buffer_used + len) {
-                    new_len *= 2;
-                }
-
-                char* new_buffer = (char*)realloc(client->receive_buffer, new_len);
-                if (!new_buffer) {
-                    mcp_log_error("Failed to allocate WebSocket receive buffer");
-                    return -1;
-                }
-
-                client->receive_buffer = new_buffer;
-                client->receive_buffer_len = new_len;
-            }
-
-            // Update client activity timestamp
-            ws_client_update_activity(client);
-
-            // Log the raw message data for debugging (including hex dump)
-            if (len < 1000) {  // Only log if not too large
-                char debug_buffer[1024] = {0};
-                size_t copy_len = len < 1000 ? len : 1000;
-                memcpy(debug_buffer, in, copy_len);
-                debug_buffer[copy_len] = '\0';  // Ensure null termination
-
-                // Log as hex for the first 32 bytes
-                char hex_buffer[200] = {0};
-                size_t hex_len = len < 32 ? len : 32;
-                for (size_t i = 0; i < hex_len; i++) {
-                    sprintf(hex_buffer + i*3, "%02x ", (unsigned char)((char*)in)[i]);
-                }
-                mcp_log_debug("WebSocket server raw data (hex): %s", hex_buffer);
-
-                // Check if this is a JSON message (most common case)
-                if (len > 0 && ((char*)in)[0] == '{') {
-                    mcp_log_debug("Detected JSON message");
-                }
-
-                // Check if this might be a length-prefixed message
-                if (len >= 4) {
-                    // Log as text��skip length prefix
-                    mcp_log_debug("WebSocket server raw data (text): '%s'", debug_buffer+4);
-
-                    // Interpret first 4 bytes as a 32-bit length (network byte order)
-                    uint32_t msg_len = 0;
-                    // Convert from network byte order (big endian) to host byte order
-                    msg_len = ((unsigned char)((char*)in)[0] << 24) |
-                              ((unsigned char)((char*)in)[1] << 16) |
-                              ((unsigned char)((char*)in)[2] << 8) |
-                              ((unsigned char)((char*)in)[3]);
-
-                    // Log the extracted length
-                    mcp_log_debug("Possible message length prefix: %u bytes (total received: %zu bytes)",
-                                 msg_len, len);
-
-                    // If this looks like a length-prefixed message, skip the length prefix
-                    if (msg_len <= len - 4 && msg_len > 0) {
-                        mcp_log_debug("Detected length-prefixed message, skipping 4-byte prefix");
-                        // Copy data without the length prefix
-                        memcpy(client->receive_buffer + client->receive_buffer_used,
-                               (char*)in + 4, len - 4);
-                        client->receive_buffer_used += (len - 4);
-
-                        // Process the message immediately if it's a complete message
-                        if (lws_is_final_fragment(wsi)) {
-                            // Ensure the buffer is null-terminated for string operations
-                            if (client->receive_buffer_used < client->receive_buffer_len) {
-                                client->receive_buffer[client->receive_buffer_used] = '\0';
-                            } else {
-                                // Resize buffer to add null terminator
-                                char* new_buffer = (char*)realloc(client->receive_buffer, client->receive_buffer_used + 1);
-                                if (!new_buffer) {
-                                    mcp_log_error("Failed to resize WebSocket server receive buffer for null terminator");
-                                    return -1;
-                                }
-                                client->receive_buffer = new_buffer;
-                                client->receive_buffer_len = client->receive_buffer_used + 1;
-                                client->receive_buffer[client->receive_buffer_used] = '\0';
-                            }
-
-                            // Process complete message
-                            if (data->transport && data->transport->message_callback) {
-                                // Initialize thread-local arena for JSON parsing
-                                mcp_log_debug("Initializing thread-local arena for server message processing");
-                                if (mcp_arena_init_current_thread(4096) != 0) {
-                                    mcp_log_error("Failed to initialize thread-local arena in WebSocket server callback");
-                                }
-
-                                int error_code = 0;
-                                char* response = data->transport->message_callback(
-                                    data->transport->callback_user_data,
-                                    client->receive_buffer,
-                                    client->receive_buffer_used,
-                                    &error_code
-                                );
-
-                                // If there's a response, send it directly
-                                if (response) {
-                                    // Allocate buffer with LWS_PRE padding
-                                    size_t response_len = strlen(response);
-                                    unsigned char* buffer = (unsigned char*)malloc(LWS_PRE + response_len);
-                                    if (buffer) {
-                                        // Copy response data
-                                        memcpy(buffer + LWS_PRE, response, response_len);
-
-                                        // Send data directly
-                                        int result = lws_write(wsi, buffer + LWS_PRE, response_len, LWS_WRITE_TEXT);
-                                        if (result < 0) {
-                                            mcp_log_error("WebSocket server direct write failed");
-                                        }
-
-                                        // Free buffer
-                                        free(buffer);
-
-                                        // Update activity timestamp
-                                        ws_client_update_activity(client);
-                                    }
-
-                                    // Free the response
-                                    free(response);
-                                }
-                            }
-
-                            // Reset buffer
-                            client->receive_buffer_used = 0;
-                        }
-
-                        return 0;  // Skip the rest of the processing
-                    }
-                }
-            }
-
-            // Normal copy if not a length-prefixed message or if length prefix check failed
-            memcpy(client->receive_buffer + client->receive_buffer_used, in, len);
-            client->receive_buffer_used += len;
-
-            // Check if this is a complete message
-            if (lws_is_final_fragment(wsi)) {
-                // Ensure the buffer is null-terminated for string operations
-                if (client->receive_buffer_used < client->receive_buffer_len) {
-                    client->receive_buffer[client->receive_buffer_used] = '\0';
-                } else {
-                    // Resize buffer to add null terminator
-                    char* new_buffer = (char*)realloc(client->receive_buffer, client->receive_buffer_used + 1);
-                    if (!new_buffer) {
-                        mcp_log_error("Failed to resize WebSocket server receive buffer for null terminator");
-                        return -1;
-                    }
-                    client->receive_buffer = new_buffer;
-                    client->receive_buffer_len = client->receive_buffer_used + 1;
-                    client->receive_buffer[client->receive_buffer_used] = '\0';
-                }
-
-                // Process complete message
-                if (data->transport && data->transport->message_callback) {
-                    // Initialize thread-local arena for JSON parsing
-                    mcp_log_debug("Initializing thread-local arena for server message processing");
-                    if (mcp_arena_init_current_thread(4096) != 0) {
-                        mcp_log_error("Failed to initialize thread-local arena in WebSocket server callback");
-                    }
-
-                    int error_code = 0;
-                    char* response = data->transport->message_callback(
-                        data->transport->callback_user_data,
-                        client->receive_buffer,
-                        client->receive_buffer_used,
-                        &error_code
-                    );
-
-                    // If there's a response, send it directly
-                    if (response) {
-                        // Allocate buffer with LWS_PRE padding
-                        size_t response_len = strlen(response);
-                        unsigned char* buffer = (unsigned char*)malloc(LWS_PRE + response_len);
-                        if (buffer) {
-                            // Copy response data
-                            memcpy(buffer + LWS_PRE, response, response_len);
-
-                            // Send data directly
-                            int result = lws_write(wsi, buffer + LWS_PRE, response_len, LWS_WRITE_TEXT);
-                            if (result < 0) {
-                                mcp_log_error("WebSocket server direct write failed");
-                            }
-
-                            // Free buffer
-                            free(buffer);
-
-                            // Update activity timestamp
-                            ws_client_update_activity(client);
-                        }
-
-                        // Free the response
-                        free(response);
-                    }
-                }
-
-                // Reset buffer
-                client->receive_buffer_used = 0;
-            }
-
-            break;
+            // Handle the received data
+            return ws_client_handle_received_data(data, client, wsi, in, len, lws_is_final_fragment(wsi));
         }
 
         case LWS_CALLBACK_SERVER_WRITEABLE: {
@@ -420,7 +491,6 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             // Update activity timestamp
             ws_client_update_activity(client);
-
             break;
         }
 
@@ -452,7 +522,7 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             unsigned char *p = &buffer[LWS_PRE];
             int head_len = sprintf((char *)p, "HTTP WebSocket server is running. Please use a WebSocket client to connect.");
 
-            if (lws_write(wsi, p, head_len, LWS_WRITE_HTTP) != len) {
+            if (lws_write(wsi, p, head_len, LWS_WRITE_HTTP) != head_len) {
                 return 1;
             }
 
@@ -465,58 +535,6 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
     }
 
     return 0;
-}
-
-// Message queue functions removed to improve performance
-
-// Helper function to find a client by WebSocket instance
-static ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* wsi) {
-    if (!data || !wsi) {
-        return NULL;
-    }
-
-    // First try to get the client from opaque user data (faster)
-    ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
-    if (client) {
-        return client;
-    }
-
-    // If not found, search through the client list
-    mcp_mutex_lock(data->clients_mutex);
-
-    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
-        if (data->clients[i].wsi == wsi) {
-            client = &data->clients[i];
-            break;
-        }
-    }
-
-    mcp_mutex_unlock(data->clients_mutex);
-
-    return client;
-}
-
-// Helper function to update client activity timestamp
-static void ws_client_update_activity(ws_client_t* client) {
-    if (!client) {
-        return;
-    }
-
-    client->last_activity = time(NULL);
-    client->ping_sent = 0; // Reset ping counter on activity
-}
-
-// Helper function to send a ping to a client
-static int ws_client_send_ping(ws_client_t* client) {
-    if (!client || !client->wsi || client->state != WS_CLIENT_STATE_ACTIVE) {
-        return -1;
-    }
-
-    // Increment ping counter
-    client->ping_sent++;
-
-    // Request a callback to send a ping
-    return lws_callback_on_writable(client->wsi);
 }
 
 // Helper function to check for client timeouts and send pings
@@ -585,18 +603,7 @@ static void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
             difftime(now, client->last_activity) > 10) { // 10 seconds grace period
 
             mcp_log_info("Cleaning up inactive client %d", client->client_id);
-
-            // Free resources
-            free(client->receive_buffer);
-            client->receive_buffer = NULL;
-            client->receive_buffer_len = 0;
-            client->receive_buffer_used = 0;
-
-            // No response queue to free anymore
-
-            // Reset client state
-            client->state = WS_CLIENT_STATE_INACTIVE;
-            client->wsi = NULL;
+            ws_client_cleanup(client);
         }
     }
 
@@ -730,15 +737,7 @@ static int ws_server_transport_stop(mcp_transport_t* transport) {
     mcp_mutex_lock(data->clients_mutex);
     for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
         if (data->clients[i].state != WS_CLIENT_STATE_INACTIVE) {
-            free(data->clients[i].receive_buffer);
-            data->clients[i].receive_buffer = NULL;
-            data->clients[i].receive_buffer_len = 0;
-            data->clients[i].receive_buffer_used = 0;
-
-            // No response queue to free anymore
-
-            data->clients[i].state = WS_CLIENT_STATE_INACTIVE;
-            data->clients[i].wsi = NULL;
+            ws_client_cleanup(&data->clients[i]);
         }
     }
     mcp_mutex_unlock(data->clients_mutex);
@@ -798,9 +797,6 @@ static void ws_server_transport_destroy(mcp_transport_t* transport) {
         ws_server_transport_stop(transport);
     }
 
-    // Free config strings
-    // Note: We don't free the strings in config because they are owned by the caller
-
     // Free transport data
     free(data);
 
@@ -853,5 +849,3 @@ mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_confi
 
     return transport;
 }
-
-
