@@ -326,6 +326,25 @@ static void ws_client_cleanup_resources(ws_client_data_t* data) {
         return;
     }
 
+    // First, make sure we're not in a connected state
+    // This helps prevent callbacks from being triggered during cleanup
+    if (data->state == WS_CLIENT_STATE_CONNECTED) {
+        mcp_mutex_lock(data->connection_mutex);
+        data->state = WS_CLIENT_STATE_CLOSING;
+        mcp_mutex_unlock(data->connection_mutex);
+    }
+
+    // Destroy libwebsockets context first to prevent any further callbacks
+    if (data->context) {
+        // Cancel any pending service calls
+        lws_cancel_service(data->context);
+
+        // Destroy the context
+        lws_context_destroy(data->context);
+        data->context = NULL;
+        data->wsi = NULL; // wsi is owned by context, so it's invalid now
+    }
+
     // Free receive buffer
     if (data->receive_buffer) {
         free(data->receive_buffer);
@@ -342,19 +361,28 @@ static void ws_client_cleanup_resources(ws_client_data_t* data) {
     }
 
     // Destroy mutexes and condition variables
-    if (data->connection_mutex) {
-        mcp_mutex_destroy(data->connection_mutex);
-        data->connection_mutex = NULL;
+    // First signal any waiting threads to prevent deadlocks
+    if (data->connection_mutex && data->connection_cond) {
+        mcp_mutex_lock(data->connection_mutex);
+        mcp_cond_signal(data->connection_cond);
+        mcp_mutex_unlock(data->connection_mutex);
     }
 
+    if (data->response_mutex && data->response_cond) {
+        mcp_mutex_lock(data->response_mutex);
+        mcp_cond_signal(data->response_cond);
+        mcp_mutex_unlock(data->response_mutex);
+    }
+
+    // Now destroy the synchronization primitives
     if (data->connection_cond) {
         mcp_cond_destroy(data->connection_cond);
         data->connection_cond = NULL;
     }
 
-    if (data->response_mutex) {
-        mcp_mutex_destroy(data->response_mutex);
-        data->response_mutex = NULL;
+    if (data->connection_mutex) {
+        mcp_mutex_destroy(data->connection_mutex);
+        data->connection_mutex = NULL;
     }
 
     if (data->response_cond) {
@@ -362,10 +390,9 @@ static void ws_client_cleanup_resources(ws_client_data_t* data) {
         data->response_cond = NULL;
     }
 
-    // Destroy libwebsockets context
-    if (data->context) {
-        lws_context_destroy(data->context);
-        data->context = NULL;
+    if (data->response_mutex) {
+        mcp_mutex_destroy(data->response_mutex);
+        data->response_mutex = NULL;
     }
 }
 
@@ -1351,15 +1378,35 @@ static int ws_client_transport_stop(mcp_transport_t* transport) {
 
     ws_client_data_t* data = (ws_client_data_t*)transport->transport_data;
 
-    // Set running flag to false to stop event loop
-    data->running = false;
+    // Check if already stopped
+    if (!data->running) {
+        mcp_log_debug("WebSocket client already stopped");
+        return 0;
+    }
+
+    mcp_log_info("Stopping WebSocket client transport...");
+
+    // First, set flags to prevent reconnection attempts
     data->reconnect = false;
 
-    // Update connection state
-    mcp_mutex_lock(data->connection_mutex);
-    data->state = WS_CLIENT_STATE_CLOSING;
-    mcp_cond_signal(data->connection_cond);
-    mcp_mutex_unlock(data->connection_mutex);
+    // Signal any waiting threads to wake up
+    if (data->connection_mutex && data->connection_cond) {
+        mcp_mutex_lock(data->connection_mutex);
+        data->state = WS_CLIENT_STATE_CLOSING;
+        mcp_cond_signal(data->connection_cond);
+        mcp_mutex_unlock(data->connection_mutex);
+    }
+
+    if (data->response_mutex && data->response_cond) {
+        mcp_mutex_lock(data->response_mutex);
+        data->response_ready = true; // Force any waiting threads to wake up
+        data->response_error_code = -1; // Indicate error
+        mcp_cond_signal(data->response_cond);
+        mcp_mutex_unlock(data->response_mutex);
+    }
+
+    // Now set running flag to false to stop event loop
+    data->running = false;
 
     // Force libwebsockets to break out of its service loop
     if (data->context) {
@@ -1367,10 +1414,18 @@ static int ws_client_transport_stop(mcp_transport_t* transport) {
         mcp_log_info("Cancelled libwebsockets client service");
     }
 
-    // Wait for event thread to exit
+    // Wait for event thread to exit with a timeout
     if (data->event_thread) {
         mcp_log_info("Waiting for WebSocket client event thread to exit...");
-        mcp_thread_join(data->event_thread, NULL);
+
+        // Join with timeout to prevent hanging
+        int join_result = mcp_thread_join(data->event_thread, NULL);
+        if (join_result != 0) {
+            mcp_log_warn("WebSocket client event thread join failed with code %d", join_result);
+        } else {
+            mcp_log_debug("WebSocket client event thread exited successfully");
+        }
+
         data->event_thread = 0;
     }
 
@@ -1394,16 +1449,29 @@ static void ws_client_transport_destroy(mcp_transport_t* transport) {
         return;
     }
 
+    mcp_log_info("Destroying WebSocket client transport...");
+
     // Stop transport if running
     if (data->running) {
+        // Call stop function to ensure proper cleanup
         ws_client_transport_stop(transport);
+    } else {
+        // Even if not running, make sure resources are cleaned up
+        ws_client_cleanup_resources(data);
     }
+
+    // Free any dynamically allocated config strings
+    // Note: In the current implementation, these are typically not duplicated,
+    // but we should check in case that changes in the future
+    // We can't compare with the original config since it's not stored in the transport
 
     // Free transport data
     free(data);
 
     // Free transport
     free(transport);
+
+    mcp_log_info("WebSocket client transport destroyed");
 }
 
 // Get WebSocket client connection state

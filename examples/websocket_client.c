@@ -28,25 +28,15 @@ static volatile bool g_running = true;
 
 // Signal handler to gracefully shut down the client
 static void handle_signal(int sig) {
-    if (g_client) {
-        printf("\nReceived signal %d, shutting down...\n", sig);
-        g_running = false;
+    printf("\nReceived signal %d, shutting down...\n", sig);
 
-        // Cancel any pending requests and destroy client immediately
-        mcp_client_destroy(g_client);
-        g_client = NULL;
+    // Set running flag to false to exit the main loop
+    g_running = false;
 
-        // Close log file
-        mcp_log_close();
+    // Don't destroy resources here - let the main function handle cleanup
+    // This avoids potential race conditions and ensures proper cleanup order
 
-        // Clean up thread-local arena
-        mcp_arena_destroy_current_thread();
-
-        printf("Client shutdown complete\n");
-
-        // Exit immediately
-        exit(0);
-    }
+    // Don't call exit() here, as it bypasses normal cleanup
 }
 
 // Helper function to read a line of input from the user
