@@ -19,9 +19,6 @@
 #include <stdlib.h>
 #include <time.h>
 
-// Default timeout values
-#define WS_DEFAULT_RESPONSE_TIMEOUT_MS 20000  // 20 seconds
-
 // Connection state
 typedef enum {
     WS_CLIENT_STATE_DISCONNECTED = 0,
@@ -47,7 +44,6 @@ typedef struct {
     bool reconnect;                 // Whether to reconnect on disconnect
     mcp_mutex_t* connection_mutex;  // Mutex for connection state
     mcp_cond_t* connection_cond;    // Condition variable for connection state
-
 
     // Reconnection parameters
     int reconnect_attempts;         // Number of reconnection attempts
@@ -78,7 +74,6 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
                              void* user, void* in, size_t len);
 static int ws_client_connect(ws_client_data_t* data);
 static void ws_client_handle_reconnect(ws_client_data_t* data);
-// Direct sending is used instead of message queue
 static void ws_client_update_activity(ws_client_data_t* data);
 static int ws_client_send_ping(ws_client_data_t* data);
 static int ws_client_send_and_wait_response(ws_client_data_t* ws_data, const void* data,
@@ -129,7 +124,8 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Signal that the connection is established
             mcp_mutex_lock(data->connection_mutex);
             data->state = WS_CLIENT_STATE_CONNECTED;
-            data->reconnect_attempts = 0; // Reset reconnection attempts on successful connection
+            // Reset reconnection attempts on successful connection
+            data->reconnect_attempts = 0;
 
             // Reset ping-related state
             data->ping_in_progress = false;
@@ -140,7 +136,6 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
-
 
             break;
         }
@@ -214,11 +209,12 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
             }
 
             // Log the raw message data for debugging (including hex dump)
-            if (len < 1000) {  // Only log if not too large
+            // Only log if not too large
+            if (len < 1000) {
                 char debug_buffer[1024] = {0};
                 size_t copy_len = len < 1000 ? len : 1000;
                 memcpy(debug_buffer, in, copy_len);
-                debug_buffer[copy_len] = '\0';  // Ensure null termination
+                debug_buffer[copy_len] = '\0';
 
                 // Log as text
                 mcp_log_debug("WebSocket client raw data (text): '%s'", debug_buffer);
@@ -359,7 +355,6 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
                     if (data->missed_pongs >= 3) {
                         mcp_log_warn("WebSocket connection may be unstable after %d missed pongs",
                                      data->missed_pongs);
-
                         // Reset missed pongs counter to avoid repeated warnings
                         data->missed_pongs = 0;
                     }
@@ -404,8 +399,6 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
-// Message queue functions have been removed in favor of direct sending
-
 // Helper function to connect to the WebSocket server
 static int ws_client_connect(ws_client_data_t* data) {
     if (!data || !data->context) {
@@ -443,18 +436,16 @@ static int ws_client_connect(ws_client_data_t* data) {
     
     // Add flags to optimize connection speed and force immediate upgrade
     connect_info.ssl_connection = data->config.use_ssl ? 
-        (LCCSCF_USE_SSL | LCCSCF_PIPELINE) : 
-        LCCSCF_PIPELINE;
+        (LCCSCF_USE_SSL | LCCSCF_PIPELINE) : LCCSCF_PIPELINE;
     
     connect_info.local_protocol_name = "mcp-protocol";
-    connect_info.retry_and_idle_policy = NULL; // Don't use retry policy
-    connect_info.userdata = data; // Store user data for callbacks
+    // Don't use retry policy
+    connect_info.retry_and_idle_policy = NULL;
+    connect_info.userdata = data;
     
     // Force immediate connection
-    connect_info.ietf_version_or_minus_one = -1; // Use latest version
-    
-    // Set protocol version to force immediate upgrade
-    connect_info.alpn = "h2";
+    // Use latest version
+    connect_info.ietf_version_or_minus_one = -1;
 
     if (!lws_client_connect_via_info(&connect_info)) {
         mcp_log_error("Failed to connect to WebSocket server");
@@ -491,7 +482,7 @@ static void ws_client_handle_reconnect(ws_client_data_t* data) {
     mcp_mutex_lock(data->connection_mutex);
 
     // Check if we've exceeded the maximum number of reconnection attempts
-    if (data->reconnect_attempts >= 10) { // Use constant value instead of macro
+    if (data->reconnect_attempts >= 10) {
         mcp_log_error("WebSocket client exceeded maximum reconnection attempts (%d)", 10);
         data->state = WS_CLIENT_STATE_ERROR;
         mcp_mutex_unlock(data->connection_mutex);
@@ -507,7 +498,7 @@ static void ws_client_handle_reconnect(ws_client_data_t* data) {
     } else {
         // Exponential backoff with a maximum delay
         data->reconnect_delay_ms *= 2;
-        if (data->reconnect_delay_ms > 60000) { // Use constant value instead of macro (60 seconds)
+        if (data->reconnect_delay_ms > 60000) {
             data->reconnect_delay_ms = 60000;
         }
         data->reconnect_attempts++;
@@ -516,7 +507,7 @@ static void ws_client_handle_reconnect(ws_client_data_t* data) {
     data->last_reconnect_time = now;
 
     mcp_log_info("WebSocket client reconnecting in %u ms (attempt %d of %d)",
-                data->reconnect_delay_ms, data->reconnect_attempts, 10); // Use constant value instead of macro
+                data->reconnect_delay_ms, data->reconnect_attempts, 10);
 
     mcp_mutex_unlock(data->connection_mutex);
 
@@ -632,7 +623,8 @@ static int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeou
     if (timeout_ms > 0) {
         // Wait with timeout
         uint32_t remaining_timeout = timeout_ms;
-        uint32_t wait_chunk = 100; // Wait in smaller chunks to check for state changes
+        // Wait in smaller chunks to check for state changes
+        uint32_t wait_chunk = 100;
 
         mcp_log_debug("WebSocket client waiting for connection with timeout %u ms", timeout_ms);
 
@@ -869,7 +861,6 @@ static int ws_client_transport_stop(mcp_transport_t* transport) {
         data->event_thread = 0;
     }
 
-
     // Clean up resources
     free(data->receive_buffer);
     data->receive_buffer = NULL;
@@ -1041,7 +1032,8 @@ static int ws_client_send_and_wait_response(
         if (timeout_ms > 0) {
             // Wait with timeout
             uint32_t remaining_timeout = timeout_ms;
-            uint32_t wait_chunk = 100; // Wait in smaller chunks to check for state changes
+            // Wait in smaller chunks to check for state changes
+            uint32_t wait_chunk = 100;
 
             mcp_log_debug("WebSocket client waiting for response with timeout %u ms", timeout_ms);
 
@@ -1315,7 +1307,8 @@ static int ws_client_transport_receive(mcp_transport_t* transport, char** data, 
         *size = 0;
 
         if (result == 0) {
-            result = -1; // General error
+            // General error
+            result = -1;
         }
 
         mcp_log_error("WebSocket client receive: failed to get response, result: %d", result);
@@ -1518,9 +1511,6 @@ static void ws_client_transport_destroy(mcp_transport_t* transport) {
     if (data->running) {
         ws_client_transport_stop(transport);
     } else {
-        // If not running, make sure we clean up any resources that might not have been cleaned up
-
-
         // Clean up receive buffer
         if (data->receive_buffer) {
             free(data->receive_buffer);
