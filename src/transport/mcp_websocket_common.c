@@ -238,6 +238,8 @@ const char* websocket_get_callback_reason_string(enum lws_callback_reasons reaso
         case LWS_CALLBACK_HTTP_CONFIRM_UPGRADE: return "LWS_CALLBACK_HTTP_CONFIRM_UPGRADE";
         case LWS_CALLBACK_CLIENT_HTTP_BIND_PROTOCOL: return "LWS_CALLBACK_CLIENT_HTTP_BIND_PROTOCOL";
         case LWS_CALLBACK_CONNECTING: return "LWS_CALLBACK_CONNECTING";
+        case LWS_CALLBACK_CLIENT_CLOSED: return "LWS_CALLBACK_CLIENT_CLOSED";
+        case LWS_CALLBACK_WS_CLIENT_DROP_PROTOCOL: return "LWS_CALLBACK_WS_CLIENT_DROP_PROTOCOL";
 
         // Add more cases as needed for your specific libwebsockets version
 
