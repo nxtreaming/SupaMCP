@@ -47,6 +47,24 @@ mcp_transport_t* mcp_transport_websocket_client_create(const mcp_websocket_confi
  */
 int mcp_transport_websocket_client_is_connected(mcp_transport_t* transport);
 
+/**
+ * @brief Get statistics from a WebSocket server transport
+ *
+ * @param transport WebSocket server transport handle
+ * @param active_clients Pointer to store the number of active clients (can be NULL)
+ * @param peak_clients Pointer to store the peak number of clients (can be NULL)
+ * @param total_connections Pointer to store the total number of connections since start (can be NULL)
+ * @param rejected_connections Pointer to store the number of rejected connections (can be NULL)
+ * @param uptime_seconds Pointer to store the server uptime in seconds (can be NULL)
+ * @return int 0 on success, -1 on error
+ */
+int mcp_transport_websocket_server_get_stats(mcp_transport_t* transport,
+                                           uint32_t* active_clients,
+                                           uint32_t* peak_clients,
+                                           uint32_t* total_connections,
+                                           uint32_t* rejected_connections,
+                                           double* uptime_seconds);
+
 #ifdef __cplusplus
 }
 #endif

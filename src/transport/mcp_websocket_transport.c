@@ -50,10 +50,16 @@ typedef struct {
     mcp_thread_t event_thread;      // Event loop thread
     mcp_mutex_t* clients_mutex;     // Clients list mutex
     ws_client_t clients[MAX_WEBSOCKET_CLIENTS]; // Clients list
+    uint32_t client_bitmap[MAX_WEBSOCKET_CLIENTS / 32 + 1]; // Bitmap for quick client slot lookup
+    uint32_t active_clients;        // Number of active clients
+    uint32_t peak_clients;          // Peak number of active clients
+    uint32_t total_connections;     // Total number of connections since start
+    uint32_t rejected_connections;  // Number of rejected connections due to max clients
     mcp_transport_t* transport;     // Transport handle
     mcp_websocket_config_t config;  // WebSocket configuration
     time_t last_ping_time;          // Time of last ping check
     time_t last_cleanup_time;       // Time of last inactive client cleanup
+    time_t start_time;              // Time when the server was started
 } ws_server_data_t;
 
 // Forward declarations
@@ -74,7 +80,7 @@ static int ws_server_transport_send(mcp_transport_t* transport, const void* data
 static int ws_server_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
 static void ws_server_transport_destroy(mcp_transport_t* transport);
 static int ws_client_init(ws_client_t* client, int client_id, struct lws* wsi);
-static void ws_client_cleanup(ws_client_t* client);
+static void ws_client_cleanup(ws_client_t* client, ws_server_data_t* server_data);
 static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size);
 static int ws_client_process_message(ws_server_data_t* data, ws_client_t* client, struct lws* wsi);
 static int ws_client_handle_received_data(ws_server_data_t* data, ws_client_t* client,
@@ -83,6 +89,51 @@ static int ws_client_send_response(ws_client_t* client, struct lws* wsi, const c
 
 // WebSocket protocol definitions
 static struct lws_protocols server_protocols[3];
+
+// Bitmap helper functions for client slot management
+static inline void ws_server_set_client_bit(uint32_t* bitmap, int index) {
+    bitmap[index / 32] |= (1 << (index % 32));
+}
+
+static inline void ws_server_clear_client_bit(uint32_t* bitmap, int index) {
+    bitmap[index / 32] &= ~(1 << (index % 32));
+}
+
+static inline bool ws_server_test_client_bit(uint32_t* bitmap, int index) {
+    return (bitmap[index / 32] & (1 << (index % 32))) != 0;
+}
+
+// Find first free client slot using bitmap
+static int ws_server_find_free_client_slot(ws_server_data_t* data) {
+    // Quick check if we're already at max capacity
+    if (data->active_clients >= MAX_WEBSOCKET_CLIENTS) {
+        return -1;
+    }
+
+    // Use bitmap to find first free slot
+    for (int i = 0; i < (MAX_WEBSOCKET_CLIENTS / 32 + 1); i++) {
+        uint32_t word = data->client_bitmap[i];
+
+        // If word is full (all bits set), skip to next word
+        if (word == 0xFFFFFFFF) {
+            continue;
+        }
+
+        // Find first zero bit in this word
+        for (int j = 0; j < 32; j++) {
+            int index = i * 32 + j;
+            if (index >= MAX_WEBSOCKET_CLIENTS) {
+                break; // Don't go beyond array bounds
+            }
+
+            if ((word & (1 << j)) == 0) {
+                return index;
+            }
+        }
+    }
+
+    return -1; // No free slots found
+}
 
 // Helper function to initialize a client
 static int ws_client_init(ws_client_t* client, int client_id, struct lws* wsi) {
@@ -103,7 +154,7 @@ static int ws_client_init(ws_client_t* client, int client_id, struct lws* wsi) {
 }
 
 // Helper function to clean up a client
-static void ws_client_cleanup(ws_client_t* client) {
+static void ws_client_cleanup(ws_client_t* client, ws_server_data_t* server_data) {
     if (!client) {
         return;
     }
@@ -117,6 +168,17 @@ static void ws_client_cleanup(ws_client_t* client) {
     // Reset client state
     client->state = WS_CLIENT_STATE_INACTIVE;
     client->wsi = NULL;
+
+    // Update bitmap and statistics if server_data is provided
+    if (server_data) {
+        // Clear bit in bitmap
+        ws_server_clear_client_bit(server_data->client_bitmap, client->client_id);
+
+        // Decrement active client count
+        if (server_data->active_clients > 0) {
+            server_data->active_clients--;
+        }
+    }
 }
 
 // Helper function to resize a client's receive buffer
@@ -386,18 +448,16 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             mcp_mutex_lock(data->clients_mutex);
 
-            // Find an empty client slot
-            int client_index = -1;
-            for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
-                if (data->clients[i].state == WS_CLIENT_STATE_INACTIVE) {
-                    client_index = i;
-                    break;
-                }
-            }
+            // Find an empty client slot using bitmap
+            int client_index = ws_server_find_free_client_slot(data);
 
             if (client_index == -1) {
+                // Update rejection statistics
+                data->rejected_connections++;
+
                 mcp_mutex_unlock(data->clients_mutex);
-                mcp_log_error("Maximum WebSocket clients reached");
+                mcp_log_error("Maximum WebSocket clients reached (%d active, %d total connections, %d rejected)",
+                             data->active_clients, data->total_connections, data->rejected_connections);
                 return -1; // Reject connection
             }
 
@@ -408,7 +468,18 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Store client pointer in user data
             lws_set_opaque_user_data(wsi, client);
 
-            mcp_log_info("Client %d connected", client_index);
+            // Update bitmap and statistics
+            ws_server_set_client_bit(data->client_bitmap, client_index);
+            data->active_clients++;
+            data->total_connections++;
+
+            // Update peak clients if needed
+            if (data->active_clients > data->peak_clients) {
+                data->peak_clients = data->active_clients;
+            }
+
+            mcp_log_info("Client %d connected (active: %d, peak: %d, total: %d)",
+                        client_index, data->active_clients, data->peak_clients, data->total_connections);
 
             mcp_mutex_unlock(data->clients_mutex);
             break;
@@ -445,7 +516,7 @@ static int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
                 ws_client_t* client = &data->clients[i];
                 if (client->state != WS_CLIENT_STATE_INACTIVE) {
-                    ws_client_cleanup(client);
+                    ws_client_cleanup(client, data);
                 }
             }
 
@@ -603,7 +674,7 @@ static void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
             difftime(now, client->last_activity) > 10) { // 10 seconds grace period
 
             mcp_log_info("Cleaning up inactive client %d", client->client_id);
-            ws_client_cleanup(client);
+            ws_client_cleanup(client, data);
         }
     }
 
@@ -678,9 +749,20 @@ static int ws_server_transport_start(
         data->clients[i].ping_sent = 0;
     }
 
+    // Initialize bitmap (all bits to 0 = all slots free)
+    memset(data->client_bitmap, 0, sizeof(data->client_bitmap));
+
+    // Initialize statistics
+    data->active_clients = 0;
+    data->peak_clients = 0;
+    data->total_connections = 0;
+    data->rejected_connections = 0;
+
     // Initialize timestamps
-    data->last_ping_time = time(NULL);
-    data->last_cleanup_time = time(NULL);
+    time_t now = time(NULL);
+    data->last_ping_time = now;
+    data->last_cleanup_time = now;
+    data->start_time = now;
 
     // Create mutex
     data->clients_mutex = mcp_mutex_create();
@@ -737,7 +819,7 @@ static int ws_server_transport_stop(mcp_transport_t* transport) {
     mcp_mutex_lock(data->clients_mutex);
     for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
         if (data->clients[i].state != WS_CLIENT_STATE_INACTIVE) {
-            ws_client_cleanup(&data->clients[i]);
+            ws_client_cleanup(&data->clients[i], data);
         }
     }
     mcp_mutex_unlock(data->clients_mutex);
@@ -804,6 +886,45 @@ static void ws_server_transport_destroy(mcp_transport_t* transport) {
     free(transport);
 }
 
+// Get WebSocket server statistics
+int mcp_transport_websocket_server_get_stats(mcp_transport_t* transport,
+                                           uint32_t* active_clients,
+                                           uint32_t* peak_clients,
+                                           uint32_t* total_connections,
+                                           uint32_t* rejected_connections,
+                                           double* uptime_seconds) {
+    if (!transport || !transport->transport_data) {
+        return -1;
+    }
+
+    // Verify this is a WebSocket server transport
+    if (transport->type != MCP_TRANSPORT_TYPE_SERVER ||
+        transport->protocol_type != MCP_TRANSPORT_PROTOCOL_WEBSOCKET) {
+        return -1;
+    }
+
+    ws_server_data_t* data = (ws_server_data_t*)transport->transport_data;
+
+    // Lock mutex to ensure consistent data
+    mcp_mutex_lock(data->clients_mutex);
+
+    // Copy statistics
+    if (active_clients) *active_clients = data->active_clients;
+    if (peak_clients) *peak_clients = data->peak_clients;
+    if (total_connections) *total_connections = data->total_connections;
+    if (rejected_connections) *rejected_connections = data->rejected_connections;
+
+    // Calculate uptime
+    if (uptime_seconds) {
+        time_t now = time(NULL);
+        *uptime_seconds = difftime(now, data->start_time); // difftime returns double, perfect for uptime
+    }
+
+    mcp_mutex_unlock(data->clients_mutex);
+
+    return 0;
+}
+
 // Create WebSocket server transport
 mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_config_t* config) {
     if (!config || !config->host) {
@@ -837,6 +958,7 @@ mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_confi
 
     // Set transport type and operations
     transport->type = MCP_TRANSPORT_TYPE_SERVER;
+    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_WEBSOCKET;
     transport->server.start = ws_server_transport_start;
     transport->server.stop = ws_server_transport_stop;
     transport->server.destroy = ws_server_transport_destroy;
