@@ -72,15 +72,17 @@ int mcp_client_send_and_wait(
     send_buffers[1].data = request_json;
     send_buffers[1].size = json_len;
 
-    // Check if this is an HTTP transport
+    // Check if this is an HTTP or WebSocket transport
     mcp_transport_protocol_t transport_protocol = mcp_transport_get_protocol(client->transport);
     bool is_http = (transport_protocol == MCP_TRANSPORT_PROTOCOL_HTTP);
+    bool is_websocket = (transport_protocol == MCP_TRANSPORT_PROTOCOL_WEBSOCKET);
 
-    // For non-HTTP transports, set up the asynchronous request handling
+    // For transports that need asynchronous request handling
     pending_request_t pending_req;
     pending_request_entry_t* req_entry_wrapper = NULL;
 
-    if (!is_http) {
+    // Both HTTP and WebSocket handle synchronous request-response
+    if (!is_http && !is_websocket) {
         // --- Asynchronous Receive Logic for non-HTTP transports ---
         // 1. Prepare pending request structure
         pending_req.id = request_id;
@@ -112,7 +114,7 @@ int mcp_client_send_and_wait(
         mcp_log_error("mcp_transport_sendv failed with status %d", send_status);
 
         // Clean up the pending request if it was created
-        if (!is_http) {
+        if (!is_http && !is_websocket) {
             mcp_mutex_lock(client->pending_requests_mutex);
             mcp_client_remove_pending_request_entry(client, request_id);
             mcp_mutex_unlock(client->pending_requests_mutex);
@@ -121,17 +123,18 @@ int mcp_client_send_and_wait(
         return -1;
     }
 
-    // For HTTP transport, handle the response synchronously
-    if (is_http) {
+    // For HTTP or WebSocket transport, handle the response synchronously
+    if (is_http || is_websocket) {
         // Create a buffer to receive the response
         char* response_data = NULL;
         size_t response_size = 0;
 
-        // Try to receive the response, This is a synchronous operation for HTTP transport
+        // Try to receive the response, This is a synchronous operation for HTTP/WebSocket transport
         int status = mcp_transport_receive(client->transport, &response_data, &response_size, client->config.request_timeout_ms);
         if (status == 0 && response_data != NULL) {
             // Parse the response JSON
-            mcp_log_debug("HTTP transport: Received response data: %s", response_data);
+            const char* transport_name = is_http ? "HTTP" : "WebSocket";
+            mcp_log_debug("%s transport: Received response data: %s", transport_name, response_data);
 
             // Extract the result from the response
             uint64_t response_id;
@@ -150,8 +153,8 @@ int mcp_client_send_and_wait(
                     *result = response_result;
                 } else {
                     // Response ID doesn't match request ID
-                    mcp_log_error("HTTP transport: Response ID %llu doesn't match request ID %llu",
-                                 (unsigned long long)response_id, (unsigned long long)request_id);
+                    mcp_log_error("%s transport: Response ID %llu doesn't match request ID %llu",
+                                 transport_name, (unsigned long long)response_id, (unsigned long long)request_id);
                     *error_code = MCP_ERROR_INTERNAL_ERROR;
                     *error_message = mcp_strdup("Response ID doesn't match request ID");
                     free(response_error_message);
@@ -159,7 +162,7 @@ int mcp_client_send_and_wait(
                 }
             } else {
                 // Failed to parse response
-                mcp_log_error("HTTP transport: Failed to parse response: %s", response_data);
+                mcp_log_error("%s transport: Failed to parse response: %s", transport_name, response_data);
                 *error_code = MCP_ERROR_PARSE_ERROR;
                 *error_message = mcp_strdup("Failed to parse response");
             }
@@ -168,16 +171,20 @@ int mcp_client_send_and_wait(
             free(response_data);
         } else {
             // No response received or error occurred
-            mcp_log_error("HTTP transport: Failed to receive response for request ID %llu", (unsigned long long)request_id);
+            const char* transport_name = is_http ? "HTTP" : "WebSocket";
+            mcp_log_error("%s transport: Failed to receive response for request ID %llu (status: %d)",
+                         transport_name, (unsigned long long)request_id, status);
             *error_code = MCP_ERROR_TRANSPORT_ERROR;
-            *error_message = mcp_strdup("Failed to receive HTTP response");
+            *error_message = mcp_strdup(is_http ?
+                                       "Failed to receive HTTP response" :
+                                       "Failed to receive WebSocket response");
         }
 
         return (*error_code == MCP_ERROR_NONE) ? 0 : -1;
     }
 
-    // For non-HTTP transports, wait for the response asynchronously
-    mcp_log_debug("Waiting for response to request ID %llu", (unsigned long long)request_id);
+    // For transports that use asynchronous response handling (not HTTP or WebSocket)
+    mcp_log_debug("Waiting for asynchronous response to request ID %llu", (unsigned long long)request_id);
     int wait_result = 0;
     int final_status = -1;
 

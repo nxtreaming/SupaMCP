@@ -17,9 +17,9 @@ extern "C" {
 #define WS_PING_INTERVAL_MS 60000      // 60 seconds
 #define WS_PING_TIMEOUT_MS 30000       // 30 seconds
 #define WS_CLEANUP_INTERVAL_MS 120000  // 120 seconds
-#define WS_DEFAULT_CONNECT_TIMEOUT_MS 10000  // 10 seconds
+#define WS_DEFAULT_CONNECT_TIMEOUT_MS 15000  // 15 seconds
 #define WS_MAX_RECONNECT_ATTEMPTS 10
-#define WS_RECONNECT_DELAY_MS 2000     // 2 seconds
+#define WS_RECONNECT_DELAY_MS 3000     // 3 seconds
 #define WS_MAX_RECONNECT_DELAY_MS 60000 // 60 seconds
 
 // Message types

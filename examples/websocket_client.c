@@ -125,39 +125,27 @@ static bool create_client_connection(const char* host, uint16_t port, const char
 
 // Function to check if client is connected and reconnect if necessary
 static bool ensure_client_connected(const char* host, uint16_t port, const char* path) {
-    // Simple check - in a real application, you might want to implement
-    // a more robust connection check
+    // Simple check - if client is NULL, we definitely need to reconnect
     if (g_client == NULL) {
         printf("Client not connected. Reconnecting...\n");
         return create_client_connection(host, port, path);
     }
 
-    // Try to send a ping to check connection
-    char* response = NULL;
-    mcp_error_code_t error_code = MCP_ERROR_NONE;
-    char* error_message = NULL;
+    // Check if the transport is still valid
+    if (g_transport == NULL) {
+        printf("Transport is invalid. Reconnecting...\n");
 
-    // Since we can't update the client config, we'll just use the current timeout
-    // This means the ping might take longer, but it will still work
-    int result = mcp_client_send_request(g_client, "ping", "{}", &response, &error_code, &error_message);
-
-    // Check if ping was successful
-    if (error_code != MCP_ERROR_NONE || result != 0) {
-        if (error_message) {
-            free(error_message);
-        }
-        if (response) {
-            free(response);
+        // Destroy the old client before creating a new one
+        if (g_client) {
+            mcp_client_destroy(g_client);
+            g_client = NULL;
         }
 
-        printf("Connection check failed. Reconnecting...\n");
         return create_client_connection(host, port, path);
     }
 
-    // Ping successful, connection is active
-    if (response) {
-        free(response);
-    }
+    // If we have a client and transport, assume connection is valid
+    // The actual WebSocket connection state is managed internally by the transport
     return true;
 }
 
@@ -257,21 +245,25 @@ int main(int argc, char* argv[]) {
         result = mcp_client_send_request(g_client, "call_tool", params_buffer, &response, &error_code, &error_message);
 
         // Handle error if any
-        if (error_code != MCP_ERROR_NONE) {
-            printf("Request failed with error code %d: %s\n",
-                   error_code, error_message ? error_message : "Unknown error");
-            free(error_message);
+        if (error_code != MCP_ERROR_NONE || result != 0) {
+            printf("Request failed with error code %d: %s (result: %d)\n",
+                   error_code, error_message ? error_message : "Unknown error", result);
+
+            if (error_message) {
+                free(error_message);
+            }
+
+            // Try to reconnect on error
+            if (!ensure_client_connected(host, port, path)) {
+                printf("Error: Failed to re-establish connection. Please check server status.\n");
+            }
+
             continue;
         }
 
         // Free error message if it was set (shouldn't be if error_code is NONE)
         if (error_message != NULL) {
             free(error_message);
-        }
-
-        if (result != 0) {
-            printf("Request failed with result code %d\n", result);
-            continue;
         }
 
         // Print response
