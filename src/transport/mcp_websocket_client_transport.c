@@ -220,11 +220,9 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
         mcp_log_debug("WebSocket client in sync mode, signaling condition variable");
         mcp_cond_signal(data->response_cond);
     } else if (data->transport && data->transport->message_callback) {
-        // Initialize thread-local arena for JSON parsing
-        mcp_log_debug("Initializing thread-local arena for client message processing");
-        if (mcp_arena_init_current_thread(4096) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena in WebSocket client callback");
-        }
+        // Reset thread-local arena for JSON parsing
+        mcp_log_debug("Resetting thread-local arena for client message processing");
+        mcp_arena_reset_current_thread();
 
         // Process message through callback
         int error_code = 0;
@@ -239,6 +237,9 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
         if (response) {
             free(response);
         }
+
+        // Reset thread-local arena after processing
+        mcp_arena_reset_current_thread();
     }
 
     mcp_mutex_unlock(data->response_mutex);
@@ -702,6 +703,12 @@ static int ws_client_send_ping(ws_client_data_t* data) {
 static void* ws_client_event_thread(void* arg) {
     ws_client_data_t* data = (ws_client_data_t*)arg;
 
+    // Initialize thread-local arena for this thread
+    mcp_log_debug("Initializing thread-local arena for WebSocket client event thread");
+    if (mcp_arena_init_current_thread(1024 * 1024) != 0) { // 1MB arena
+        mcp_log_error("Failed to initialize thread-local arena in WebSocket client event thread");
+    }
+
     while (data->running) {
         // Service the WebSocket context with a very short timeout
         // This ensures the event loop is responsive
@@ -730,6 +737,10 @@ static void* ws_client_event_thread(void* arg) {
             lws_callback_on_writable(data->wsi);
         }
     }
+
+    // Destroy thread-local arena before thread exits
+    mcp_log_debug("Destroying thread-local arena for WebSocket client event thread");
+    mcp_arena_destroy_current_thread();
 
     return NULL;
 }

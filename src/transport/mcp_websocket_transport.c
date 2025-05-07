@@ -389,11 +389,9 @@ static int ws_client_process_message(ws_server_data_t* data, ws_client_t* client
 
     // Process complete message
     if (data->transport && data->transport->message_callback) {
-        // Initialize thread-local arena for JSON parsing
-        mcp_log_debug("Initializing thread-local arena for server message processing");
-        if (mcp_arena_init_current_thread(4096) != 0) {
-            mcp_log_error("Failed to initialize thread-local arena in WebSocket server callback");
-        }
+        // Reset thread-local arena for JSON parsing
+        mcp_log_debug("Resetting thread-local arena for server message processing");
+        mcp_arena_reset_current_thread();
 
         int error_code = 0;
         char* response = data->transport->message_callback(
@@ -411,6 +409,9 @@ static int ws_client_process_message(ws_server_data_t* data, ws_client_t* client
             // Free the response
             free(response);
         }
+
+        // Reset thread-local arena after processing
+        mcp_arena_reset_current_thread();
     }
 
     // Reset buffer
@@ -850,6 +851,12 @@ static void* ws_server_event_thread(void* arg) {
     time_t last_service_time = time(NULL);
     unsigned long service_count = 0;
 
+    // Initialize thread-local arena for this thread
+    mcp_log_debug("Initializing thread-local arena for WebSocket server event thread");
+    if (mcp_arena_init_current_thread(1024 * 1024) != 0) { // 1MB arena
+        mcp_log_error("Failed to initialize thread-local arena in WebSocket server event thread");
+    }
+
     mcp_log_info("WebSocket server event thread started");
 
     while (data->running) {
@@ -884,6 +891,11 @@ static void* ws_server_event_thread(void* arg) {
     }
 
     mcp_log_info("WebSocket server event thread exiting");
+
+    // Destroy thread-local arena before thread exits
+    mcp_log_debug("Destroying thread-local arena for WebSocket server event thread");
+    mcp_arena_destroy_current_thread();
+
     return NULL;
 }
 
