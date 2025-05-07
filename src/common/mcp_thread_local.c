@@ -6,14 +6,17 @@
 #include <string.h>
 
 // Performance statistics for thread-local storage
-typedef struct {
-    size_t arena_allocations;      // Number of arena allocations
-    size_t arena_resets;           // Number of arena resets
-    size_t arena_destroys;         // Number of arena destroys
-    size_t cache_allocations;      // Number of cache allocations
-    size_t cache_frees;            // Number of cache frees
-    size_t cache_hits;             // Number of cache hits
-    size_t cache_misses;           // Number of cache misses
+typedef MCP_CACHE_ALIGNED struct {
+    unsigned long thread_id;        // Thread identifier for debugging and analysis
+    size_t arena_allocations;       // Number of arena allocations
+    size_t arena_resets;            // Number of arena resets
+    size_t arena_destroys;          // Number of arena destroys
+    size_t cache_allocations;       // Number of cache allocations
+    size_t cache_frees;             // Number of cache frees
+    size_t cache_hits;              // Number of cache hits
+    size_t cache_misses;            // Number of cache misses
+    // Padding to cache line size to reduce false sharing
+    char padding[MCP_CACHE_LINE_SIZE - ((sizeof(unsigned long) + 7 * sizeof(size_t)) % MCP_CACHE_LINE_SIZE)];
 } mcp_thread_local_stats_t;
 
 // Thread-local storage for performance statistics
@@ -22,6 +25,15 @@ __declspec(thread) static mcp_thread_local_stats_t tls_stats = {0};
 #else
 __thread static mcp_thread_local_stats_t tls_stats = {0};
 #endif
+
+// Function to get current thread ID in a platform-independent way
+static unsigned long get_current_thread_id(void) {
+#ifdef _WIN32
+    return (unsigned long)GetCurrentThreadId();
+#else
+    return (unsigned long)pthread_self();
+#endif
+}
 
 #ifdef _WIN32
 #include <windows.h>
@@ -117,11 +129,15 @@ int mcp_arena_init_current_thread(size_t initial_size) {
     }
 #endif
 
-    // Update statistics
+    // Update statistics and set thread ID
+    if (tls_stats.thread_id == 0) {
+        tls_stats.thread_id = get_current_thread_id();
+    }
     tls_stats.arena_allocations++;
     tls_initialized = true;
 
-    mcp_log_debug("Thread-local arena initialized with size %zu", initial_size);
+    mcp_log_debug("Thread-local arena initialized with size %zu for thread %lu",
+                 initial_size, tls_stats.thread_id);
     return 0;
 }
 
@@ -299,7 +315,11 @@ bool mcp_thread_cache_init_current_thread(void) {
     // Update initialization state
     if (result) {
         tls_initialized = true;
-        mcp_log_debug("Thread-local object cache system initialized");
+        // Set thread ID if not already set
+        if (tls_stats.thread_id == 0) {
+            tls_stats.thread_id = get_current_thread_id();
+        }
+        mcp_log_debug("Thread-local object cache system initialized for thread %lu", tls_stats.thread_id);
     } else {
         mcp_log_error("Failed to initialize thread-local object cache system");
     }
@@ -531,8 +551,9 @@ void mcp_thread_cache_cleanup_current_thread(void) {
  * @brief Get statistics about thread-local storage usage.
  *
  * This function provides detailed statistics about the usage of thread-local
- * storage, including arena allocations, resets, and cache operations.
+ * storage, including thread ID, arena allocations, resets, and cache operations.
  *
+ * @param thread_id Thread identifier
  * @param arena_allocations Number of arena allocations
  * @param arena_resets Number of arena resets
  * @param arena_destroys Number of arena destroys
@@ -543,6 +564,7 @@ void mcp_thread_cache_cleanup_current_thread(void) {
  * @return true if statistics were successfully retrieved, false otherwise
  */
 bool mcp_thread_local_get_stats(
+    unsigned long* thread_id,
     size_t* arena_allocations,
     size_t* arena_resets,
     size_t* arena_destroys,
@@ -556,7 +578,13 @@ bool mcp_thread_local_get_stats(
         return false;
     }
 
+    // Ensure thread ID is set
+    if (tls_stats.thread_id == 0) {
+        tls_stats.thread_id = get_current_thread_id();
+    }
+
     // Fill in statistics if pointers are provided
+    if (thread_id) *thread_id = tls_stats.thread_id;
     if (arena_allocations) *arena_allocations = tls_stats.arena_allocations;
     if (arena_resets) *arena_resets = tls_stats.arena_resets;
     if (arena_destroys) *arena_destroys = tls_stats.arena_destroys;

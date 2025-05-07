@@ -115,8 +115,9 @@ void mcp_thread_cache_cleanup_current_thread(void);
  * @brief Get statistics about thread-local storage usage.
  *
  * This function provides detailed statistics about the usage of thread-local
- * storage, including arena allocations, resets, and cache operations.
+ * storage, including thread ID, arena allocations, resets, and cache operations.
  *
+ * @param thread_id Thread identifier
  * @param arena_allocations Number of arena allocations
  * @param arena_resets Number of arena resets
  * @param arena_destroys Number of arena destroys
@@ -127,6 +128,7 @@ void mcp_thread_cache_cleanup_current_thread(void);
  * @return true if statistics were successfully retrieved, false otherwise
  */
 bool mcp_thread_local_get_stats(
+    unsigned long* thread_id,
     size_t* arena_allocations,
     size_t* arena_resets,
     size_t* arena_destroys,
