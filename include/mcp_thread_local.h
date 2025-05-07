@@ -111,6 +111,41 @@ void mcp_thread_cache_flush_object_cache(mcp_object_cache_type_t type);
  */
 void mcp_thread_cache_cleanup_current_thread(void);
 
+/**
+ * @brief Get statistics about thread-local storage usage.
+ *
+ * This function provides detailed statistics about the usage of thread-local
+ * storage, including arena allocations, resets, and cache operations.
+ *
+ * @param arena_allocations Number of arena allocations
+ * @param arena_resets Number of arena resets
+ * @param arena_destroys Number of arena destroys
+ * @param cache_allocations Number of cache allocations
+ * @param cache_frees Number of cache frees
+ * @param cache_hits Number of cache hits
+ * @param cache_misses Number of cache misses
+ * @return true if statistics were successfully retrieved, false otherwise
+ */
+bool mcp_thread_local_get_stats(
+    size_t* arena_allocations,
+    size_t* arena_resets,
+    size_t* arena_destroys,
+    size_t* cache_allocations,
+    size_t* cache_frees,
+    size_t* cache_hits,
+    size_t* cache_misses
+);
+
+/**
+ * @brief Check if thread-local storage is initialized.
+ *
+ * This function checks if the thread-local storage has been initialized
+ * for the current thread.
+ *
+ * @return true if thread-local storage is initialized, false otherwise
+ */
+bool mcp_thread_local_is_initialized(void);
+
 #ifdef __cplusplus
 }
 #endif
