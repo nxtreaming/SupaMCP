@@ -13,7 +13,6 @@
 #include <windows.h>
 #include <intrin.h>
 #else
-// GCC/Clang atomics are built-in
 #include <sched.h>
 #endif
 
@@ -39,6 +38,19 @@ typedef struct {
 #   pragma warning(pop) // Restore warning settings
 #endif
 
+// Forward declaration for the worker thread function
+static void* thread_pool_worker(void* arg);
+
+// Argument struct for worker threads
+typedef struct {
+    struct mcp_thread_pool* pool;
+    size_t worker_index;
+} worker_arg_t;
+
+#ifdef _MSC_VER
+#   pragma warning(push)
+#   pragma warning(disable : 4324) // Disable warning for structure padding
+#endif
 /**
  * @brief Internal structure for the thread pool using work-stealing deques.
  */
@@ -48,21 +60,33 @@ struct mcp_thread_pool {
     mcp_cond_t* notify;         /**< Condition variable to signal waiting threads (mainly for shutdown). */
     mcp_thread_t* threads;      /**< Array of worker thread handles. */
     work_stealing_deque_t* deques; /**< Array of work-stealing deques, one per thread. */
+    worker_arg_t** worker_args; /**< Array of worker thread arguments for cleanup. */
     size_t thread_count;        /**< Number of worker threads. */
-    volatile int shutdown;      /**< Flag indicating if the pool is shutting down (0=no, 1=immediate, 2=graceful). */
+    volatile int shutdown_flag; /**< Flag indicating if the pool is shutting down (0=no, 1=immediate, 2=graceful). */
     int started;                /**< Number of threads successfully started. */
     size_t deque_capacity;      /**< Capacity of each individual deque. */
     volatile size_t next_submit_deque; /**< Index for round-robin task submission. */
-};
 
-// Forward declaration for the worker thread function
-static void* thread_pool_worker(void* arg);
+    // Statistics
+    MCP_CACHE_ALIGNED volatile size_t tasks_submitted;  /**< Total number of tasks submitted. */
+    MCP_CACHE_ALIGNED volatile size_t tasks_completed;  /**< Total number of tasks completed. */
+    MCP_CACHE_ALIGNED volatile size_t tasks_failed;     /**< Total number of tasks that failed to be submitted. */
+    MCP_CACHE_ALIGNED volatile size_t active_tasks;     /**< Number of tasks currently being processed. */
+
+    // Worker state tracking
+    MCP_CACHE_ALIGNED volatile int* worker_status;      /**< Status of each worker thread (0=idle, 1=active). */
+    MCP_CACHE_ALIGNED volatile size_t* tasks_stolen;    /**< Number of tasks stolen by each worker. */
+    MCP_CACHE_ALIGNED volatile size_t* tasks_executed;  /**< Number of tasks executed by each worker. */
+};
+#ifdef _MSC_VER
+#   pragma warning(pop)
+#endif
 
 // Atomic Compare-and-Swap for size_t
 static inline bool compare_and_swap_size(volatile size_t* ptr, size_t expected, size_t desired) {
 #ifdef _WIN32
     return InterlockedCompareExchangePointer((volatile PVOID*)ptr, (PVOID)desired, (PVOID)expected) == (PVOID)expected;
-#else // GCC/Clang
+#else
     return __sync_bool_compare_and_swap(ptr, expected, desired);
 #endif
 }
@@ -73,7 +97,7 @@ static inline size_t load_size(volatile size_t* ptr) {
     size_t value = *ptr;
     _ReadWriteBarrier();
     return value;
-#else // GCC/Clang
+#else
     return __sync_fetch_and_add(ptr, 0);
 #endif
 }
@@ -84,7 +108,7 @@ static inline int load_int(volatile int* ptr) {
     int value = *ptr;
     _ReadWriteBarrier();
     return value;
-#else // GCC/Clang
+#else
     return __sync_fetch_and_add(ptr, 0);
 #endif
 }
@@ -93,7 +117,7 @@ static inline int load_int(volatile int* ptr) {
 static inline void store_int(volatile int* ptr, int value) {
 #ifdef _WIN32
     InterlockedExchange((volatile LONG*)ptr, (LONG)value);
-#else // GCC/Clang
+#else
     __sync_lock_test_and_set(ptr, value);
 #endif
 }
@@ -103,22 +127,18 @@ static inline size_t fetch_add_size(volatile size_t* ptr, size_t value) {
 #ifdef _WIN32
     // Use appropriate Windows atomic function based on pointer size
 #if defined(_WIN64)
-        // 64-bit Windows
+    // 64-bit Windows
     return (size_t)InterlockedExchangeAdd64((volatile LONGLONG*)ptr, (LONGLONG)value);
 #   else
-        // 32-bit Windows
+    // 32-bit Windows
     return (size_t)InterlockedExchangeAdd((volatile LONG*)ptr, (LONG)value);
 #   endif
-#else // GCC/Clang
+#else
     return __sync_fetch_and_add(ptr, value);
 #endif
 }
 
-// Argument struct for worker threads
-typedef struct {
-    mcp_thread_pool_t* pool;
-    size_t worker_index;
-} worker_arg_t;
+// worker_arg_t is already defined above
 
 // Push task onto the bottom of the deque (owner thread only)
 static bool deque_push_bottom(work_stealing_deque_t* deque, mcp_task_t task) {
@@ -146,9 +166,10 @@ static bool deque_push_bottom(work_stealing_deque_t* deque, mcp_task_t task) {
 // Pop task from the bottom of the deque (owner thread only)
 static bool deque_pop_bottom(work_stealing_deque_t* deque, mcp_task_t* task) {
     size_t b = load_size(&deque->bottom);
-    if (b == 0) return false; // Nothing to pop if bottom is 0
+    if (b == 0) return false;
     b = b - 1;
-    deque->bottom = b; // Volatile write
+    // Volatile write
+    deque->bottom = b;
 
     // Ensure bottom write is visible before reading top (memory barrier)
 #ifdef _WIN32
@@ -158,11 +179,13 @@ static bool deque_pop_bottom(work_stealing_deque_t* deque, mcp_task_t* task) {
 #endif
 
     size_t t = load_size(&deque->top);
-    long size = (long)b - (long)t; // Use signed difference
+    // Use signed difference
+    long size = (long)b - (long)t;
 
     if (size < 0) {
         // Deque was empty or became empty due to concurrent steal
-        deque->bottom = t; // Reset bottom to match top
+        // Reset bottom to match top
+        deque->bottom = t;
         return false;
     }
 
@@ -240,15 +263,25 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
     }
 
     // Initialize pool structure
-    pool->thread_count = 0; // Set later after threads start
-    pool->shutdown = 0;
+    pool->thread_count = 0;
+    pool->shutdown_flag = 0;
     pool->started = 0;
     pool->rwlock = NULL;
     pool->cond_mutex = NULL;
     pool->notify = NULL;
     pool->threads = NULL;
     pool->deques = NULL;
+    pool->worker_args = NULL;
+    pool->worker_status = NULL;
+    pool->tasks_stolen = NULL;
+    pool->tasks_executed = NULL;
     pool->next_submit_deque = 0;
+
+    // Initialize statistics
+    pool->tasks_submitted = 0;
+    pool->tasks_completed = 0;
+    pool->tasks_failed = 0;
+    pool->active_tasks = 0;
 
     // Adjust queue capacity to the next power of 2
     size_t adjusted_capacity = 1;
@@ -261,6 +294,10 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
     // Allocate memory for threads, deques array, and sync primitives
     pool->threads = (mcp_thread_t*)malloc(sizeof(mcp_thread_t) * thread_count);
     pool->deques = (work_stealing_deque_t*)malloc(sizeof(work_stealing_deque_t) * thread_count);
+    pool->worker_args = (worker_arg_t**)malloc(sizeof(worker_arg_t*) * thread_count);
+    pool->worker_status = (volatile int*)calloc(thread_count, sizeof(int));
+    pool->tasks_stolen = (volatile size_t*)calloc(thread_count, sizeof(size_t));
+    pool->tasks_executed = (volatile size_t*)calloc(thread_count, sizeof(size_t));
     pool->rwlock = mcp_rwlock_create();
     pool->cond_mutex = mcp_mutex_create();
     pool->notify = mcp_cond_create();
@@ -299,9 +336,18 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
         allocation_failed = true;
     }
 
-    if (pool->rwlock == NULL || pool->cond_mutex == NULL || pool->notify == NULL || pool->threads == NULL || allocation_failed) {
-        mcp_log_error("Thread pool creation failed: Failed to initialize sync primitives or allocate memory for deques.");
+    if (pool->rwlock == NULL || pool->cond_mutex == NULL || pool->notify == NULL ||
+        pool->threads == NULL || pool->worker_args == NULL || pool->worker_status == NULL ||
+        pool->tasks_stolen == NULL || pool->tasks_executed == NULL || allocation_failed) {
+
+        mcp_log_error("Thread pool creation failed: Failed to initialize sync primitives or allocate memory.");
+
         if (pool->threads) free(pool->threads);
+        if (pool->worker_args) free(pool->worker_args);
+        if (pool->worker_status) free((void*)pool->worker_status);
+        if (pool->tasks_stolen) free((void*)pool->tasks_stolen);
+        if (pool->tasks_executed) free((void*)pool->tasks_executed);
+
         if (pool->deques) {
              for (size_t i = 0; i < thread_count; ++i) {
                  if (pool->deques[i].buffer) {
@@ -314,6 +360,7 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
              }
              free(pool->deques);
         }
+
         mcp_rwlock_free(pool->rwlock);
         mcp_mutex_destroy(pool->cond_mutex);
         mcp_cond_destroy(pool->notify);
@@ -333,9 +380,13 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
         arg->pool = pool;
         arg->worker_index = i;
 
-        if (mcp_thread_create(&(pool->threads[i]), thread_pool_worker, (void*)arg) != 0) {
+        // Store the worker argument for later cleanup
+        pool->worker_args[i] = arg;
+
+        if (mcp_thread_create(&(pool->threads[i]), thread_pool_worker, arg) != 0) {
             mcp_log_error("Failed to create worker thread");
             free(arg);
+            pool->worker_args[i] = NULL;
             allocation_failed = true;
             break;
         }
@@ -345,17 +396,61 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
 
     // If any allocation or thread creation failed after partial success
     if (allocation_failed) {
-         store_int(&pool->shutdown, 1);
+         store_int(&pool->shutdown_flag, 1);
          if (mcp_mutex_lock(pool->cond_mutex) == 0) {
              mcp_cond_broadcast(pool->notify);
              mcp_mutex_unlock(pool->cond_mutex);
          }
+
+         // Join and cleanup worker threads with retry mechanism
          for (size_t i = 0; i < pool->started; ++i) {
-             mcp_thread_join(pool->threads[i], NULL);
-             // TODO: Free worker_arg_t for joined threads
+             int join_attempts = 0;
+             const int max_join_attempts = 3;
+             bool join_success = false;
+
+             while (join_attempts < max_join_attempts && !join_success) {
+                 if (mcp_thread_join(pool->threads[i], NULL) == 0) {
+                     join_success = true;
+                 } else {
+                     mcp_log_warn("Warning: Failed to join thread %zu during cleanup (attempt %d of %d)",
+                                 i, join_attempts + 1, max_join_attempts);
+                     join_attempts++;
+
+                     // Short sleep before retry
+                     #ifdef _WIN32
+                     Sleep(100);
+                     #else
+                     struct timespec ts;
+                     ts.tv_sec = 0;
+                     ts.tv_nsec = 100000000; // 100ms
+                     nanosleep(&ts, NULL);
+                     #endif
+                 }
+             }
+
+             if (!join_success) {
+                 mcp_log_error("Error: Failed to join thread %zu during cleanup after %d attempts",
+                              i, max_join_attempts);
+                 // Continue with cleanup anyway
+             }
+
+             // Worker threads free their own arguments when they exit normally
          }
-         // Full cleanup
+
+         // Free any worker arguments that weren't passed to threads
+         for (size_t i = pool->started; i < thread_count; ++i) {
+             if (pool->worker_args[i]) {
+                 free(pool->worker_args[i]);
+             }
+         }
+
+         // Full cleanup - first free regular memory resources
          if (pool->threads) free(pool->threads);
+         if (pool->worker_args) free(pool->worker_args);
+         if (pool->worker_status) free((void*)pool->worker_status);
+         if (pool->tasks_stolen) free((void*)pool->tasks_stolen);
+         if (pool->tasks_executed) free((void*)pool->tasks_executed);
+
          if (pool->deques) {
              for (size_t i = 0; i < thread_count; ++i) {
                  if (pool->deques[i].buffer) {
@@ -368,9 +463,11 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
              }
              free(pool->deques);
          }
-         mcp_rwlock_free(pool->rwlock);
-         mcp_mutex_destroy(pool->cond_mutex);
-         mcp_cond_destroy(pool->notify);
+
+         // Free synchronization primitives last
+         if (pool->rwlock) mcp_rwlock_free(pool->rwlock);
+         if (pool->cond_mutex) mcp_mutex_destroy(pool->cond_mutex);
+         if (pool->notify) mcp_cond_destroy(pool->notify);
          free(pool);
          return NULL;
     }
@@ -389,7 +486,7 @@ int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), v
 
     // Use read lock to check shutdown state - allows multiple threads to check concurrently
     mcp_rwlock_read_lock(pool->rwlock);
-    int shutdown_state = pool->shutdown;
+    int shutdown_state = pool->shutdown_flag;
     mcp_rwlock_read_unlock(pool->rwlock);
 
     if (shutdown_state != 0) {
@@ -399,26 +496,45 @@ int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), v
 
     mcp_task_t task = { .function = function, .argument = argument };
 
-    // Simple round-robin submission for now
-    // Note: This part is NOT thread-safe if multiple producers call add_task!
+    // Thread-safe round-robin submission using atomic fetch-and-add
     size_t target_deque_idx = fetch_add_size(&pool->next_submit_deque, 1) % pool->thread_count;
     work_stealing_deque_t* target_deque = &pool->deques[target_deque_idx];
 
-    // Push task onto the bottom of the target deque
+    // Try to push task onto the bottom of the target deque
     if (!deque_push_bottom(target_deque, task)) {
-        // Deque is full - Try submitting to the next deque? Or fail?
-        // For simplicity, fail for now.
-        mcp_log_error("Warning: Target deque %zu is full during task submission.", target_deque_idx);
-        PROFILE_END("mcp_thread_pool_add_task");
-        return -1; // Indicate queue full
+        // First deque is full, try to find another deque with space
+        bool submission_success = false;
+
+        // Try each deque in sequence
+        for (size_t i = 1; i < pool->thread_count; i++) {
+            size_t alt_deque_idx = (target_deque_idx + i) % pool->thread_count;
+            work_stealing_deque_t* alt_deque = &pool->deques[alt_deque_idx];
+
+            if (deque_push_bottom(alt_deque, task)) {
+                submission_success = true;
+                target_deque_idx = alt_deque_idx; // Update for signaling
+                break;
+            }
+        }
+
+        if (!submission_success) {
+            // All deques are full
+            mcp_log_error("All deques are full during task submission. Consider increasing queue size.");
+            fetch_add_size(&pool->tasks_failed, 1);
+            PROFILE_END("mcp_thread_pool_add_task");
+            return -1; // Indicate queue full
+        }
     }
 
-    // Optional: Signal a potentially idle worker?
-    // If using the hybrid wait approach in workers, signal here.
-    // if (mcp_mutex_lock(pool->lock) == 0) {
-    //     mcp_cond_signal(pool->notify);
-    //     mcp_mutex_unlock(pool->lock);
-    // }
+    // Update statistics
+    fetch_add_size(&pool->tasks_submitted, 1);
+
+    // Signal a potentially idle worker
+    if (mcp_mutex_lock(pool->cond_mutex) == 0) {
+        // Always broadcast to ensure no worker misses the signal
+        mcp_cond_broadcast(pool->notify); // Wake up all waiting workers
+        mcp_mutex_unlock(pool->cond_mutex);
+    }
 
     PROFILE_END("mcp_thread_pool_add_task");
     return 0;
@@ -441,22 +557,43 @@ int mcp_thread_pool_wait(mcp_thread_pool_t* pool, unsigned int timeout_ms) {
 
     // Use read lock to check shutdown state - allows multiple threads to check concurrently
     mcp_rwlock_read_lock(pool->rwlock);
-    int shutdown_state = pool->shutdown;
+    int shutdown_state = pool->shutdown_flag;
     mcp_rwlock_read_unlock(pool->rwlock);
 
     if (shutdown_state != 0) {
         return -1; // Pool is shutting down
     }
 
-    // Check if all deques are empty
-    bool all_empty = true;
+    // Capture the current number of submitted tasks
+    size_t tasks_to_wait_for = pool->tasks_submitted;
+
+    // If no tasks have been submitted, return immediately
+    if (tasks_to_wait_for == 0) {
+        return 0;
+    }
+
+    // Calculate the number of tasks that should be completed
+    size_t target_completed = tasks_to_wait_for - pool->tasks_failed;
+
+    // If all tasks have already completed, return immediately
+    if (pool->tasks_completed >= target_completed) {
+        return 0;
+    }
+
+    // Wait for tasks to complete using condition variable
+    if (mcp_mutex_lock(pool->cond_mutex) != 0) {
+        return -1; // Failed to lock mutex
+    }
+
     unsigned int wait_time = 0;
     unsigned int sleep_interval = 10; // 10ms sleep interval
+    int result = 0;
 
-    while (wait_time < timeout_ms || timeout_ms == 0) {
-        all_empty = true;
+    while ((pool->tasks_completed < target_completed) &&
+           (wait_time < timeout_ms || timeout_ms == 0)) {
 
-        // Check all deques
+        // Check if all deques are empty and no tasks are active
+        bool all_empty = true;
         for (size_t i = 0; i < pool->thread_count; i++) {
             size_t bottom = load_size(&pool->deques[i].bottom);
             size_t top = load_size(&pool->deques[i].top);
@@ -467,24 +604,32 @@ int mcp_thread_pool_wait(mcp_thread_pool_t* pool, unsigned int timeout_ms) {
             }
         }
 
-        if (all_empty) {
-            return 0; // All tasks completed
+        // If all deques are empty and no tasks are active, we're done
+        if (all_empty && pool->active_tasks == 0) {
+            result = 0;
+            break;
         }
 
-        // Sleep for a short interval
-#ifdef _WIN32
-        Sleep(sleep_interval);
-#else
-        struct timespec ts;
-        ts.tv_sec = sleep_interval / 1000;
-        ts.tv_nsec = (sleep_interval % 1000) * 1000000;
-        nanosleep(&ts, NULL);
-#endif
+        // Wait for a signal or timeout
+        int wait_result = mcp_cond_timedwait(pool->notify, pool->cond_mutex, sleep_interval);
+
+        // Check for errors in wait
+        if (wait_result < 0 && wait_result != -2) { // -2 is timeout which is expected
+            result = -1;
+            break;
+        }
 
         wait_time += sleep_interval;
     }
 
-    return -1; // Timeout
+    mcp_mutex_unlock(pool->cond_mutex);
+
+    // If we timed out and tasks are still not complete
+    if (wait_time >= timeout_ms && timeout_ms > 0 && pool->tasks_completed < target_completed) {
+        return -1; // Timeout
+    }
+
+    return result;
 }
 
 /**
@@ -498,7 +643,7 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
     int err = 0;
     // Use read lock to check current shutdown state
     mcp_rwlock_read_lock(pool->rwlock);
-    int current_shutdown_state = pool->shutdown;
+    int current_shutdown_state = pool->shutdown_flag;
     mcp_rwlock_read_unlock(pool->rwlock);
 
     if (current_shutdown_state != 0) {
@@ -509,13 +654,13 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
     mcp_rwlock_write_lock(pool->rwlock);
 
     // Double-check shutdown state after acquiring lock
-    if (pool->shutdown != 0) {
+    if (pool->shutdown_flag != 0) {
         mcp_rwlock_write_unlock(pool->rwlock);
         return -1; // Another thread initiated shutdown
     }
 
     // Set shutdown state to graceful shutdown (2)
-    pool->shutdown = 2;
+    pool->shutdown_flag = 2;
     mcp_rwlock_write_unlock(pool->rwlock);
 
     // Wake up worker threads
@@ -530,20 +675,62 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
         mcp_log_error("Error: Failed to lock mutex for shutdown broadcast.");
     }
 
-    // Join threads
+    // Join threads with timeout and retry mechanism
     for (size_t i = 0; i < pool->started; ++i) {
-        if (mcp_thread_join(pool->threads[i], NULL) != 0) {
-            mcp_log_error("Failed to join thread");
-            err = -1;
+        int join_attempts = 0;
+        const int max_join_attempts = 3;
+        bool join_success = false;
+
+        while (join_attempts < max_join_attempts && !join_success) {
+            if (mcp_thread_join(pool->threads[i], NULL) == 0) {
+                join_success = true;
+            } else {
+                mcp_log_warn("Warning: Failed to join thread %zu (attempt %d of %d)",
+                            i, join_attempts + 1, max_join_attempts);
+                join_attempts++;
+
+                // Short sleep before retry
+                #ifdef _WIN32
+                Sleep(100);
+                #else
+                struct timespec ts;
+                ts.tv_sec = 0;
+                ts.tv_nsec = 100000000; // 100ms
+                nanosleep(&ts, NULL);
+                #endif
+            }
         }
-        // TODO: Free worker_arg_t associated with this thread
+
+        if (!join_success) {
+            mcp_log_error("Error: Failed to join thread %zu after %d attempts", i, max_join_attempts);
+            err = -1;
+
+            // We'll continue with cleanup even if join failed
+            // The thread might still be running, but we need to clean up resources
+        }
+
+        // Note: Worker threads free their own arguments when they exit normally
+        // If join failed, we might leak the worker_arg, but that's better than
+        // potentially freeing memory that's still in use by a running thread
     }
 
-    // Cleanup
-    mcp_rwlock_free(pool->rwlock);
-    mcp_mutex_destroy(pool->cond_mutex);
-    mcp_cond_destroy(pool->notify);
+    // Log final statistics
+    mcp_log_info("Thread pool statistics: submitted=%zu, completed=%zu, failed=%zu",
+                 pool->tasks_submitted, pool->tasks_completed, pool->tasks_failed);
+
+    // Per-worker statistics
+    for (size_t i = 0; i < pool->thread_count; ++i) {
+        mcp_log_info("Worker %zu statistics: executed=%zu, stolen=%zu",
+                     i, pool->tasks_executed[i], pool->tasks_stolen[i]);
+    }
+
+    // Cleanup - first free regular memory resources
     if (pool->threads) free(pool->threads);
+    if (pool->worker_args) free(pool->worker_args);
+    if (pool->worker_status) free((void*)pool->worker_status);
+    if (pool->tasks_stolen) free((void*)pool->tasks_stolen);
+    if (pool->tasks_executed) free((void*)pool->tasks_executed);
+
     if (pool->deques) {
          for (size_t i = 0; i < pool->thread_count; ++i) {
               if (pool->deques[i].buffer) {
@@ -556,8 +743,13 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
          }
          free(pool->deques);
     }
-    free(pool);
 
+    // Free synchronization primitives last
+    if (pool->rwlock) mcp_rwlock_free(pool->rwlock);
+    if (pool->cond_mutex) mcp_mutex_destroy(pool->cond_mutex);
+    if (pool->notify) mcp_cond_destroy(pool->notify);
+
+    free(pool);
     return err;
 }
 
@@ -572,29 +764,65 @@ static void* thread_pool_worker(void* arg) {
     mcp_task_t task;
     unsigned int steal_attempts = 0; // Counter for steal attempts
 
-    // Free the argument struct now that we've copied the data
-    free(arg);
+    // Mark this worker as the owner of its argument
+    pool->worker_args[my_index] = worker_data;
 
     while (1) {
         // 1. Try to pop from own deque
         if (deque_pop_bottom(my_deque, &task)) {
             steal_attempts = 0;
+
+            // Mark worker as active
+            pool->worker_status[my_index] = 1;
+            fetch_add_size(&pool->active_tasks, 1);
+
             PROFILE_START("thread_pool_task_execution");
             (*(task.function))(task.argument);
             PROFILE_END("thread_pool_task_execution");
+
+            // Update statistics
+            fetch_add_size(&pool->tasks_completed, 1);
+            fetch_add_size(&pool->tasks_executed[my_index], 1);
+            fetch_add_size(&pool->active_tasks, (size_t)-1); // Decrement
+
+            // Mark worker as idle
+            pool->worker_status[my_index] = 0;
+
             continue;
         }
 
         // 2. Own deque is empty, check for shutdown
         // Use read lock to check shutdown state - allows multiple threads to check concurrently
         mcp_rwlock_read_lock(pool->rwlock);
-        int shutdown_status = pool->shutdown;
+        int shutdown_status = pool->shutdown_flag;
         mcp_rwlock_read_unlock(pool->rwlock);
 
         if (shutdown_status != 0) {
-            // Simplified exit: If shutdown signaled and own deque empty, exit.
-            // A more robust graceful shutdown would check if *all* deques are empty.
-           return NULL;
+            // For immediate shutdown (1), exit right away
+            if (shutdown_status == 1) {
+                break; // Exit the loop and clean up
+            }
+
+            // For graceful shutdown (2), check if all deques are empty
+            bool all_empty = true;
+
+            // Check all deques
+            for (size_t i = 0; i < pool->thread_count; i++) {
+                size_t bottom = load_size(&pool->deques[i].bottom);
+                size_t top = load_size(&pool->deques[i].top);
+
+                if (bottom > top) {
+                    all_empty = false;
+                    break;
+                }
+            }
+
+            // If all deques are empty and no active tasks, we can exit
+            if (all_empty && load_size(&pool->active_tasks) == 0) {
+                break; // Exit the loop and clean up
+            }
+
+            // Otherwise continue trying to steal and process remaining tasks
         }
 
         // 3. Try to steal from another random deque
@@ -608,9 +836,23 @@ static void* thread_pool_worker(void* arg) {
 
             if (deque_steal_top(victim_deque, &task)) {
                 steal_attempts = 0;
+
+                // Mark worker as active
+                pool->worker_status[my_index] = 1;
+                fetch_add_size(&pool->active_tasks, 1);
+
                 PROFILE_START("thread_pool_task_execution_steal");
                 (*(task.function))(task.argument);
                 PROFILE_END("thread_pool_task_execution_steal");
+
+                // Update statistics
+                fetch_add_size(&pool->tasks_completed, 1);
+                fetch_add_size(&pool->tasks_stolen[my_index], 1);
+                fetch_add_size(&pool->active_tasks, (size_t)-1); // Decrement
+
+                // Mark worker as idle
+                pool->worker_status[my_index] = 0;
+
                 continue;
             }
         }
@@ -626,20 +868,101 @@ static void* thread_pool_worker(void* arg) {
              if (mcp_mutex_lock(pool->cond_mutex) == 0) {
                  // Use read lock to check shutdown state - allows multiple threads to check concurrently
                  mcp_rwlock_read_lock(pool->rwlock);
-                 int current_shutdown = pool->shutdown;
+                 int current_shutdown = pool->shutdown_flag;
                  mcp_rwlock_read_unlock(pool->rwlock);
 
                  if (current_shutdown != 0) {
-                     mcp_mutex_unlock(pool->cond_mutex);
-                     return NULL;
+                     // For immediate shutdown (1), exit right away
+                     if (current_shutdown == 1) {
+                         mcp_mutex_unlock(pool->cond_mutex);
+                         break; // Exit the loop and clean up
+                     }
+
+                     // For graceful shutdown (2), check if all deques are empty
+                     bool all_empty = true;
+
+                     // Check all deques
+                     for (size_t i = 0; i < pool->thread_count; i++) {
+                         size_t bottom = load_size(&pool->deques[i].bottom);
+                         size_t top = load_size(&pool->deques[i].top);
+
+                         if (bottom > top) {
+                             all_empty = false;
+                             break;
+                         }
+                     }
+
+                     // If all deques are empty and no active tasks, we can exit
+                     if (all_empty && load_size(&pool->active_tasks) == 0) {
+                         mcp_mutex_unlock(pool->cond_mutex);
+                         break; // Exit the loop and clean up
+                     }
+
+                     // Otherwise continue waiting for tasks
                  }
-                 mcp_cond_timedwait(pool->notify, pool->cond_mutex, 100); // Wait 100ms
+
+                 // Wait for a signal or timeout
+                 // Use a shorter timeout to prevent deadlock if signal is missed
+                 int wait_result = mcp_cond_timedwait(pool->notify, pool->cond_mutex, 50); // Wait 50ms
+
+                 // If we timed out, check if there are tasks in any deque
+                 if (wait_result == -2) { // -2 is timeout
+                     bool found_tasks = false;
+                     for (size_t i = 0; i < pool->thread_count && !found_tasks; i++) {
+                         size_t bottom = load_size(&pool->deques[i].bottom);
+                         size_t top = load_size(&pool->deques[i].top);
+                         if (bottom > top) {
+                             found_tasks = true;
+                         }
+                     }
+
+                     // If we found tasks but timed out, there might be a missed signal
+                     // Reset steal_attempts to try stealing again immediately
+                     if (found_tasks) {
+                         steal_attempts = 0;
+                     }
+                 }
+
                  mcp_mutex_unlock(pool->cond_mutex);
              }
              steal_attempts = 0;
         }
-
     } // End while(1)
 
+    // Clean up worker argument
+    free(worker_data);
+    pool->worker_args[my_index] = NULL;
+
     return NULL;
+}
+
+/**
+ * @brief Gets statistics from the thread pool.
+ *
+ * This function retrieves statistics about the thread pool's operation.
+ *
+ * @param pool The thread pool instance.
+ * @param submitted Pointer to store the number of submitted tasks.
+ * @param completed Pointer to store the number of completed tasks.
+ * @param failed Pointer to store the number of failed task submissions.
+ * @param active Pointer to store the number of currently active tasks.
+ * @return 0 on success, -1 on failure.
+ */
+int mcp_thread_pool_get_stats(mcp_thread_pool_t* pool, size_t* submitted, size_t* completed,
+                              size_t* failed, size_t* active) {
+    if (pool == NULL) {
+        return -1;
+    }
+
+    // Use read lock to ensure consistent state
+    mcp_rwlock_read_lock(pool->rwlock);
+
+    if (submitted) *submitted = pool->tasks_submitted;
+    if (completed) *completed = pool->tasks_completed;
+    if (failed) *failed = pool->tasks_failed;
+    if (active) *active = pool->active_tasks;
+
+    mcp_rwlock_read_unlock(pool->rwlock);
+
+    return 0;
 }

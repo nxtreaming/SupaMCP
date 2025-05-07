@@ -65,4 +65,19 @@ int mcp_thread_pool_wait(mcp_thread_pool_t* pool, unsigned int timeout_ms);
  */
 int mcp_thread_pool_destroy(mcp_thread_pool_t* pool);
 
+/**
+ * @brief Gets statistics from the thread pool.
+ *
+ * This function retrieves statistics about the thread pool's operation.
+ *
+ * @param pool The thread pool instance.
+ * @param submitted Pointer to store the number of submitted tasks. Can be NULL.
+ * @param completed Pointer to store the number of completed tasks. Can be NULL.
+ * @param failed Pointer to store the number of failed task submissions. Can be NULL.
+ * @param active Pointer to store the number of currently active tasks. Can be NULL.
+ * @return 0 on success, -1 on failure.
+ */
+int mcp_thread_pool_get_stats(mcp_thread_pool_t* pool, size_t* submitted, size_t* completed,
+                              size_t* failed, size_t* active);
+
 #endif // MCP_THREAD_POOL_H
