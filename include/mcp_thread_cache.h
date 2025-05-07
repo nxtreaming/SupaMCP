@@ -12,14 +12,20 @@ extern "C" {
  * @brief Thread-local cache configuration
  */
 typedef struct {
+    // Cache sizes
     size_t small_cache_size;     /**< Maximum number of small blocks in thread-local cache */
     size_t medium_cache_size;    /**< Maximum number of medium blocks in thread-local cache */
     size_t large_cache_size;     /**< Maximum number of large blocks in thread-local cache */
+
+    // Adaptive sizing configuration
     bool adaptive_sizing;        /**< Whether to enable adaptive cache sizing */
     double growth_threshold;     /**< Hit ratio threshold for growing cache (0.0-1.0) */
     double shrink_threshold;     /**< Hit ratio threshold for shrinking cache (0.0-1.0) */
     size_t min_cache_size;       /**< Minimum cache size for adaptive sizing */
     size_t max_cache_size;       /**< Maximum cache size for adaptive sizing */
+
+    // LRU configuration
+    int lru_enabled;             /**< Whether to enable LRU replacement (-1 = don't change, 0 = disable, 1 = enable) */
 } mcp_thread_cache_config_t;
 
 /**
@@ -39,6 +45,7 @@ typedef struct {
     size_t medium_max_size;      /**< Maximum number of medium blocks in thread-local cache */
     size_t large_max_size;       /**< Maximum number of large blocks in thread-local cache */
     bool adaptive_sizing;        /**< Whether adaptive cache sizing is enabled */
+    bool lru_enabled;            /**< Whether LRU replacement is enabled */
 
     // Hit/miss statistics
     size_t cache_hits;           /**< Number of cache hits */
