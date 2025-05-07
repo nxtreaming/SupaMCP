@@ -77,7 +77,16 @@ void mcp_arena_reset_current_thread(void) {
 void mcp_arena_destroy_current_thread(void) {
     mcp_arena_t* arena = mcp_arena_get_current();
     if (arena) {
+        // Log cleanup for debugging purposes
+        size_t total_allocated = 0, total_block_size = 0, block_count = 0;
+        mcp_arena_get_stats(arena, &total_allocated, &total_block_size, &block_count);
+        mcp_log_debug("Destroying thread-local arena: %zu bytes allocated, %zu total block size, %zu blocks",
+                     total_allocated, total_block_size, block_count);
+
+        // Clean up the arena
         cleanup_arena(arena);
+
+        // Clear the thread-local storage
 #ifdef _WIN32
         TlsSetValue(arena_tls_index, NULL);
 #else

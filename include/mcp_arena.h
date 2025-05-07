@@ -2,8 +2,23 @@
 #define MCP_ARENA_H
 
 #include <stddef.h>
+#include <stdbool.h>
 
 #define MCP_ARENA_DEFAULT_SIZE (32 * 1024) // 32KB default size
+
+// Adjust cache line size based on CPU architecture
+#if defined(__x86_64__) || defined(_M_X64)
+#define MCP_CACHE_LINE_SIZE 64
+#else
+#define MCP_CACHE_LINE_SIZE 32
+#endif
+
+// Define cache line alignment attribute
+#ifdef _MSC_VER
+#define MCP_CACHE_ALIGNED __declspec(align(MCP_CACHE_LINE_SIZE))
+#else
+#define MCP_CACHE_ALIGNED __attribute__((aligned(MCP_CACHE_LINE_SIZE)))
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,16 +33,19 @@ typedef struct mcp_arena_block mcp_arena_block_t;
  * The arena allocator provides fast allocation by simply incrementing a pointer,
  * and bulk deallocation by resetting that pointer. It's useful for temporary
  * allocations that have the same lifetime, like during request processing.
+ *
+ * The structure is cache-line aligned to improve performance in multi-threaded environments.
  */
-struct mcp_arena {
+typedef MCP_CACHE_ALIGNED struct mcp_arena {
     struct mcp_arena_block* current_block;  /**< Current block for allocations */
     size_t default_block_size;              /**< Default size for new blocks */
     // Statistics
     size_t total_allocated;                 /**< Total bytes requested via mcp_arena_alloc since last reset. */
     size_t total_block_size;                /**< Total bytes allocated in all blocks. */
     size_t block_count;                     /**< Number of allocated blocks. */
-};
-typedef struct mcp_arena mcp_arena_t;
+    // Padding to cache line size to reduce false sharing
+    char padding[MCP_CACHE_LINE_SIZE - (sizeof(void*) + 4 * sizeof(size_t)) % MCP_CACHE_LINE_SIZE];
+} mcp_arena_t;
 
 /**
  * @brief Initialize an arena allocator with the given initial size.
@@ -84,6 +102,28 @@ void mcp_arena_destroy(mcp_arena_t* arena);
  * @return 0 on success, -1 if arena is NULL.
  */
 int mcp_arena_get_stats(mcp_arena_t* arena, size_t* out_total_allocated, size_t* out_total_block_size, size_t* out_block_count);
+
+/**
+ * @brief Checks if a thread-local arena exists without creating one.
+ *
+ * This function is useful to determine if a thread-local arena has been
+ * initialized without triggering the creation of one if it doesn't exist.
+ *
+ * @return true if a thread-local arena exists, false otherwise
+ */
+bool mcp_arena_exists_current_thread(void);
+
+/**
+ * @brief Allocates memory from the thread-local arena if it exists.
+ *
+ * This function is similar to mcp_arena_alloc(NULL, size) but will not
+ * create a thread-local arena if one doesn't exist. Instead, it will
+ * return NULL.
+ *
+ * @param size Size of memory to allocate
+ * @return Pointer to allocated memory, or NULL if no thread-local arena exists
+ */
+void* mcp_arena_alloc_if_exists(size_t size);
 
 #ifdef __cplusplus
 }
