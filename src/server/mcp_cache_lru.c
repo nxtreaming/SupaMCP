@@ -91,7 +91,7 @@ mcp_resource_cache_t* mcp_cache_create(size_t capacity, time_t default_ttl_secon
     }
 
     // Create LRU list
-    cache->lru_list = mcp_list_create();
+    cache->lru_list = mcp_list_create(MCP_LIST_NOT_THREAD_SAFE);
     if (!cache->lru_list) {
         mcp_hashtable_destroy(cache->table);
         mcp_rwlock_free(cache->rwlock);

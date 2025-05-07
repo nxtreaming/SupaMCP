@@ -180,7 +180,7 @@ mcp_json_schema_cache_t* mcp_json_schema_cache_create(size_t capacity) {
     }
 
     // Create LRU list for cache eviction
-    cache->lru_list = mcp_list_create();
+    cache->lru_list = mcp_list_create(MCP_LIST_NOT_THREAD_SAFE);
     if (!cache->lru_list) {
         mcp_log_error("Failed to create LRU list");
         mcp_rwlock_destroy(cache->cache_lock);
