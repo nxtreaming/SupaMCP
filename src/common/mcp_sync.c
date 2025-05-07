@@ -61,11 +61,11 @@ void mcp_mutex_destroy(mcp_mutex_t* mutex) {
 
 int mcp_mutex_lock(mcp_mutex_t* mutex) {
     if (!mutex) {
-        return -1; // Or some error code
+        return -1;
     }
 #ifdef _WIN32
     EnterCriticalSection(&mutex->cs);
-    return 0; // EnterCriticalSection is void
+    return 0;
 #else
     return pthread_mutex_lock(&mutex->mutex);
 #endif
@@ -77,7 +77,7 @@ int mcp_mutex_unlock(mcp_mutex_t* mutex) {
     }
 #ifdef _WIN32
     LeaveCriticalSection(&mutex->cs);
-    return 0; // LeaveCriticalSection is void
+    return 0;
 #else
     return pthread_mutex_unlock(&mutex->mutex);
 #endif
@@ -121,9 +121,9 @@ int mcp_cond_wait(mcp_cond_t* cond, mcp_mutex_t* mutex) {
 #ifdef _WIN32
     // SleepConditionVariableCS returns TRUE on success, FALSE on failure.
     if (!SleepConditionVariableCS(&cond->cv, &mutex->cs, INFINITE)) {
-        return -1; // Indicate error
+        return -1;
     }
-    return 0; // Success
+    return 0;
 #else
     return pthread_cond_wait(&cond->cond, &mutex->mutex);
 #endif
@@ -138,17 +138,18 @@ int mcp_cond_timedwait(mcp_cond_t* cond, mcp_mutex_t* mutex, uint32_t timeout_ms
     // SleepConditionVariableCS returns TRUE on success, FALSE on failure/timeout.
     if (!SleepConditionVariableCS(&cond->cv, &mutex->cs, timeout_ms)) {
         if (GetLastError() == ERROR_TIMEOUT) {
-            return -2; // Indicate timeout
+            return -2;
         }
-        return -1; // Indicate other error
+        return -1;
     }
-    return 0; // Success
+    return 0;
 #else
     struct timespec ts;
     struct timeval tv;
 
     // Get current time
-    gettimeofday(&tv, NULL); // Using gettimeofday as clock_gettime might not be available everywhere (e.g., older macOS)
+    // Using gettimeofday as clock_gettime might not be available everywhere (e.g., older macOS)
+    gettimeofday(&tv, NULL);
 
     // Calculate absolute timeout time
     uint64_t nsec = (uint64_t)tv.tv_usec * 1000 + (uint64_t)(timeout_ms % 1000) * 1000000;
@@ -157,11 +158,11 @@ int mcp_cond_timedwait(mcp_cond_t* cond, mcp_mutex_t* mutex, uint32_t timeout_ms
 
     int ret = pthread_cond_timedwait(&cond->cond, &mutex->mutex, &ts);
     if (ret == ETIMEDOUT) {
-        return -2; // Indicate timeout
+        return -2;
     } else if (ret != 0) {
-        return -1; // Indicate other error
+        return -1;
     }
-    return 0; // Success
+    return 0;
 #endif
 }
 
@@ -171,7 +172,7 @@ int mcp_cond_signal(mcp_cond_t* cond) {
     }
 #ifdef _WIN32
     WakeConditionVariable(&cond->cv);
-    return 0; // WakeConditionVariable is void
+    return 0;
 #else
     return pthread_cond_signal(&cond->cond);
 #endif
@@ -183,7 +184,7 @@ int mcp_cond_broadcast(mcp_cond_t* cond) {
     }
 #ifdef _WIN32
     WakeAllConditionVariable(&cond->cv);
-    return 0; // WakeAllConditionVariable is void
+    return 0;
 #else
     return pthread_cond_broadcast(&cond->cond);
 #endif
@@ -208,7 +209,7 @@ int mcp_thread_create(mcp_thread_t* thread_handle, mcp_thread_func_t start_routi
     pthread_t tid;
     int ret = pthread_create(&tid, NULL, start_routine, arg);
     if (ret != 0) {
-        *thread_handle = 0; // Or some invalid value
+        *thread_handle = 0;
         return -1;
     }
     *thread_handle = tid;
@@ -225,7 +226,7 @@ int mcp_thread_join(mcp_thread_t thread_handle, void** retval) {
     }
     // Close the handle after joining
     CloseHandle((HANDLE)thread_handle);
-    if (retval) *retval = NULL; // Indicate return value retrieval not supported
+    if (retval) *retval = NULL;
     return 0;
 #else
     return pthread_join((pthread_t)thread_handle, retval);
@@ -237,8 +238,10 @@ int mcp_thread_join(mcp_thread_t thread_handle, void** retval) {
  */
 void mcp_thread_yield(void) {
 #ifdef _WIN32
-    SwitchToThread(); // Allows another ready thread on the same processor to run
+    // Allows another ready thread on the same processor to run
+    SwitchToThread();
 #else
-    sched_yield();    // Yields processor to another thread
+    // Yields processor to another thread
+    sched_yield();
 #endif
 }
