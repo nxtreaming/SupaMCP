@@ -763,6 +763,8 @@ static void* thread_pool_worker(void* arg) {
     work_stealing_deque_t* my_deque = &pool->deques[my_index];
     mcp_task_t task;
     unsigned int steal_attempts = 0; // Counter for steal attempts
+    size_t last_victim_index = (my_index + 1) % pool->thread_count; // Cache last successful victim
+    unsigned int scan_interval = 0; // Counter to control full queue scan frequency
 
     // Mark this worker as the owner of its argument
     pool->worker_args[my_index] = worker_data;
@@ -825,17 +827,62 @@ static void* thread_pool_worker(void* arg) {
             // Otherwise continue trying to steal and process remaining tasks
         }
 
-        // 3. Try to steal from another random deque
+        // 3. Try to steal using an optimized strategy
         if (pool->thread_count > 1) {
-            // Simple random victim selection
-            size_t victim_index = rand() % pool->thread_count;
-            if (victim_index == my_index) {
-                victim_index = (victim_index + 1) % pool->thread_count;
+            size_t victim_index = my_index; // Default to own index (will be changed)
+
+            // Increment scan interval counter
+            scan_interval++;
+
+            // Every 8 attempts, do a full scan to find the deque with most tasks
+            // This balances between quick targeted stealing and thorough load balancing
+            if (scan_interval >= 8) {
+                scan_interval = 0;
+                size_t max_tasks = 0;
+
+                // Full scan of all deques
+                for (size_t i = 0; i < pool->thread_count; i++) {
+                    if (i == my_index) continue; // Skip own deque
+
+                    size_t bottom = load_size(&pool->deques[i].bottom);
+                    size_t top = load_size(&pool->deques[i].top);
+                    size_t tasks = (bottom > top) ? (bottom - top) : 0;
+
+                    if (tasks > max_tasks) {
+                        max_tasks = tasks;
+                        victim_index = i;
+                    }
+                }
+
+                // If we found a deque with tasks, update the last victim index
+                if (max_tasks > 0) {
+                    last_victim_index = victim_index;
+                }
+                // If no tasks found, we'll try the last successful victim or random
+            } else {
+                // First try the last successful victim
+                size_t bottom = load_size(&pool->deques[last_victim_index].bottom);
+                size_t top = load_size(&pool->deques[last_victim_index].top);
+
+                // If last victim has no tasks, try a random victim
+                if (bottom <= top) {
+                    // Try a random victim, but not ourselves
+                    do {
+                        victim_index = rand() % pool->thread_count;
+                    } while (victim_index == my_index);
+                } else {
+                    // Last victim still has tasks
+                    victim_index = last_victim_index;
+                }
             }
+
             work_stealing_deque_t* victim_deque = &pool->deques[victim_index];
 
             if (deque_steal_top(victim_deque, &task)) {
                 steal_attempts = 0;
+
+                // Update last successful victim index
+                last_victim_index = victim_index;
 
                 // Mark worker as active
                 pool->worker_status[my_index] = 1;
