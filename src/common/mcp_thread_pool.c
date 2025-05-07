@@ -24,14 +24,33 @@
 /**
  * @brief Lock-free work-stealing deque structure (Chase-Lev style inspired).
  * Simplified: Assumes single producer (owner thread pushes/pops bottom), multiple consumers (thieves steal top).
+ *
+ * This structure is carefully designed to avoid false sharing:
+ * - top is accessed by multiple thieves (readers) and occasionally by the owner
+ * - bottom is primarily accessed by the owner (writer) and occasionally by thieves
+ * - Each field is placed on its own cache line to prevent false sharing
  */
 typedef struct {
+    // Top index - accessed by multiple thieves
     MCP_CACHE_ALIGNED volatile size_t top;    /**< Index for stealing (incremented by thieves). */
+
+    // Padding to ensure top and bottom are on different cache lines
+    char pad1[MCP_CACHE_LINE_SIZE - sizeof(size_t)];
+
+    // Bottom index - accessed primarily by owner
     MCP_CACHE_ALIGNED volatile size_t bottom; /**< Index for adding/removing by owner (incremented/decremented by owner). */
+
+    // Padding to separate bottom from other fields
+    char pad2[MCP_CACHE_LINE_SIZE - sizeof(size_t)];
+
     // Capacity must be power of 2
-    size_t capacity_mask;                     /**< Mask for circular buffer indexing (capacity - 1). */
+    MCP_CACHE_ALIGNED size_t capacity_mask;   /**< Mask for circular buffer indexing (capacity - 1). */
+
+    // Buffer pointer - aligned to cache line
     MCP_CACHE_ALIGNED mcp_task_t* buffer;     /**< Circular buffer for tasks. */
-    // Padding might be needed between top/bottom/buffer depending on layout and access patterns
+
+    // Final padding to ensure no false sharing with adjacent structures
+    char pad3[MCP_CACHE_LINE_SIZE - sizeof(size_t) - sizeof(mcp_task_t*)];
 } work_stealing_deque_t;
 
 #ifdef _MSC_VER
@@ -53,27 +72,49 @@ typedef struct {
 #endif
 /**
  * @brief Internal structure for the thread pool using work-stealing deques.
+ *
+ * This structure is carefully designed to avoid false sharing between frequently accessed fields.
+ * Fields are grouped by access patterns and separated by cache line padding.
  */
 struct mcp_thread_pool {
+    // Group 1: Synchronization primitives (rarely modified after initialization)
     mcp_rwlock_t* rwlock;       /**< Read-write lock for thread pool state. */
     mcp_mutex_t* cond_mutex;    /**< Mutex for condition variable (cannot use rwlock with condition variables). */
     mcp_cond_t* notify;         /**< Condition variable to signal waiting threads (mainly for shutdown). */
+
+    // Group 2: Thread management (rarely modified after initialization)
     mcp_thread_t* threads;      /**< Array of worker thread handles. */
-    work_stealing_deque_t* deques; /**< Array of work-stealing deques, one per thread. */
     worker_arg_t** worker_args; /**< Array of worker thread arguments for cleanup. */
     size_t thread_count;        /**< Number of worker threads. */
-    volatile int shutdown_flag; /**< Flag indicating if the pool is shutting down (0=no, 1=immediate, 2=graceful). */
     int started;                /**< Number of threads successfully started. */
+
+    // Group 3: Deque management (rarely modified after initialization)
+    work_stealing_deque_t* deques; /**< Array of work-stealing deques, one per thread. */
     size_t deque_capacity;      /**< Capacity of each individual deque. */
-    volatile size_t next_submit_deque; /**< Index for round-robin task submission. */
 
-    // Statistics
+    // Group 4: Shutdown flag (occasionally modified, frequently read)
+    MCP_CACHE_ALIGNED volatile int shutdown_flag; /**< Flag indicating if the pool is shutting down (0=no, 1=immediate, 2=graceful). */
+    char pad1[MCP_CACHE_LINE_SIZE - sizeof(int)]; /**< Padding to separate shutdown_flag from next_submit_deque */
+
+    // Group 5: Task submission counter (frequently modified by submitters)
+    MCP_CACHE_ALIGNED volatile size_t next_submit_deque; /**< Index for round-robin task submission. */
+    char pad2[MCP_CACHE_LINE_SIZE - sizeof(size_t)]; /**< Padding to separate next_submit_deque from statistics */
+
+    // Group 6: Statistics - each on its own cache line to prevent false sharing
+    // These are frequently updated by different threads
     MCP_CACHE_ALIGNED volatile size_t tasks_submitted;  /**< Total number of tasks submitted. */
-    MCP_CACHE_ALIGNED volatile size_t tasks_completed;  /**< Total number of tasks completed. */
-    MCP_CACHE_ALIGNED volatile size_t tasks_failed;     /**< Total number of tasks that failed to be submitted. */
-    MCP_CACHE_ALIGNED volatile size_t active_tasks;     /**< Number of tasks currently being processed. */
+    char pad3[MCP_CACHE_LINE_SIZE - sizeof(size_t)];
 
-    // Worker state tracking
+    MCP_CACHE_ALIGNED volatile size_t tasks_completed;  /**< Total number of tasks completed. */
+    char pad4[MCP_CACHE_LINE_SIZE - sizeof(size_t)];
+
+    MCP_CACHE_ALIGNED volatile size_t tasks_failed;     /**< Total number of tasks that failed to be submitted. */
+    char pad5[MCP_CACHE_LINE_SIZE - sizeof(size_t)];
+
+    MCP_CACHE_ALIGNED volatile size_t active_tasks;     /**< Number of tasks currently being processed. */
+    char pad6[MCP_CACHE_LINE_SIZE - sizeof(size_t)];
+
+    // Group 7: Worker state tracking arrays (accessed by different threads)
     MCP_CACHE_ALIGNED volatile int* worker_status;      /**< Status of each worker thread (0=idle, 1=active). */
     MCP_CACHE_ALIGNED volatile size_t* tasks_stolen;    /**< Number of tasks stolen by each worker. */
     MCP_CACHE_ALIGNED volatile size_t* tasks_executed;  /**< Number of tasks executed by each worker. */
@@ -757,49 +798,75 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
  * @brief The worker thread function using work-stealing deques.
  */
 static void* thread_pool_worker(void* arg) {
-    worker_arg_t* worker_data = (worker_arg_t*)arg;
-    mcp_thread_pool_t* pool = worker_data->pool;
-    size_t my_index = worker_data->worker_index;
-    work_stealing_deque_t* my_deque = &pool->deques[my_index];
-    mcp_task_t task;
-    unsigned int steal_attempts = 0; // Counter for steal attempts
-    size_t last_victim_index = (my_index + 1) % pool->thread_count; // Cache last successful victim
-    unsigned int scan_interval = 0; // Counter to control full queue scan frequency
-    unsigned int backoff_shift = 0; // For exponential backoff calculation
+    // Thread-local data structure with cache line alignment to prevent false sharing
+    // between different worker threads' local variables
+#ifdef _MSC_VER
+#   pragma warning(push)
+#   pragma warning(disable : 4324) // Disable warning for structure padding
+#endif
+    struct MCP_CACHE_ALIGNED {
+        worker_arg_t* worker_data;
+        mcp_thread_pool_t* pool;
+        size_t my_index;
+        work_stealing_deque_t* my_deque;
+        mcp_task_t task;
+        unsigned int steal_attempts;
+        size_t last_victim_index;
+        unsigned int scan_interval;
+        unsigned int backoff_shift;
+        // Padding to ensure this structure occupies complete cache lines
+        char padding[MCP_CACHE_LINE_SIZE - (
+            sizeof(worker_arg_t*) + sizeof(mcp_thread_pool_t*) + sizeof(size_t) +
+            sizeof(work_stealing_deque_t*) + sizeof(mcp_task_t) + sizeof(unsigned int) * 3 +
+            sizeof(size_t)) % MCP_CACHE_LINE_SIZE];
+    } worker_locals;
+#ifdef _MSC_VER
+#   pragma warning(pop)
+#endif
+
+    // Initialize worker locals
+    worker_locals.worker_data = (worker_arg_t*)arg;
+    worker_locals.pool = worker_locals.worker_data->pool;
+    worker_locals.my_index = worker_locals.worker_data->worker_index;
+    worker_locals.my_deque = &worker_locals.pool->deques[worker_locals.my_index];
+    worker_locals.steal_attempts = 0;
+    worker_locals.last_victim_index = (worker_locals.my_index + 1) % worker_locals.pool->thread_count;
+    worker_locals.scan_interval = 0;
+    worker_locals.backoff_shift = 0;
 
     // Mark this worker as the owner of its argument
-    pool->worker_args[my_index] = worker_data;
+    worker_locals.pool->worker_args[worker_locals.my_index] = worker_locals.worker_data;
 
     while (1) {
         // 1. Try to pop from own deque
-        if (deque_pop_bottom(my_deque, &task)) {
-            steal_attempts = 0;
-            backoff_shift = 0; // Reset exponential backoff
+        if (deque_pop_bottom(worker_locals.my_deque, &worker_locals.task)) {
+            worker_locals.steal_attempts = 0;
+            worker_locals.backoff_shift = 0; // Reset exponential backoff
 
             // Mark worker as active
-            pool->worker_status[my_index] = 1;
-            fetch_add_size(&pool->active_tasks, 1);
+            worker_locals.pool->worker_status[worker_locals.my_index] = 1;
+            fetch_add_size(&worker_locals.pool->active_tasks, 1);
 
             PROFILE_START("thread_pool_task_execution");
-            (*(task.function))(task.argument);
+            (*(worker_locals.task.function))(worker_locals.task.argument);
             PROFILE_END("thread_pool_task_execution");
 
             // Update statistics
-            fetch_add_size(&pool->tasks_completed, 1);
-            fetch_add_size(&pool->tasks_executed[my_index], 1);
-            fetch_add_size(&pool->active_tasks, (size_t)-1); // Decrement
+            fetch_add_size(&worker_locals.pool->tasks_completed, 1);
+            fetch_add_size(&worker_locals.pool->tasks_executed[worker_locals.my_index], 1);
+            fetch_add_size(&worker_locals.pool->active_tasks, (size_t)-1); // Decrement
 
             // Mark worker as idle
-            pool->worker_status[my_index] = 0;
+            worker_locals.pool->worker_status[worker_locals.my_index] = 0;
 
             continue;
         }
 
         // 2. Own deque is empty, check for shutdown
         // Use read lock to check shutdown state - allows multiple threads to check concurrently
-        mcp_rwlock_read_lock(pool->rwlock);
-        int shutdown_status = pool->shutdown_flag;
-        mcp_rwlock_read_unlock(pool->rwlock);
+        mcp_rwlock_read_lock(worker_locals.pool->rwlock);
+        int shutdown_status = worker_locals.pool->shutdown_flag;
+        mcp_rwlock_read_unlock(worker_locals.pool->rwlock);
 
         if (shutdown_status != 0) {
             // For immediate shutdown (1), exit right away
@@ -811,9 +878,9 @@ static void* thread_pool_worker(void* arg) {
             bool all_empty = true;
 
             // Check all deques
-            for (size_t i = 0; i < pool->thread_count; i++) {
-                size_t bottom = load_size(&pool->deques[i].bottom);
-                size_t top = load_size(&pool->deques[i].top);
+            for (size_t i = 0; i < worker_locals.pool->thread_count; i++) {
+                size_t bottom = load_size(&worker_locals.pool->deques[i].bottom);
+                size_t top = load_size(&worker_locals.pool->deques[i].top);
 
                 if (bottom > top) {
                     all_empty = false;
@@ -822,7 +889,7 @@ static void* thread_pool_worker(void* arg) {
             }
 
             // If all deques are empty and no active tasks, we can exit
-            if (all_empty && load_size(&pool->active_tasks) == 0) {
+            if (all_empty && load_size(&worker_locals.pool->active_tasks) == 0) {
                 break; // Exit the loop and clean up
             }
 
@@ -830,24 +897,24 @@ static void* thread_pool_worker(void* arg) {
         }
 
         // 3. Try to steal using an optimized strategy
-        if (pool->thread_count > 1) {
-            size_t victim_index = my_index; // Default to own index (will be changed)
+        if (worker_locals.pool->thread_count > 1) {
+            size_t victim_index = worker_locals.my_index; // Default to own index (will be changed)
 
             // Increment scan interval counter
-            scan_interval++;
+            worker_locals.scan_interval++;
 
             // Every 8 attempts, do a full scan to find the deque with most tasks
             // This balances between quick targeted stealing and thorough load balancing
-            if (scan_interval >= 8) {
-                scan_interval = 0;
+            if (worker_locals.scan_interval >= 8) {
+                worker_locals.scan_interval = 0;
                 size_t max_tasks = 0;
 
                 // Full scan of all deques
-                for (size_t i = 0; i < pool->thread_count; i++) {
-                    if (i == my_index) continue; // Skip own deque
+                for (size_t i = 0; i < worker_locals.pool->thread_count; i++) {
+                    if (i == worker_locals.my_index) continue; // Skip own deque
 
-                    size_t bottom = load_size(&pool->deques[i].bottom);
-                    size_t top = load_size(&pool->deques[i].top);
+                    size_t bottom = load_size(&worker_locals.pool->deques[i].bottom);
+                    size_t top = load_size(&worker_locals.pool->deques[i].top);
                     size_t tasks = (bottom > top) ? (bottom - top) : 0;
 
                     if (tasks > max_tasks) {
@@ -858,68 +925,68 @@ static void* thread_pool_worker(void* arg) {
 
                 // If we found a deque with tasks, update the last victim index
                 if (max_tasks > 0) {
-                    last_victim_index = victim_index;
+                    worker_locals.last_victim_index = victim_index;
                 }
                 // If no tasks found, we'll try the last successful victim or random
             } else {
                 // First try the last successful victim
-                size_t bottom = load_size(&pool->deques[last_victim_index].bottom);
-                size_t top = load_size(&pool->deques[last_victim_index].top);
+                size_t bottom = load_size(&worker_locals.pool->deques[worker_locals.last_victim_index].bottom);
+                size_t top = load_size(&worker_locals.pool->deques[worker_locals.last_victim_index].top);
 
                 // If last victim has no tasks, try a random victim
                 if (bottom <= top) {
                     // Try a random victim, but not ourselves
                     do {
-                        victim_index = rand() % pool->thread_count;
-                    } while (victim_index == my_index);
+                        victim_index = rand() % worker_locals.pool->thread_count;
+                    } while (victim_index == worker_locals.my_index);
                 } else {
                     // Last victim still has tasks
-                    victim_index = last_victim_index;
+                    victim_index = worker_locals.last_victim_index;
                 }
             }
 
-            work_stealing_deque_t* victim_deque = &pool->deques[victim_index];
+            work_stealing_deque_t* victim_deque = &worker_locals.pool->deques[victim_index];
 
-            if (deque_steal_top(victim_deque, &task)) {
-                steal_attempts = 0;
-                backoff_shift = 0; // Reset exponential backoff
+            if (deque_steal_top(victim_deque, &worker_locals.task)) {
+                worker_locals.steal_attempts = 0;
+                worker_locals.backoff_shift = 0; // Reset exponential backoff
 
                 // Update last successful victim index
-                last_victim_index = victim_index;
+                worker_locals.last_victim_index = victim_index;
 
                 // Mark worker as active
-                pool->worker_status[my_index] = 1;
-                fetch_add_size(&pool->active_tasks, 1);
+                worker_locals.pool->worker_status[worker_locals.my_index] = 1;
+                fetch_add_size(&worker_locals.pool->active_tasks, 1);
 
                 PROFILE_START("thread_pool_task_execution_steal");
-                (*(task.function))(task.argument);
+                (*(worker_locals.task.function))(worker_locals.task.argument);
                 PROFILE_END("thread_pool_task_execution_steal");
 
                 // Update statistics
-                fetch_add_size(&pool->tasks_completed, 1);
-                fetch_add_size(&pool->tasks_stolen[my_index], 1);
-                fetch_add_size(&pool->active_tasks, (size_t)-1); // Decrement
+                fetch_add_size(&worker_locals.pool->tasks_completed, 1);
+                fetch_add_size(&worker_locals.pool->tasks_stolen[worker_locals.my_index], 1);
+                fetch_add_size(&worker_locals.pool->active_tasks, (size_t)-1); // Decrement
 
                 // Mark worker as idle
-                pool->worker_status[my_index] = 0;
+                worker_locals.pool->worker_status[worker_locals.my_index] = 0;
 
                 continue;
             }
         }
 
         // 4. Failed to pop and failed to steal
-        steal_attempts++;
+        worker_locals.steal_attempts++;
 
         // Exponential backoff strategy
-        if (steal_attempts <= 3) {
+        if (worker_locals.steal_attempts <= 3) {
             // For first few attempts, just yield to give other threads a chance
             mcp_thread_yield();
             // Reset backoff shift for next time
-            backoff_shift = 0;
-        } else if (steal_attempts <= 10) {
+            worker_locals.backoff_shift = 0;
+        } else if (worker_locals.steal_attempts <= 10) {
             // For attempts 4-10, use exponential backoff with yield
             // Calculate backoff time: 2^backoff_shift milliseconds (1, 2, 4, 8, 16, 32, 64)
-            unsigned int backoff_time = 1u << backoff_shift;
+            unsigned int backoff_time = 1u << worker_locals.backoff_shift;
 
             // Yield a number of times proportional to backoff time
             for (unsigned int i = 0; i < backoff_time && i < 20; i++) {
@@ -927,34 +994,34 @@ static void* thread_pool_worker(void* arg) {
             }
 
             // Increase shift for next backoff, max 6 (2^6 = 64ms equivalent of yields)
-            if (backoff_shift < 6) {
-                backoff_shift++;
+            if (worker_locals.backoff_shift < 6) {
+                worker_locals.backoff_shift++;
             }
         } else {
             // For attempts > 10, use condition variable with exponential timeout
             // Reset backoff shift if it's too large
-            if (backoff_shift > 8) {
-                backoff_shift = 3; // Start from 8ms again
+            if (worker_locals.backoff_shift > 8) {
+                worker_locals.backoff_shift = 3; // Start from 8ms again
             }
 
             // Calculate timeout: 2^backoff_shift milliseconds, capped at 200ms
-            unsigned int timeout_ms = 1u << backoff_shift;
+            unsigned int timeout_ms = 1u << worker_locals.backoff_shift;
             if (timeout_ms > 200) timeout_ms = 200;
 
             // Increase shift for next backoff, max 8 (2^8 = 256ms, but capped at 200ms)
-            backoff_shift++;
+            worker_locals.backoff_shift++;
 
             // Longer wait using mutex/condvar for shutdown signal
-            if (mcp_mutex_lock(pool->cond_mutex) == 0) {
+            if (mcp_mutex_lock(worker_locals.pool->cond_mutex) == 0) {
                 // Use read lock to check shutdown state - allows multiple threads to check concurrently
-                mcp_rwlock_read_lock(pool->rwlock);
-                int current_shutdown = pool->shutdown_flag;
-                mcp_rwlock_read_unlock(pool->rwlock);
+                mcp_rwlock_read_lock(worker_locals.pool->rwlock);
+                int current_shutdown = worker_locals.pool->shutdown_flag;
+                mcp_rwlock_read_unlock(worker_locals.pool->rwlock);
 
                 if (current_shutdown != 0) {
                     // For immediate shutdown (1), exit right away
                     if (current_shutdown == 1) {
-                        mcp_mutex_unlock(pool->cond_mutex);
+                        mcp_mutex_unlock(worker_locals.pool->cond_mutex);
                         break; // Exit the loop and clean up
                     }
 
@@ -962,9 +1029,9 @@ static void* thread_pool_worker(void* arg) {
                     bool all_empty = true;
 
                     // Check all deques
-                    for (size_t i = 0; i < pool->thread_count; i++) {
-                        size_t bottom = load_size(&pool->deques[i].bottom);
-                        size_t top = load_size(&pool->deques[i].top);
+                    for (size_t i = 0; i < worker_locals.pool->thread_count; i++) {
+                        size_t bottom = load_size(&worker_locals.pool->deques[i].bottom);
+                        size_t top = load_size(&worker_locals.pool->deques[i].top);
 
                         if (bottom > top) {
                             all_empty = false;
@@ -973,8 +1040,8 @@ static void* thread_pool_worker(void* arg) {
                     }
 
                     // If all deques are empty and no active tasks, we can exit
-                    if (all_empty && load_size(&pool->active_tasks) == 0) {
-                        mcp_mutex_unlock(pool->cond_mutex);
+                    if (all_empty && load_size(&worker_locals.pool->active_tasks) == 0) {
+                        mcp_mutex_unlock(worker_locals.pool->cond_mutex);
                         break; // Exit the loop and clean up
                     }
 
@@ -982,14 +1049,14 @@ static void* thread_pool_worker(void* arg) {
                 }
 
                 // Wait for a signal or timeout with exponential backoff
-                int wait_result = mcp_cond_timedwait(pool->notify, pool->cond_mutex, timeout_ms);
+                int wait_result = mcp_cond_timedwait(worker_locals.pool->notify, worker_locals.pool->cond_mutex, timeout_ms);
 
                 // If we timed out, check if there are tasks in any deque
                 if (wait_result == -2) { // -2 is timeout
                     bool found_tasks = false;
-                    for (size_t i = 0; i < pool->thread_count && !found_tasks; i++) {
-                        size_t bottom = load_size(&pool->deques[i].bottom);
-                        size_t top = load_size(&pool->deques[i].top);
+                    for (size_t i = 0; i < worker_locals.pool->thread_count && !found_tasks; i++) {
+                        size_t bottom = load_size(&worker_locals.pool->deques[i].bottom);
+                        size_t top = load_size(&worker_locals.pool->deques[i].top);
                         if (bottom > top) {
                             found_tasks = true;
                         }
@@ -998,30 +1065,30 @@ static void* thread_pool_worker(void* arg) {
                     // If we found tasks but timed out, there might be a missed signal
                     if (found_tasks) {
                         // Reset steal_attempts to try stealing again immediately
-                        steal_attempts = 0;
-                        backoff_shift = 0;
+                        worker_locals.steal_attempts = 0;
+                        worker_locals.backoff_shift = 0;
                     }
                 } else if (wait_result == 0) {
                     // If we were signaled, reset backoff
-                    backoff_shift = 0;
-                    steal_attempts = 0;
+                    worker_locals.backoff_shift = 0;
+                    worker_locals.steal_attempts = 0;
                 }
 
-                mcp_mutex_unlock(pool->cond_mutex);
+                mcp_mutex_unlock(worker_locals.pool->cond_mutex);
             }
 
             // If we've been trying for a very long time with no success,
             // occasionally reset the steal counter to avoid getting stuck in long backoffs
-            if (steal_attempts > 30) {
-                steal_attempts = 5;
-                backoff_shift = 0;
+            if (worker_locals.steal_attempts > 30) {
+                worker_locals.steal_attempts = 5;
+                worker_locals.backoff_shift = 0;
             }
         }
     } // End while(1)
 
     // Clean up worker argument
-    free(worker_data);
-    pool->worker_args[my_index] = NULL;
+    free(worker_locals.worker_data);
+    worker_locals.pool->worker_args[worker_locals.my_index] = NULL;
 
     return NULL;
 }
