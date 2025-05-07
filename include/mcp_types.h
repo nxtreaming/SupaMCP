@@ -4,20 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "mcp_cache_aligned.h"
 
 #ifdef __cplusplus
 extern "C" {
-#endif
-
-// --- Cache Line Alignment ---
-#ifndef CACHE_LINE_SIZE
-#define CACHE_LINE_SIZE 64 // Common cache line size
-#endif
-
-#ifdef _MSC_VER
-#define MCP_CACHE_ALIGNED __declspec(align(CACHE_LINE_SIZE))
-#else // GCC/Clang
-#define MCP_CACHE_ALIGNED __attribute__((aligned(CACHE_LINE_SIZE)))
 #endif
 
 // Forward declaration for object pool structure

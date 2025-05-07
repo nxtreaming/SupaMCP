@@ -1,8 +1,8 @@
+#include "mcp_cache_aligned.h"
 #include "mcp_thread_cache.h"
 #include "mcp_memory_pool.h"
 #include "mcp_memory_constants.h"
 #include "mcp_log.h"
-#include "mcp_types.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -70,13 +70,13 @@ typedef MCP_CACHE_ALIGNED struct {
     double shrink_threshold;                  // Hit ratio threshold for shrinking cache
 
     // Padding to ensure the structure size is a multiple of the cache line size
-    char padding[CACHE_LINE_SIZE - (
+    char padding[MCP_CACHE_LINE_SIZE - (
         sizeof(unsigned long) +               // thread_id
         3 * sizeof(void*[MAX_CACHE_SIZE]) +   // cache arrays
         13 * sizeof(size_t) +                 // counters and configuration
         2 * sizeof(bool) +                    // flags
         2 * sizeof(double)                    // thresholds
-    ) % CACHE_LINE_SIZE];
+    ) % MCP_CACHE_LINE_SIZE];
 } thread_cache_state_t;
 #ifdef _MSC_VER
 #   pragma warning(pop)

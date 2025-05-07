@@ -271,9 +271,9 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
         for (size_t i = 0; i < thread_count; ++i) {
             // Use aligned allocation if possible
 #ifdef  _WIN32
-            pool->deques[i].buffer = (mcp_task_t*)_aligned_malloc(sizeof(mcp_task_t) * pool->deque_capacity, CACHE_LINE_SIZE);
+            pool->deques[i].buffer = (mcp_task_t*)_aligned_malloc(sizeof(mcp_task_t) * pool->deque_capacity, MCP_CACHE_LINE_SIZE);
 #elif defined(__GNUC__) || defined(__clang__)
-            if (posix_memalign((void**)&pool->deques[i].buffer, CACHE_LINE_SIZE, sizeof(mcp_task_t) * pool->deque_capacity) != 0) {
+            if (posix_memalign((void**)&pool->deques[i].buffer, MCP_CACHE_LINE_SIZE, sizeof(mcp_task_t) * pool->deque_capacity) != 0) {
                 pool->deques[i].buffer = NULL;
             }
 #else
