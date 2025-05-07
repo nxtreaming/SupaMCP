@@ -4,7 +4,7 @@
 #   endif
 #endif
 
-#include "mcp_websocket_common.h"
+#include "internal/websocket_common.h"
 #include "mcp_log.h"
 #include <stdlib.h>
 #include <string.h>

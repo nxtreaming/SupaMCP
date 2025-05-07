@@ -1,5 +1,5 @@
-#ifndef MCP_WEBSOCKET_COMMON_H
-#define MCP_WEBSOCKET_COMMON_H
+#ifndef WEBSOCKET_COMMON_H
+#define WEBSOCKET_COMMON_H
 
 #include "mcp_transport.h"
 #include "mcp_sync.h"
@@ -123,4 +123,4 @@ const char* websocket_get_callback_reason_string(enum lws_callback_reasons reaso
 }
 #endif
 
-#endif // MCP_WEBSOCKET_COMMON_H
+#endif // WEBSOCKET_COMMON_H

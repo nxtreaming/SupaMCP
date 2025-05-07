@@ -5,7 +5,7 @@
 #endif
 
 #include "mcp_websocket_transport.h"
-#include "mcp_websocket_common.h"
+#include "internal/websocket_common.h"
 #include "internal/transport_internal.h"
 #include "internal/transport_interfaces.h"
 #include "mcp_log.h"
