@@ -2,7 +2,7 @@
 #include "mcp_log.h"
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>  // For snprintf
+#include <stdio.h>
 
 // Platform-specific includes for byte order conversion
 #ifdef _WIN32
@@ -35,7 +35,7 @@ static void handle_socket_error(int error_code, volatile bool* stop_flag, int re
         mcp_log_debug("mcp_framing_recv_message: Socket closed/reset during %s (error: %d)",
                      context_message, error_code);
     }
-#else // POSIX
+#else
     else if (error_code == ECONNRESET || error_code == ENOTCONN) {
         // Normal socket close during shutdown, log as debug
         mcp_log_debug("mcp_framing_recv_message: Socket closed/reset during %s (error: %d)",
@@ -85,12 +85,12 @@ int mcp_framing_send_message(socket_t sock, const char* message_data, uint32_t m
         iov[iovcnt].len = (ULONG)message_len;
         iovcnt++;
     }
-#else // POSIX
-    iov[iovcnt].iov_base = (char*)&net_len; // Cast needed for non-const base
+#else
+    iov[iovcnt].iov_base = (char*)&net_len;
     iov[iovcnt].iov_len = sizeof(net_len);
     iovcnt++;
     if (message_len > 0) {
-        iov[iovcnt].iov_base = (char*)message_data; // Cast needed for non-const base
+        iov[iovcnt].iov_base = (char*)message_data;
         iov[iovcnt].iov_len = message_len;
         iovcnt++;
     }
@@ -104,7 +104,7 @@ int mcp_framing_send_message(socket_t sock, const char* message_data, uint32_t m
         return -1;
     }
 
-    return 0; // Success
+    return 0;
 }
 
 int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* message_len_out,
@@ -146,7 +146,7 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
                       message_length_host, max_message_size);
         // TODO: Should we try to read and discard the oversized message?
         // For now, return error and let the caller handle the broken state.
-        return -1; // Invalid length
+        return -1;
     }
 
     // 4. Allocate Buffer for Message Body (+1 for potential null terminator)
@@ -155,7 +155,7 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     char* message_buf = (char*)malloc(message_length_host + 1);
     if (message_buf == NULL) {
         mcp_log_error("mcp_framing_recv_message: Failed to allocate buffer for message size %u", message_length_host);
-        return -1; // Allocation failure
+        return -1;
     }
 
     // 5. Read the Message Body
@@ -169,8 +169,9 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
 
         handle_socket_error(error_code, stop_flag, read_result, "reading message body", additional_info);
 
-        free(message_buf); // Clean up allocated buffer on error
-        return -1; // Error, connection closed, or aborted
+        free(message_buf);
+        // Error, connection closed, or aborted
+        return -1;
     }
 
     // Add null terminator for convenience, even though framing doesn't strictly require it
@@ -180,5 +181,5 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     *message_data_out = message_buf;
     *message_len_out = message_length_host;
 
-    return 0; // Success
+    return 0;
 }
