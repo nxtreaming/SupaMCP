@@ -26,6 +26,9 @@ typedef struct {
  * @brief Thread-local cache statistics
  */
 typedef struct {
+    // Thread identification
+    unsigned long thread_id;     /**< Thread identifier for debugging and analysis */
+
     // Cache occupancy
     size_t small_cache_count;    /**< Number of small blocks in thread-local cache */
     size_t medium_cache_count;   /**< Number of medium blocks in thread-local cache */
@@ -43,8 +46,10 @@ typedef struct {
     size_t misses_medium;        /**< Number of cache misses for medium blocks */
     size_t misses_large;         /**< Number of cache misses for large blocks */
     size_t misses_other;         /**< Number of cache misses for other block sizes */
+    size_t total_misses;         /**< Total number of cache misses (sum of all misses) */
+    size_t total_operations;     /**< Total number of operations (hits + misses) */
     size_t cache_flushes;        /**< Number of cache flushes */
-    double hit_ratio;           /**< Cache hit ratio (0.0-1.0) */
+    double hit_ratio;            /**< Cache hit ratio (0.0-1.0) */
 } mcp_thread_cache_stats_t;
 
 /**

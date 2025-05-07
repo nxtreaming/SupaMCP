@@ -5,6 +5,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
+
+#ifdef _MSC_VER
+#   pragma warning(push)
+#   pragma warning(disable : 4324) // Disable warning for structure padding
+#endif
 // Performance statistics for thread-local storage
 typedef MCP_CACHE_ALIGNED struct {
     unsigned long thread_id;        // Thread identifier for debugging and analysis
@@ -18,6 +28,9 @@ typedef MCP_CACHE_ALIGNED struct {
     // Padding to cache line size to reduce false sharing
     char padding[MCP_CACHE_LINE_SIZE - ((sizeof(unsigned long) + 7 * sizeof(size_t)) % MCP_CACHE_LINE_SIZE)];
 } mcp_thread_local_stats_t;
+#ifdef _MSC_VER
+#   pragma warning(pop)
+#endif
 
 // Thread-local storage for performance statistics
 #ifdef _WIN32
@@ -36,10 +49,8 @@ static unsigned long get_current_thread_id(void) {
 }
 
 #ifdef _WIN32
-#include <windows.h>
 static DWORD arena_tls_index = TLS_OUT_OF_INDEXES;
 #else
-#include <pthread.h>
 static pthread_key_t arena_key;
 static pthread_once_t key_once = PTHREAD_ONCE_INIT;
 #endif
