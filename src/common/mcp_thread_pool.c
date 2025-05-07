@@ -765,6 +765,7 @@ static void* thread_pool_worker(void* arg) {
     unsigned int steal_attempts = 0; // Counter for steal attempts
     size_t last_victim_index = (my_index + 1) % pool->thread_count; // Cache last successful victim
     unsigned int scan_interval = 0; // Counter to control full queue scan frequency
+    unsigned int backoff_shift = 0; // For exponential backoff calculation
 
     // Mark this worker as the owner of its argument
     pool->worker_args[my_index] = worker_data;
@@ -773,6 +774,7 @@ static void* thread_pool_worker(void* arg) {
         // 1. Try to pop from own deque
         if (deque_pop_bottom(my_deque, &task)) {
             steal_attempts = 0;
+            backoff_shift = 0; // Reset exponential backoff
 
             // Mark worker as active
             pool->worker_status[my_index] = 1;
@@ -880,6 +882,7 @@ static void* thread_pool_worker(void* arg) {
 
             if (deque_steal_top(victim_deque, &task)) {
                 steal_attempts = 0;
+                backoff_shift = 0; // Reset exponential backoff
 
                 // Update last successful victim index
                 last_victim_index = victim_index;
@@ -907,72 +910,112 @@ static void* thread_pool_worker(void* arg) {
         // 4. Failed to pop and failed to steal
         steal_attempts++;
 
-        // Backoff strategy
-        if (steal_attempts < 5) {
-             mcp_thread_yield();
+        // Exponential backoff strategy
+        if (steal_attempts <= 3) {
+            // For first few attempts, just yield to give other threads a chance
+            mcp_thread_yield();
+            // Reset backoff shift for next time
+            backoff_shift = 0;
+        } else if (steal_attempts <= 10) {
+            // For attempts 4-10, use exponential backoff with yield
+            // Calculate backoff time: 2^backoff_shift milliseconds (1, 2, 4, 8, 16, 32, 64)
+            unsigned int backoff_time = 1u << backoff_shift;
+
+            // Yield a number of times proportional to backoff time
+            for (unsigned int i = 0; i < backoff_time && i < 20; i++) {
+                mcp_thread_yield();
+            }
+
+            // Increase shift for next backoff, max 6 (2^6 = 64ms equivalent of yields)
+            if (backoff_shift < 6) {
+                backoff_shift++;
+            }
         } else {
-             // Longer wait using mutex/condvar for shutdown signal
-             if (mcp_mutex_lock(pool->cond_mutex) == 0) {
-                 // Use read lock to check shutdown state - allows multiple threads to check concurrently
-                 mcp_rwlock_read_lock(pool->rwlock);
-                 int current_shutdown = pool->shutdown_flag;
-                 mcp_rwlock_read_unlock(pool->rwlock);
+            // For attempts > 10, use condition variable with exponential timeout
+            // Reset backoff shift if it's too large
+            if (backoff_shift > 8) {
+                backoff_shift = 3; // Start from 8ms again
+            }
 
-                 if (current_shutdown != 0) {
-                     // For immediate shutdown (1), exit right away
-                     if (current_shutdown == 1) {
-                         mcp_mutex_unlock(pool->cond_mutex);
-                         break; // Exit the loop and clean up
-                     }
+            // Calculate timeout: 2^backoff_shift milliseconds, capped at 200ms
+            unsigned int timeout_ms = 1u << backoff_shift;
+            if (timeout_ms > 200) timeout_ms = 200;
 
-                     // For graceful shutdown (2), check if all deques are empty
-                     bool all_empty = true;
+            // Increase shift for next backoff, max 8 (2^8 = 256ms, but capped at 200ms)
+            backoff_shift++;
 
-                     // Check all deques
-                     for (size_t i = 0; i < pool->thread_count; i++) {
-                         size_t bottom = load_size(&pool->deques[i].bottom);
-                         size_t top = load_size(&pool->deques[i].top);
+            // Longer wait using mutex/condvar for shutdown signal
+            if (mcp_mutex_lock(pool->cond_mutex) == 0) {
+                // Use read lock to check shutdown state - allows multiple threads to check concurrently
+                mcp_rwlock_read_lock(pool->rwlock);
+                int current_shutdown = pool->shutdown_flag;
+                mcp_rwlock_read_unlock(pool->rwlock);
 
-                         if (bottom > top) {
-                             all_empty = false;
-                             break;
-                         }
-                     }
+                if (current_shutdown != 0) {
+                    // For immediate shutdown (1), exit right away
+                    if (current_shutdown == 1) {
+                        mcp_mutex_unlock(pool->cond_mutex);
+                        break; // Exit the loop and clean up
+                    }
 
-                     // If all deques are empty and no active tasks, we can exit
-                     if (all_empty && load_size(&pool->active_tasks) == 0) {
-                         mcp_mutex_unlock(pool->cond_mutex);
-                         break; // Exit the loop and clean up
-                     }
+                    // For graceful shutdown (2), check if all deques are empty
+                    bool all_empty = true;
 
-                     // Otherwise continue waiting for tasks
-                 }
+                    // Check all deques
+                    for (size_t i = 0; i < pool->thread_count; i++) {
+                        size_t bottom = load_size(&pool->deques[i].bottom);
+                        size_t top = load_size(&pool->deques[i].top);
 
-                 // Wait for a signal or timeout
-                 // Use a shorter timeout to prevent deadlock if signal is missed
-                 int wait_result = mcp_cond_timedwait(pool->notify, pool->cond_mutex, 50); // Wait 50ms
+                        if (bottom > top) {
+                            all_empty = false;
+                            break;
+                        }
+                    }
 
-                 // If we timed out, check if there are tasks in any deque
-                 if (wait_result == -2) { // -2 is timeout
-                     bool found_tasks = false;
-                     for (size_t i = 0; i < pool->thread_count && !found_tasks; i++) {
-                         size_t bottom = load_size(&pool->deques[i].bottom);
-                         size_t top = load_size(&pool->deques[i].top);
-                         if (bottom > top) {
-                             found_tasks = true;
-                         }
-                     }
+                    // If all deques are empty and no active tasks, we can exit
+                    if (all_empty && load_size(&pool->active_tasks) == 0) {
+                        mcp_mutex_unlock(pool->cond_mutex);
+                        break; // Exit the loop and clean up
+                    }
 
-                     // If we found tasks but timed out, there might be a missed signal
-                     // Reset steal_attempts to try stealing again immediately
-                     if (found_tasks) {
-                         steal_attempts = 0;
-                     }
-                 }
+                    // Otherwise continue waiting for tasks
+                }
 
-                 mcp_mutex_unlock(pool->cond_mutex);
-             }
-             steal_attempts = 0;
+                // Wait for a signal or timeout with exponential backoff
+                int wait_result = mcp_cond_timedwait(pool->notify, pool->cond_mutex, timeout_ms);
+
+                // If we timed out, check if there are tasks in any deque
+                if (wait_result == -2) { // -2 is timeout
+                    bool found_tasks = false;
+                    for (size_t i = 0; i < pool->thread_count && !found_tasks; i++) {
+                        size_t bottom = load_size(&pool->deques[i].bottom);
+                        size_t top = load_size(&pool->deques[i].top);
+                        if (bottom > top) {
+                            found_tasks = true;
+                        }
+                    }
+
+                    // If we found tasks but timed out, there might be a missed signal
+                    if (found_tasks) {
+                        // Reset steal_attempts to try stealing again immediately
+                        steal_attempts = 0;
+                        backoff_shift = 0;
+                    }
+                } else if (wait_result == 0) {
+                    // If we were signaled, reset backoff
+                    backoff_shift = 0;
+                    steal_attempts = 0;
+                }
+
+                mcp_mutex_unlock(pool->cond_mutex);
+            }
+
+            // If we've been trying for a very long time with no success,
+            // occasionally reset the steal counter to avoid getting stuck in long backoffs
+            if (steal_attempts > 30) {
+                steal_attempts = 5;
+                backoff_shift = 0;
+            }
         }
     } // End while(1)
 
