@@ -55,6 +55,19 @@ void mcp_buffer_pool_release(mcp_buffer_pool_t* pool, void* buffer);
  */
 size_t mcp_buffer_pool_get_buffer_size(const mcp_buffer_pool_t* pool);
 
+/**
+ * @brief Gets statistics about the buffer pool.
+ *
+ * @param pool Pointer to the buffer pool.
+ * @param total_blocks [out] If not NULL, will be set to the total number of blocks in the pool.
+ * @param allocated_blocks [out] If not NULL, will be set to the number of currently allocated blocks.
+ * @param free_blocks [out] If not NULL, will be set to the number of free blocks available.
+ */
+void mcp_buffer_pool_get_stats(const mcp_buffer_pool_t* pool,
+                              size_t* total_blocks,
+                              size_t* allocated_blocks,
+                              size_t* free_blocks);
+
 #ifdef __cplusplus
 }
 #endif
