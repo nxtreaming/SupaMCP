@@ -1,10 +1,31 @@
 #include "mcp_hashtable.h"
 #include "mcp_types.h"
 #include "mcp_string_utils.h"
+#include "mcp_memory_pool.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+
+// Helper function to allocate memory from pool if available, or fallback to malloc
+static void* hashtable_alloc(size_t size) {
+    if (mcp_memory_pool_system_is_initialized()) {
+        return mcp_pool_alloc(size);
+    } else {
+        return malloc(size);
+    }
+}
+
+// Helper function to free memory allocated with hashtable_alloc
+static void hashtable_free(void* ptr) {
+    if (!ptr) return;
+
+    if (mcp_memory_pool_system_is_initialized()) {
+        mcp_pool_free(ptr);
+    } else {
+        free(ptr);
+    }
+}
 
 // Helper function to check if a number is a power of 2
 static bool is_power_of_two(size_t n) {
@@ -32,11 +53,14 @@ static int mcp_hashtable_resize(mcp_hashtable_t* table, size_t new_capacity) {
     }
 
     // Allocate new buckets array
-    mcp_hashtable_entry_t** new_buckets = (mcp_hashtable_entry_t**)calloc(
-        new_capacity, sizeof(mcp_hashtable_entry_t*));
+    mcp_hashtable_entry_t** new_buckets = (mcp_hashtable_entry_t**)hashtable_alloc(
+        new_capacity * sizeof(mcp_hashtable_entry_t*));
     if (!new_buckets) {
         return -1;
     }
+
+    // Initialize all buckets to NULL
+    memset(new_buckets, 0, new_capacity * sizeof(mcp_hashtable_entry_t*));
 
     // Rehash all entries
     for (size_t i = 0; i < table->capacity; i++) {
@@ -56,7 +80,7 @@ static int mcp_hashtable_resize(mcp_hashtable_t* table, size_t new_capacity) {
     }
 
     // Free old buckets array and update table
-    free(table->buckets);
+    hashtable_free(table->buckets);
     table->buckets = new_buckets;
     table->capacity = new_capacity;
 
@@ -89,18 +113,21 @@ mcp_hashtable_t* mcp_hashtable_create(
     }
 
     // Allocate hash table structure
-    mcp_hashtable_t* table = (mcp_hashtable_t*)malloc(sizeof(mcp_hashtable_t));
+    mcp_hashtable_t* table = (mcp_hashtable_t*)hashtable_alloc(sizeof(mcp_hashtable_t));
     if (!table) {
         return NULL;
     }
 
     // Allocate buckets array
-    table->buckets = (mcp_hashtable_entry_t**)calloc(
-        initial_capacity, sizeof(mcp_hashtable_entry_t*));
+    table->buckets = (mcp_hashtable_entry_t**)hashtable_alloc(
+        initial_capacity * sizeof(mcp_hashtable_entry_t*));
     if (!table->buckets) {
-        free(table);
+        hashtable_free(table);
         return NULL;
     }
+
+    // Initialize buckets to NULL
+    memset(table->buckets, 0, initial_capacity * sizeof(mcp_hashtable_entry_t*));
 
     // Initialize hash table
     table->capacity = initial_capacity;
@@ -124,8 +151,8 @@ void mcp_hashtable_destroy(mcp_hashtable_t* table) {
     mcp_hashtable_clear(table);
 
     // Free buckets array and table structure
-    free(table->buckets);
-    free(table);
+    hashtable_free(table->buckets);
+    hashtable_free(table);
 }
 
 int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
@@ -161,7 +188,7 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
     }
 
     // --- Key doesn't exist, create and insert new entry ---
-    mcp_hashtable_entry_t* new_entry = (mcp_hashtable_entry_t*)malloc(
+    mcp_hashtable_entry_t* new_entry = (mcp_hashtable_entry_t*)hashtable_alloc(
         sizeof(mcp_hashtable_entry_t));
     if (!new_entry) {
         return -1;
@@ -170,7 +197,7 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
     // Duplicate key
     new_entry->key = table->key_dup(key);
     if (!new_entry->key) {
-        free(new_entry);
+        hashtable_free(new_entry);
         return -1;
     }
 
@@ -243,7 +270,7 @@ int mcp_hashtable_remove(mcp_hashtable_t* table, const void* key) {
             }
 
             // Free entry struct and decrement size
-            free(entry);
+            hashtable_free(entry);
             table->size--;
 
             return 0;
@@ -300,7 +327,7 @@ void mcp_hashtable_clear(mcp_hashtable_t* table) {
             }
 
             // Free entry
-            free(entry);
+            hashtable_free(entry);
             entry = next;
         }
         table->buckets[i] = NULL;
@@ -329,14 +356,15 @@ void mcp_hashtable_foreach(
     }
 }
 
-// String hash function (djb2)
+// String hash function (FNV-1a)
 unsigned long mcp_hashtable_string_hash(const void* key) {
-    const char* str = (const char*)key;
-    unsigned long hash = 5381;
-    int c;
+    const unsigned char* str = (const unsigned char*)key;
+    unsigned long hash = 2166136261UL; // FNV offset basis
 
-    while ((c = *str++)) {
-        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+    // Process 4 bytes at a time for better performance
+    while (*str) {
+        hash ^= *str++;
+        hash *= 16777619UL; // FNV prime
     }
 
     return hash;
@@ -359,17 +387,16 @@ void mcp_hashtable_string_free(void* key) {
 
 // Integer hash function
 unsigned long mcp_hashtable_int_hash(const void* key) {
-    // FNV-1a hash for integers
-    unsigned long hash = 2166136261UL; // FNV offset basis
-    const unsigned char* bytes = (const unsigned char*)key;
-    size_t size = sizeof(int);
+    // MurmurHash-inspired integer hash
+    unsigned int k = *(const unsigned int*)key;
 
-    for (size_t i = 0; i < size; i++) {
-        hash ^= bytes[i];
-        hash *= 16777619UL; // FNV prime
-    }
+    k ^= k >> 16;
+    k *= 0x85ebca6b;
+    k ^= k >> 13;
+    k *= 0xc2b2ae35;
+    k ^= k >> 16;
 
-    return hash;
+    return (unsigned long)k;
 }
 
 // Integer comparison function
@@ -393,17 +420,17 @@ void mcp_hashtable_int_free(void* key) {
 
 // Pointer hash function
 unsigned long mcp_hashtable_ptr_hash(const void* key) {
-    // Simple hash for pointer values
-    // Use XOR of upper and lower bits to avoid truncation on 64-bit systems
+    // MurmurHash-inspired pointer hash
     uintptr_t ptr_val = (uintptr_t)key;
-    unsigned long hash = (unsigned long)(ptr_val & 0xFFFFFFFFUL);
 
-    // On 64-bit systems, also include the upper bits
-    #if UINTPTR_MAX > 0xFFFFFFFFUL
-    hash ^= (unsigned long)((ptr_val >> 32) & 0xFFFFFFFFUL);
-    #endif
+    // Mix the bits to distribute them better
+    ptr_val ^= ptr_val >> 16;
+    ptr_val *= 0x85ebca6b;
+    ptr_val ^= ptr_val >> 13;
+    ptr_val *= 0xc2b2ae35;
+    ptr_val ^= ptr_val >> 16;
 
-    return hash;
+    return (unsigned long)ptr_val;
 }
 
 // Pointer comparison function
@@ -419,4 +446,97 @@ void* mcp_hashtable_ptr_dup(const void* key) {
 // No-op free function
 void mcp_hashtable_ptr_free(void* key) {
     (void)key; // Unused parameter
+}
+
+// Batch put operation
+int mcp_hashtable_put_batch(
+    mcp_hashtable_t* table,
+    const void** keys,
+    void** values,
+    size_t count
+) {
+    if (!table || !keys || !values || count == 0) {
+        return -1;
+    }
+
+    int success_count = 0;
+
+    // Check if we need to resize the table
+    if ((float)(table->size + count) / table->capacity > table->load_factor_threshold) {
+        size_t new_capacity = table->capacity;
+        while ((float)(table->size + count) / new_capacity > table->load_factor_threshold) {
+            new_capacity *= 2;
+        }
+        if (mcp_hashtable_resize(table, new_capacity) != 0) {
+            // Continue with the current capacity if resize fails
+        }
+    }
+
+    // Process each key-value pair
+    for (size_t i = 0; i < count; i++) {
+        if (mcp_hashtable_put(table, keys[i], values[i]) == 0) {
+            success_count++;
+        }
+    }
+
+    return success_count;
+}
+
+// Batch get operation
+int mcp_hashtable_get_batch(
+    mcp_hashtable_t* table,
+    const void** keys,
+    void** values_out,
+    size_t count,
+    int* results_out
+) {
+    if (!table || !keys || !values_out || count == 0) {
+        return 0;
+    }
+
+    int success_count = 0;
+
+    // Process each key
+    for (size_t i = 0; i < count; i++) {
+        int result = mcp_hashtable_get(table, keys[i], &values_out[i]);
+
+        if (results_out) {
+            results_out[i] = result;
+        }
+
+        if (result == 0) {
+            success_count++;
+        }
+    }
+
+    return success_count;
+}
+
+// Batch remove operation
+int mcp_hashtable_remove_batch(
+    mcp_hashtable_t* table,
+    const void** keys,
+    size_t count,
+    int* results_out
+) {
+    if (!table || !keys || count == 0) {
+        return 0;
+    }
+
+    int success_count = 0;
+
+    // Process each key
+    for (size_t i = 0; i < count; i++) {
+        int result = mcp_hashtable_remove(table, keys[i]);
+
+        if (results_out) {
+            results_out[i] = result;
+        }
+
+        if (result == 0) {
+            success_count++;
+        }
+    }
+
+    return success_count;
 }

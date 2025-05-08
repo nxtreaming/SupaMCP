@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include "mcp_cache_aligned.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,8 +50,10 @@ typedef void (*mcp_value_free_func_t)(void* value);
 
 /**
  * @brief Hash table entry structure.
+ *
+ * Cache-aligned to prevent false sharing in multi-threaded environments.
  */
-typedef struct mcp_hashtable_entry {
+typedef MCP_CACHE_ALIGNED struct mcp_hashtable_entry {
     void* key;                      /**< Pointer to the key. */
     void* value;                    /**< Pointer to the value. */
     struct mcp_hashtable_entry* next; /**< Pointer to the next entry in the bucket. */
@@ -58,8 +61,10 @@ typedef struct mcp_hashtable_entry {
 
 /**
  * @brief Hash table structure.
+ *
+ * Cache-aligned to prevent false sharing in multi-threaded environments.
  */
-typedef struct mcp_hashtable {
+typedef MCP_CACHE_ALIGNED struct mcp_hashtable {
     mcp_hashtable_entry_t** buckets; /**< Array of bucket pointers. */
     size_t capacity;                /**< Number of buckets in the table. */
     size_t size;                    /**< Number of entries in the table. */
@@ -261,6 +266,56 @@ void* mcp_hashtable_ptr_dup(const void* key);
  * @param key Pointer to free.
  */
 void mcp_hashtable_ptr_free(void* key);
+
+/**
+ * @brief Batch put operation for multiple key-value pairs.
+ *
+ * @param table Pointer to the hash table.
+ * @param keys Array of pointers to keys.
+ * @param values Array of pointers to values.
+ * @param count Number of key-value pairs to put.
+ * @return Number of successful insertions, or -1 on error.
+ */
+int mcp_hashtable_put_batch(
+    mcp_hashtable_t* table,
+    const void** keys,
+    void** values,
+    size_t count
+);
+
+/**
+ * @brief Batch get operation for multiple keys.
+ *
+ * @param table Pointer to the hash table.
+ * @param keys Array of pointers to keys.
+ * @param values_out Array to receive value pointers.
+ * @param count Number of keys to get.
+ * @param results_out Optional array to receive result codes (0 for success, -1 for not found).
+ * @return Number of successful retrievals.
+ */
+int mcp_hashtable_get_batch(
+    mcp_hashtable_t* table,
+    const void** keys,
+    void** values_out,
+    size_t count,
+    int* results_out
+);
+
+/**
+ * @brief Batch remove operation for multiple keys.
+ *
+ * @param table Pointer to the hash table.
+ * @param keys Array of pointers to keys.
+ * @param count Number of keys to remove.
+ * @param results_out Optional array to receive result codes (0 for success, -1 for not found).
+ * @return Number of successful removals.
+ */
+int mcp_hashtable_remove_batch(
+    mcp_hashtable_t* table,
+    const void** keys,
+    size_t count,
+    int* results_out
+);
 
 #ifdef __cplusplus
 }
