@@ -5,25 +5,60 @@
 
 #include "mcp_rwlock.h"
 #include "mcp_log.h"
+#include "mcp_memory_pool.h"
+#include "mcp_cache_aligned.h"
 #include <stdlib.h>
 
 #ifdef _WIN32
 #include <windows.h>
 
+/**
+ * @brief Read-write lock implementation with cache line alignment.
+ *
+ * The rwlock is cache-line aligned to prevent false sharing between different locks.
+ */
 struct mcp_rwlock_t {
-    SRWLOCK srwlock;
+    MCP_CACHE_ALIGNED SRWLOCK srwlock;
     bool initialized;
+    // Padding to ensure the structure occupies a full cache line
+    char padding[MCP_CACHE_LINE_SIZE - sizeof(SRWLOCK) - sizeof(bool)];
 };
 
+/**
+ * @brief Helper function to validate rwlock state
+ *
+ * @param rwlock The rwlock to validate
+ * @param operation_name Name of the operation being performed (for error logging)
+ * @return true if valid, false otherwise
+ */
+static inline bool validate_rwlock(const mcp_rwlock_t* rwlock, const char* operation_name) {
+    if (!rwlock || !rwlock->initialized) {
+        mcp_log_error("Cannot %s on uninitialized read-write lock", operation_name);
+        return false;
+    }
+    return true;
+}
+
 mcp_rwlock_t* mcp_rwlock_create(void) {
-    mcp_rwlock_t* rwlock = (mcp_rwlock_t*)malloc(sizeof(mcp_rwlock_t));
+    // Use memory pool allocation if available
+    mcp_rwlock_t* rwlock = NULL;
+    if (mcp_memory_pool_system_is_initialized()) {
+        rwlock = (mcp_rwlock_t*)mcp_pool_alloc(sizeof(mcp_rwlock_t));
+    } else {
+        rwlock = (mcp_rwlock_t*)malloc(sizeof(mcp_rwlock_t));
+    }
+
     if (!rwlock) {
         mcp_log_error("Failed to allocate memory for read-write lock");
         return NULL;
     }
 
     if (!mcp_rwlock_init(rwlock)) {
-        free(rwlock);
+        if (mcp_memory_pool_system_is_initialized()) {
+            mcp_pool_free(rwlock);
+        } else {
+            free(rwlock);
+        }
         return NULL;
     }
 
@@ -44,8 +79,7 @@ bool mcp_rwlock_init(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_destroy(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot destroy uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "destroy")) {
         return false;
     }
 
@@ -57,8 +91,7 @@ bool mcp_rwlock_destroy(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_read_lock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot acquire read lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "acquire read lock")) {
         return false;
     }
 
@@ -67,8 +100,7 @@ bool mcp_rwlock_read_lock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_try_read_lock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot try read lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "try read lock")) {
         return false;
     }
 
@@ -76,8 +108,7 @@ bool mcp_rwlock_try_read_lock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_read_unlock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot release read lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "release read lock")) {
         return false;
     }
 
@@ -87,8 +118,7 @@ bool mcp_rwlock_read_unlock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_write_lock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot acquire write lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "acquire write lock")) {
         return false;
     }
 
@@ -97,8 +127,7 @@ bool mcp_rwlock_write_lock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_try_write_lock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot try write lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "try write lock")) {
         return false;
     }
 
@@ -106,8 +135,7 @@ bool mcp_rwlock_try_write_lock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_write_unlock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot release write lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "release write lock")) {
         return false;
     }
 
@@ -119,27 +147,66 @@ bool mcp_rwlock_write_unlock(mcp_rwlock_t* rwlock) {
 void mcp_rwlock_free(mcp_rwlock_t* rwlock) {
     if (rwlock) {
         mcp_rwlock_destroy(rwlock);
-        free(rwlock);
+
+        // Use appropriate free function based on memory system
+        if (mcp_memory_pool_system_is_initialized()) {
+            mcp_pool_free(rwlock);
+        } else {
+            free(rwlock);
+        }
     }
 }
 
 #else
 #include <pthread.h>
 
+/**
+ * @brief Read-write lock implementation with cache line alignment.
+ *
+ * The rwlock is cache-line aligned to prevent false sharing between different locks.
+ */
 struct mcp_rwlock_t {
-    pthread_rwlock_t rwlock;
+    MCP_CACHE_ALIGNED pthread_rwlock_t rwlock;
     bool initialized;
+    // Padding to ensure the structure occupies a full cache line
+    char padding[MCP_CACHE_LINE_SIZE - sizeof(pthread_rwlock_t) - sizeof(bool)];
 };
 
+/**
+ * @brief Helper function to validate rwlock state
+ *
+ * @param rwlock The rwlock to validate
+ * @param operation_name Name of the operation being performed (for error logging)
+ * @return true if valid, false otherwise
+ */
+static inline bool validate_rwlock(const mcp_rwlock_t* rwlock, const char* operation_name) {
+    if (!rwlock || !rwlock->initialized) {
+        mcp_log_error("Cannot %s on uninitialized read-write lock", operation_name);
+        return false;
+    }
+    return true;
+}
+
 mcp_rwlock_t* mcp_rwlock_create(void) {
-    mcp_rwlock_t* rwlock = (mcp_rwlock_t*)malloc(sizeof(mcp_rwlock_t));
+    // Use memory pool allocation if available
+    mcp_rwlock_t* rwlock = NULL;
+    if (mcp_memory_pool_system_is_initialized()) {
+        rwlock = (mcp_rwlock_t*)mcp_pool_alloc(sizeof(mcp_rwlock_t));
+    } else {
+        rwlock = (mcp_rwlock_t*)malloc(sizeof(mcp_rwlock_t));
+    }
+
     if (!rwlock) {
         mcp_log_error("Failed to allocate memory for read-write lock");
         return NULL;
     }
 
     if (!mcp_rwlock_init(rwlock)) {
-        free(rwlock);
+        if (mcp_memory_pool_system_is_initialized()) {
+            mcp_pool_free(rwlock);
+        } else {
+            free(rwlock);
+        }
         return NULL;
     }
 
@@ -164,8 +231,7 @@ bool mcp_rwlock_init(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_destroy(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot destroy uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "destroy")) {
         return false;
     }
 
@@ -181,8 +247,7 @@ bool mcp_rwlock_destroy(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_read_lock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot acquire read lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "acquire read lock")) {
         return false;
     }
 
@@ -195,8 +260,7 @@ bool mcp_rwlock_read_lock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_try_read_lock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot try read lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "try read lock")) {
         return false;
     }
 
@@ -204,8 +268,7 @@ bool mcp_rwlock_try_read_lock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_read_unlock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot release read lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "release read lock")) {
         return false;
     }
 
@@ -218,8 +281,7 @@ bool mcp_rwlock_read_unlock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_write_lock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot acquire write lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "acquire write lock")) {
         return false;
     }
 
@@ -232,8 +294,7 @@ bool mcp_rwlock_write_lock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_try_write_lock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot try write lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "try write lock")) {
         return false;
     }
 
@@ -241,8 +302,7 @@ bool mcp_rwlock_try_write_lock(mcp_rwlock_t* rwlock) {
 }
 
 bool mcp_rwlock_write_unlock(mcp_rwlock_t* rwlock) {
-    if (!rwlock || !rwlock->initialized) {
-        mcp_log_error("Cannot release write lock on uninitialized read-write lock");
+    if (!validate_rwlock(rwlock, "release write lock")) {
         return false;
     }
 
@@ -257,7 +317,13 @@ bool mcp_rwlock_write_unlock(mcp_rwlock_t* rwlock) {
 void mcp_rwlock_free(mcp_rwlock_t* rwlock) {
     if (rwlock) {
         mcp_rwlock_destroy(rwlock);
-        free(rwlock);
+
+        // Use appropriate free function based on memory system
+        if (mcp_memory_pool_system_is_initialized()) {
+            mcp_pool_free(rwlock);
+        } else {
+            free(rwlock);
+        }
     }
 }
 #endif
