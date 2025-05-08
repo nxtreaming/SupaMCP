@@ -390,6 +390,7 @@ int mcp_socket_set_timeout(socket_t sock, uint32_t timeout_ms) {
  *
  * This function implements a non-blocking connect with timeout as specified in the header.
  * It tries each address returned by getaddrinfo until one succeeds or all fail.
+ * The returned socket is set back to blocking mode before returning.
  *
  * @param host The hostname or IP address of the server
  * @param port The port number of the server
@@ -706,6 +707,7 @@ int mcp_socket_recv_exact(socket_t sock, char* buf, size_t len, volatile bool* s
 }
 
 int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatile bool* stop_flag) {
+    // Calculate total size to send
     size_t total_to_send = 0;
     for (int i = 0; i < iovcnt; ++i) {
 #ifdef _WIN32
@@ -715,138 +717,218 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
 #endif
     }
 
+    // If total size is 0, return success immediately
+    if (total_to_send == 0) {
+        return 0;
+    }
+
     size_t total_sent = 0;
 
 #ifdef _WIN32
+    // Windows optimized implementation
     DWORD bytes_sent_this_call = 0;
-    DWORD flags = 0; // No flags needed for basic WSASend
+    DWORD flags = 0;
+
+    // Create temporary IOV array to avoid modifying the original array
+    WSABUF* temp_iov = NULL;
+    if (iovcnt > 1) {
+        temp_iov = (WSABUF*)socket_utils_alloc(iovcnt * sizeof(WSABUF));
+        if (!temp_iov) {
+            mcp_log_error("Failed to allocate memory for temporary IOV array");
+            return -1;
+        }
+        memcpy(temp_iov, iov, iovcnt * sizeof(WSABUF));
+    }
+    else {
+        temp_iov = iov;
+    }
+
+    int current_iovcnt = iovcnt;
+    int result = 0;
 
     while (total_sent < total_to_send) {
-        // Abort if stop_flag is provided and is true
+        // Check stop flag
         if (stop_flag && *stop_flag) {
             mcp_log_debug("send_vectors (Win) aborted by stop flag");
+            if (temp_iov != iov) {
+                socket_utils_free(temp_iov);
+            }
             return -1;
         }
 
-        // WSASend might modify the iov array, but we manage adjustments manually if needed
-        int result = WSASend(sock, iov, (DWORD)iovcnt, &bytes_sent_this_call, flags, NULL, NULL);
+        result = WSASend(sock, temp_iov, (DWORD)current_iovcnt, &bytes_sent_this_call, flags, NULL, NULL);
 
         if (result == MCP_SOCKET_ERROR) {
             int error_code = mcp_socket_get_last_error();
 
-            // Special case: error code 0 during shutdown is normal
-            if (error_code == 0) {
-                // This is a common case during normal shutdown
-                mcp_log_debug("send_vectors (Win): Socket closed (socket %d, error: 0)", (int)sock);
-                return -1;
-            }
-            else if (error_code == WSAECONNRESET || error_code == WSAESHUTDOWN || error_code == WSAENOTCONN || error_code == WSAECONNABORTED) {
-                // Normal socket close during shutdown, log as debug instead of warning
+            // Handle common errors
+            if (error_code == 0 ||
+                error_code == WSAECONNRESET ||
+                error_code == WSAESHUTDOWN ||
+                error_code == WSAENOTCONN ||
+                error_code == WSAECONNABORTED) {
                 mcp_log_debug("send_vectors (Win): Connection closed/reset (socket %d, error %d)", (int)sock, error_code);
+                if (temp_iov != iov) {
+                    socket_utils_free(temp_iov);
+                }
                 return -1;
             }
+
             if (error_code == WSAEWOULDBLOCK) {
-                mcp_log_warn("send_vectors (Win) got WOULDBLOCK?");
-                // Need to wait/retry if non-blocking
+                // Non-blocking socket would block, retry later
+                mcp_log_debug("Socket would block, retrying...");
                 continue;
             }
+
+            // Other errors
             mcp_log_error("send_vectors (Win) WSASend failed (socket %d): Error %d", (int)sock, error_code);
+            if (temp_iov != iov) {
+                socket_utils_free(temp_iov);
+            }
             return -1;
         }
 
         if (bytes_sent_this_call == 0) {
             mcp_log_error("send_vectors (Win) sent 0 bytes unexpectedly (socket %d)", (int)sock);
+            if (temp_iov != iov) {
+                socket_utils_free(temp_iov);
+            }
             return -1;
         }
 
         total_sent += bytes_sent_this_call;
 
-        // Adjust iovec array for the next iteration if partial write occurred
+        // If not all data sent, adjust IOV array
         if (total_sent < total_to_send) {
-            size_t sent_adjust = bytes_sent_this_call;
-            int current_iov = 0;
-            while (sent_adjust > 0 && current_iov < iovcnt) {
-                if (sent_adjust < iov[current_iov].len) {
-                    iov[current_iov].buf += sent_adjust;
-                    iov[current_iov].len -= (ULONG)sent_adjust;
-                    sent_adjust = 0;
-                } else {
-                    sent_adjust -= iov[current_iov].len;
-                    iov[current_iov].len = 0; // Mark as fully sent
-                    current_iov++;
-                }
-            }
-            // Adjust pointers for the next WSASend call
-            iov += current_iov;
-            iovcnt -= current_iov;
-            if (iovcnt <= 0) break; // Should have sent everything
-        }
-    } // end while
+            size_t bytes_remaining = bytes_sent_this_call;
+            int i = 0;
 
+            // Skip fully sent buffers
+            while (i < current_iovcnt && bytes_remaining >= temp_iov[i].len) {
+                bytes_remaining -= temp_iov[i].len;
+                i++;
+            }
+
+            // Adjust partially sent buffer
+            if (i < current_iovcnt && bytes_remaining > 0) {
+                temp_iov[i].buf += bytes_remaining;
+                temp_iov[i].len -= (ULONG)bytes_remaining;
+            }
+
+            // Move array pointer
+            if (i > 0) {
+                temp_iov += i;
+                current_iovcnt -= i;
+            }
+        }
+    }
+
+    if (temp_iov != iov) {
+        socket_utils_free(temp_iov);
+    }
 #else
+    // POSIX optimized implementation
+    struct iovec* temp_iov = NULL;
+    if (iovcnt > 1) {
+        temp_iov = (struct iovec*)socket_utils_alloc(iovcnt * sizeof(struct iovec));
+        if (!temp_iov) {
+            mcp_log_error("Failed to allocate memory for temporary IOV array");
+            return -1;
+        }
+        memcpy(temp_iov, iov, iovcnt * sizeof(struct iovec));
+    } else {
+        temp_iov = iov;
+    }
+
+    int current_iovcnt = iovcnt;
+
     while (total_sent < total_to_send) {
-        // Abort if stop_flag is provided and is true
+        // Check stop flag
         if (stop_flag && *stop_flag) {
             mcp_log_debug("send_vectors (POSIX) aborted by stop flag");
+            if (temp_iov != iov) {
+                socket_utils_free(temp_iov);
+            }
             return -1;
         }
 
-        ssize_t bytes_sent = writev(sock, iov, iovcnt);
+        ssize_t bytes_sent = writev(sock, temp_iov, current_iovcnt);
 
         if (bytes_sent == MCP_SOCKET_ERROR) {
-            int error_code = mcp_socket_get_last_error();
+            int error_code = errno;
 
-            // Special case: error code 0 during shutdown is normal
-            if (error_code == 0) {
-                // This is a common case during normal shutdown
-                mcp_log_debug("send_vectors (POSIX): Socket closed (socket %d, error: 0)", (int)sock);
-                return -1;
-            }
-            else if (error_code == EPIPE || error_code == ECONNRESET || error_code == ENOTCONN) {
-                // Normal socket close during shutdown, log as debug instead of warning
-                mcp_log_debug("send_vectors (POSIX): Connection closed/reset (socket %d, error %d - %s)", (int)sock, error_code, strerror(error_code));
-                return -1;
-            }
             if (error_code == EINTR) {
+                // Interrupted by signal, retry
                 mcp_log_debug("send_vectors (POSIX) interrupted, retrying...");
-                continue; // Retry if interrupted
-            }
-            if (error_code == EAGAIN || error_code == EWOULDBLOCK) {
-                mcp_log_warn("send_vectors (POSIX) got EAGAIN/EWOULDBLOCK?");
                 continue;
             }
-            mcp_log_error("send_vectors (POSIX) writev failed (socket %d): Error %d (%s)", (int)sock, error_code, strerror(error_code));
+
+            if (error_code == EAGAIN || error_code == EWOULDBLOCK) {
+                // Non-blocking socket would block, retry later
+                mcp_log_debug("Socket would block, retrying...");
+                continue;
+            }
+
+            if (error_code == 0 ||
+                error_code == EPIPE ||
+                error_code == ECONNRESET ||
+                error_code == ENOTCONN) {
+                // Connection closed
+                mcp_log_debug("send_vectors (POSIX): Connection closed/reset (socket %d, error %d - %s)",
+                             (int)sock, error_code, strerror(error_code));
+                if (temp_iov != iov) {
+                    socket_utils_free(temp_iov);
+                }
+                return -1;
+            }
+
+            // Other errors
+            mcp_log_error("send_vectors (POSIX) writev failed (socket %d): Error %d (%s)",
+                         (int)sock, error_code, strerror(error_code));
+            if (temp_iov != iov) {
+                socket_utils_free(temp_iov);
+            }
             return -1;
         }
 
         if (bytes_sent == 0) {
             mcp_log_error("send_vectors (POSIX) sent 0 bytes unexpectedly (socket %d)", (int)sock);
+            if (temp_iov != iov) {
+                socket_utils_free(temp_iov);
+            }
             return -1;
         }
 
-        total_sent += (size_t)bytes_sent;
+        total_sent += bytes_sent;
 
-        // Adjust iovec array for the next iteration if partial write occurred
+        // If not all data sent, adjust IOV array
         if (total_sent < total_to_send) {
-            size_t sent_adjust = bytes_sent;
-            int current_iov = 0;
-            while (sent_adjust > 0 && current_iov < iovcnt) {
-                if (sent_adjust < iov[current_iov].iov_len) {
-                    iov[current_iov].iov_base = (char*)iov[current_iov].iov_base + sent_adjust;
-                    iov[current_iov].iov_len -= sent_adjust;
-                    sent_adjust = 0;
-                } else {
-                    sent_adjust -= iov[current_iov].iov_len;
-                    iov[current_iov].iov_len = 0; // Mark as fully sent
-                    current_iov++;
-                }
+            size_t bytes_remaining = bytes_sent;
+            int i = 0;
+
+            // Skip fully sent buffers
+            while (i < current_iovcnt && bytes_remaining >= temp_iov[i].iov_len) {
+                bytes_remaining -= temp_iov[i].iov_len;
+                i++;
             }
-            // Adjust pointers for the next writev call
-            iov += current_iov;
-            iovcnt -= current_iov;
-            if (iovcnt <= 0) break; // Should have sent everything
+
+            // Adjust partially sent buffer
+            if (i < current_iovcnt && bytes_remaining > 0) {
+                temp_iov[i].iov_base = (char*)temp_iov[i].iov_base + bytes_remaining;
+                temp_iov[i].iov_len -= bytes_remaining;
+            }
+
+            // Move array pointer
+            if (i > 0) {
+                temp_iov += i;
+                current_iovcnt -= i;
+            }
         }
-    } // end while
+    }
+
+    if (temp_iov != iov) {
+        socket_utils_free(temp_iov);
+    }
 #endif
 
     return (total_sent == total_to_send) ? 0 : -1; // Success only if all bytes sent
@@ -1237,4 +1319,241 @@ socket_t mcp_socket_accept(socket_t listen_sock, struct sockaddr* client_addr, s
     }
 
     return client_sock;
+}
+
+/**
+ * @brief Connects to a server address in non-blocking mode with timeout.
+ *
+ * This function creates a non-blocking socket and attempts to connect to the specified
+ * server address. It waits for the connection to complete or timeout using select().
+ * The returned socket remains in non-blocking mode.
+ *
+ * @param host The hostname or IP address of the server.
+ * @param port The port number of the server.
+ * @param timeout_ms Timeout for the connection attempt in milliseconds.
+ * @return The connected non-blocking socket on success, MCP_INVALID_SOCKET on failure or timeout.
+ */
+socket_t mcp_socket_connect_nonblocking(const char* host, uint16_t port, uint32_t timeout_ms) {
+    struct addrinfo hints, *servinfo = NULL, *p;
+    int rv;
+    char port_str[6]; // Stack allocation for small string
+    socket_t sock = MCP_INVALID_SOCKET;
+
+    // Default to a reasonable timeout if none specified
+    if (timeout_ms == 0) {
+        timeout_ms = 15000; // 15 seconds default
+    }
+
+    // Convert port to string using stack memory
+    snprintf(port_str, sizeof(port_str), "%u", port);
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
+    hints.ai_socktype = SOCK_STREAM;
+
+    if ((rv = getaddrinfo(host, port_str, &hints, &servinfo)) != 0) {
+        mcp_log_error("getaddrinfo failed for %s:%s : %s", host, port_str, gai_strerror(rv));
+        return MCP_INVALID_SOCKET;
+    }
+
+    // Try each address until we successfully connect
+    for (p = servinfo; p != NULL; p = p->ai_next) {
+        // Create the socket
+        if ((sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == MCP_INVALID_SOCKET) {
+            mcp_log_debug("socket() failed: %d", mcp_socket_get_last_error());
+            continue;
+        }
+
+        // Set socket to non-blocking mode
+        if (mcp_socket_set_non_blocking(sock) != 0) {
+            mcp_log_error("Failed to set socket to non-blocking mode");
+            mcp_socket_close(sock);
+            sock = MCP_INVALID_SOCKET;
+            continue;
+        }
+
+        // Attempt to connect
+        int result = connect(sock, p->ai_addr, (int)p->ai_addrlen);
+
+        if (result == 0) {
+            // Immediate success (rare but possible)
+            mcp_log_debug("Immediate connection success to %s:%u", host, port);
+            break;
+        }
+
+        if (result == MCP_SOCKET_ERROR) {
+            int error_code = mcp_socket_get_last_error();
+
+            // Check if the error is as expected for non-blocking connect
+#ifdef _WIN32
+            bool would_block = (error_code == WSAEWOULDBLOCK);
+#else
+            bool would_block = (error_code == EINPROGRESS || error_code == EWOULDBLOCK);
+#endif
+
+            if (!would_block) {
+                // Unexpected error
+                mcp_log_debug("connect() failed with error: %d", error_code);
+                mcp_socket_close(sock);
+                sock = MCP_INVALID_SOCKET;
+                continue;
+            }
+
+            // Connection in progress, wait for completion or timeout
+            fd_set write_fds, error_fds;
+            FD_ZERO(&write_fds);
+            FD_ZERO(&error_fds);
+            FD_SET(sock, &write_fds);
+            FD_SET(sock, &error_fds);
+
+            struct timeval tv;
+            tv.tv_sec = timeout_ms / 1000;
+            tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+#ifdef _WIN32
+            // Windows select first parameter is ignored
+            result = select(0, NULL, &write_fds, &error_fds, &tv);
+#else
+            // POSIX select needs max fd + 1
+            result = select(sock + 1, NULL, &write_fds, &error_fds, &tv);
+#endif
+
+            if (result == 0) {
+                // Timeout
+                mcp_log_warn("Connection to %s:%u timed out after %u ms", host, port, timeout_ms);
+                mcp_socket_close(sock);
+                sock = MCP_INVALID_SOCKET;
+                continue;
+            } else if (result < 0) {
+                // Select error
+                mcp_log_error("select() failed during connect: %d", mcp_socket_get_last_error());
+                mcp_socket_close(sock);
+                sock = MCP_INVALID_SOCKET;
+                continue;
+            }
+
+            // Check if socket has an error
+            if (FD_ISSET(sock, &error_fds)) {
+                int error = 0;
+                socklen_t len = sizeof(error);
+
+                if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &len) < 0) {
+                    mcp_log_error("getsockopt(SO_ERROR) failed: %d", mcp_socket_get_last_error());
+                    mcp_socket_close(sock);
+                    sock = MCP_INVALID_SOCKET;
+                    continue;
+                }
+
+                if (error != 0) {
+                    mcp_log_debug("Connection failed with error: %d", error);
+                    mcp_socket_close(sock);
+                    sock = MCP_INVALID_SOCKET;
+                    continue;
+                }
+            }
+
+            // Check if socket is writable (connected)
+            if (!FD_ISSET(sock, &write_fds)) {
+                mcp_log_warn("Socket not writable after select()");
+                mcp_socket_close(sock);
+                sock = MCP_INVALID_SOCKET;
+                continue;
+            }
+
+            // Double-check connection status
+            int error = 0;
+            socklen_t len = sizeof(error);
+            if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &len) < 0 || error != 0) {
+                mcp_log_debug("Connection failed after select: %d", error ? error : mcp_socket_get_last_error());
+                mcp_socket_close(sock);
+                sock = MCP_INVALID_SOCKET;
+                continue;
+            }
+
+            // Connection successful
+            mcp_log_debug("Connected to %s:%u on socket %d (non-blocking)", host, port, (int)sock);
+            break;
+        }
+    }
+
+    // Free address info
+    if (servinfo) {
+        freeaddrinfo(servinfo);
+    }
+
+    if (sock != MCP_INVALID_SOCKET) {
+        // Apply socket optimizations
+        mcp_socket_optimize(sock, false); // false = client socket
+    } else {
+        mcp_log_error("Failed to connect to %s:%u", host, port);
+    }
+
+    return sock;
+}
+
+/**
+ * @brief Sends multiple buffers in a batch operation.
+ *
+ * This function sends multiple buffers over a socket using vectored I/O internally.
+ * It handles the conversion from cache-aligned mcp_socket_buffer_t to platform-specific
+ * iovec structures. The cache alignment of the buffer structures helps prevent false
+ * sharing in multi-threaded environments.
+ *
+ * @param sock The socket descriptor.
+ * @param buffers Array of pointers to socket buffer structures.
+ * @param buffer_count Number of buffers in the array.
+ * @param stop_flag Optional pointer to a boolean flag. If not NULL and becomes true, the operation aborts early.
+ * @return 0 on success, -1 on error or if aborted by stop_flag.
+ */
+int mcp_socket_send_batch(socket_t sock, const mcp_socket_buffer_t** buffers, int buffer_count, volatile bool* stop_flag) {
+    // Parameter validation
+    if (sock == MCP_INVALID_SOCKET || !buffers || buffer_count <= 0) {
+        mcp_log_error("Invalid parameters in mcp_socket_send_batch");
+        return -1;
+    }
+
+    // Create IOV array using cache-aware memory allocation
+    mcp_iovec_t* iov = (mcp_iovec_t*)socket_utils_alloc(buffer_count * sizeof(mcp_iovec_t));
+    if (!iov) {
+        mcp_log_error("Failed to allocate memory for IOV array");
+        return -1;
+    }
+
+    // Calculate total bytes to send for logging
+    size_t total_bytes = 0;
+
+    // Fill IOV array from cache-aligned buffer structures
+    for (int i = 0; i < buffer_count; i++) {
+        if (!buffers[i] || !buffers[i]->buffer || buffers[i]->used == 0) {
+            // Skip empty buffers
+            continue;
+        }
+
+#ifdef _WIN32
+        iov[i].buf = buffers[i]->buffer;
+        iov[i].len = (ULONG)buffers[i]->used;
+#else
+        iov[i].iov_base = buffers[i]->buffer;
+        iov[i].iov_len = buffers[i]->used;
+#endif
+        total_bytes += buffers[i]->used;
+    }
+
+    mcp_log_debug("Sending batch of %d buffers, total %zu bytes on socket %d",
+                 buffer_count, total_bytes, (int)sock);
+
+    // Use vectored send
+    int result = mcp_socket_send_vectors(sock, iov, buffer_count, stop_flag);
+
+    // Free IOV array
+    socket_utils_free(iov);
+
+    if (result == 0) {
+        mcp_log_debug("Successfully sent %zu bytes in batch on socket %d",
+                     total_bytes, (int)sock);
+    } else {
+        mcp_log_error("Failed to send batch on socket %d", (int)sock);
+    }
+
+    return result;
 }

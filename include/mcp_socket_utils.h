@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "mcp_cache_aligned.h"
 
 #ifdef _WIN32
 // Include our Windows socket compatibility header
@@ -164,6 +165,20 @@ int mcp_socket_set_timeout(socket_t sock, uint32_t timeout_ms);
 socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms);
 
 /**
+ * @brief Connects to a server address in non-blocking mode with timeout.
+ *
+ * This function creates a non-blocking socket and attempts to connect to the specified
+ * server address. It waits for the connection to complete or timeout using select().
+ * The returned socket remains in non-blocking mode.
+ *
+ * @param host The hostname or IP address of the server.
+ * @param port The port number of the server.
+ * @param timeout_ms Timeout for the connection attempt in milliseconds.
+ * @return The connected non-blocking socket on success, MCP_INVALID_SOCKET on failure or timeout.
+ */
+socket_t mcp_socket_connect_nonblocking(const char* host, uint16_t port, uint32_t timeout_ms);
+
+/**
  * @brief Sends exactly 'len' bytes over the socket. Handles partial sends.
  * @param sock The socket descriptor.
  * @param buf The buffer containing data to send.
@@ -192,6 +207,35 @@ int mcp_socket_recv_exact(socket_t sock, char* buf, size_t len, volatile bool* s
  * @return 0 on success, -1 on error or if aborted by stop_flag.
  */
 int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatile bool* stop_flag);
+
+/**
+ * @brief Cache-aligned socket buffer structure for batch sending operations.
+ *
+ * This structure is aligned to the CPU's cache line size to prevent false sharing
+ * in multi-threaded environments, improving performance.
+ */
+typedef MCP_CACHE_ALIGNED struct mcp_socket_buffer {
+    char* buffer;    /**< Pointer to the buffer data. */
+    size_t size;     /**< Total size of the buffer. */
+    size_t used;     /**< Number of bytes used in the buffer. */
+
+    // Padding to ensure the structure occupies a full cache line
+    char padding[MCP_CACHE_LINE_SIZE - (sizeof(char*) + 2 * sizeof(size_t)) % MCP_CACHE_LINE_SIZE];
+} mcp_socket_buffer_t;
+
+/**
+ * @brief Sends multiple buffers in a batch operation.
+ *
+ * This function sends multiple buffers over a socket using vectored I/O internally.
+ * It handles the conversion from mcp_socket_buffer_t to platform-specific iovec structures.
+ *
+ * @param sock The socket descriptor.
+ * @param buffers Array of pointers to socket buffer structures.
+ * @param buffer_count Number of buffers in the array.
+ * @param stop_flag Optional pointer to a boolean flag. If not NULL and becomes true, the operation aborts early.
+ * @return 0 on success, -1 on error or if aborted by stop_flag.
+ */
+int mcp_socket_send_batch(socket_t sock, const mcp_socket_buffer_t** buffers, int buffer_count, volatile bool* stop_flag);
 
 /**
  * @brief Waits for a socket to become readable or until a timeout occurs.
