@@ -40,14 +40,18 @@ static void sync_free(void* ptr) {
  * @brief Mutex implementation with cache line alignment.
  *
  * The mutex is cache-line aligned to prevent false sharing between different mutexes.
+ * It can be either a standard mutex or a recursive mutex, depending on how it was created.
  */
 struct mcp_mutex_s {
 #ifdef _WIN32
     MCP_CACHE_ALIGNED CRITICAL_SECTION cs;
+    // On Windows, CRITICAL_SECTION is recursive by default
 #else
     MCP_CACHE_ALIGNED pthread_mutex_t mutex;
+    // Flag to indicate if this is a recursive mutex (for debugging)
+    int is_recursive;
     // Padding to ensure the structure occupies a full cache line
-    char padding[MCP_CACHE_LINE_SIZE - sizeof(pthread_mutex_t)];
+    char padding[MCP_CACHE_LINE_SIZE - sizeof(pthread_mutex_t) - sizeof(int)];
 #endif
 };
 
@@ -66,7 +70,13 @@ struct mcp_cond_s {
 #endif
 };
 
-mcp_mutex_t* mcp_mutex_create(void) {
+/**
+ * @brief Internal function to create a mutex (standard or recursive).
+ *
+ * @param is_recursive Whether to create a recursive mutex.
+ * @return Pointer to the created mutex, or NULL on failure.
+ */
+static mcp_mutex_t* mutex_create_internal(int is_recursive) {
     mcp_mutex_t* mutex = (mcp_mutex_t*)sync_alloc(sizeof(mcp_mutex_t));
     if (!mutex) {
         mcp_log_error("Failed to allocate memory for mutex");
@@ -74,17 +84,70 @@ mcp_mutex_t* mcp_mutex_create(void) {
     }
 
 #ifdef _WIN32
+    (void)is_recursive; // Ignore the recursive flag on Windows
+    // On Windows, CRITICAL_SECTION is recursive by default
     InitializeCriticalSection(&mutex->cs);
     // Assume success for InitializeCriticalSection as it's void
     return mutex;
 #else
-    if (pthread_mutex_init(&mutex->mutex, NULL) != 0) {
-        mcp_log_error("Failed to initialize pthread mutex");
-        sync_free(mutex);
-        return NULL;
+    // On POSIX, we need to use attributes for recursive mutexes
+    if (is_recursive) {
+        pthread_mutexattr_t attr;
+        if (pthread_mutexattr_init(&attr) != 0) {
+            mcp_log_error("Failed to initialize pthread mutex attributes");
+            sync_free(mutex);
+            return NULL;
+        }
+
+        // Set the mutex type to recursive
+        if (pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE) != 0) {
+            mcp_log_error("Failed to set mutex type to recursive");
+            pthread_mutexattr_destroy(&attr);
+            sync_free(mutex);
+            return NULL;
+        }
+
+        // Initialize the mutex with the recursive attribute
+        if (pthread_mutex_init(&mutex->mutex, &attr) != 0) {
+            mcp_log_error("Failed to initialize recursive pthread mutex");
+            pthread_mutexattr_destroy(&attr);
+            sync_free(mutex);
+            return NULL;
+        }
+
+        // Clean up the attribute
+        pthread_mutexattr_destroy(&attr);
+
+        // Set the recursive flag
+        mutex->is_recursive = 1;
+    } else {
+        // Standard mutex
+        if (pthread_mutex_init(&mutex->mutex, NULL) != 0) {
+            mcp_log_error("Failed to initialize pthread mutex");
+            sync_free(mutex);
+            return NULL;
+        }
+
+        // Clear the recursive flag
+        mutex->is_recursive = 0;
     }
+
     return mutex;
 #endif
+}
+
+/**
+ * @brief Creates a new standard mutex.
+ */
+mcp_mutex_t* mcp_mutex_create(void) {
+    return mutex_create_internal(0); // Standard mutex
+}
+
+/**
+ * @brief Creates a new recursive mutex.
+ */
+mcp_mutex_t* mcp_recursive_mutex_create(void) {
+    return mutex_create_internal(1); // Recursive mutex
 }
 
 void mcp_mutex_destroy(mcp_mutex_t* mutex) {

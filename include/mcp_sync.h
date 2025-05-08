@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-/** @brief Opaque mutex type. */
+/** @brief Opaque mutex type. Can be either standard or recursive. */
 typedef struct mcp_mutex_s mcp_mutex_t;
 
 /**
@@ -37,6 +37,14 @@ int mcp_mutex_lock(mcp_mutex_t* mutex);
  * @return 0 on success, non-zero on error.
  */
 int mcp_mutex_unlock(mcp_mutex_t* mutex);
+
+/**
+ * @brief Creates a new recursive mutex.
+ * @return Pointer to the created recursive mutex, or NULL on failure.
+ * @note Caller is responsible for destroying the mutex using mcp_mutex_destroy().
+ * @note A recursive mutex can be locked multiple times by the same thread without deadlocking.
+ */
+mcp_mutex_t* mcp_recursive_mutex_create(void);
 
 /** @brief Opaque condition variable type. */
 typedef struct mcp_cond_s mcp_cond_t;
