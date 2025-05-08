@@ -121,6 +121,80 @@ int mcp_thread_join(mcp_thread_t thread_handle, void** retval);
  */
 void mcp_thread_yield(void);
 
+/** @brief Opaque spinlock type. */
+typedef struct mcp_spinlock_s mcp_spinlock_t;
+
+/**
+ * @brief Creates a new spinlock.
+ * @return Pointer to the created spinlock, or NULL on failure.
+ * @note Caller is responsible for destroying the spinlock using mcp_spinlock_destroy().
+ */
+mcp_spinlock_t* mcp_spinlock_create(void);
+
+/**
+ * @brief Destroys a spinlock and frees associated resources.
+ * @param spinlock Pointer to the spinlock to destroy. If NULL, the function does nothing.
+ */
+void mcp_spinlock_destroy(mcp_spinlock_t* spinlock);
+
+/**
+ * @brief Acquires the spinlock. Spins (busy-waits) if the spinlock is already locked.
+ * @param spinlock Pointer to the spinlock to acquire.
+ * @return 0 on success, non-zero on error.
+ * @note Spinlocks should only be held for very short durations to avoid wasting CPU time.
+ */
+int mcp_spinlock_lock(mcp_spinlock_t* spinlock);
+
+/**
+ * @brief Tries to acquire the spinlock without spinning.
+ * @param spinlock Pointer to the spinlock to acquire.
+ * @return 0 if the spinlock was acquired, 1 if the spinlock was already locked, negative value on error.
+ */
+int mcp_spinlock_trylock(mcp_spinlock_t* spinlock);
+
+/**
+ * @brief Releases the spinlock.
+ * @param spinlock Pointer to the spinlock to release.
+ * @return 0 on success, non-zero on error.
+ */
+int mcp_spinlock_unlock(mcp_spinlock_t* spinlock);
+
+/** @brief Opaque thread local storage key type. */
+typedef struct mcp_tls_key_s mcp_tls_key_t;
+
+/**
+ * @brief Creates a new thread local storage key.
+ * @param destructor Optional destructor function that is called when a thread exits,
+ *                   to free the thread-specific data. Can be NULL.
+ * @return Pointer to the created TLS key, or NULL on failure.
+ * @note Caller is responsible for destroying the key using mcp_tls_key_destroy().
+ */
+mcp_tls_key_t* mcp_tls_key_create(void (*destructor)(void*));
+
+/**
+ * @brief Destroys a thread local storage key.
+ * @param key Pointer to the TLS key to destroy. If NULL, the function does nothing.
+ * @note This does not free the thread-specific data associated with the key.
+ *       The destructor is called for each thread's data when the thread exits.
+ */
+void mcp_tls_key_destroy(mcp_tls_key_t* key);
+
+/**
+ * @brief Sets the thread-specific data associated with a key.
+ * @param key Pointer to the TLS key.
+ * @param value Pointer to the thread-specific data to associate with the key.
+ * @return 0 on success, non-zero on error.
+ */
+int mcp_tls_set(mcp_tls_key_t* key, void* value);
+
+/**
+ * @brief Gets the thread-specific data associated with a key.
+ * @param key Pointer to the TLS key.
+ * @return Pointer to the thread-specific data, or NULL if no data is associated
+ *         with the key or an error occurred.
+ */
+void* mcp_tls_get(mcp_tls_key_t* key);
+
 #ifdef __cplusplus
 }
 #endif
