@@ -276,20 +276,25 @@ int mcp_socket_optimize(socket_t sock, bool is_server) {
 
     if (is_server) {
         // Server-specific optimizations
+#ifdef _WIN32
+        // On Windows, prefer SO_EXCLUSIVEADDRUSE over SO_REUSEADDR for security
+        // These options are mutually exclusive on Windows
+        int flag = 1;
+        if (setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&flag, sizeof(flag)) == MCP_SOCKET_ERROR) {
+            mcp_log_debug("SO_EXCLUSIVEADDRUSE not available, falling back to SO_REUSEADDR");
+            // Fall back to SO_REUSEADDR
+            if (mcp_socket_set_reuseaddr(sock) != 0) {
+                mcp_log_warn("Failed to set SO_REUSEADDR on server socket %d", (int)sock);
+                failures--;
+            }
+        } else {
+            mcp_log_debug("SO_EXCLUSIVEADDRUSE enabled on server socket %d", (int)sock);
+        }
+#else
+        // On non-Windows platforms, use SO_REUSEADDR
         if (mcp_socket_set_reuseaddr(sock) != 0) {
             mcp_log_warn("Failed to set SO_REUSEADDR on server socket %d", (int)sock);
             failures--;
-        }
-
-#ifdef _WIN32
-        // On Windows, set SO_EXCLUSIVEADDRUSE for security
-        int flag = 1;
-        if (setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&flag, sizeof(flag)) == MCP_SOCKET_ERROR) {
-            mcp_log_warn("Failed to set SO_EXCLUSIVEADDRUSE on server socket %d: %d",
-                        (int)sock, mcp_socket_get_last_error());
-            failures--;
-        } else {
-            mcp_log_debug("SO_EXCLUSIVEADDRUSE enabled on server socket %d", (int)sock);
         }
 #endif
 
@@ -1031,7 +1036,7 @@ int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_
             long elapsed_ms = (long)(difftime(current_time, state->start_time) * 1000);
 
             if (elapsed_ms >= timeout_ms) {
-                socket_wait_state_free(state);
+                socket_utils_free(state);
                 return 0; // Timeout expired
             }
 
