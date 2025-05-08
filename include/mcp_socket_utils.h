@@ -92,6 +92,56 @@ int mcp_socket_set_non_blocking(socket_t sock);
 int mcp_socket_set_nodelay(socket_t sock);
 
 /**
+ * @brief Sets the SO_REUSEADDR option on a socket.
+ *
+ * This function enables the SO_REUSEADDR option, which allows the socket
+ * to be bound to an address that is already in use. This is useful for
+ * server applications that need to restart quickly after a crash.
+ *
+ * @param sock The socket to set the option on.
+ * @return 0 on success, -1 on error.
+ */
+int mcp_socket_set_reuseaddr(socket_t sock);
+
+/**
+ * @brief Sets the SO_KEEPALIVE option on a socket.
+ *
+ * This function enables the SO_KEEPALIVE option, which causes the TCP stack
+ * to send keepalive probes to detect if a connection is still alive.
+ *
+ * @param sock The socket to set the option on.
+ * @return 0 on success, -1 on error.
+ */
+int mcp_socket_set_keepalive(socket_t sock);
+
+/**
+ * @brief Sets the send and receive buffer sizes for a socket.
+ *
+ * This function sets the SO_SNDBUF and SO_RCVBUF options to control
+ * the size of the socket's send and receive buffers.
+ *
+ * @param sock The socket to set the options on.
+ * @param send_size The size of the send buffer in bytes (0 to leave unchanged).
+ * @param recv_size The size of the receive buffer in bytes (0 to leave unchanged).
+ * @return 0 on success, -1 on error.
+ */
+int mcp_socket_set_buffer_size(socket_t sock, int send_size, int recv_size);
+
+/**
+ * @brief Applies common socket optimizations based on the socket's role.
+ *
+ * This function applies a set of common socket optimizations:
+ * - For all sockets: TCP_NODELAY
+ * - For server sockets: SO_REUSEADDR, larger receive buffer
+ * - For client sockets: SO_KEEPALIVE, larger send buffer
+ *
+ * @param sock The socket to optimize.
+ * @param is_server Whether this is a server socket (true) or client socket (false).
+ * @return 0 if all optimizations succeeded, or a negative value indicating how many failed.
+ */
+int mcp_socket_optimize(socket_t sock, bool is_server);
+
+/**
  * @brief Sets the timeout for socket operations.
  *
  * This function sets both the send and receive timeouts for a socket.
