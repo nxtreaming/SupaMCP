@@ -7,6 +7,75 @@
 #include <stdio.h>
 #include <stdint.h>
 
+// Forward declarations of internal functions
+static void* hashtable_alloc(size_t size);
+static void hashtable_free(void* ptr);
+static mcp_hashtable_entry_t* hashtable_entry_alloc(void);
+static void hashtable_entry_free(mcp_hashtable_entry_t* entry);
+static bool init_hashtable_entry_pool(void);
+static void cleanup_hashtable_entry_pool(void);
+static void preheat_hashtable_entry_pool(size_t count);
+static bool is_power_of_two(size_t n);
+static size_t next_power_of_two(size_t n);
+static int mcp_hashtable_resize(mcp_hashtable_t* table, size_t new_capacity);
+
+// Thread-local storage for hashtable entry pools
+#ifdef _WIN32
+__declspec(thread) static mcp_memory_pool_t* tls_hashtable_entry_pool = NULL;
+#else
+__thread static mcp_memory_pool_t* tls_hashtable_entry_pool = NULL;
+#endif
+
+// Preheat the memory pool by allocating and freeing entries
+static void preheat_hashtable_entry_pool(size_t count) {
+    if (!tls_hashtable_entry_pool) {
+        return;
+    }
+
+    // Allocate temporary array to hold pointers
+    void** temp_entries = (void**)hashtable_alloc(count * sizeof(void*));
+    if (!temp_entries) {
+        return; // If we can't allocate the array, just skip preheating
+    }
+
+    // Allocate entries
+    size_t allocated = 0;
+    for (size_t i = 0; i < count; i++) {
+        temp_entries[i] = mcp_memory_pool_alloc(tls_hashtable_entry_pool);
+        if (temp_entries[i]) {
+            allocated++;
+        } else {
+            break; // Pool is full or allocation failed
+        }
+    }
+
+    // Free entries in reverse order (LIFO) for better cache locality
+    for (size_t i = allocated; i > 0; i--) {
+        mcp_memory_pool_free(tls_hashtable_entry_pool, temp_entries[i-1]);
+    }
+
+    hashtable_free(temp_entries);
+}
+
+// Initialize the thread-local hashtable entry pool
+static bool init_hashtable_entry_pool(void) {
+    if (tls_hashtable_entry_pool) {
+        return true; // Already initialized for this thread
+    }
+
+    // Create a pool with initial 128 entries (increased from 64), no maximum limit
+    tls_hashtable_entry_pool = mcp_memory_pool_create(
+        sizeof(mcp_hashtable_entry_t), 128, 0);
+
+    if (tls_hashtable_entry_pool) {
+        // Preheat the pool by allocating and freeing 64 entries
+        // This ensures the internal structures are ready for high load
+        preheat_hashtable_entry_pool(64);
+    }
+
+    return (tls_hashtable_entry_pool != NULL);
+}
+
 // Helper function to allocate memory from pool if available, or fallback to malloc
 static void* hashtable_alloc(size_t size) {
     if (mcp_memory_pool_system_is_initialized()) {
@@ -25,6 +94,33 @@ static void hashtable_free(void* ptr) {
     } else {
         free(ptr);
     }
+}
+
+// Helper function to allocate a hashtable entry from the dedicated pool
+static mcp_hashtable_entry_t* hashtable_entry_alloc(void) {
+    // Try to use the thread-local entry pool first
+    if (tls_hashtable_entry_pool) {
+        void* entry = mcp_memory_pool_alloc(tls_hashtable_entry_pool);
+        if (entry) {
+            return (mcp_hashtable_entry_t*)entry;
+        }
+    }
+
+    // Fall back to general allocation if entry pool is not available or full
+    return (mcp_hashtable_entry_t*)hashtable_alloc(sizeof(mcp_hashtable_entry_t));
+}
+
+// Helper function to free a hashtable entry
+static void hashtable_entry_free(mcp_hashtable_entry_t* entry) {
+    if (!entry) return;
+
+    // Try to return to the thread-local entry pool first
+    if (tls_hashtable_entry_pool && mcp_memory_pool_free(tls_hashtable_entry_pool, entry)) {
+        return;
+    }
+
+    // Fall back to general free if entry pool is not available or entry wasn't from the pool
+    hashtable_free(entry);
 }
 
 // Helper function to check if a number is a power of 2
@@ -100,6 +196,11 @@ mcp_hashtable_t* mcp_hashtable_create(
         return NULL;
     }
 
+    // Initialize the thread-local hashtable entry pool if not already initialized
+    if (mcp_memory_pool_system_is_initialized() && !tls_hashtable_entry_pool) {
+        init_hashtable_entry_pool();
+    }
+
     // Ensure initial capacity is a power of 2
     if (initial_capacity == 0) {
         initial_capacity = 16; // Default initial capacity
@@ -140,6 +241,14 @@ mcp_hashtable_t* mcp_hashtable_create(
     table->value_free = value_free;
 
     return table;
+}
+
+// Cleanup the thread-local hashtable entry pool
+static void cleanup_hashtable_entry_pool(void) {
+    if (tls_hashtable_entry_pool) {
+        mcp_memory_pool_destroy(tls_hashtable_entry_pool);
+        tls_hashtable_entry_pool = NULL;
+    }
 }
 
 void mcp_hashtable_destroy(mcp_hashtable_t* table) {
@@ -188,8 +297,7 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
     }
 
     // --- Key doesn't exist, create and insert new entry ---
-    mcp_hashtable_entry_t* new_entry = (mcp_hashtable_entry_t*)hashtable_alloc(
-        sizeof(mcp_hashtable_entry_t));
+    mcp_hashtable_entry_t* new_entry = hashtable_entry_alloc();
     if (!new_entry) {
         return -1;
     }
@@ -197,7 +305,7 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
     // Duplicate key
     new_entry->key = table->key_dup(key);
     if (!new_entry->key) {
-        hashtable_free(new_entry);
+        hashtable_entry_free(new_entry);
         return -1;
     }
 
@@ -270,7 +378,7 @@ int mcp_hashtable_remove(mcp_hashtable_t* table, const void* key) {
             }
 
             // Free entry struct and decrement size
-            hashtable_free(entry);
+            hashtable_entry_free(entry);
             table->size--;
 
             return 0;
@@ -327,7 +435,7 @@ void mcp_hashtable_clear(mcp_hashtable_t* table) {
             }
 
             // Free entry
-            hashtable_free(entry);
+            hashtable_entry_free(entry);
             entry = next;
         }
         table->buckets[i] = NULL;
@@ -382,7 +490,13 @@ void* mcp_hashtable_string_dup(const void* key) {
 
 // String free function
 void mcp_hashtable_string_free(void* key) {
-    free(key);
+    if (!key) return;
+
+    if (mcp_memory_pool_system_is_initialized()) {
+        mcp_pool_free(key);
+    } else {
+        free(key);
+    }
 }
 
 // Integer hash function
@@ -406,7 +520,14 @@ bool mcp_hashtable_int_compare(const void* key1, const void* key2) {
 
 // Integer duplication function
 void* mcp_hashtable_int_dup(const void* key) {
-    int* dup = (int*)malloc(sizeof(int));
+    int* dup;
+
+    if (mcp_memory_pool_system_is_initialized()) {
+        dup = (int*)mcp_pool_alloc(sizeof(int));
+    } else {
+        dup = (int*)malloc(sizeof(int));
+    }
+
     if (dup) {
         *dup = *(const int*)key;
     }
@@ -415,7 +536,13 @@ void* mcp_hashtable_int_dup(const void* key) {
 
 // Integer free function
 void mcp_hashtable_int_free(void* key) {
-    free(key);
+    if (!key) return;
+
+    if (mcp_memory_pool_system_is_initialized()) {
+        mcp_pool_free(key);
+    } else {
+        free(key);
+    }
 }
 
 // Pointer hash function
@@ -539,4 +666,12 @@ int mcp_hashtable_remove_batch(
     }
 
     return success_count;
+}
+
+// Global cleanup function
+void mcp_hashtable_system_cleanup(void) {
+    // Cleanup the thread-local hashtable entry pool for the current thread
+    // Note: This only cleans up the pool for the current thread
+    // Each thread should call this function before exiting
+    cleanup_hashtable_entry_pool();
 }

@@ -317,6 +317,15 @@ int mcp_hashtable_remove_batch(
     int* results_out
 );
 
+/**
+ * @brief Cleans up thread-local resources used by the hashtable implementation.
+ *
+ * This function should be called by each thread before it exits to free any
+ * thread-local resources allocated by the hashtable implementation, such as
+ * memory pools. It only affects resources for the calling thread.
+ */
+void mcp_hashtable_system_cleanup(void);
+
 #ifdef __cplusplus
 }
 #endif
