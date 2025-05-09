@@ -17,7 +17,7 @@ static void cleanup_hashtable_entry_pool(void);
 static void preheat_hashtable_entry_pool(size_t count);
 static bool is_power_of_two(size_t n);
 static size_t next_power_of_two(size_t n);
-static int mcp_hashtable_resize(mcp_hashtable_t* table, size_t new_capacity);
+static int hashtable_resize(mcp_hashtable_t* table, size_t new_capacity);
 
 // Thread-local storage for hashtable entry pools
 #ifdef _WIN32
@@ -143,7 +143,7 @@ static size_t next_power_of_two(size_t n) {
 }
 
 // Helper function to resize the hash table
-static int mcp_hashtable_resize(mcp_hashtable_t* table, size_t new_capacity) {
+static int hashtable_resize(mcp_hashtable_t* table, size_t new_capacity) {
     if (!table || new_capacity <= table->capacity) {
         return -1;
     }
@@ -271,7 +271,7 @@ int mcp_hashtable_put(mcp_hashtable_t* table, const void* key, void* value) {
 
     // --- Check if resize is needed ---
     if ((float)(table->size + 1) / table->capacity > table->load_factor_threshold) {
-        if (mcp_hashtable_resize(table, table->capacity * 2) != 0) {
+        if (hashtable_resize(table, table->capacity * 2) != 0) {
             return -1;
         }
     }
@@ -594,7 +594,7 @@ int mcp_hashtable_put_batch(
         while ((float)(table->size + count) / new_capacity > table->load_factor_threshold) {
             new_capacity *= 2;
         }
-        if (mcp_hashtable_resize(table, new_capacity) != 0) {
+        if (hashtable_resize(table, new_capacity) != 0) {
             // Continue with the current capacity if resize fails
         }
     }
