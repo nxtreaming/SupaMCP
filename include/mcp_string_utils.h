@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdarg.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -89,6 +90,58 @@ char* dyn_buf_finalize(dyn_buf_t* db);
  * @param db Pointer to the dyn_buf_t structure.
  */
 void dyn_buf_free(dyn_buf_t* db);
+
+/**
+ * @brief Formats a string using printf-style formatting and returns a newly allocated string.
+ *
+ * @param format The format string.
+ * @param ... The arguments to format.
+ * @return A newly allocated string containing the formatted result, or NULL on error.
+ *         The caller is responsible for freeing the returned string with free().
+ */
+char* mcp_format_string(const char* format, ...);
+
+/**
+ * @brief Performs a case-insensitive string comparison.
+ *
+ * @param s1 The first string.
+ * @param s2 The second string.
+ * @return An integer less than, equal to, or greater than zero if s1 is found,
+ *         respectively, to be less than, to match, or be greater than s2.
+ */
+int mcp_stricmp(const char* s1, const char* s2);
+
+/**
+ * @brief Checks if a string starts with a given prefix (case-sensitive).
+ *
+ * @param str The string to check.
+ * @param prefix The prefix to look for.
+ * @return true if str starts with prefix, false otherwise.
+ */
+bool mcp_str_starts_with(const char* str, const char* prefix);
+
+/**
+ * @brief Checks if a string ends with a given suffix (case-sensitive).
+ *
+ * @param str The string to check.
+ * @param suffix The suffix to look for.
+ * @return true if str ends with suffix, false otherwise.
+ */
+bool mcp_str_ends_with(const char* str, const char* suffix);
+
+/**
+ * @brief Splits a string into tokens based on a delimiter character.
+ *
+ * This function modifies the input string by replacing delimiter characters with null terminators.
+ * The returned array of pointers points into the modified input string.
+ *
+ * @param str The string to split (will be modified).
+ * @param delimiter The delimiter character.
+ * @param count Pointer to a size_t variable that will receive the number of tokens.
+ * @return An array of pointers to the tokens, or NULL on error.
+ *         The caller is responsible for freeing the returned array with free().
+ */
+char** mcp_str_split(char* str, char delimiter, size_t* count);
 
 #ifdef __cplusplus
 }
