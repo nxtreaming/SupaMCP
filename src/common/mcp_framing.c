@@ -1,5 +1,6 @@
 #include "mcp_framing.h"
 #include "mcp_log.h"
+#include "mcp_memory_pool.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -10,6 +11,35 @@
 #else
 #include <netinet/in.h>
 #endif
+
+/**
+ * @brief Helper function to allocate memory, using memory pool if available.
+ *
+ * @param size Size of memory to allocate in bytes.
+ * @return Pointer to allocated memory, or NULL on failure.
+ */
+static void* framing_alloc(size_t size) {
+    if (mcp_memory_pool_system_is_initialized()) {
+        return mcp_pool_alloc(size);
+    } else {
+        return malloc(size);
+    }
+}
+
+/**
+ * @brief Helper function to free memory allocated with framing_alloc.
+ *
+ * @param ptr Pointer to memory to free.
+ */
+static void framing_free(void* ptr) {
+    if (!ptr) return;
+
+    if (mcp_memory_pool_system_is_initialized()) {
+        mcp_pool_free(ptr);
+    } else {
+        free(ptr);
+    }
+}
 
 /**
  * @brief Helper function to handle socket errors in a consistent way.
@@ -180,6 +210,139 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     // 6. Set output parameters
     *message_data_out = message_buf;
     *message_len_out = message_length_host;
+
+    return 0;
+}
+
+int mcp_framing_send_batch(socket_t sock, const char** messages, const uint32_t* lengths, size_t count, volatile bool* stop_flag) {
+    if (sock == MCP_INVALID_SOCKET || (count > 0 && (messages == NULL || lengths == NULL))) {
+        mcp_log_error("mcp_framing_send_batch: Invalid parameters");
+        return -1;
+    }
+
+    if (count == 0) {
+        // Nothing to send, return success
+        return 0;
+    }
+
+    // Calculate total number of iovec entries needed (2 per message: length + data)
+    size_t total_iovecs = 0;
+    for (size_t i = 0; i < count; i++) {
+        // Each message needs 1 iovec for length, and 1 for data if length > 0
+        total_iovecs += (lengths[i] > 0) ? 2 : 1;
+    }
+
+    // Allocate iovec array
+    mcp_iovec_t* iov = (mcp_iovec_t*)framing_alloc(total_iovecs * sizeof(mcp_iovec_t));
+    if (iov == NULL) {
+        mcp_log_error("mcp_framing_send_batch: Failed to allocate iovec array");
+        return -1;
+    }
+
+    // Allocate a single buffer for all length prefixes
+    // This ensures the memory remains valid during the entire send operation
+    char* length_buffer = (char*)framing_alloc(count * sizeof(uint32_t));
+    if (length_buffer == NULL) {
+        mcp_log_error("mcp_framing_send_batch: Failed to allocate length buffer");
+        framing_free(iov);
+        return -1;
+    }
+
+    // Fill iovec array
+    size_t iov_index = 0;
+    for (size_t i = 0; i < count; i++) {
+        // Convert length to network byte order and store directly in the buffer
+        uint32_t net_length = htonl(lengths[i]);
+        memcpy(length_buffer + (i * sizeof(uint32_t)), &net_length, sizeof(uint32_t));
+
+        // Add length prefix to iovec
+#ifdef _WIN32
+        iov[iov_index].buf = length_buffer + (i * sizeof(uint32_t));
+        iov[iov_index].len = (ULONG)sizeof(uint32_t);
+#else
+        iov[iov_index].iov_base = length_buffer + (i * sizeof(uint32_t));
+        iov[iov_index].iov_len = sizeof(uint32_t);
+#endif
+        iov_index++;
+
+        // Add message data to iovec if length > 0
+        if (lengths[i] > 0) {
+#ifdef _WIN32
+            iov[iov_index].buf = (char*)messages[i];
+            iov[iov_index].len = (ULONG)lengths[i];
+#else
+            iov[iov_index].iov_base = (char*)messages[i];
+            iov[iov_index].iov_len = lengths[i];
+#endif
+            iov_index++;
+        }
+    }
+
+    // Send using vectored I/O
+    int result = mcp_socket_send_vectors(sock, iov, (int)iov_index, stop_flag);
+
+    // Free allocated memory - only after the send operation is complete
+    framing_free(length_buffer);
+    framing_free(iov);
+
+    if (result != 0) {
+        mcp_log_error("mcp_framing_send_batch: mcp_socket_send_vectors failed (result: %d)", result);
+        return -1;
+    }
+
+    return 0;
+}
+
+int mcp_framing_recv_batch(socket_t sock, char** messages_out, uint32_t* lengths_out, size_t max_count, size_t* count_out, uint32_t max_message_size, volatile bool* stop_flag) {
+    if (sock == MCP_INVALID_SOCKET || messages_out == NULL || lengths_out == NULL || count_out == NULL || max_count == 0) {
+        mcp_log_error("mcp_framing_recv_batch: Invalid parameters");
+        return -1;
+    }
+
+    // Initialize count
+    *count_out = 0;
+
+    // Try to receive up to max_count messages
+    for (size_t i = 0; i < max_count; i++) {
+        // Check if we should stop
+        if (stop_flag && *stop_flag) {
+            mcp_log_info("mcp_framing_recv_batch: Stopped by flag after receiving %zu messages", i);
+            return 0;
+        }
+
+        // Try to receive a message
+        char* message = NULL;
+        uint32_t length = 0;
+
+        // Use non-blocking mode for all but the first message
+        // This allows us to receive as many messages as are available without blocking
+        if (i > 0) {
+            // Check if there's data available to read using mcp_socket_wait_readable with 0 timeout (non-blocking)
+            int available = mcp_socket_wait_readable(sock, 0, stop_flag);
+            if (available <= 0) {
+                // No data available, timeout, error, or stopped by flag
+                break;
+            }
+        }
+
+        // Receive the message
+        int result = mcp_framing_recv_message(sock, &message, &length, max_message_size, stop_flag);
+        if (result != 0) {
+            // If this is the first message, it's an error
+            // If we've already received some messages, it's OK to stop here
+            if (i == 0) {
+                mcp_log_error("mcp_framing_recv_batch: Failed to receive first message");
+                return -1;
+            } else {
+                break;
+            }
+        }
+
+        // Store the message and length
+        messages_out[i] = message;
+        lengths_out[i] = length;
+        (*count_out)++;
+    }
 
     return 0;
 }
