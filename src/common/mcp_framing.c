@@ -43,6 +43,7 @@ static void framing_free(void* ptr) {
 
 /**
  * @brief Helper function to handle socket errors in a consistent way.
+ *        Only used in mcp_framing_recv_message().
  *
  * @param error_code The socket error code
  * @param stop_flag Pointer to a flag indicating if the operation was intentionally stopped
