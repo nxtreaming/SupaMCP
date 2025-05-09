@@ -201,7 +201,6 @@ set(COMMON_SOURCES
     src/gateway/mcp_gateway_routing.c
     src/gateway/mcp_gateway_pool.c
     src/gateway/mcp_gateway_config_manager.c
-    src/gateway/mcp_gateway_socket_utils.c
 )
 
 # Create common library

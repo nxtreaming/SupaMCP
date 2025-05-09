@@ -8,7 +8,7 @@
 #include <stdlib.h>
 
 #ifndef _WIN32
-#include <regex.h> // Include POSIX regex header only on non-Windows
+#include <regex.h>
 #endif
 
 // Implementation of find_backend_for_request
