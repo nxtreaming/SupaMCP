@@ -28,107 +28,154 @@ static void skip_whitespace(const char** json) {
     }
 }
 
-// Parses a JSON string, handling basic escapes and UTF-8 characters. Uses malloc.
+// Helper function to convert a 4-digit hex Unicode escape to UTF-8
+static int hex_to_utf8(const char* hex, char* utf8) {
+    // Convert 4 hex digits to a Unicode code point
+    unsigned int code_point = 0;
+    for (int i = 0; i < 4; i++) {
+        code_point <<= 4;
+        if (hex[i] >= '0' && hex[i] <= '9') {
+            code_point |= hex[i] - '0';
+        } else if (hex[i] >= 'a' && hex[i] <= 'f') {
+            code_point |= hex[i] - 'a' + 10;
+        } else if (hex[i] >= 'A' && hex[i] <= 'F') {
+            code_point |= hex[i] - 'A' + 10;
+        } else {
+            return 0; // Invalid hex digit
+        }
+    }
+
+    // Convert code point to UTF-8
+    if (code_point < 0x80) {
+        // 1-byte UTF-8 (ASCII)
+        utf8[0] = (char)code_point;
+        return 1;
+    } else if (code_point < 0x800) {
+        // 2-byte UTF-8
+        utf8[0] = (char)(0xC0 | (code_point >> 6));
+        utf8[1] = (char)(0x80 | (code_point & 0x3F));
+        return 2;
+    } else {
+        // 3-byte UTF-8
+        utf8[0] = (char)(0xE0 | (code_point >> 12));
+        utf8[1] = (char)(0x80 | ((code_point >> 6) & 0x3F));
+        utf8[2] = (char)(0x80 | (code_point & 0x3F));
+        return 3;
+    }
+}
+
+// Optimized single-pass JSON string parser with proper Unicode handling
 static char* parse_string(const char** json) {
     if (**json != '"') {
         return NULL;
     }
     (*json)++; // Skip opening quote
 
-    // First pass: calculate required length and check for invalid escapes/chars
-    size_t required_len = 0;
-    const char* p = *json;
-    while (*p != '"' && *p != '\0') {
-        // Check for actual control characters, but allow UTF-8 multi-byte sequences
-        unsigned char c = (unsigned char)*p;
-
-        // Only check for control characters in ASCII range (< 128) and not part of UTF-8 sequence
-        if (c < 32 && c != '\t' && c != '\n' && c != '\r' && c != '\b' && c != '\f') {
-            // For UTF-8, first byte of multi-byte sequence has high bit set
-            // If this is a continuation byte (10xxxxxx), it's part of a UTF-8 sequence
-            if (c < 128 || !is_utf8_continuation(c)) {
-                fprintf(stderr, "Error: Invalid control character in JSON string.\n");
-                return NULL; // Invalid control character
-            }
-        }
-
-        if (*p == '\\') {
-            p++; // Skip backslash
-            switch (*p) {
-                case '"': case '\\': case '/': case 'b':
-                case 'f': case 'n': case 'r': case 't':
-                    required_len++;
-                    p++;
-                    break;
-                case 'u': // Unicode escape - basic parser just skips 4 hex digits
-                    p++;
-                    for (int i = 0; i < 4; i++) {
-                        if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') || (*p >= 'A' && *p <= 'F'))) {
-                             fprintf(stderr, "Error: Invalid hex digit in \\u escape.\n");
-                             return NULL; // Invalid hex
-                         }
-                        p++;
-                    }
-                    // TODO: Proper UTF-8 conversion needed here for correct length/value
-                    required_len += 3; // Allow up to 3 bytes for UTF-8 encoded character
-                    break;
-                default:
-                    fprintf(stderr, "Error: Invalid escape sequence '\\%c'.\n", *p);
-                    return NULL; // Invalid escape
-            }
-        } else {
-            if (*p == '\0') { // Check for embedded null byte
-                fprintf(stderr, "Error: Embedded null byte found in JSON string.\n");
-                return NULL;
-            }
-            required_len++;
-            p++;
-        }
-    }
-
-    if (*p != '"') {
-        return NULL; // Unterminated string
-    }
-
-    // Allocate buffer for the unescaped string
-    char* result = (char*)malloc(required_len + 1);
+    // Use a dynamic buffer approach with initial capacity
+    size_t capacity = 32; // Start with a reasonable size
+    size_t length = 0;
+    char* result = (char*)malloc(capacity);
     if (result == NULL) {
         return NULL;
     }
 
-    // Second pass: copy characters and handle escapes
-    p = *json; // Reset pointer to start of string content
-    char* q = result;
-    while (*p != '"') {
+    const char* p = *json;
+
+    // Single pass: parse and build the string directly
+    while (*p != '"' && *p != '\0') {
+        // Ensure we have space for at least 4 more bytes (max UTF-8 char size)
+        if (length + 4 >= capacity) {
+            capacity *= 2;
+            char* new_result = (char*)realloc(result, capacity);
+            if (new_result == NULL) {
+                free(result);
+                return NULL;
+            }
+            result = new_result;
+        }
+
+        // Check for control characters
+        unsigned char c = (unsigned char)*p;
+        if (c < 32 && c != '\t' && c != '\n' && c != '\r' && c != '\b' && c != '\f') {
+            if (c < 128 || !is_utf8_continuation(c)) {
+                mcp_log_error("Invalid control character in JSON string.");
+                free(result);
+                return NULL;
+            }
+        }
+
         if (*p == '\\') {
             p++; // Skip backslash
             switch (*p) {
-                case '"':  *q++ = '"'; p++; break;
-                case '\\': *q++ = '\\'; p++; break;
-                case '/':  *q++ = '/'; p++; break;
-                case 'b':  *q++ = '\b'; p++; break;
-                case 'f':  *q++ = '\f'; p++; break;
-                case 'n':  *q++ = '\n'; p++; break;
-                case 'r':  *q++ = '\r'; p++; break;
-                case 't':  *q++ = '\t'; p++; break;
-                case 'u': // Unicode escape - preserve as-is for now
-                    // Just copy the \uXXXX sequence as-is
-                    *q++ = '\\';
-                    *q++ = 'u';
+                case '"':  result[length++] = '"'; p++; break;
+                case '\\': result[length++] = '\\'; p++; break;
+                case '/':  result[length++] = '/'; p++; break;
+                case 'b':  result[length++] = '\b'; p++; break;
+                case 'f':  result[length++] = '\f'; p++; break;
+                case 'n':  result[length++] = '\n'; p++; break;
+                case 'r':  result[length++] = '\r'; p++; break;
+                case 't':  result[length++] = '\t'; p++; break;
+                case 'u': { // Unicode escape - convert to UTF-8
                     p++; // Skip 'u'
+                    // Validate hex digits
                     for (int i = 0; i < 4; i++) {
-                        *q++ = *p++;
+                        if (!((p[i] >= '0' && p[i] <= '9') ||
+                              (p[i] >= 'a' && p[i] <= 'f') ||
+                              (p[i] >= 'A' && p[i] <= 'F'))) {
+                            mcp_log_error("Invalid hex digit in \\u escape.");
+                            free(result);
+                            return NULL;
+                        }
                     }
+
+                    // Convert \uXXXX to UTF-8
+                    char utf8_buf[4]; // Max 3 bytes for BMP + null terminator
+                    int utf8_len = hex_to_utf8(p, utf8_buf);
+                    if (utf8_len == 0) {
+                        mcp_log_error("Failed to convert Unicode escape to UTF-8.");
+                        free(result);
+                        return NULL;
+                    }
+
+                    // Copy UTF-8 bytes to result
+                    for (int i = 0; i < utf8_len; i++) {
+                        result[length++] = utf8_buf[i];
+                    }
+
+                    p += 4; // Skip the 4 hex digits
                     break;
-                // No default needed due to first pass validation
+                }
+                default:
+                    mcp_log_error("Invalid escape sequence '\\%c'.", *p);
+                    free(result);
+                    return NULL;
             }
-            // Removed the p++ that was here, advancement is handled in cases now
         } else {
-            // For UTF-8 characters, just copy them as-is
-            *q++ = *p++;
+            if (*p == '\0') {
+                mcp_log_error("Embedded null byte found in JSON string.");
+                free(result);
+                return NULL;
+            }
+            result[length++] = *p++;
         }
     }
-    *q = '\0'; // Null-terminate the result
+
+    if (*p != '"') {
+        mcp_log_error("Unterminated JSON string.");
+        free(result);
+        return NULL;
+    }
+
+    // Ensure null termination
+    if (length + 1 > capacity) {
+        char* new_result = (char*)realloc(result, length + 1);
+        if (new_result == NULL) {
+            free(result);
+            return NULL;
+        }
+        result = new_result;
+    }
+    result[length] = '\0';
 
     *json = p + 1; // Move original pointer past the closing quote
     return result;

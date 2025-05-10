@@ -17,7 +17,7 @@
 
 // --- Constants (Keep if needed elsewhere, otherwise remove) ---
 /** @internal Initial capacity for the hash table bucket array. Should be power of 2. */
-#define MCP_JSON_HASH_TABLE_INITIAL_CAPACITY 16
+#define MCP_JSON_HASH_TABLE_INITIAL_CAPACITY 32  // Increased from 16 for better performance
 /** @internal Load factor threshold. If count/capacity exceeds this, the table resizes. */
 #define MCP_JSON_HASH_TABLE_MAX_LOAD_FACTOR 0.75
 

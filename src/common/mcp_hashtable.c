@@ -464,16 +464,41 @@ void mcp_hashtable_foreach(
     }
 }
 
-// String hash function (FNV-1a)
+// Optimized string hash function (FNV-1a with batch processing)
 unsigned long mcp_hashtable_string_hash(const void* key) {
     const unsigned char* str = (const unsigned char*)key;
+    if (!str) return 0;
+
     unsigned long hash = 2166136261UL; // FNV offset basis
 
-    // Process 4 bytes at a time for better performance
+    // Process string in batches of 4 bytes for better performance
+    // This reduces loop iterations and improves instruction pipelining
     while (*str) {
-        hash ^= *str++;
-        hash *= 16777619UL; // FNV prime
+        // Fast path: process 4 bytes at once if we have at least 4 bytes left
+        if (str[0] && str[1] && str[2] && str[3]) {
+            // Unrolled loop for better performance
+            hash ^= str[0];
+            hash *= 16777619UL; // FNV prime
+
+            hash ^= str[1];
+            hash *= 16777619UL;
+
+            hash ^= str[2];
+            hash *= 16777619UL;
+
+            hash ^= str[3];
+            hash *= 16777619UL;
+
+            str += 4;
+        } else {
+            // Slow path: process remaining bytes one at a time
+            hash ^= *str++;
+            hash *= 16777619UL;
+        }
     }
+
+    // Final mixing to improve distribution
+    hash ^= hash >> 16;
 
     return hash;
 }

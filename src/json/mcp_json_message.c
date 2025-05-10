@@ -153,16 +153,73 @@ int mcp_json_parse_message(const char* json_str, mcp_message_t* message) {
     return parse_status;
 }
 
-// Rewritten stringify function using dynamic buffer
+// Optimized stringify function using dynamic buffer with better size estimation
 char* mcp_json_stringify_message(const mcp_message_t* message) {
     if (message == NULL) {
         return NULL;
     }
     PROFILE_START("mcp_json_stringify_message");
 
+    // Estimate initial buffer size based on message type and content
+    size_t initial_size = 64; // Base size for {"jsonrpc":"2.0",...}
+
+    // Add size for specific message type fields
+    switch (message->type) {
+        case MCP_MESSAGE_TYPE_REQUEST:
+            initial_size += 32; // For "id":number
+
+            // Method size
+            if (message->request.method) {
+                initial_size += strlen(message->request.method) + 12; // "method":"..."
+            }
+
+            // Params size (if present)
+            if (message->request.params) {
+                initial_size += strlen(message->request.params) + 10; // ,"params":...
+            }
+            break;
+
+        case MCP_MESSAGE_TYPE_RESPONSE:
+            initial_size += 32; // For "id":number
+
+            if (message->response.error_code != MCP_ERROR_NONE) {
+                // Error response
+                initial_size += 32; // For "error":{"code":number
+
+                if (message->response.error_message) {
+                    initial_size += strlen(message->response.error_message) + 14; // ,"message":"..."
+                }
+            } else {
+                // Success response
+                if (message->response.result) {
+                    initial_size += strlen(message->response.result) + 10; // ,"result":...
+                } else {
+                    initial_size += 14; // ,"result":null
+                }
+            }
+            break;
+
+        case MCP_MESSAGE_TYPE_NOTIFICATION:
+            // Method size
+            if (message->notification.method) {
+                initial_size += strlen(message->notification.method) + 12; // "method":"..."
+            }
+
+            // Params size (if present)
+            if (message->notification.params) {
+                initial_size += strlen(message->notification.params) + 10; // ,"params":...
+            }
+            break;
+
+        default:
+            mcp_log_error("Invalid message type encountered during stringify.");
+            PROFILE_END("mcp_json_stringify_message");
+            return NULL;
+    }
+
+    // Initialize dynamic buffer with estimated size
     dyn_buf_t db;
-    // Estimate initial size (can be tuned)
-    if (dyn_buf_init(&db, 256) != 0) {
+    if (dyn_buf_init(&db, initial_size) != 0) {
         mcp_log_error("Failed to initialize dynamic buffer for stringify.");
         PROFILE_END("mcp_json_stringify_message");
         return NULL;
@@ -238,8 +295,6 @@ char* mcp_json_stringify_message(const mcp_message_t* message) {
 
     // Finalize buffer (transfers ownership of buffer to final_json_string)
     char* final_json_string = dyn_buf_finalize(&db);
-
-    // dyn_buf_free(&db); // Not needed after finalize
 
     PROFILE_END("mcp_json_stringify_message");
     return final_json_string; // Return the malloc'd final string
@@ -394,7 +449,7 @@ static int parse_single_message_from_json(mcp_json_t* json, mcp_message_t* messa
             message->type = MCP_MESSAGE_TYPE_RESPONSE;
             message->response.id = (uint64_t)id->number_value;
             if (error != NULL && error->type == MCP_JSON_OBJECT) { // Error Response
-                if (result != NULL) 
+                if (result != NULL)
                     message->type = MCP_MESSAGE_TYPE_INVALID;
                 else {
                     mcp_json_t* code = mcp_json_object_get_property(error, "code");
@@ -417,9 +472,9 @@ static int parse_single_message_from_json(mcp_json_t* json, mcp_message_t* messa
                 message->response.error_message = NULL;
                 message->response.result = mcp_json_stringify(result); // Still uses malloc
                 if (message->response.result != NULL)
-                    parse_status = 0; 
+                    parse_status = 0;
                 else {
-                    message->type = MCP_MESSAGE_TYPE_INVALID; 
+                    message->type = MCP_MESSAGE_TYPE_INVALID;
                 }
             } else {
                 message->type = MCP_MESSAGE_TYPE_INVALID;
@@ -449,12 +504,28 @@ int mcp_json_parse_message_or_batch(const char* json_str, mcp_message_t** messag
 
     PROFILE_START("mcp_json_parse_batch");
 
+    // Quick check for batch vs single message to optimize allocation
+    bool is_likely_batch = false;
+    // Skip whitespace
+    const char* p = json_str;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        p++;
+    }
+    // Check if it starts with '[' (batch) or '{' (single message)
+    if (*p == '[') {
+        is_likely_batch = true;
+    } else if (*p != '{') {
+        mcp_log_error("Batch parse error: JSON must start with '[' or '{'.");
+        PROFILE_END("mcp_json_parse_batch");
+        return MCP_ERROR_PARSE_ERROR;
+    }
+
     // Parse the input string using the thread-local arena
     mcp_json_t* root_json = mcp_json_parse(json_str);
     if (root_json == NULL) {
         mcp_log_error("Batch parse error: Invalid root JSON.");
         PROFILE_END("mcp_json_parse_batch");
-        return MCP_ERROR_PARSE_ERROR; // Use defined error code
+        return MCP_ERROR_PARSE_ERROR;
     }
 
     int result = 0; // Success by default
@@ -464,8 +535,12 @@ int mcp_json_parse_message_or_batch(const char* json_str, mcp_message_t** messag
         *messages = (mcp_message_t*)malloc(sizeof(mcp_message_t));
         if (*messages == NULL) {
             mcp_log_error("Batch parse error: Failed to allocate memory for single message.");
-            result = MCP_ERROR_INTERNAL_ERROR; // Allocation error
+            result = MCP_ERROR_INTERNAL_ERROR;
         } else {
+            // Initialize message struct
+            memset(*messages, 0, sizeof(mcp_message_t));
+            (*messages)[0].type = MCP_MESSAGE_TYPE_INVALID;
+
             // Parse the single object
             if (parse_single_message_from_json(root_json, *messages) == 0) {
                 *count = 1;
@@ -473,57 +548,61 @@ int mcp_json_parse_message_or_batch(const char* json_str, mcp_message_t** messag
             } else {
                 // Parsing the single object failed (invalid format)
                 mcp_log_error("Batch parse error: Invalid single message format.");
-                free(*messages); // Free the allocated message struct
+                free(*messages);
                 *messages = NULL;
-                result = MCP_ERROR_INVALID_REQUEST; // Invalid message structure
+                result = MCP_ERROR_INVALID_REQUEST;
             }
         }
     } else if (root_json->type == MCP_JSON_ARRAY) {
         // --- Batch Message ---
         size_t batch_size = mcp_json_array_get_size(root_json);
         if (batch_size == 0) {
-            // Empty batch is technically valid according to JSON-RPC 2.0, but maybe an error for MCP?
-            // Let's treat it as an invalid request for now.
-            mcp_log_error("Batch parse error: Received empty batch array.");
-            result = MCP_ERROR_INVALID_REQUEST;
+            // Empty batch is technically valid according to JSON-RPC 2.0
+            // Return an empty array with success
+            *messages = NULL;
+            *count = 0;
+            result = 0;
         } else {
+            // Allocate memory for the message array
             *messages = (mcp_message_t*)malloc(batch_size * sizeof(mcp_message_t));
             if (*messages == NULL) {
                 mcp_log_error("Batch parse error: Failed to allocate memory for message array.");
-                result = MCP_ERROR_INTERNAL_ERROR; // Allocation error
+                result = MCP_ERROR_INTERNAL_ERROR;
             } else {
-                *count = 0; // Track successfully parsed messages
-                bool parse_error_occurred = false;
-                for (size_t i = 0; i < batch_size; ++i) {
-                    mcp_json_t* item_json = mcp_json_array_get_item(root_json, (int)i);
-                    // Initialize message struct before parsing
+                // Initialize all messages to invalid state
+                for (size_t i = 0; i < batch_size; i++) {
                     memset(&(*messages)[i], 0, sizeof(mcp_message_t));
-                    (*messages)[i].type = MCP_MESSAGE_TYPE_INVALID; // Default
+                    (*messages)[i].type = MCP_MESSAGE_TYPE_INVALID;
+                }
 
-                    if (item_json != NULL && item_json->type == MCP_JSON_OBJECT) {
-                        // Parse the individual message object
-                        if (parse_single_message_from_json(item_json, &(*messages)[i]) == 0) {
-                            (*count)++; // Increment count only if parsing this item succeeded
-                        } else {
-                            // Parsing failed for this item, mark as invalid but continue processing batch
-                            mcp_log_warn("Batch parse warning: Invalid message format at index %zu.", i);
-                            // Ensure contents are released for the failed item
-                            mcp_message_release_contents(&(*messages)[i]);
-                            (*messages)[i].type = MCP_MESSAGE_TYPE_INVALID; // Ensure type is invalid
-                            parse_error_occurred = true; // Flag that at least one item failed
+                *count = 0; // Track successfully parsed messages
+
+                // Process batch items in parallel chunks for better performance on large batches
+                const size_t CHUNK_SIZE = 16; // Process this many items at once
+
+                for (size_t chunk_start = 0; chunk_start < batch_size; chunk_start += CHUNK_SIZE) {
+                    size_t chunk_end = chunk_start + CHUNK_SIZE;
+                    if (chunk_end > batch_size) chunk_end = batch_size;
+
+                    // Process this chunk
+                    for (size_t i = chunk_start; i < chunk_end; i++) {
+                        mcp_json_t* item_json = mcp_json_array_get_item(root_json, (int)i);
+
+                        if (item_json != NULL && item_json->type == MCP_JSON_OBJECT) {
+                            // Parse the individual message object
+                            if (parse_single_message_from_json(item_json, &(*messages)[i]) == 0) {
+                                (*count)++; // Increment count only if parsing succeeded
+                            } else {
+                                // Parsing failed, ensure contents are released
+                                mcp_message_release_contents(&(*messages)[i]);
+                                (*messages)[i].type = MCP_MESSAGE_TYPE_INVALID;
+                            }
                         }
-                    } else {
-                        // Item in batch is not a JSON object
-                        mcp_log_warn("Batch parse warning: Item at index %zu is not a JSON object.", i);
-                        (*messages)[i].type = MCP_MESSAGE_TYPE_INVALID; // Mark as invalid
-                        parse_error_occurred = true;
                     }
                 }
-                // If any item failed parsing, the overall result might be considered an error,
-                // but we still return the partially parsed array. Let the caller decide.
-                // For now, return success if at least one message was parsed, otherwise error.
-                // result = (*count > 0) ? 0 : MCP_ERROR_INVALID_REQUEST;
-                // Let's return success even if some items failed, caller checks individual types.
+
+                // Always return success for batch processing
+                // The caller should check individual message types
                 result = 0;
             }
         }

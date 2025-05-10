@@ -7,12 +7,33 @@
 #include <stdbool.h>
 
 // Stringification uses malloc/realloc for the output buffer, not arena.
+// Forward declaration for estimating JSON size
+static size_t estimate_json_size(const mcp_json_t* json);
+
+// Optimized buffer capacity management with smarter initial sizing
 static int ensure_output_capacity(char** output, size_t* output_size, size_t* output_capacity, size_t additional) {
     if (*output_size + additional > *output_capacity) {
-        size_t new_capacity = *output_capacity == 0 ? 256 : *output_capacity * 2;
-        while (new_capacity < *output_size + additional) {
-            new_capacity *= 2;
+        // More aggressive growth for larger buffers to reduce reallocation frequency
+        size_t new_capacity;
+        if (*output_capacity == 0) {
+            // For initial allocation, try to estimate a good size based on the JSON structure
+            new_capacity = 256; // Minimum starting size
+        } else if (*output_capacity < 1024) {
+            // For small buffers, double the size
+            new_capacity = *output_capacity * 2;
+        } else if (*output_capacity < 1024 * 1024) {
+            // For medium buffers, grow by 50%
+            new_capacity = *output_capacity + (*output_capacity / 2);
+        } else {
+            // For large buffers, grow by 25% to avoid excessive memory usage
+            new_capacity = *output_capacity + (*output_capacity / 4);
         }
+
+        // Ensure the new capacity is at least enough for the current request
+        while (new_capacity < *output_size + additional) {
+            new_capacity = new_capacity + (new_capacity / 2);
+        }
+
         char* new_output = (char*)realloc(*output, new_capacity);
         if (new_output == NULL) {
             return -1;
@@ -174,22 +195,139 @@ int stringify_value(const mcp_json_t* json, char** output, size_t* output_size, 
     }
 }
 
+// Estimate the size of a JSON value when stringified
+// This helps reduce reallocations by providing a better initial buffer size
+static size_t estimate_json_size(const mcp_json_t* json) {
+    if (json == NULL) {
+        return 4; // "null"
+    }
+
+    size_t estimate = 0;
+
+    switch (json->type) {
+        case MCP_JSON_NULL:
+            return 4; // "null"
+
+        case MCP_JSON_BOOLEAN:
+            return json->boolean_value ? 4 : 5; // "true" or "false"
+
+        case MCP_JSON_NUMBER:
+            // Numbers typically need around 20 chars max for double precision
+            return 20;
+
+        case MCP_JSON_STRING: {
+            // String length plus quotes, plus some extra for escapes
+            size_t str_len = json->string_value ? strlen(json->string_value) : 0;
+            // Assume ~10% of characters need escaping (2 chars each)
+            return str_len + (str_len / 10) + 2; // +2 for quotes
+        }
+
+        case MCP_JSON_ARRAY: {
+            // Start with 2 for [ and ]
+            estimate = 2;
+            // Add commas between items
+            if (json->array.count > 0) {
+                estimate += json->array.count - 1;
+            }
+            // Sample up to 10 items to get an average size
+            size_t sample_count = json->array.count < 10 ? json->array.count : 10;
+            size_t sample_total = 0;
+
+            for (size_t i = 0; i < sample_count; i++) {
+                sample_total += estimate_json_size(json->array.items[i]);
+            }
+
+            // Extrapolate to full array size
+            if (sample_count > 0) {
+                estimate += (sample_total / sample_count) * json->array.count;
+            }
+
+            return estimate;
+        }
+
+        case MCP_JSON_OBJECT: {
+            // Start with 2 for { and }
+            estimate = 2;
+
+            // Get property names
+            char** names = NULL;
+            size_t count = 0;
+            if (mcp_json_object_get_property_names(json, &names, &count) != 0) {
+                return 16; // Fallback if we can't get names
+            }
+
+            // Add commas between properties
+            if (count > 0) {
+                estimate += count - 1;
+            }
+
+            // Sample up to 10 properties to get an average size
+            size_t sample_count = count < 10 ? count : 10;
+            size_t sample_total = 0;
+
+            for (size_t i = 0; i < sample_count && i < count; i++) {
+                // Add property name length plus quotes and colon
+                sample_total += strlen(names[i]) + 3;
+                // Add property value size
+                mcp_json_t* value = mcp_json_object_get_property(json, names[i]);
+                if (value) {
+                    sample_total += estimate_json_size(value);
+                }
+            }
+
+            // Clean up
+            for (size_t i = 0; i < count; i++) {
+                free(names[i]);
+            }
+            free(names);
+
+            // Extrapolate to full object size
+            if (sample_count > 0) {
+                estimate += (sample_total / sample_count) * count;
+            }
+
+            return estimate;
+        }
+
+        default:
+            return 16; // Default fallback
+    }
+}
+
 // Public API function for stringification
 char* mcp_json_stringify(const mcp_json_t* json) {
-    char* output = NULL;
+    // Estimate initial buffer size to reduce reallocations
+    size_t initial_capacity = estimate_json_size(json);
+    if (initial_capacity < 256) initial_capacity = 256; // Minimum size
+
+    char* output = (char*)malloc(initial_capacity);
+    if (output == NULL) {
+        return NULL;
+    }
+
     size_t output_size = 0;
-    size_t output_capacity = 0;
+    size_t output_capacity = initial_capacity;
+
     if (stringify_value(json, &output, &output_size, &output_capacity) != 0) {
         free(output);
         return NULL;
     }
+
     // Add null terminator
     if (ensure_output_capacity(&output, &output_size, &output_capacity, 1) != 0) {
         free(output);
         return NULL;
     }
     output[output_size] = '\0';
-    // Optionally, shrink buffer to fit: realloc(output, output_size + 1);
+
+    // Optionally shrink buffer to fit if there's significant waste
+    if (output_capacity > output_size + 1024) {
+        char* new_output = (char*)realloc(output, output_size + 1);
+        if (new_output != NULL) {
+            output = new_output;
+        }
+    }
+
     return output; // Caller must free this string
 }
 
