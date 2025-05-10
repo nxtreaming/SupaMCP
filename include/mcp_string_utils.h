@@ -52,6 +52,14 @@ typedef struct {
 int dyn_buf_init(dyn_buf_t* db, size_t initial_capacity);
 
 /**
+ * @brief Ensures the buffer has enough capacity for additional characters plus null terminator.
+ * @param db Pointer to the dyn_buf_t structure.
+ * @param additional_len The additional length needed.
+ * @return 0 on success, -1 on allocation failure.
+ */
+int dyn_buf_ensure_capacity(dyn_buf_t* db, size_t additional_len);
+
+/**
  * @brief Appends a null-terminated string to the dynamic buffer, resizing if necessary.
  * @param db Pointer to the dyn_buf_t structure.
  * @param str The string to append.

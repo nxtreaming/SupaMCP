@@ -67,7 +67,7 @@ char* mcp_strdup(const char* str) {
 
 // Ensures the buffer has enough capacity for 'additional_len' more characters + null terminator.
 // Returns 0 on success, -1 on allocation failure.
-static MCP_INLINE int dyn_buf_ensure_capacity(dyn_buf_t* db, size_t additional_len) {
+int dyn_buf_ensure_capacity(dyn_buf_t* db, size_t additional_len) {
     if (!db)
         return -1;
     // +1 for null terminator

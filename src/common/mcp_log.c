@@ -398,6 +398,17 @@ void mcp_log_set_level(mcp_log_level_t level) {
     }
 }
 
+mcp_log_level_t mcp_log_get_level(void) {
+    mcp_log_level_t level;
+
+    // Acquire mutex - we're accessing shared state
+    mcp_mutex_lock(g_log_mutex);
+    level = g_log_level;
+    mcp_mutex_unlock(g_log_mutex);
+
+    return level;
+}
+
 void mcp_log_set_quiet(bool quiet) {
     // Acquire mutex - we're modifying shared state
     mcp_mutex_lock(g_log_mutex);

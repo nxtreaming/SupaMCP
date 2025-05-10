@@ -36,6 +36,7 @@
 
 struct mcp_json {
     mcp_json_type_t type; /**< The type of this JSON value. */
+    int ref_count;        /**< Reference count for shared nodes. */
     union {
         bool boolean_value;     /**< Used if type is MCP_JSON_BOOLEAN. */
         double number_value;    /**< Used if type is MCP_JSON_NUMBER. */

@@ -184,74 +184,81 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
 
     bool first_response_in_batch = true;
 
+    // Pre-allocate response buffer for batch processing
+    // This avoids multiple small allocations and string copies
+    if (is_batch_response && batch_buffer_initialized) {
+        // Estimate initial buffer size based on message count and average response size
+        size_t estimated_size = message_count * 256; // Assume average response size of 256 bytes
+        if (dyn_buf_ensure_capacity(&response_batch_buf, estimated_size) != 0) {
+            mcp_log_warn("Failed to pre-allocate batch response buffer, will grow dynamically");
+        }
+    }
+
     // Process each message
     for (size_t i = 0; i < message_count && *error_code == MCP_ERROR_NONE; ++i) {
         mcp_message_t* current_msg = &messages[i];
         char* single_response_str = NULL;
         int current_msg_error = MCP_ERROR_NONE;
 
-        // Log message type and details
-        mcp_log_debug("Processing message %zu of %zu, type: %d", i+1, message_count, current_msg->type);
+        // Only log at debug level to reduce overhead
+        if (mcp_log_get_level() <= MCP_LOG_LEVEL_DEBUG) {
+            mcp_log_debug("Processing message %zu of %zu, type: %d", i+1, message_count, current_msg->type);
+        }
 
-        switch (current_msg->type) {
-            case MCP_MESSAGE_TYPE_REQUEST:
+        // Fast path for common message types
+        if (current_msg->type == MCP_MESSAGE_TYPE_REQUEST) {
+            // Process request message
+            if (mcp_log_get_level() <= MCP_LOG_LEVEL_DEBUG) {
                 mcp_log_debug("Request message: method=%s, id=%llu",
                              current_msg->request.method ? current_msg->request.method : "NULL",
                              (unsigned long long)current_msg->request.id);
-                single_response_str = handle_request(server, arena, &current_msg->request, auth_context, &current_msg_error);
-                mcp_log_debug("handle_request returned: error_code=%d, response=%s",
-                             current_msg_error,
-                             single_response_str ? "non-NULL" : "NULL");
-                // If handle_request failed internally, current_msg_error will be set.
-                // single_response_str will be an error response string or success response string.
-                if (single_response_str != NULL) {
-                    if (is_batch_response && batch_buffer_initialized) {
-                        if (!first_response_in_batch) {
-                            dyn_buf_append(&response_batch_buf, ",");
-                        }
-                        dyn_buf_append(&response_batch_buf, single_response_str);
-                        first_response_in_batch = false;
-                        free(single_response_str); // Free individual response string after appending
-                        single_response_str = NULL;
-                    } else if (!is_batch_response) {
-                        // This was the only message, store its response directly
-                        final_response_str = single_response_str;
-                        single_response_str = NULL; // Avoid double free
-                    } else {
-                        // Batch buffer init failed, discard individual response
-                        free(single_response_str);
-                        single_response_str = NULL;
+            }
+
+            // Handle the request
+            single_response_str = handle_request(server, arena, &current_msg->request, auth_context, &current_msg_error);
+
+            // Process the response
+            if (single_response_str != NULL) {
+                if (is_batch_response && batch_buffer_initialized) {
+                    // Append to batch response buffer
+                    if (!first_response_in_batch) {
+                        dyn_buf_append(&response_batch_buf, ",");
                     }
-                } else if (current_msg_error != MCP_ERROR_NONE && is_batch_response) {
-                    // Handle cases where handle_request failed but didn't return a string (shouldn't happen ideally)
-                    // Optionally generate and append an error response here.
+                    dyn_buf_append(&response_batch_buf, single_response_str);
+                    first_response_in_batch = false;
+                    free(single_response_str); // Free individual response string after appending
+                } else if (!is_batch_response) {
+                    // This was the only message, store its response directly
+                    final_response_str = single_response_str;
+                    single_response_str = NULL; // Avoid double free
+                } else {
+                    // Batch buffer init failed, discard individual response
+                    free(single_response_str);
                 }
-                break;
-
-            case MCP_MESSAGE_TYPE_NOTIFICATION:
-                // Process notification (currently does nothing)
-                // No response generated for notifications.
-                break;
-
-            case MCP_MESSAGE_TYPE_RESPONSE:
-                // Server received a response - typically ignore.
-                break;
-
-            case MCP_MESSAGE_TYPE_INVALID:
-                // Message was invalid during parsing (e.g., non-object in batch)
-                // JSON-RPC spec says: "If the batch array contains invalid JSON, or if the batch array is empty,
-                // the server MUST return a single Response object." - This is handled by initial parse check.
-                // "If the batch array contains character data that is not valid JSON, the server MUST return a single Response object." - Handled by initial parse check.
-                // "If the batch array contains invalid Request objects (e.g. wrong method parameter type),
-                // the server MUST return a Response object for each invalid Request object."
-                // We need to generate an error response if this was detected during parsing.
-                // Our current parse_single_message_from_json marks type as invalid but doesn't store details.
-                // TODO: Enhance parsing to generate specific error responses for invalid requests within a batch.
-                // For now, we just skip generating a response for invalid types found post-parsing.
-                break;
+            } else if (current_msg_error != MCP_ERROR_NONE && is_batch_response && batch_buffer_initialized) {
+                // Generate error response for failed request in batch
+                char* error_response = create_error_response(current_msg->request.id, current_msg_error,
+                                                           "Request processing failed");
+                if (error_response) {
+                    if (!first_response_in_batch) {
+                        dyn_buf_append(&response_batch_buf, ",");
+                    }
+                    dyn_buf_append(&response_batch_buf, error_response);
+                    first_response_in_batch = false;
+                    free(error_response);
+                }
+            }
+        } else if (current_msg->type == MCP_MESSAGE_TYPE_NOTIFICATION) {
+            // Process notification (currently does nothing)
+            // No response generated for notifications.
+        } else if (current_msg->type == MCP_MESSAGE_TYPE_RESPONSE) {
+            // Server received a response - typically ignore.
+        } else {
+            // Invalid message type - skip
         }
-         // Reset arena for the next message in the batch (if any)
-         mcp_arena_reset_current_thread();
+
+        // Reset arena for the next message in the batch (if any)
+        mcp_arena_reset_current_thread();
     }
 
     // Finalize batch response if needed
@@ -352,28 +359,50 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
     // --- End Gateway Routing Check ---
 
     // --- Local Handling (Gateway mode disabled OR no backend route found) ---
-    mcp_log_debug("Handling request locally (method: %s).", request->method);
+    if (mcp_log_get_level() <= MCP_LOG_LEVEL_DEBUG) {
+        mcp_log_debug("Handling request locally (method: %s).", request->method);
+    }
 
     // Handle the request locally based on its method
     // Note: Pass auth_context down to specific handlers
-    if (strcmp(request->method, "ping") == 0) {
+
+    // Use method length for faster comparison
+    const char* method = request->method;
+    if (!method) {
+        *error_code = MCP_ERROR_INVALID_REQUEST;
+        return create_error_response(request->id, *error_code, "Missing method");
+    }
+
+    // Get method length for faster comparison
+    size_t method_len = strlen(method);
+
+    // Fast path for common methods using length check first
+    if (method_len == 4 && memcmp(method, "ping", 4) == 0) {
         // Special handling for ping requests, all servers should support this connection health check
         return handle_ping_request(server, arena, request, auth_context, error_code);
-    } else if (strcmp(request->method, "list_resources") == 0) {
-        return handle_list_resources_request(server, arena, request, auth_context, error_code);
-    } else if (strcmp(request->method, "list_resource_templates") == 0) {
-        return handle_list_resource_templates_request(server, arena, request, auth_context, error_code);
-    } else if (strcmp(request->method, "read_resource") == 0) {
-        return handle_read_resource_request(server, arena, request, auth_context, error_code);
-    } else if (strcmp(request->method, "list_tools") == 0) {
-        return handle_list_tools_request(server, arena, request, auth_context, error_code);
-    } else if (strcmp(request->method, "call_tool") == 0) {
+    }
+    else if (method_len == 10 && memcmp(method, "call_tool", 9) == 0) {
         return handle_call_tool_request(server, arena, request, auth_context, error_code);
-    } else if (strcmp(request->method, "get_performance_metrics") == 0) {
+    }
+    else if (method_len == 13 && memcmp(method, "read_resource", 13) == 0) {
+        return handle_read_resource_request(server, arena, request, auth_context, error_code);
+    }
+    else if (method_len == 14 && memcmp(method, "list_resources", 14) == 0) {
+        return handle_list_resources_request(server, arena, request, auth_context, error_code);
+    }
+    else if (method_len == 10 && memcmp(method, "list_tools", 10) == 0) {
+        return handle_list_tools_request(server, arena, request, auth_context, error_code);
+    }
+    else if (method_len == 23 && memcmp(method, "list_resource_templates", 23) == 0) {
+        return handle_list_resource_templates_request(server, arena, request, auth_context, error_code);
+    }
+    else if (method_len == 22 && memcmp(method, "get_performance_metrics", 22) == 0) {
         return handle_get_performance_metrics_request(server, arena, request, auth_context, error_code);
-    } else if (strcmp(request->method, "reset_performance_metrics") == 0) {
+    }
+    else if (method_len == 24 && memcmp(method, "reset_performance_metrics", 24) == 0) {
         return handle_reset_performance_metrics_request(server, arena, request, auth_context, error_code);
-    } else {
+    }
+    else {
         // Unknown method - Create and return error response string
         *error_code = MCP_ERROR_METHOD_NOT_FOUND;
         // Use the helper function from mcp_server_response.c (declared in internal header)

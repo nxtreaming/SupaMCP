@@ -294,10 +294,9 @@ static size_t estimate_json_size(const mcp_json_t* json) {
     }
 }
 
-// Public API function for stringification
-char* mcp_json_stringify(const mcp_json_t* json) {
-    // Estimate initial buffer size to reduce reallocations
-    size_t initial_capacity = estimate_json_size(json);
+// Internal function for stringification with a specified initial capacity
+static char* stringify_with_capacity(const mcp_json_t* json, size_t initial_capacity) {
+    // Ensure minimum capacity
     if (initial_capacity < 256) initial_capacity = 256; // Minimum size
 
     char* output = (char*)malloc(initial_capacity);
@@ -329,6 +328,18 @@ char* mcp_json_stringify(const mcp_json_t* json) {
     }
 
     return output; // Caller must free this string
+}
+
+// Public API function for stringification
+char* mcp_json_stringify(const mcp_json_t* json) {
+    // Estimate initial buffer size to reduce reallocations
+    size_t initial_capacity = estimate_json_size(json);
+    return stringify_with_capacity(json, initial_capacity);
+}
+
+// Public API function for stringification with a specified initial capacity
+char* mcp_json_stringify_with_capacity(const mcp_json_t* json, size_t initial_capacity) {
+    return stringify_with_capacity(json, initial_capacity);
 }
 
 /**

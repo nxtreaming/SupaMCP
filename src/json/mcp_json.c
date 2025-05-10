@@ -46,6 +46,7 @@ mcp_json_t* mcp_json_null_create(void) {
         return NULL;
     }
     json->type = MCP_JSON_NULL;
+    json->ref_count = 1;
     return json;
 }
 
@@ -56,6 +57,7 @@ mcp_json_t* mcp_json_boolean_create(bool value) {
         return NULL;
     }
     json->type = MCP_JSON_BOOLEAN;
+    json->ref_count = 1;
     json->boolean_value = value;
     return json;
 }
@@ -67,6 +69,7 @@ mcp_json_t* mcp_json_number_create(double value) {
         return NULL;
     }
     json->type = MCP_JSON_NUMBER;
+    json->ref_count = 1;
     json->number_value = value;
     return json;
 }
@@ -83,6 +86,7 @@ mcp_json_t* mcp_json_string_create(const char* value) {
         return NULL;
     }
     json->type = MCP_JSON_STRING;
+    json->ref_count = 1;
     // Duplicate the input string using our helper
     json->string_value = mcp_strdup(value);
     if (json->string_value == NULL) {
@@ -96,6 +100,11 @@ mcp_json_t* mcp_json_string_create(const char* value) {
 
 // NOTE: Array backing storage (the array of pointers `items`) *always* uses malloc/realloc.
 mcp_json_t* mcp_json_array_create(void) {
+    return mcp_json_array_create_with_capacity(0);
+}
+
+// NOTE: Array backing storage (the array of pointers `items`) *always* uses malloc/realloc.
+mcp_json_t* mcp_json_array_create_with_capacity(size_t capacity) {
     // Allocate the node structure using thread-local arena
     mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
@@ -103,14 +112,31 @@ mcp_json_t* mcp_json_array_create(void) {
         return NULL;
     }
     json->type = MCP_JSON_ARRAY;
-    json->array.items = NULL;
+    json->ref_count = 1;
     json->array.count = 0;
     json->array.capacity = 0;
+    json->array.items = NULL;
+
+    // Pre-allocate array if capacity is specified
+    if (capacity > 0) {
+        json->array.items = (mcp_json_t**)malloc(capacity * sizeof(mcp_json_t*));
+        if (json->array.items == NULL) {
+            // Malloc failed, but node is arena-allocated so we don't free it
+            return json; // Return partially initialized node, will work with empty array
+        }
+        json->array.capacity = capacity;
+    }
+
     return json;
 }
 
 // NOTE: Object hash table structures (buckets, entries, keys) *always* use malloc/realloc/mcp_strdup.
 mcp_json_t* mcp_json_object_create(void) {
+    return mcp_json_object_create_with_capacity(MCP_JSON_HASH_TABLE_INITIAL_CAPACITY);
+}
+
+// NOTE: Object hash table structures (buckets, entries, keys) *always* use malloc/realloc/mcp_strdup.
+mcp_json_t* mcp_json_object_create_with_capacity(size_t capacity) {
     // Allocate the node structure using thread-local arena
     mcp_json_t* json = mcp_json_alloc_node();
     if (json == NULL) {
@@ -118,9 +144,14 @@ mcp_json_t* mcp_json_object_create(void) {
         return NULL;
     }
     json->type = MCP_JSON_OBJECT;
+    json->ref_count = 1;
+
+    // Use specified capacity or default if 0
+    size_t initial_capacity = capacity > 0 ? capacity : MCP_JSON_HASH_TABLE_INITIAL_CAPACITY;
+
     // Create a generic hash table for the object properties
     json->object_table = mcp_hashtable_create(
-        MCP_JSON_HASH_TABLE_INITIAL_CAPACITY, // Initial capacity
+        initial_capacity,                     // Initial capacity (specified or default)
         MCP_JSON_HASH_TABLE_MAX_LOAD_FACTOR,  // Load factor
         mcp_hashtable_string_hash,            // Use standard string hash
         mcp_hashtable_string_compare,         // Use standard string compare
@@ -136,9 +167,36 @@ mcp_json_t* mcp_json_object_create(void) {
     return json;
 }
 
+/**
+ * @brief Increments the reference count of a JSON value node.
+ *
+ * This function is used when the same JSON node is shared between multiple
+ * parent nodes (e.g., the same string value used in multiple array items).
+ * Each call to this function must be balanced with a call to mcp_json_destroy().
+ *
+ * @param json Pointer to the JSON value whose reference count should be incremented.
+ * @return 0 on success, non-zero on error (e.g., NULL input).
+ */
+int mcp_json_increment_ref_count(mcp_json_t* json) {
+    if (json == NULL) {
+        return -1;
+    }
+
+    json->ref_count++;
+    return 0;
+}
+
 // See header file for detailed explanation of mcp_json_destroy behavior.
 void mcp_json_destroy(mcp_json_t* json) {
     if (json == NULL) {
+        return;
+    }
+
+    // Decrement reference count
+    json->ref_count--;
+
+    // If reference count is still positive, don't free anything yet
+    if (json->ref_count > 0) {
         return;
     }
 

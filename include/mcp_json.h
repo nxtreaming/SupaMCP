@@ -70,6 +70,15 @@ mcp_json_t* mcp_json_string_create(const char* value);
 mcp_json_t* mcp_json_array_create(void);
 
 /**
+ * @brief Creates an empty JSON array value with pre-allocated capacity.
+ * @param capacity Initial capacity to allocate for the array.
+ * @return Pointer to the created JSON array value (node allocated using the thread-local arena), or NULL on error.
+ * @note Internal storage for array items uses malloc/realloc and is freed by mcp_json_destroy().
+ *       See mcp_json_null_create() note regarding arena management for the node itself.
+ */
+mcp_json_t* mcp_json_array_create_with_capacity(size_t capacity);
+
+/**
  * @brief Creates an empty JSON object value.
  * @return Pointer to the created JSON object value (node allocated using the thread-local arena), or NULL on error.
  * @note Internal storage for object properties (hash table, keys, values) uses malloc/realloc/strdup
@@ -77,6 +86,16 @@ mcp_json_t* mcp_json_array_create(void);
  *       See mcp_json_null_create() note regarding arena management for the node itself.
  */
 mcp_json_t* mcp_json_object_create(void);
+
+/**
+ * @brief Creates an empty JSON object value with pre-allocated capacity.
+ * @param capacity Initial capacity to allocate for the object's properties.
+ * @return Pointer to the created JSON object value (node allocated using the thread-local arena), or NULL on error.
+ * @note Internal storage for object properties (hash table, keys, values) uses malloc/realloc/strdup
+ *       and is freed by mcp_json_destroy().
+ *       See mcp_json_null_create() note regarding arena management for the node itself.
+ */
+mcp_json_t* mcp_json_object_create_with_capacity(size_t capacity);
 
 /**
  * @brief Parses a JSON string into a tree of mcp_json_t nodes.
@@ -99,6 +118,16 @@ mcp_json_t* mcp_json_parse(const char* json);
  * @note The caller is responsible for freeing the returned string using free().
  */
 char* mcp_json_stringify(const mcp_json_t* json);
+
+/**
+ * @brief Converts a JSON value tree back into a JSON string representation with a pre-allocated buffer.
+ *
+ * @param json Pointer to the root JSON value node.
+ * @param initial_capacity Initial capacity for the string buffer.
+ * @return A newly allocated null-terminated JSON string, or NULL on error (e.g., allocation failure).
+ * @note The caller is responsible for freeing the returned string using free().
+ */
+char* mcp_json_stringify_with_capacity(const mcp_json_t* json, size_t initial_capacity);
 
 /**
  * @brief Gets the type of a JSON value.
@@ -237,6 +266,18 @@ int mcp_json_object_delete_property(mcp_json_t* json, const char* name);
 int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names, size_t* count);
 
 /**
+ * @brief Increments the reference count of a JSON value node.
+ *
+ * This function is used when the same JSON node is shared between multiple
+ * parent nodes (e.g., the same string value used in multiple array items).
+ * Each call to this function must be balanced with a call to mcp_json_destroy().
+ *
+ * @param json Pointer to the JSON value whose reference count should be incremented.
+ * @return 0 on success, non-zero on error (e.g., NULL input).
+ */
+int mcp_json_increment_ref_count(mcp_json_t* json);
+
+/**
  * @brief Frees memory allocated *internally* by a JSON value node.
  *
  * This function handles freeing:
@@ -251,6 +292,8 @@ int mcp_json_object_get_property_names(const mcp_json_t* json, char*** names, si
  *     The node's memory is managed by the thread-local arena.
  * 3.  You MUST call `mcp_json_destroy(json)` first to free any internally `malloc`-ed data
  *     (like strings or object keys), and *then* reset or destroy the thread-local arena to free the node itself.
+ * 4.  If the node's reference count is greater than 1, this function decrements the reference count
+ *     but does not free the internal data until the reference count reaches 0.
  *
  * @param json Pointer to the JSON value whose internal data should be freed. If NULL, the function does nothing.
  */

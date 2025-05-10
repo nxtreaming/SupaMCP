@@ -75,6 +75,12 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
 void mcp_log_set_level(mcp_log_level_t level);
 
 /**
+ * @brief Gets the current minimum log level.
+ * @return The current minimum log level.
+ */
+mcp_log_level_t mcp_log_get_level(void);
+
+/**
  * @brief Enables or disables logging output.
  * @param quiet If true, disable all logging output. If false, enable logging based on level.
  */

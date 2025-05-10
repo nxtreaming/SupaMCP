@@ -268,13 +268,19 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     // 1. Check cache first
     if (server->resource_cache != NULL) {
         // Pass the content item pool to mcp_cache_get
+        PROFILE_START("cache_lookup");
         if (mcp_cache_get(server->resource_cache, uri, server->content_item_pool, &content_items, &content_count) == 0) {
-            fprintf(stdout, "Cache hit for URI: %s\n", uri);
+            if (mcp_log_get_level() <= MCP_LOG_LEVEL_DEBUG) {
+                mcp_log_debug("Cache hit for URI: %s", uri);
+            }
         } else {
-            fprintf(stdout, "Cache miss for URI: %s\n", uri);
+            if (mcp_log_get_level() <= MCP_LOG_LEVEL_DEBUG) {
+                mcp_log_debug("Cache miss for URI: %s", uri);
+            }
             content_items = NULL;
             content_count = 0;
         }
+        PROFILE_END("cache_lookup");
     }
 
     // 2. If not found in cache, try template-based routing first, then fall back to the default resource handler
@@ -381,41 +387,106 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     // 3. If fetched from handler, put it in the cache
     if (fetched_from_handler && server->resource_cache != NULL) {
         // Pass the content item pool to mcp_cache_put
-        if (mcp_cache_put(server->resource_cache, uri, server->content_item_pool, content_items, content_count, 0) != 0) {
-            fprintf(stderr, "Warning: Failed to put resource %s into cache.\n", uri);
-        } else {
-            fprintf(stdout, "Stored resource %s in cache.\n", uri);
+        PROFILE_START("cache_store");
+
+        // Calculate appropriate TTL based on content type
+        int ttl_seconds = 0; // Default: no expiration
+
+        // If we have content items, check their type to determine appropriate TTL
+        if (content_count > 0 && content_items[0]) {
+            // For text content, use shorter TTL (5 minutes)
+            // For binary content, use longer TTL (1 hour)
+            if (content_items[0]->type == MCP_CONTENT_TYPE_TEXT) {
+                ttl_seconds = 300; // 5 minutes
+            } else {
+                ttl_seconds = 3600; // 1 hour
+            }
         }
+
+        if (mcp_cache_put(server->resource_cache, uri, server->content_item_pool, content_items, content_count, ttl_seconds) != 0) {
+            mcp_log_warn("Failed to put resource %s into cache", uri);
+        } else if (mcp_log_get_level() <= MCP_LOG_LEVEL_DEBUG) {
+            mcp_log_debug("Stored resource %s in cache with TTL=%d seconds", uri, ttl_seconds);
+        }
+        PROFILE_END("cache_store");
     }
 
     // 4. Create response JSON structure
-    mcp_json_t* contents_json = mcp_json_array_create();
+    PROFILE_START("json_build");
+
+    // Pre-allocate the JSON array with the expected size
+    mcp_json_t* contents_json = mcp_json_array_create_with_capacity(content_count);
     if (!contents_json) {
         if (content_items) { // Cleanup if JSON creation fails
-            for (size_t i = 0; i < content_count; i++) mcp_content_item_free(content_items[i]);
+            for (size_t i = 0; i < content_count; i++) {
+                if (content_items[i]) mcp_object_pool_release(server->content_item_pool, content_items[i]);
+            }
             free(content_items);
         }
         mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to create contents array");
+        PROFILE_END("json_build");
         PROFILE_END("handle_read_resource");
         return response;
     }
 
     bool json_build_error = false;
-    for (size_t i = 0; i < content_count; i++) {
-        mcp_content_item_t* item = content_items[i];
-        mcp_json_t* item_obj = mcp_json_object_create();
-        if (!item_obj ||
-            mcp_json_object_set_property(item_obj, "uri", mcp_json_string_create(uri)) != 0 ||
-            (item->mime_type && mcp_json_object_set_property(item_obj, "mimeType", mcp_json_string_create(item->mime_type)) != 0) ||
-            (item->type == MCP_CONTENT_TYPE_TEXT && item->data && mcp_json_object_set_property(item_obj, "text", mcp_json_string_create((const char*)item->data)) != 0) ||
-            mcp_json_array_add_item(contents_json, item_obj) != 0)
-        {
-            mcp_json_destroy(item_obj);
-            json_build_error = true;
-            break;
+
+    // Reuse URI JSON string for all items
+    mcp_json_t* uri_json_str = mcp_json_string_create(uri);
+    if (!uri_json_str) {
+        json_build_error = true;
+    } else {
+        // Process all content items
+        for (size_t i = 0; i < content_count && !json_build_error; i++) {
+            mcp_content_item_t* item = content_items[i];
+            if (!item) continue;
+
+            mcp_json_t* item_obj = mcp_json_object_create_with_capacity(3); // Pre-allocate for uri, mimeType, text
+            if (!item_obj) {
+                json_build_error = true;
+                break;
+            }
+
+            // Add URI (reuse the same JSON string for all items)
+            if (mcp_json_object_set_property(item_obj, "uri", uri_json_str) != 0) {
+                mcp_json_destroy(item_obj);
+                json_build_error = true;
+                break;
+            }
+
+            // Only increment reference count after first use
+            if (i == 0) {
+                mcp_json_increment_ref_count(uri_json_str);
+            }
+
+            // Add mime type if present
+            if (item->mime_type &&
+                mcp_json_object_set_property(item_obj, "mimeType", mcp_json_string_create(item->mime_type)) != 0) {
+                mcp_json_destroy(item_obj);
+                json_build_error = true;
+                break;
+            }
+
+            // Add text content if present and of text type
+            if (item->type == MCP_CONTENT_TYPE_TEXT && item->data &&
+                mcp_json_object_set_property(item_obj, "text", mcp_json_string_create((const char*)item->data)) != 0) {
+                mcp_json_destroy(item_obj);
+                json_build_error = true;
+                break;
+            }
+
+            // Add item to array
+            if (mcp_json_array_add_item(contents_json, item_obj) != 0) {
+                mcp_json_destroy(item_obj);
+                json_build_error = true;
+                break;
+            }
         }
+
+        // Clean up the URI JSON string (array items have their own references)
+        mcp_json_destroy(uri_json_str);
     }
 
     // Release original content items back to pool after copying to JSON
@@ -431,30 +502,39 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
         mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to build content item JSON");
+        PROFILE_END("json_build");
         PROFILE_END("handle_read_resource");
         return response;
     }
 
-    mcp_json_t* result_obj = mcp_json_object_create();
+    // Create result object with pre-allocated capacity
+    mcp_json_t* result_obj = mcp_json_object_create_with_capacity(1); // Just need space for "contents"
     if (!result_obj || mcp_json_object_set_property(result_obj, "contents", contents_json) != 0) {
         mcp_json_destroy(contents_json);
         mcp_json_destroy(result_obj);
         mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to create result object");
+        PROFILE_END("json_build");
         PROFILE_END("handle_read_resource");
         return response;
     }
 
-    char* result_str = mcp_json_stringify(result_obj);
+    // Stringify with a reasonable initial buffer size based on content count
+    size_t estimated_size = content_count * 256 + 64; // Base size + estimated content size
+    char* result_str = mcp_json_stringify_with_capacity(result_obj, estimated_size);
     mcp_json_destroy(result_obj);
+
     if (!result_str) {
         mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
         char* response = create_error_response(request->id, *error_code, "Failed to stringify result");
+        PROFILE_END("json_build");
         PROFILE_END("handle_read_resource");
         return response;
     }
+
+    PROFILE_END("json_build");
 
     mcp_json_destroy(params_json);
     char* response = create_success_response(request->id, result_str);
