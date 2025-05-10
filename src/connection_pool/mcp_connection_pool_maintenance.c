@@ -37,7 +37,7 @@ void* pool_maintenance_thread_func(void* arg) {
         // 1. Check and close idle connections that have timed out
         if (pool->idle_timeout_ms > 0) {
             mcp_pooled_connection_t* prev = NULL;
-            mcp_pooled_connection_t* current = pool->idle_list;
+            mcp_pooled_connection_t* current = pool->idle_head;
 
             while (current) {
                 // Check if this connection has timed out
@@ -48,11 +48,23 @@ void* pool_maintenance_thread_func(void* arg) {
 
                     if (prev) {
                         prev->next = current->next;
+                        if (current->next) {
+                            current->next->prev = prev;
+                        } else {
+                            // This was the tail
+                            pool->idle_tail = prev;
+                        }
                         current = current->next;
                     } else {
                         // Removing the head of the list
-                        pool->idle_list = current->next;
-                        current = pool->idle_list;
+                        pool->idle_head = current->next;
+                        if (current->next) {
+                            current->next->prev = NULL;
+                        } else {
+                            // This was the only node
+                            pool->idle_tail = NULL;
+                        }
+                        current = pool->idle_head;
                     }
 
                     // Close the connection and free the node
@@ -119,8 +131,21 @@ void* pool_maintenance_thread_func(void* arg) {
                         new_conn->last_used_time = time(NULL);
                         // Initialize health check fields
                         init_connection_health(new_conn);
-                        new_conn->next = pool->idle_list;
-                        pool->idle_list = new_conn;
+                        // Initialize prev pointer
+                        new_conn->prev = NULL;
+
+                        // Add to head of idle list
+                        if (pool->idle_head == NULL) {
+                            // Empty list
+                            new_conn->next = NULL;
+                            pool->idle_head = new_conn;
+                            pool->idle_tail = new_conn;
+                        } else {
+                            // Add to head
+                            new_conn->next = pool->idle_head;
+                            pool->idle_head->prev = new_conn;
+                            pool->idle_head = new_conn;
+                        }
                         pool->idle_count++;
                         mcp_log_debug("Added new connection %d to maintain minimum pool size.", (int)new_sock);
                     } else {
@@ -177,8 +202,21 @@ int prepopulate_pool(mcp_connection_pool_t* pool) {
                 new_conn->last_used_time = time(NULL);
                 // Initialize health check fields
                 init_connection_health(new_conn);
-                new_conn->next = pool->idle_list;
-                pool->idle_list = new_conn;
+                // Initialize prev pointer
+                new_conn->prev = NULL;
+
+                // Add to head of idle list
+                if (pool->idle_head == NULL) {
+                    // Empty list
+                    new_conn->next = NULL;
+                    pool->idle_head = new_conn;
+                    pool->idle_tail = new_conn;
+                } else {
+                    // Add to head
+                    new_conn->next = pool->idle_head;
+                    pool->idle_head->prev = new_conn;
+                    pool->idle_head = new_conn;
+                }
                 pool->idle_count++;
                 success_count++;
                 mcp_log_debug("Pre-populated pool with connection %d (%zu/%zu).",

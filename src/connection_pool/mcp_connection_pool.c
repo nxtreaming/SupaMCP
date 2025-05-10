@@ -43,10 +43,22 @@ mcp_connection_pool_t* mcp_connection_pool_create(
     pool->health_check_interval_ms = health_check_interval_ms;
     pool->health_check_timeout_ms = health_check_timeout_ms > 0 ? health_check_timeout_ms : 2000; // Default to 2 seconds if not specified
     pool->shutting_down = false;
-    pool->idle_list = NULL;
+    pool->idle_head = NULL;
+    pool->idle_tail = NULL;
     pool->idle_count = 0;
     pool->active_count = 0;
     pool->total_count = 0;
+
+    // Initialize performance statistics
+    pool->total_connections_created = 0;
+    pool->total_connections_closed = 0;
+    pool->total_connection_gets = 0;
+    pool->total_connection_timeouts = 0;
+    pool->total_connection_errors = 0;
+    pool->total_wait_time_ms = 0;
+    pool->max_wait_time_ms = 0;
+
+    // Initialize health check statistics
     pool->health_checks_performed = 0;
     pool->failed_health_checks = 0;
 
@@ -102,12 +114,31 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
         }
 
         // 1. Try to get an idle connection
-        if (pool->idle_list) {
-            mcp_pooled_connection_t* pooled_conn = pool->idle_list;
-            pool->idle_list = pooled_conn->next;
+        if (pool->idle_head) {
+            // Get connection from head of idle list (most recently used)
+            mcp_pooled_connection_t* pooled_conn = pool->idle_head;
+
+            // Update head pointer
+            pool->idle_head = pooled_conn->next;
+
+            // Update tail pointer if this was the last connection
+            if (pool->idle_head == NULL) {
+                pool->idle_tail = NULL;
+            } else {
+                // Update prev pointer of new head
+                pool->idle_head->prev = NULL;
+            }
+
+            // Update counts
             pool->idle_count--;
             pool->active_count++;
+            pool->total_connection_gets++;
+
+            // Get socket handle
             sock = pooled_conn->socket_fd;
+
+            // Update connection use count
+            pooled_conn->use_count++;
 
             // Check if the connection has timed out
             if (pool->idle_timeout_ms > 0) {
@@ -267,14 +298,33 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, socket_handle_t con
         // Add valid connection back to idle list
         mcp_pooled_connection_t* pooled_conn = (mcp_pooled_connection_t*)malloc(sizeof(mcp_pooled_connection_t));
         if (pooled_conn) {
+            // Initialize connection node
             pooled_conn->socket_fd = connection;
             pooled_conn->last_used_time = time(NULL); // Record return time
+            pooled_conn->use_count = 1; // First use
+            pooled_conn->next = NULL; // Will be at head of list
+            pooled_conn->prev = NULL;
+
             // Initialize health check fields
             init_connection_health(pooled_conn);
-            pooled_conn->next = pool->idle_list;
-            pool->idle_list = pooled_conn;
+
+            // Add to head of idle list (most recently used)
+            if (pool->idle_head == NULL) {
+                // Empty list
+                pool->idle_head = pooled_conn;
+                pool->idle_tail = pooled_conn;
+            } else {
+                // Add to head
+                pooled_conn->next = pool->idle_head;
+                pool->idle_head->prev = pooled_conn;
+                pool->idle_head = pooled_conn;
+            }
+
+            // Update counts
             pool->idle_count++;
+
             mcp_log_debug("Returned connection %d to idle pool.", (int)connection);
+
             // Signal one waiting getter that a connection is available
             pool_signal(pool); // Use helper from sync
         } else {
@@ -314,14 +364,16 @@ void mcp_connection_pool_destroy(mcp_connection_pool_t* pool) {
     // 3. Close idle connections and free resources
     pool_lock(pool); // Use helper from sync
     mcp_log_info("Closing %zu idle connections.", pool->idle_count);
-    mcp_pooled_connection_t* current = pool->idle_list;
+    mcp_pooled_connection_t* current = pool->idle_head;
     while(current) {
         mcp_pooled_connection_t* next = current->next;
         close_connection(current->socket_fd); // Use helper from socket utils
+        pool->total_connections_closed++;
         free(current);
         current = next;
     }
-    pool->idle_list = NULL;
+    pool->idle_head = NULL;
+    pool->idle_tail = NULL;
     pool->idle_count = 0;
 
     // Note: Active connections are not explicitly waited for here.
@@ -338,6 +390,8 @@ void mcp_connection_pool_destroy(mcp_connection_pool_t* pool) {
 
     mcp_log_info("Connection pool destroyed.");
 }
+
+// Using the extended statistics structure defined in mcp_connection_pool.h
 
 int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_connections, size_t* idle_connections, size_t* active_connections, size_t* health_checks_performed, size_t* failed_health_checks) {
     if (!pool || !total_connections || !idle_connections || !active_connections) {
@@ -358,6 +412,51 @@ int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_con
 
     if (failed_health_checks) {
         *failed_health_checks = pool->failed_health_checks;
+    }
+
+    pool_unlock(pool); // Use helper from sync
+
+    return 0;
+}
+
+/**
+ * @brief Get extended statistics from the connection pool
+ *
+ * @param pool The connection pool
+ * @param stats Pointer to a statistics structure to fill
+ * @return 0 on success, -1 on failure
+ */
+int mcp_connection_pool_get_extended_stats(mcp_connection_pool_t* pool, mcp_connection_pool_extended_stats_t* stats) {
+    if (!pool || !stats) {
+        mcp_log_error("mcp_connection_pool_get_extended_stats: Received NULL pointer argument.");
+        return -1;
+    }
+
+    pool_lock(pool); // Use helper from sync
+
+    // Basic stats
+    stats->total_connections = pool->total_count;
+    stats->idle_connections = pool->idle_count;
+    stats->active_connections = pool->active_count;
+
+    // Health check stats
+    stats->health_checks_performed = pool->health_checks_performed;
+    stats->failed_health_checks = pool->failed_health_checks;
+
+    // Performance stats
+    stats->total_connections_created = pool->total_connections_created;
+    stats->total_connections_closed = pool->total_connections_closed;
+    stats->total_connection_gets = pool->total_connection_gets;
+    stats->total_connection_timeouts = pool->total_connection_timeouts;
+    stats->total_connection_errors = pool->total_connection_errors;
+    stats->total_wait_time_ms = pool->total_wait_time_ms;
+    stats->max_wait_time_ms = pool->max_wait_time_ms;
+
+    // Calculate average wait time
+    if (pool->total_connection_gets > 0) {
+        stats->avg_wait_time_ms = (double)pool->total_wait_time_ms / pool->total_connection_gets;
+    } else {
+        stats->avg_wait_time_ms = 0.0;
     }
 
     pool_unlock(pool); // Use helper from sync

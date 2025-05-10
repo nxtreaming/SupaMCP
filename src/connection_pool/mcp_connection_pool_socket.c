@@ -7,6 +7,12 @@
 // Platform-specific includes needed for socket operations
 #ifdef _WIN32
 // Already included via internal header
+#include <winsock2.h>
+#include <ws2tcpip.h>
+// Define poll-related constants for Windows
+#ifndef POLLOUT
+#define POLLOUT 0x0004
+#endif
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -22,21 +28,26 @@
 socket_handle_t create_new_connection(const char* host, int port, int connect_timeout_ms) {
     socket_handle_t sock = INVALID_SOCKET_HANDLE;
     struct addrinfo hints, *servinfo = NULL, *p = NULL;
-    char port_str[6]; // Max port number is 65535
     int rv;
     int err = 0; // Initialize err
 
     // Note: WSAStartup is assumed to be called once elsewhere (e.g., pool create or globally)
     // It's generally not safe to call WSAStartup/WSACleanup per connection.
 
-    snprintf(port_str, sizeof(port_str), "%d", port);
+    // Initialize DNS cache if not already initialized
+    if (!g_dns_cache.initialized) {
+        dns_cache_init();
+    }
 
+    // Set up hints for the type of socket we want
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
     hints.ai_socktype = SOCK_STREAM;
 
-    if ((rv = getaddrinfo(host, port_str, &hints, &servinfo)) != 0) {
-        mcp_log_error("getaddrinfo failed for %s:%s : %s", host, port_str, gai_strerror(rv));
+    // Try to get address info from cache first
+    servinfo = dns_cache_get(host, port, &hints);
+    if (!servinfo) {
+        mcp_log_error("Failed to resolve address for %s:%d", host, port);
         return INVALID_SOCKET_HANDLE;
     }
 
@@ -191,7 +202,8 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
         break; // If we get here, we must have connected successfully
     }
 
-    freeaddrinfo(servinfo); // All done with this structure
+    // Release the DNS cache entry
+    dns_cache_release(servinfo);
 
     if (sock == INVALID_SOCKET_HANDLE) {
         mcp_log_error("Failed to connect to %s:%d after trying all addresses.", host, port);

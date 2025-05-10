@@ -98,7 +98,31 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, SOCKET connection, 
 void mcp_connection_pool_destroy(mcp_connection_pool_t* pool);
 
 /**
- * @brief Gets statistics about the connection pool.
+ * @brief Extended statistics structure for connection pool
+ */
+typedef struct mcp_connection_pool_extended_stats {
+    // Basic stats
+    size_t total_connections;
+    size_t idle_connections;
+    size_t active_connections;
+
+    // Health check stats
+    size_t health_checks_performed;
+    size_t failed_health_checks;
+
+    // Performance stats
+    size_t total_connections_created;
+    size_t total_connections_closed;
+    size_t total_connection_gets;
+    size_t total_connection_timeouts;
+    size_t total_connection_errors;
+    long long total_wait_time_ms;
+    long long max_wait_time_ms;
+    double avg_wait_time_ms;
+} mcp_connection_pool_extended_stats_t;
+
+/**
+ * @brief Gets basic statistics about the connection pool.
  *
  * @param pool The connection pool instance.
  * @param[out] total_connections Pointer to store the total number of connections (active + idle).
@@ -109,6 +133,15 @@ void mcp_connection_pool_destroy(mcp_connection_pool_t* pool);
  * @return 0 on success, -1 on failure (e.g., NULL pool pointer provided).
  */
 int mcp_connection_pool_get_stats(mcp_connection_pool_t* pool, size_t* total_connections, size_t* idle_connections, size_t* active_connections, size_t* health_checks_performed, size_t* failed_health_checks);
+
+/**
+ * @brief Gets extended statistics from the connection pool
+ *
+ * @param pool The connection pool instance.
+ * @param[out] stats Pointer to a statistics structure to fill
+ * @return 0 on success, -1 on failure
+ */
+int mcp_connection_pool_get_extended_stats(mcp_connection_pool_t* pool, mcp_connection_pool_extended_stats_t* stats);
 
 #ifdef __cplusplus
 }

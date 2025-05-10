@@ -196,6 +196,7 @@ set(COMMON_SOURCES
     src/connection_pool/mcp_connection_pool_utils.c
     src/connection_pool/mcp_connection_pool_maintenance.c
     src/connection_pool/mcp_connection_pool_health.c
+    src/connection_pool/mcp_connection_pool_dns_cache.c
     src/server/mcp_plugin.c
     src/gateway/mcp_gateway_config.c
     src/gateway/mcp_gateway_routing.c
