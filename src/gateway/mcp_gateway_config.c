@@ -199,32 +199,70 @@ mcp_error_code_t load_gateway_config(
         return MCP_ERROR_INVALID_REQUEST; // Treat file not found/readable as invalid request context
     }
 
-    fseek(fp, 0, SEEK_END);
-    long file_size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
+    // Use a more efficient approach to read the file
+    // Start with a reasonable buffer size and grow as needed
+    size_t buffer_size = 4096; // Initial buffer size (4KB)
+    size_t content_size = 0;
+    file_content = (char*)malloc(buffer_size);
 
-    if (file_size <= 0) {
-        mcp_log_warn("Gateway config file is empty or invalid size: %s", config_path);
-        fclose(fp);
-        return MCP_ERROR_NONE; // Empty config is not an error, just results in 0 backends
-    }
-
-    file_content = (char*)malloc(file_size + 1);
     if (!file_content) {
-        mcp_log_error("Failed to allocate memory to read gateway config file: %s", config_path);
+        mcp_log_error("Failed to allocate initial buffer for gateway config file: %s", config_path);
         fclose(fp);
         return MCP_ERROR_INTERNAL_ERROR;
     }
 
-    size_t bytes_read = fread(file_content, 1, file_size, fp);
+    // Read file in chunks
+    char chunk[1024];
+    size_t bytes_read;
+
+    while ((bytes_read = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
+        // Check if we need to grow the buffer
+        if (content_size + bytes_read + 1 > buffer_size) {
+            buffer_size *= 2; // Double the buffer size
+            char* new_content = (char*)realloc(file_content, buffer_size);
+            if (!new_content) {
+                mcp_log_error("Failed to resize buffer for gateway config file: %s", config_path);
+                free(file_content);
+                fclose(fp);
+                return MCP_ERROR_INTERNAL_ERROR;
+            }
+            file_content = new_content;
+        }
+
+        // Copy chunk to buffer
+        memcpy(file_content + content_size, chunk, bytes_read);
+        content_size += bytes_read;
+    }
+
+    // Check for read errors
+    if (ferror(fp)) {
+        mcp_log_error("Error reading gateway config file: %s", config_path);
+        free(file_content);
+        fclose(fp);
+        return MCP_ERROR_INTERNAL_ERROR;
+    }
+
     fclose(fp);
 
-    if (bytes_read != (size_t)file_size) {
-        mcp_log_error("Failed to read entire gateway config file: %s", config_path);
+    // Add null terminator
+    if (content_size == 0) {
+        mcp_log_warn("Gateway config file is empty: %s", config_path);
         free(file_content);
-        return MCP_ERROR_INTERNAL_ERROR;
+        return MCP_ERROR_NONE; // Empty config is not an error
     }
-    file_content[file_size] = '\0'; // Null-terminate
+
+    // Ensure buffer has space for null terminator
+    if (content_size + 1 > buffer_size) {
+        char* new_content = (char*)realloc(file_content, content_size + 1);
+        if (!new_content) {
+            mcp_log_error("Failed to resize buffer for null terminator: %s", config_path);
+            free(file_content);
+            return MCP_ERROR_INTERNAL_ERROR;
+        }
+        file_content = new_content;
+    }
+
+    file_content[content_size] = '\0'; // Null-terminate
 
     // 2. Parse JSON
     root_json = mcp_json_parse(file_content);

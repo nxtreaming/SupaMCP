@@ -103,86 +103,111 @@ const mcp_backend_info_t* find_backend_for_request(
 /**
  * @internal
  * @brief Forwards a request to a specified backend server using the gateway pool manager.
+ *
+ * Optimized implementation with better error handling and memory management.
  */
 char* gateway_forward_request(
-    gateway_pool_manager_t* pool_manager, // Use pool manager
+    gateway_pool_manager_t* pool_manager,
     const mcp_backend_info_t* target_backend,
     const mcp_request_t* request,
-    int* error_code_out) // Changed name for clarity
+    int* error_code_out)
 {
+    // Validate input parameters
     if (!pool_manager || !target_backend || !request || !error_code_out) {
         if (error_code_out) *error_code_out = MCP_ERROR_INVALID_PARAMS;
         return NULL;
     }
 
-    mcp_log_info("Forwarding request for method '%s' (ID: %llu) to backend '%s'...",
-                 request->method, (unsigned long long)request->id, target_backend->name);
-
-    *error_code_out = MCP_ERROR_NONE; // Initialize error code
+    // Initialize output variables
+    *error_code_out = MCP_ERROR_NONE;
     char* backend_response_json = NULL;
     char* backend_error_message = NULL;
     mcp_error_code_t backend_error_code = MCP_ERROR_NONE;
-    bool connection_released = false; // Flag to ensure release happens once
+    mcp_client_t* client_handle = NULL;
 
-    // 1. Get a client connection handle from the gateway pool manager
-    // Note: gateway_pool_get_connection currently doesn't support timeout parameter
-    mcp_client_t* client_handle = (mcp_client_t*)gateway_pool_get_connection(pool_manager, target_backend);
+    // Log the request
+    mcp_log_info("Forwarding request for method '%s' (ID: %llu) to backend '%s'...",
+                 request->method, (unsigned long long)request->id, target_backend->name);
 
+    // Get a client connection handle
+    // Note: Currently gateway_pool_get_connection doesn't support timeout parameter
+
+    client_handle = (mcp_client_t*)gateway_pool_get_connection(pool_manager, target_backend);
     if (!client_handle) {
         mcp_log_error("Failed to get connection from gateway pool for backend '%s'.", target_backend->name);
-        *error_code_out = MCP_ERROR_INTERNAL_ERROR; // Or a specific gateway error
-        return mcp_json_create_error_response(request->id, *error_code_out, "Gateway failed to get backend connection.");
+        *error_code_out = MCP_ERROR_INTERNAL_ERROR;
+        return mcp_json_create_error_response(
+            request->id,
+            *error_code_out,
+            "Gateway failed to get backend connection."
+        );
     }
 
-    mcp_log_debug("Obtained client handle for backend '%s'.", target_backend->name);
-
-    // 2. Send the raw request using the client handle
-    // request->params is assumed to be the raw JSON string of parameters
+    // Prepare parameters string (use empty object if NULL)
     const char* params_str = (request->params != NULL) ? (const char*)request->params : "{}";
 
+    // Send the request to the backend
     int send_status = mcp_client_send_raw_request(
         client_handle,
         request->method,
         params_str,
         request->id,
-        &backend_response_json, // Output: raw response JSON
-        &backend_error_code,    // Output: JSON-RPC error code from backend
-        &backend_error_message  // Output: JSON-RPC error message from backend
+        &backend_response_json,
+        &backend_error_code,
+        &backend_error_message
     );
 
-    // 3. Release the connection handle back to the pool
-    // Determine validity based on the result of send_raw_request
+    // Always release the connection back to the pool
     gateway_pool_release_connection(pool_manager, target_backend, client_handle);
-    connection_released = true; // Mark as released
+    client_handle = NULL; // Avoid using after release
 
-    // 4. Process the result
+    // Process the result based on status
     if (send_status == 0) {
-        // Communication successful, check backend_error_code
         if (backend_error_code != MCP_ERROR_NONE) {
-            // Backend returned a JSON-RPC error
+            // Backend returned an error
             mcp_log_warn("Backend '%s' returned error for request ID %llu: %d (%s)",
                          target_backend->name, (unsigned long long)request->id,
                          backend_error_code, backend_error_message ? backend_error_message : "N/A");
-            *error_code_out = backend_error_code; // Propagate backend error code
-            // Create a new error response based on the backend's error
-            char* gateway_error_response = mcp_json_create_error_response(request->id, backend_error_code, backend_error_message);
-            free(backend_response_json); // Free the original (unused) result part
+
+            // Create error response
+            *error_code_out = backend_error_code;
+            char* error_response = mcp_json_create_error_response(
+                request->id,
+                backend_error_code,
+                backend_error_message
+            );
+
+            // Clean up
+            free(backend_response_json);
             free(backend_error_message);
-            return gateway_error_response; // Return the formatted error response
+
+            return error_response;
         } else {
             // Backend returned success
             mcp_log_debug("Successfully received response from backend '%s' for request ID %llu.",
                           target_backend->name, (unsigned long long)request->id);
-            *error_code_out = MCP_ERROR_NONE;
-            free(backend_error_message); // Should be NULL
-            return backend_response_json; // Return the successful response JSON (ownership transferred)
+
+            // Clean up and return success
+            free(backend_error_message);
+            return backend_response_json;
         }
     } else {
-        // Communication failed (transport error, timeout, etc.)
-        mcp_log_error("Failed to forward request to backend '%s' (send_raw_request status: %d).", target_backend->name, send_status);
-        *error_code_out = MCP_ERROR_TRANSPORT_ERROR; // General transport error
-        free(backend_response_json); // Ensure NULL
-        free(backend_error_message); // Free if somehow allocated during failure
-        return mcp_json_create_error_response(request->id, *error_code_out, "Gateway transport error communicating with backend.");
+        // Communication failed
+        mcp_log_error("Failed to forward request to backend '%s' (status: %d).",
+                     target_backend->name, send_status);
+
+        // Create error response
+        *error_code_out = MCP_ERROR_TRANSPORT_ERROR;
+        char* error_response = mcp_json_create_error_response(
+            request->id,
+            *error_code_out,
+            "Gateway transport error communicating with backend."
+        );
+
+        // Clean up
+        free(backend_response_json);
+        free(backend_error_message);
+
+        return error_response;
     }
 }

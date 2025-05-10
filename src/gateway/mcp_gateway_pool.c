@@ -187,7 +187,79 @@ static backend_pool_t* create_backend_pool(const mcp_backend_info_t* backend_inf
     pool->active_count = 0;
     pool->total_count = 0;
 
-    // TODO: Implement pre-population with min_connections here or in a separate thread
+    // Pre-populate the pool with min_connections
+    if (pool->min_connections > 0) {
+        mcp_log_info("Pre-populating connection pool for backend: %s with %zu connections",
+                     backend_info->name, pool->min_connections);
+
+        // Parse TCP address once for all connections
+        const char* address_to_parse = pool->backend_address;
+        char host_buffer[256] = {0};
+        uint16_t port_part = 0;
+        bool address_valid = false;
+
+        // Skip "tcp://" prefix if present
+        if (strncmp(address_to_parse, "tcp://", 6) == 0) {
+            address_to_parse += 6;
+        }
+
+        // Find the colon separator
+        const char* colon = strchr(address_to_parse, ':');
+        if (colon && colon > address_to_parse) {
+            // Copy host part to buffer
+            size_t host_len = colon - address_to_parse;
+            if (host_len < sizeof(host_buffer) - 1) {
+                memcpy(host_buffer, address_to_parse, host_len);
+                host_buffer[host_len] = '\0';
+
+                // Parse port
+                port_part = (uint16_t)atoi(colon + 1);
+                if (port_part > 0 && host_buffer[0] != '\0') {
+                    address_valid = true;
+                }
+            }
+        }
+
+        if (!address_valid) {
+            mcp_log_error("Invalid address format for pre-population: %s", pool->backend_address);
+        } else {
+            // Create min_connections connections
+            for (size_t i = 0; i < pool->min_connections; i++) {
+                // Create transport
+                mcp_transport_t* transport = mcp_transport_tcp_client_create(host_buffer, port_part);
+                if (!transport) {
+                    mcp_log_error("Failed to create transport for pre-population: %s", pool->backend_address);
+                    continue;
+                }
+
+                // Create client
+                mcp_client_config_t client_config = { .request_timeout_ms = pool->connect_timeout_ms };
+                mcp_client_t* client = mcp_client_create(&client_config, transport);
+                if (!client) {
+                    mcp_log_error("Failed to create client for pre-population: %s", pool->backend_address);
+                    continue;
+                }
+
+                // Add to idle list
+                idle_connection_node_t* node = (idle_connection_node_t*)malloc(sizeof(idle_connection_node_t));
+                if (!node) {
+                    mcp_log_error("Failed to allocate node for pre-population: %s", pool->backend_address);
+                    mcp_client_destroy(client);
+                    continue;
+                }
+
+                node->client = client;
+                node->idle_since = time(NULL);
+                node->next = pool->idle_list;
+                pool->idle_list = node;
+                pool->idle_count++;
+                pool->total_count++;
+
+                mcp_log_debug("Created pre-populated connection %zu/%zu for %s",
+                             i+1, pool->min_connections, pool->backend_address);
+            }
+        }
+    }
 
     mcp_log_info("Created new connection pool for backend: %s (%s) [Min:%zu, Max:%zu, ConnectT:%dms, IdleT:%dms]",
                  backend_info->name, pool->backend_address,
@@ -296,36 +368,42 @@ void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_bac
             mcp_mutex_unlock(pool->pool_lock);
 
             mcp_log_debug("Creating new connection (%zu/%zu) for %s", current_total + 1, pool->max_connections, pool->backend_address);
-            char* host_part = mcp_strdup(pool->backend_address);
+
+            // Parse TCP address format (tcp://host:port or just host:port)
+            const char* address_to_parse = pool->backend_address;
+            char host_buffer[256] = {0};
             uint16_t port_part = 0;
-            char* colon = NULL;
-            if (host_part) {
-                colon = strchr(host_part, ':');
-                if (colon) {
-                    *colon = '\0';
-                    if (*(colon + 1) != '\0')
-                        port_part = (uint16_t)atoi(colon + 1);
-                    else {
-                        mcp_log_error("Invalid port format...");
-                        port_part = 0;
-                    }
-                } else {
-                    mcp_log_error("Port missing..."); 
-                    port_part = 0;
-                }
-            } else {
-                mcp_log_error("Failed to duplicate address..."); 
-                /* Handle error */
+
+            // Skip "tcp://" prefix if present
+            if (strncmp(address_to_parse, "tcp://", 6) == 0) {
+                address_to_parse += 6;
             }
 
-            mcp_transport_t* transport = NULL;
-            if (port_part > 0 && host_part && *host_part != '\0') {
-                // Use the function from the included header
-                transport = mcp_transport_tcp_client_create(host_part, port_part);
+            // Find the colon separator
+            const char* colon = strchr(address_to_parse, ':');
+            if (colon && colon > address_to_parse) {
+                // Copy host part to buffer (safer than strdup+modify)
+                size_t host_len = colon - address_to_parse;
+                if (host_len < sizeof(host_buffer) - 1) {
+                    memcpy(host_buffer, address_to_parse, host_len);
+                    host_buffer[host_len] = '\0';
+
+                    // Parse port
+                    port_part = (uint16_t)atoi(colon + 1);
+                } else {
+                    mcp_log_error("Host name too long in address: %s", pool->backend_address);
+                }
             } else {
-                mcp_log_error("Invalid host or port...");
+                mcp_log_error("Invalid address format (missing port): %s", pool->backend_address);
             }
-            free(host_part);
+
+            // Create transport
+            mcp_transport_t* transport = NULL;
+            if (port_part > 0 && host_buffer[0] != '\0') {
+                transport = mcp_transport_tcp_client_create(host_buffer, port_part);
+            } else {
+                mcp_log_error("Invalid host or port in address: %s", pool->backend_address);
+            }
 
             if (!transport) {
                 mcp_log_error("Failed to create transport for %s", pool->backend_address);
@@ -396,6 +474,34 @@ found_connection:
     return client_connection; // Return the mcp_client_t* or NULL
 }
 
+// Helper function to check if a connection is healthy
+static bool is_connection_healthy(mcp_client_t* client) {
+    if (!client) return false;
+
+    // Simple health check - try to ping the server
+    // This is a lightweight operation that verifies the connection is still valid
+    char* response = NULL;
+    mcp_error_code_t error_code = MCP_ERROR_NONE;
+    char* error_message = NULL;
+
+    int result = mcp_client_send_raw_request(
+        client,
+        "ping",  // Use the standard ping method
+        "{}",    // Empty params
+        0,       // Use 0 as ID for health check
+        &response,
+        &error_code,
+        &error_message
+    );
+
+    // Clean up allocated memory
+    free(response);
+    free(error_message);
+
+    // Connection is healthy if request succeeded
+    return (result == 0 && error_code == MCP_ERROR_NONE);
+}
+
 // Implementation of gateway_pool_release_connection
 void gateway_pool_release_connection(gateway_pool_manager_t* manager, const mcp_backend_info_t* backend_info, void* connection_handle) {
     if (!manager || !backend_info || !backend_info->address || !connection_handle) {
@@ -421,29 +527,64 @@ void gateway_pool_release_connection(gateway_pool_manager_t* manager, const mcp_
     // Lock the specific pool's mutex
     mcp_mutex_lock(pool->pool_lock);
 
-    // TODO: Add connection validity check if needed (e.g., ping before adding to idle)
+    // Check if we should perform health check
+    // Only check if we already have some idle connections or if we're near capacity
+    bool should_check_health = (pool->idle_count > 0 || pool->total_count >= pool->max_connections * 0.8);
+    bool is_healthy = true;
 
-    // Add connection back to idle list
-    idle_connection_node_t* node = (idle_connection_node_t*)malloc(sizeof(idle_connection_node_t));
-    if (node) {
-        node->client = client;
-        node->idle_since = time(NULL);
-        node->next = pool->idle_list;
-        pool->idle_list = node;
-        pool->idle_count++;
-        if (pool->active_count > 0) pool->active_count--; // Decrement active count
-        mcp_log_debug("Returned connection to idle pool for backend: %s", pool->backend_address);
+    // Perform health check if needed
+    if (should_check_health) {
+        // Temporarily unlock pool to avoid blocking during health check
+        mcp_mutex_unlock(pool->pool_lock);
+        is_healthy = is_connection_healthy(client);
+        mcp_mutex_lock(pool->pool_lock);
+    }
 
-        // Signal a waiting getter
-        mcp_cond_signal(pool->pool_cond);
+    // If connection is healthy, add it to the idle pool
+    if (is_healthy) {
+        // Check if we're already at max idle connections (keep at most max_connections/2 idle)
+        size_t max_idle = pool->max_connections / 2;
+        if (pool->idle_count >= max_idle) {
+            // Too many idle connections, destroy this one
+            if (pool->active_count > 0) pool->active_count--;
+            if (pool->total_count > 0) pool->total_count--;
+            mcp_mutex_unlock(pool->pool_lock);
+            mcp_client_destroy(client);
+            mcp_log_debug("Too many idle connections (%zu/%zu), destroyed connection for %s",
+                         pool->idle_count, max_idle, pool->backend_address);
+            return;
+        }
+
+        // Add connection back to idle list
+        idle_connection_node_t* node = (idle_connection_node_t*)malloc(sizeof(idle_connection_node_t));
+        if (node) {
+            node->client = client;
+            node->idle_since = time(NULL);
+            node->next = pool->idle_list;
+            pool->idle_list = node;
+            pool->idle_count++;
+            if (pool->active_count > 0) pool->active_count--; // Decrement active count
+            mcp_log_debug("Returned connection to idle pool for backend: %s", pool->backend_address);
+
+            // Signal a waiting getter
+            mcp_cond_signal(pool->pool_cond);
+        } else {
+            mcp_log_error("Failed to allocate node for idle connection for backend %s. Destroying connection.", pool->backend_address);
+            if (pool->active_count > 0) pool->active_count--;
+            // Decrement total_count as the connection is being destroyed
+            if (pool->total_count > 0) pool->total_count--;
+            mcp_mutex_unlock(pool->pool_lock);
+            mcp_client_destroy(client);
+            return;
+        }
     } else {
-        mcp_log_error("Failed to allocate node for idle connection for backend %s. Destroying connection.", pool->backend_address);
+        // Connection is unhealthy, destroy it
+        mcp_log_warn("Connection to %s is unhealthy, destroying it", pool->backend_address);
         if (pool->active_count > 0) pool->active_count--;
-        // Decrement total_count as the connection is being destroyed
         if (pool->total_count > 0) pool->total_count--;
+        mcp_mutex_unlock(pool->pool_lock);
         mcp_client_destroy(client);
-        // Optionally signal waiters even if adding failed, as total count decreased (a slot might open up)
-        mcp_cond_signal(pool->pool_cond);
+        return;
     }
 
     mcp_mutex_unlock(pool->pool_lock);
