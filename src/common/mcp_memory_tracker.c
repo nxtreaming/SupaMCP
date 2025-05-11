@@ -4,6 +4,7 @@
 #include "mcp_hashtable.h"
 #include "mcp_cache_aligned.h"
 #include "mcp_memory_pool.h"
+#include "mcp_atom.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -59,34 +60,6 @@ typedef struct {
                   sizeof(int) + sizeof(int) +
                   (MAX_BACKTRACE_FRAMES * sizeof(void*))) % MCP_CACHE_LINE_SIZE)];
 } MCP_CACHE_ALIGNED mcp_allocation_record_t;
-
-// Atomic operations for thread safety
-#ifdef _WIN32
-#define ATOMIC_INCREMENT(var) InterlockedIncrement64((LONG64*)&(var))
-#define ATOMIC_DECREMENT(var) InterlockedDecrement64((LONG64*)&(var))
-#define ATOMIC_ADD(var, val) InterlockedAdd64((LONG64*)&(var), (LONG64)(val))
-#define ATOMIC_SUBTRACT(var, val) InterlockedAdd64((LONG64*)&(var), -(LONG64)(val))
-#define ATOMIC_EXCHANGE_MAX(var, val) do { \
-    LONG64 old_val, new_val; \
-    do { \
-        old_val = *(LONG64*)&(var); \
-        new_val = (old_val < (LONG64)(val)) ? (LONG64)(val) : old_val; \
-    } while (InterlockedCompareExchange64((LONG64*)&(var), new_val, old_val) != old_val); \
-} while(0)
-#else
-// For non-Windows platforms, we'll use GCC atomic builtins
-#define ATOMIC_INCREMENT(var) __sync_add_and_fetch(&(var), 1)
-#define ATOMIC_DECREMENT(var) __sync_sub_and_fetch(&(var), 1)
-#define ATOMIC_ADD(var, val) __sync_add_and_fetch(&(var), (val))
-#define ATOMIC_SUBTRACT(var, val) __sync_sub_and_fetch(&(var), (val))
-#define ATOMIC_EXCHANGE_MAX(var, val) do { \
-    size_t old_val; \
-    do { \
-        old_val = (var); \
-        if (old_val >= (val)) break; \
-    } while (!__sync_bool_compare_and_swap(&(var), old_val, (val))); \
-} while(0)
-#endif
 
 // Global tracking state - aligned for better cache performance
 typedef struct {

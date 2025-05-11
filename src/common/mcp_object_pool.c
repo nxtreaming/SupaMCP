@@ -1,6 +1,7 @@
 #include "mcp_object_pool.h"
 #include "mcp_log.h"
 #include "mcp_cache_aligned.h"
+#include "mcp_atom.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -14,29 +15,6 @@
 #define MCP_THREAD_LOCAL __thread
 #endif
 
-// Platform-specific atomic operations
-#ifdef _WIN32
-#define ATOMIC_INCREMENT(var) InterlockedIncrement64((LONG64*)&(var))
-#define ATOMIC_DECREMENT(var) InterlockedDecrement64((LONG64*)&(var))
-#define ATOMIC_EXCHANGE_MAX(var, val) do { \
-    LONG64 old_val, new_val; \
-    do { \
-        old_val = *(LONG64*)&(var); \
-        new_val = (old_val < (LONG64)(val)) ? (LONG64)(val) : old_val; \
-    } while (InterlockedCompareExchange64((LONG64*)&(var), new_val, old_val) != old_val); \
-} while(0)
-#else
-#include <stdatomic.h>
-#define ATOMIC_INCREMENT(var) __sync_add_and_fetch(&(var), 1)
-#define ATOMIC_DECREMENT(var) __sync_sub_and_fetch(&(var), 1)
-#define ATOMIC_EXCHANGE_MAX(var, val) do { \
-    size_t old_val; \
-    do { \
-        old_val = (var); \
-        if (old_val >= (val)) break; \
-    } while (!__sync_bool_compare_and_swap(&(var), old_val, (val))); \
-} while(0)
-#endif
 
 // Memory alignment for better performance
 #define MCP_OBJECT_ALIGN_SIZE 8
