@@ -15,4 +15,4 @@
 #define MCP_CACHE_ALIGNED __attribute__((aligned(MCP_CACHE_LINE_SIZE)))
 #endif
 
-#endif /* MCP_ARENA_H */
+#endif /* MCP_CACHE_ALIGNED_H */

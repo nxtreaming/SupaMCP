@@ -85,6 +85,30 @@ bool mcp_memory_tracker_set_limit(size_t max_bytes);
 bool mcp_memory_tracker_would_exceed_limit(size_t size);
 
 /**
+ * @brief Enables or disables symbolization of backtraces in leak reports
+ *
+ * Symbolization provides human-readable function names and line numbers
+ * in backtrace output, but may have performance implications.
+ *
+ * @param enable Whether to enable symbolization
+ * @return true if the setting was successfully changed, false otherwise
+ */
+bool mcp_memory_tracker_set_symbolize_backtraces(bool enable);
+
+/**
+ * @brief Gets statistics about the string pool used for file paths
+ *
+ * The string pool is used to deduplicate file paths in allocation records,
+ * which can significantly reduce memory usage when many allocations come
+ * from the same source files.
+ *
+ * @param unique_strings Pointer to store the number of unique strings in the pool (can be NULL)
+ * @param bytes_saved Pointer to store the number of bytes saved through deduplication (can be NULL)
+ * @return true if statistics were successfully retrieved, false otherwise
+ */
+bool mcp_memory_tracker_get_string_pool_stats(size_t* unique_strings, size_t* bytes_saved);
+
+/**
  * @brief Macro to track allocations with file and line information
  */
 #ifdef MCP_TRACK_MEMORY
