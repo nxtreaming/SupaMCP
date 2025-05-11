@@ -2,6 +2,7 @@
 #include "mcp_log.h"
 #include "mcp_sync.h"
 #include "mcp_string_utils.h"
+#include "mcp_atom.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

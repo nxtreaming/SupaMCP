@@ -5,29 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
-
-// Cross-platform atomic operations
-#ifdef _WIN32
-#include <windows.h>
-#define MCP_ATOMIC_TYPE(type) volatile type
-#define MCP_ATOMIC_INC(var) InterlockedIncrement64(&(var))
-#define MCP_ATOMIC_DEC(var) InterlockedDecrement64(&(var))
-#define MCP_ATOMIC_ADD(var, val) InterlockedAdd64(&(var), (val))
-#define MCP_ATOMIC_LOAD(var) (var)
-#define MCP_ATOMIC_STORE(var, val) InterlockedExchange64(&(var), (val))
-#define MCP_ATOMIC_COMPARE_EXCHANGE(var, expected, desired) \
-    (InterlockedCompareExchange64(&(var), (desired), (expected)) == (expected))
-#else
-#include <stdatomic.h>
-#define MCP_ATOMIC_TYPE(type) _Atomic(type)
-#define MCP_ATOMIC_INC(var) atomic_fetch_add(&(var), 1)
-#define MCP_ATOMIC_DEC(var) atomic_fetch_sub(&(var), 1)
-#define MCP_ATOMIC_ADD(var, val) atomic_fetch_add(&(var), (val))
-#define MCP_ATOMIC_LOAD(var) atomic_load(&(var))
-#define MCP_ATOMIC_STORE(var, val) atomic_store(&(var), (val))
-#define MCP_ATOMIC_COMPARE_EXCHANGE(var, expected, desired) \
-    atomic_compare_exchange_weak(&(var), &(expected), (desired))
-#endif
+#include "mcp_atom.h"
 
 #ifdef __cplusplus
 extern "C" {
