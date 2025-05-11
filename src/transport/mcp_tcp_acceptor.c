@@ -8,7 +8,31 @@
 #include "mcp_sync.h"
 #include <mcp_thread_pool.h>
 
-// Thread function to accept incoming connections
+#ifdef _WIN32
+#include <winsock2.h>
+#include <windows.h>
+#else
+#include <poll.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#endif
+
+/**
+ * @brief Thread function to accept incoming TCP connections.
+ *
+ * This function runs in a separate thread and continuously accepts new client
+ * connections on the listening socket. When a new connection is accepted, it
+ * finds an available client slot and adds a client handler task to the thread pool.
+ *
+ * The thread can be stopped by setting the running flag to false and either:
+ * - On Windows: Closing the listening socket
+ * - On POSIX: Writing to the stop pipe
+ *
+ * @param arg Pointer to the transport structure (mcp_transport_t*)
+ * @return NULL when the thread exits
+ */
 void* tcp_accept_thread_func(void* arg) {
     mcp_transport_t* transport = (mcp_transport_t*)arg;
     if (transport == NULL || transport->transport_data == NULL) {
@@ -23,114 +47,173 @@ void* tcp_accept_thread_func(void* arg) {
         struct sockaddr_in client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
         socket_t client_socket = MCP_INVALID_SOCKET;
+        bool connection_pending = false;
 
         // Use select/poll to wait for connection or stop signal
 #ifdef _WIN32
+        // Windows: Use select() with timeout to check for connections
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(data->listen_socket, &read_fds);
-        // Check every 1 second
+
+        // Check every 1 second to allow for clean shutdown
         struct timeval tv = {1, 0};
 
         int select_result = select(0, &read_fds, NULL, NULL, &tv);
 
         // Check stop flag after select
-        if (!data->running)
+        if (!data->running) {
+            mcp_log_debug("Accept thread received stop signal after select()");
             break;
+        }
 
         if (select_result == MCP_SOCKET_ERROR) {
-            mcp_log_error("select() failed in accept thread: %d", mcp_socket_get_last_error());
+            int error = mcp_socket_get_last_error();
+            // WSAEINTR is not defined on Windows, but we check for other common errors
+            if (error == WSAENOTSOCK) {
+                // Socket was closed, likely due to shutdown
+                mcp_log_debug("Listening socket was closed, accept thread exiting");
+                break;
+            }
+            mcp_log_error("select() failed in accept thread: %d", error);
             break;
         } else if (select_result == 0) {
             // Timeout, loop again to check running flag
             continue;
         }
+
         // If select_result > 0, the listen socket is readable (connection pending)
+        connection_pending = true;
 #else
+        // POSIX: Use poll() to wait for connections or stop signal
         struct pollfd pfd[2];
         pfd[0].fd = data->listen_socket;
         pfd[0].events = POLLIN;
+        pfd[0].revents = 0;
+
         // Read end of the stop pipe
         pfd[1].fd = data->stop_pipe[0];
         pfd[1].events = POLLIN;
+        pfd[1].revents = 0;
 
-        // Wait indefinitely until event or signal
-        int poll_result = poll(pfd, 2, -1);
+        // Wait with a 1 second timeout to allow for clean shutdown
+        int poll_result = poll(pfd, 2, 1000);
 
         // Check stop flag after poll
-        if (!data->running)
+        if (!data->running) {
+            mcp_log_debug("Accept thread received stop signal after poll()");
             break;
+        }
 
         if (poll_result < 0) {
             // Interrupted by signal, loop again
-            if (errno == EINTR)
+            if (errno == EINTR) {
+                mcp_log_debug("poll() was interrupted by signal, continuing");
                 continue;
+            }
             mcp_log_error("poll() failed in accept thread: %s", strerror(errno));
             break;
+        } else if (poll_result == 0) {
+            // Timeout, loop again to check running flag
+            continue;
         }
 
         // Check if stop pipe has data
         if (pfd[1].revents & POLLIN) {
-            mcp_log_info("Stop signal received on pipe, accept thread exiting.");
+            char dummy[8];
+            // Read from pipe to clear it
+            ssize_t bytes_read = read(data->stop_pipe[0], dummy, sizeof(dummy));
+            if (bytes_read < 0) {
+                mcp_log_warn("Failed to read from stop pipe: %s", strerror(errno));
+            }
+            mcp_log_info("Stop signal received on pipe, accept thread exiting");
             break;
         }
 
         // Check if listen socket has connection
-        if (!(pfd[0].revents & POLLIN)) {
+        if (pfd[0].revents & POLLIN) {
+            connection_pending = true;
+        } else {
             // No incoming connection, loop again
             continue;
         }
 #endif
 
-        // Accept the connection using the new utility function
+        // Skip accept if no connection is pending
+        if (!connection_pending) {
+            continue;
+        }
+
+        // Accept the connection using the utility function
         client_socket = mcp_socket_accept(data->listen_socket, (struct sockaddr*)&client_addr, &client_addr_len);
         if (client_socket == MCP_INVALID_SOCKET) {
             // Error logging is handled within mcp_socket_accept
             if (data->running) {
-                mcp_log_debug("mcp_socket_accept returned invalid socket, continuing accept loop.");
+                mcp_log_debug("Accept failed, continuing accept loop");
             }
             // Continue listening even if one accept fails
             continue;
         }
 
+        // Get client IP and port for logging
+        char client_ip[INET_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
+        uint16_t client_port = ntohs(client_addr.sin_port);
+
         // Find an available client slot
         int client_index = tcp_find_free_client_slot(data);
 
         if (client_index == -1) {
-            mcp_log_warn("Max client connections reached (%d). Rejecting new connection.", data->max_clients);
+            mcp_log_warn("Max client connections reached (%d). Rejecting connection from %s:%d",
+                        data->max_clients, client_ip, client_port);
             mcp_socket_close(client_socket);
             tcp_stats_update_connection_rejected(&data->stats);
             continue;
         }
 
-        // Initialize the client connection
+        // Get current time once for both timestamps
+        time_t current_time = time(NULL);
+
+        // Initialize the client connection with minimal lock time
+        tcp_client_connection_t client_init = {
+            .socket = client_socket,
+            .address = client_addr,
+            .transport = transport,
+            .should_stop = false,
+            .state = CLIENT_STATE_INITIALIZING,
+            .last_activity_time = current_time,
+            .connect_time = current_time,
+            .messages_processed = 0,
+            .client_index = client_index
+        };
+
+        // Copy the client IP and port (safely)
+#ifdef _WIN32
+        strncpy_s(client_init.client_ip, sizeof(client_init.client_ip), client_ip, _TRUNCATE);
+#else
+        // For non-Windows platforms, use standard strncpy with explicit null termination
+        strncpy(client_init.client_ip, client_ip, sizeof(client_init.client_ip) - 1);
+        client_init.client_ip[sizeof(client_init.client_ip) - 1] = '\0'; // Ensure null termination
+#endif
+        client_init.client_port = client_port;
+
+        // Update the client slot under lock
         mcp_mutex_lock(data->client_mutex);
-        tcp_client_connection_t* client = &data->clients[client_index];
-        client->state = CLIENT_STATE_INITIALIZING;
-        client->socket = client_socket;
-        client->address = client_addr;
-        client->transport = transport;
-        client->should_stop = false;
-        client->last_activity_time = time(NULL);
-        client->connect_time = time(NULL);
-        client->messages_processed = 0;
-        client->client_index = client_index;
-
-        // Store client IP and port for logging
-        inet_ntop(AF_INET, &client_addr.sin_addr, client->client_ip, sizeof(client->client_ip));
-        client->client_port = ntohs(client_addr.sin_port);
-
+        memcpy(&data->clients[client_index], &client_init, sizeof(tcp_client_connection_t));
         mcp_mutex_unlock(data->client_mutex);
 
         // Add the client to the thread pool
-        if (mcp_thread_pool_add_task(data->thread_pool, tcp_client_handler_wrapper, client) != 0) {
-            mcp_log_error("Failed to add client handler task to thread pool for slot %d.", client_index);
+        if (mcp_thread_pool_add_task(data->thread_pool, tcp_client_handler_wrapper, &data->clients[client_index]) != 0) {
+            mcp_log_error("Failed to add client handler task to thread pool for %s:%d (slot %d)",
+                         client_ip, client_port, client_index);
+
+            // Close the socket
             mcp_socket_close(client_socket);
 
             // Reset the slot state under lock
             mcp_mutex_lock(data->client_mutex);
-            client->state = CLIENT_STATE_INACTIVE;
-            client->socket = MCP_INVALID_SOCKET;
+            data->clients[client_index].state = CLIENT_STATE_INACTIVE;
+            data->clients[client_index].socket = MCP_INVALID_SOCKET;
             mcp_mutex_unlock(data->client_mutex);
 
             tcp_stats_update_error(&data->stats);
@@ -139,21 +222,24 @@ void* tcp_accept_thread_func(void* arg) {
             mcp_mutex_lock(data->client_mutex);
 
             // Check if state is still INITIALIZING (could have been changed by stop signal)
-            if (client->state == CLIENT_STATE_INITIALIZING) {
-                client->state = CLIENT_STATE_ACTIVE;
-                mcp_log_info("Accepted connection from %s:%d on socket %d (slot %d)",
-                             client->client_ip, client->client_port, (int)client_socket, client_index);
+            if (data->clients[client_index].state == CLIENT_STATE_INITIALIZING) {
+                data->clients[client_index].state = CLIENT_STATE_ACTIVE;
 
                 // Update statistics
                 tcp_stats_update_connection_accepted(&data->stats);
+
+                // Log after releasing the lock to minimize lock time
+                mcp_mutex_unlock(data->client_mutex);
+
+                mcp_log_info("Accepted connection from %s:%d on socket %d (slot %d)",
+                            client_ip, client_port, (int)client_socket, client_index);
             } else {
                 // State changed before we could mark active (likely stopped)
-                mcp_log_warn("Client slot %d state changed before activation.", client_index);
-                client->state = CLIENT_STATE_INACTIVE;
-                client->socket = MCP_INVALID_SOCKET;
+                mcp_log_warn("Client slot %d state changed before activation", client_index);
+                data->clients[client_index].state = CLIENT_STATE_INACTIVE;
+                data->clients[client_index].socket = MCP_INVALID_SOCKET;
+                mcp_mutex_unlock(data->client_mutex);
             }
-
-            mcp_mutex_unlock(data->client_mutex);
         }
     }
 

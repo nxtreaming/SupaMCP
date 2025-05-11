@@ -87,7 +87,7 @@ typedef struct {
 // Thread functions
 void* tcp_accept_thread_func(void* arg);
 void* tcp_client_handler_thread_func(void* arg);
-void* tcp_cleanup_thread_func(void* arg);
+void* tcp_cleanup_thread_func(void* arg); // Implemented in mcp_tcp_server_utils.c
 
 // Client handler wrapper function for thread pool
 void tcp_client_handler_wrapper(void* arg);
