@@ -6,6 +6,12 @@
 #include <stdbool.h>
 #include <time.h>
 #include "mcp_atom.h"
+#include "mcp_cache_aligned.h"
+
+// Constants for performance metrics
+#define MCP_METRICS_DEFAULT_BUFFER_SIZE 4096
+#define MCP_METRICS_MIN_BUFFER_SIZE 1024
+#define MCP_METRICS_MAX_LATENCY_THRESHOLD UINT64_MAX
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,38 +19,49 @@ extern "C" {
 
 /**
  * @brief Performance metrics collection structure
+ *
+ * This structure is cache-aligned to prevent false sharing in multi-threaded environments.
+ * Each group of related metrics is placed on separate cache lines.
  */
 typedef struct mcp_performance_metrics {
-    // Request metrics
+    // Request metrics - first cache line
     MCP_ATOMIC_TYPE(uint64_t) total_requests;          /**< Total number of requests processed */
     MCP_ATOMIC_TYPE(uint64_t) successful_requests;     /**< Number of successful requests */
     MCP_ATOMIC_TYPE(uint64_t) failed_requests;         /**< Number of failed requests */
     MCP_ATOMIC_TYPE(uint64_t) timeout_requests;        /**< Number of timed out requests */
+    MCP_CACHE_PADDING(1);                              /**< Padding to align to cache line */
 
-    // Latency metrics (in microseconds)
+    // Latency metrics (in microseconds) - second cache line
     MCP_ATOMIC_TYPE(uint64_t) total_latency_us;        /**< Total latency of all requests */
     MCP_ATOMIC_TYPE(uint64_t) min_latency_us;          /**< Minimum request latency */
     MCP_ATOMIC_TYPE(uint64_t) max_latency_us;          /**< Maximum request latency */
+    MCP_CACHE_PADDING(2);                              /**< Padding to align to cache line */
 
-    // Throughput metrics
+    // Throughput metrics - third cache line
     MCP_ATOMIC_TYPE(uint64_t) bytes_sent;              /**< Total bytes sent */
     MCP_ATOMIC_TYPE(uint64_t) bytes_received;          /**< Total bytes received */
+    MCP_CACHE_PADDING(3);                              /**< Padding to align to cache line */
 
-    // Resource metrics
+    // Resource metrics - fourth cache line
     MCP_ATOMIC_TYPE(uint64_t) active_connections;      /**< Current number of active connections */
     MCP_ATOMIC_TYPE(uint64_t) peak_connections;        /**< Peak number of active connections */
+    MCP_CACHE_PADDING(4);                              /**< Padding to align to cache line */
 
-    // Time tracking
+    // Time tracking - fifth cache line
     MCP_ATOMIC_TYPE(time_t) start_time;                /**< Time when metrics collection started */
     MCP_ATOMIC_TYPE(time_t) last_reset_time;           /**< Time when metrics were last reset */
-} mcp_performance_metrics_t;
+    MCP_CACHE_PADDING(5);                              /**< Padding to align to cache line */
+} MCP_CACHE_ALIGNED mcp_performance_metrics_t;
 
 /**
  * @brief Timer structure for measuring operation durations
+ *
+ * This structure is optimized for fast time measurements with minimal overhead.
  */
 typedef struct mcp_performance_timer {
     struct timespec start_time;                /**< Start time of the operation */
     bool running;                              /**< Whether the timer is running */
+    uint8_t padding[7];                        /**< Padding for alignment */
 } mcp_performance_timer_t;
 
 /**

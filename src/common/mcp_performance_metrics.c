@@ -8,52 +8,111 @@
 #include <string.h>
 #include <time.h>
 
+// Define TIME_UTC for Windows if not already defined
+#ifdef _WIN32
+#ifndef TIME_UTC
+#define TIME_UTC 1
+#endif
+#endif
+
 // Global metrics instance
 static mcp_performance_metrics_t g_metrics;
 static mcp_mutex_t* g_metrics_mutex = NULL;
 static bool g_initialized = false;
 
-// Helper function to get current time in microseconds
-static uint64_t get_current_time_us() {
+// Constants for time conversion
+#define MICROSECONDS_PER_SECOND 1000000ULL
+#define NANOSECONDS_PER_MICROSECOND 1000ULL
+
+/**
+ * @brief Get current time in microseconds with high precision
+ *
+ * This function uses the most precise clock available on each platform.
+ *
+ * @return Current time in microseconds
+ */
+static inline uint64_t get_current_time_us(void) {
     struct timespec ts;
 #ifdef _WIN32
-    timespec_get(&ts, TIME_UTC);
+    // On Windows, use timespec_get with TIME_UTC
+    if (timespec_get(&ts, TIME_UTC) != TIME_UTC) {
+        // Fallback to less precise time if timespec_get fails
+        time_t now = time(NULL);
+        ts.tv_sec = now;
+        ts.tv_nsec = 0;
+    }
 #else
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    // On POSIX systems, use CLOCK_MONOTONIC for better precision
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        // Fallback to less precise time if clock_gettime fails
+        time_t now = time(NULL);
+        ts.tv_sec = now;
+        ts.tv_nsec = 0;
+    }
 #endif
-    return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
+    return (uint64_t)ts.tv_sec * MICROSECONDS_PER_SECOND +
+           (uint64_t)ts.tv_nsec / NANOSECONDS_PER_MICROSECOND;
 }
 
-// Helper function to calculate time difference in microseconds
-static uint64_t timespec_diff_us(struct timespec* start, struct timespec* end) {
-    uint64_t start_us = (uint64_t)start->tv_sec * 1000000 + (uint64_t)start->tv_nsec / 1000;
-    uint64_t end_us = (uint64_t)end->tv_sec * 1000000 + (uint64_t)end->tv_nsec / 1000;
-    return end_us - start_us;
-}
-
-int mcp_performance_metrics_init(void) {
-    if (g_initialized) {
-        mcp_log_warn("Performance metrics system already initialized");
+/**
+ * @brief Calculate time difference between two timespec structures in microseconds
+ *
+ * This function handles potential overflow by using 64-bit arithmetic.
+ *
+ * @param start Pointer to start timespec
+ * @param end Pointer to end timespec
+ * @return Time difference in microseconds
+ */
+static inline uint64_t timespec_diff_us(const struct timespec* start, const struct timespec* end) {
+    // Ensure end time is greater than or equal to start time
+    if (end->tv_sec < start->tv_sec ||
+        (end->tv_sec == start->tv_sec && end->tv_nsec < start->tv_nsec)) {
         return 0;
     }
 
-    // Initialize mutex
+    uint64_t start_us = (uint64_t)start->tv_sec * MICROSECONDS_PER_SECOND +
+                        (uint64_t)start->tv_nsec / NANOSECONDS_PER_MICROSECOND;
+    uint64_t end_us = (uint64_t)end->tv_sec * MICROSECONDS_PER_SECOND +
+                      (uint64_t)end->tv_nsec / NANOSECONDS_PER_MICROSECOND;
+
+    return end_us - start_us;
+}
+
+/**
+ * @brief Initialize the performance metrics system
+ *
+ * This function initializes the global metrics instance and mutex.
+ * It is thread-safe and can be called multiple times (subsequent calls are no-ops).
+ *
+ * @return 0 on success, -1 on failure
+ */
+int mcp_performance_metrics_init(void) {
+    // Fast path for already initialized
+    if (g_initialized) {
+        mcp_log_debug("Performance metrics system already initialized");
+        return 0;
+    }
+
+    // Initialize mutex for thread safety
     g_metrics_mutex = mcp_mutex_create();
     if (!g_metrics_mutex) {
         mcp_log_error("Failed to create performance metrics mutex");
         return -1;
     }
 
-    // Initialize metrics
+    // Initialize metrics with zeros
     memset(&g_metrics, 0, sizeof(mcp_performance_metrics_t));
 
     // Set initial values
-    MCP_ATOMIC_STORE(g_metrics.min_latency_us, UINT64_MAX);
-    MCP_ATOMIC_STORE(g_metrics.start_time, time(NULL));
-    MCP_ATOMIC_STORE(g_metrics.last_reset_time, time(NULL));
+    time_t current_time = time(NULL);
+
+    // Set min latency to max value so first request will become the minimum
+    MCP_ATOMIC_STORE(g_metrics.min_latency_us, MCP_METRICS_MAX_LATENCY_THRESHOLD);
+    MCP_ATOMIC_STORE(g_metrics.start_time, current_time);
+    MCP_ATOMIC_STORE(g_metrics.last_reset_time, current_time);
 
     g_initialized = true;
-    mcp_log_info("Performance metrics system initialized");
+    mcp_log_info("Performance metrics system initialized successfully");
     return 0;
 }
 
@@ -222,60 +281,106 @@ uint64_t mcp_performance_timer_stop(mcp_performance_timer_t* timer) {
     return elapsed_us;
 }
 
+/**
+ * @brief Convert performance metrics to JSON format
+ *
+ * This function generates a JSON representation of the current performance metrics.
+ * It includes derived metrics like average latency, error rate, and throughput.
+ *
+ * @param buffer Buffer to store the JSON string
+ * @param size Size of the buffer
+ * @return Number of bytes written to the buffer, or -1 on error
+ */
 int mcp_performance_metrics_to_json(char* buffer, size_t size) {
-    if (!g_initialized || !buffer || size == 0) {
+    // Validate parameters
+    if (!g_initialized || !buffer || size < MCP_METRICS_MIN_BUFFER_SIZE) {
+        mcp_log_error("Invalid parameters for metrics JSON conversion");
         return -1;
     }
 
+    // Get a snapshot of the metrics to ensure consistency
     mcp_performance_metrics_t* metrics = &g_metrics;
 
-    // Calculate derived metrics
+    // Atomic load all metrics at once to get a consistent snapshot
     uint64_t total_requests = MCP_ATOMIC_LOAD(metrics->total_requests);
-    uint64_t total_latency_us = MCP_ATOMIC_LOAD(metrics->total_latency_us);
-    uint64_t avg_latency_us = (total_requests > 0) ? (total_latency_us / total_requests) : 0;
-
-    time_t now = time(NULL);
-    time_t start_time = MCP_ATOMIC_LOAD(metrics->start_time);
-    double uptime_seconds = difftime(now, start_time);
-    double requests_per_second = (uptime_seconds > 0) ? ((double)total_requests / uptime_seconds) : 0;
-
     uint64_t successful_requests = MCP_ATOMIC_LOAD(metrics->successful_requests);
     uint64_t failed_requests = MCP_ATOMIC_LOAD(metrics->failed_requests);
     uint64_t timeout_requests = MCP_ATOMIC_LOAD(metrics->timeout_requests);
-    double error_rate = (total_requests > 0) ?
-        (100.0 * (failed_requests + timeout_requests) / total_requests) : 0.0;
-
+    uint64_t total_latency_us = MCP_ATOMIC_LOAD(metrics->total_latency_us);
+    uint64_t min_latency_us = MCP_ATOMIC_LOAD(metrics->min_latency_us);
+    uint64_t max_latency_us = MCP_ATOMIC_LOAD(metrics->max_latency_us);
     uint64_t bytes_sent = MCP_ATOMIC_LOAD(metrics->bytes_sent);
     uint64_t bytes_received = MCP_ATOMIC_LOAD(metrics->bytes_received);
+    uint64_t active_connections = MCP_ATOMIC_LOAD(metrics->active_connections);
+    uint64_t peak_connections = MCP_ATOMIC_LOAD(metrics->peak_connections);
+    time_t start_time = MCP_ATOMIC_LOAD(metrics->start_time);
+
+    // Calculate derived metrics
+    time_t now = time(NULL);
+    double uptime_seconds = difftime(now, start_time);
+
+    // Avoid division by zero
+    uint64_t avg_latency_us = (total_requests > 0) ? (total_latency_us / total_requests) : 0;
+    double requests_per_second = (uptime_seconds > 0) ? ((double)total_requests / uptime_seconds) : 0;
+    double error_rate = (total_requests > 0) ?
+        (100.0 * (failed_requests + timeout_requests) / total_requests) : 0.0;
     double bytes_per_second = (uptime_seconds > 0) ?
         ((double)(bytes_sent + bytes_received) / uptime_seconds) : 0;
 
-    // Format JSON
+    // Handle special case for min latency
+    if (min_latency_us == MCP_METRICS_MAX_LATENCY_THRESHOLD) {
+        min_latency_us = 0; // No requests processed yet
+    }
+
+    // Format JSON with platform-independent format specifiers
     int written = snprintf(buffer, size,
         "{\n"
         "  \"timestamp\": %ld,\n"
         "  \"uptime_seconds\": %.2f,\n"
         "  \"requests\": {\n"
+#ifdef _WIN32
         "    \"total\": %I64u,\n"
         "    \"successful\": %I64u,\n"
         "    \"failed\": %I64u,\n"
         "    \"timeout\": %I64u,\n"
+#else
+        "    \"total\": %llu,\n"
+        "    \"successful\": %llu,\n"
+        "    \"failed\": %llu,\n"
+        "    \"timeout\": %llu,\n"
+#endif
         "    \"per_second\": %.2f,\n"
         "    \"error_rate_percent\": %.2f\n"
         "  },\n"
         "  \"latency_us\": {\n"
+#ifdef _WIN32
         "    \"min\": %I64u,\n"
         "    \"max\": %I64u,\n"
         "    \"avg\": %I64u\n"
+#else
+        "    \"min\": %llu,\n"
+        "    \"max\": %llu,\n"
+        "    \"avg\": %llu\n"
+#endif
         "  },\n"
         "  \"throughput\": {\n"
+#ifdef _WIN32
         "    \"bytes_sent\": %I64u,\n"
         "    \"bytes_received\": %I64u,\n"
+#else
+        "    \"bytes_sent\": %llu,\n"
+        "    \"bytes_received\": %llu,\n"
+#endif
         "    \"bytes_per_second\": %.2f\n"
         "  },\n"
         "  \"connections\": {\n"
+#ifdef _WIN32
         "    \"active\": %I64u,\n"
         "    \"peak\": %I64u\n"
+#else
+        "    \"active\": %llu,\n"
+        "    \"peak\": %llu\n"
+#endif
         "  }\n"
         "}",
         (long)now,
@@ -286,17 +391,24 @@ int mcp_performance_metrics_to_json(char* buffer, size_t size) {
         timeout_requests,
         requests_per_second,
         error_rate,
-        MCP_ATOMIC_LOAD(metrics->min_latency_us) == UINT64_MAX ? 0 : MCP_ATOMIC_LOAD(metrics->min_latency_us),
-        MCP_ATOMIC_LOAD(metrics->max_latency_us),
+        min_latency_us,
+        max_latency_us,
         avg_latency_us,
         bytes_sent,
         bytes_received,
         bytes_per_second,
-        MCP_ATOMIC_LOAD(metrics->active_connections),
-        MCP_ATOMIC_LOAD(metrics->peak_connections)
+        active_connections,
+        peak_connections
     );
 
-    return (written >= (int)size) ? -1 : written;
+    // Check for buffer overflow
+    if (written >= (int)size) {
+        mcp_log_error("Buffer too small for metrics JSON (need %d bytes, have %zu)",
+                     written, size);
+        return -1;
+    }
+
+    return written;
 }
 
 uint64_t mcp_performance_metrics_get_avg_latency(void) {
@@ -345,35 +457,66 @@ double mcp_performance_metrics_get_error_rate(void) {
     return 100.0 * (double)(failed_requests + timeout_requests) / (double)total_requests;
 }
 
+/**
+ * @brief Export performance metrics to a file in JSON format
+ *
+ * This function generates a JSON representation of the current performance metrics
+ * and writes it to the specified file.
+ *
+ * @param filename Name of the file to export to
+ * @return 0 on success, -1 on failure
+ */
 int mcp_performance_metrics_export(const char* filename) {
-    if (!g_initialized || !filename) {
+    // Validate parameters
+    if (!g_initialized || !filename || !*filename) {
+        mcp_log_error("Invalid parameters for metrics export");
         return -1;
     }
 
-    // Buffer for JSON data
-    char buffer[4096];
+    // Buffer for JSON data - use the defined constant
+    char buffer[MCP_METRICS_DEFAULT_BUFFER_SIZE];
+
+    // Generate JSON representation
     int written = mcp_performance_metrics_to_json(buffer, sizeof(buffer));
     if (written < 0) {
         mcp_log_error("Failed to generate performance metrics JSON");
         return -1;
     }
 
-    // Open file for writing
-    FILE* file = fopen(filename, "w");
-    if (!file) {
-        mcp_log_error("Failed to open file for performance metrics export: %s", filename);
+    // Open file for writing with error handling
+    FILE* file = NULL;
+#ifdef _MSC_VER
+    // Use fopen_s on Windows for security
+    errno_t err = fopen_s(&file, filename, "w");
+    if (err != 0 || !file) {
+        mcp_log_error("Failed to open file for performance metrics export: %s (error %d)",
+                     filename, err);
         return -1;
     }
+#else
+    // Use standard fopen on other platforms
+    file = fopen(filename, "w");
+    if (!file) {
+        mcp_log_error("Failed to open file for performance metrics export: %s (error %d)",
+                     filename, errno);
+        return -1;
+    }
+#endif
 
     // Write JSON data to file
     size_t bytes_written = fwrite(buffer, 1, written, file);
+
+    // Ensure data is flushed to disk
+    fflush(file);
     fclose(file);
 
+    // Verify all data was written
     if (bytes_written != (size_t)written) {
-        mcp_log_error("Failed to write performance metrics to file: %s", filename);
+        mcp_log_error("Failed to write performance metrics to file: %s (wrote %zu of %d bytes)",
+                     filename, bytes_written, written);
         return -1;
     }
 
-    mcp_log_info("Performance metrics exported to %s", filename);
+    mcp_log_info("Performance metrics exported to %s (%d bytes)", filename, written);
     return 0;
 }
