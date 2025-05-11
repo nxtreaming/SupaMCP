@@ -78,6 +78,21 @@ size_t mcp_object_pool_get_free_count(mcp_object_pool_t* pool);
  */
 size_t mcp_object_pool_get_total_count(mcp_object_pool_t* pool);
 
+/**
+ * @brief Gets detailed statistics about the object pool.
+ *
+ * @param pool A pointer to the object pool.
+ * @param total_objects Pointer to store the total number of objects (can be NULL).
+ * @param free_objects Pointer to store the number of free objects (can be NULL).
+ * @param current_usage Pointer to store the current number of objects in use (can be NULL).
+ * @param peak_usage Pointer to store the peak number of objects in use (can be NULL).
+ * @return true if statistics were successfully retrieved, false otherwise.
+ */
+bool mcp_object_pool_get_stats(mcp_object_pool_t* pool,
+                              size_t* total_objects,
+                              size_t* free_objects,
+                              size_t* current_usage,
+                              size_t* peak_usage);
 
 #ifdef __cplusplus
 }
