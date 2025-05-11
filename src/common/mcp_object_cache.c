@@ -2,9 +2,42 @@
 #include "mcp_memory_pool.h"
 #include "mcp_memory_constants.h"
 #include "mcp_log.h"
+#include "mcp_cache_aligned.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
+
+// Platform-specific atomic operations
+#ifdef _WIN32
+#include <windows.h>
+#define ATOMIC_INCREMENT(var) InterlockedIncrement64((LONG64*)&(var))
+#define ATOMIC_DECREMENT(var) InterlockedDecrement64((LONG64*)&(var))
+#define ATOMIC_ADD(var, val) InterlockedAdd64((LONG64*)&(var), (LONG64)(val))
+#define ATOMIC_EXCHANGE_MAX(var, val) do { \
+    LONG64 old_val, new_val; \
+    do { \
+        old_val = *(LONG64*)&(var); \
+        new_val = (old_val < (LONG64)(val)) ? (LONG64)(val) : old_val; \
+    } while (InterlockedCompareExchange64((LONG64*)&(var), new_val, old_val) != old_val); \
+} while(0)
+#else
+#include <stdatomic.h>
+#define ATOMIC_INCREMENT(var) __sync_add_and_fetch(&(var), 1)
+#define ATOMIC_DECREMENT(var) __sync_sub_and_fetch(&(var), 1)
+#define ATOMIC_ADD(var, val) __sync_add_and_fetch(&(var), (val))
+#define ATOMIC_EXCHANGE_MAX(var, val) do { \
+    size_t old_val; \
+    do { \
+        old_val = (var); \
+        if (old_val >= (val)) break; \
+    } while (!__sync_bool_compare_and_swap(&(var), old_val, (val))); \
+} while(0)
+#endif
+
+// Memory alignment for better performance
+#define MCP_OBJECT_ALIGN_SIZE 8
+#define MCP_OBJECT_ALIGN_UP(value) (((value) + (MCP_OBJECT_ALIGN_SIZE - 1)) & ~(MCP_OBJECT_ALIGN_SIZE - 1))
 
 // Default cache sizes
 #define DEFAULT_CACHE_SIZE 16
@@ -13,6 +46,10 @@
 #define DEFAULT_GROWTH_THRESHOLD 0.8  // Grow cache if hit ratio > 80%
 #define DEFAULT_SHRINK_THRESHOLD 0.3  // Shrink cache if hit ratio < 30%
 #define DEFAULT_ADJUSTMENT_INTERVAL 100  // Adjust every 100 operations
+
+// Batch processing sizes for better cache locality
+#define FLUSH_BATCH_SIZE 8  // Batch size for flushing caches
+#define ADJUST_BATCH_SIZE 8  // Batch size for adjusting caches
 
 // Object cache type names
 static const char* object_cache_type_names[MCP_OBJECT_CACHE_TYPE_COUNT] = {
@@ -73,6 +110,55 @@ __thread static void (*tls_destructors[MCP_OBJECT_CACHE_TYPE_COUNT])(void*) = {N
 // Forward declarations
 static bool adjust_cache_size(mcp_object_cache_type_t type);
 static void apply_default_config(mcp_object_cache_type_t type);
+static void* aligned_malloc(size_t size);
+static void aligned_free(void* ptr);
+
+// Helper function for aligned memory allocation
+static void* aligned_malloc(size_t size) {
+#ifdef _WIN32
+    return _aligned_malloc(size, MCP_OBJECT_ALIGN_SIZE);
+#else
+    void* ptr = NULL;
+    #if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L
+        if (posix_memalign(&ptr, MCP_OBJECT_ALIGN_SIZE, size) != 0) {
+            return NULL;
+        }
+        return ptr;
+    #else
+        // Fallback for systems without posix_memalign
+        // Allocate extra space for alignment and pointer storage
+        size_t total_size = size + MCP_OBJECT_ALIGN_SIZE + sizeof(void*);
+        void* raw_ptr = malloc(total_size);
+        if (!raw_ptr) return NULL;
+
+        // Calculate aligned address
+        uintptr_t addr = (uintptr_t)raw_ptr + sizeof(void*);
+        void* aligned_ptr = (void*)((addr + MCP_OBJECT_ALIGN_SIZE - 1) & ~(MCP_OBJECT_ALIGN_SIZE - 1));
+
+        // Store original pointer for freeing later
+        ((void**)aligned_ptr)[-1] = raw_ptr;
+
+        return aligned_ptr;
+    #endif
+#endif
+}
+
+// Helper function for aligned memory deallocation
+static void aligned_free(void* ptr) {
+    if (!ptr) return;
+
+#ifdef _WIN32
+    _aligned_free(ptr);
+#else
+    #if defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L
+        free(ptr);
+    #else
+        // For the fallback implementation, retrieve the original pointer
+        void* original_ptr = ((void**)ptr)[-1];
+        free(original_ptr);
+    #endif
+#endif
+}
 
 bool mcp_object_cache_system_init(void) {
     if (tls_system_initialized) {
@@ -193,16 +279,25 @@ void mcp_object_cache_cleanup(mcp_object_cache_type_t type) {
 }
 
 void* mcp_object_cache_alloc(mcp_object_cache_type_t type, size_t size) {
+    // Fast path for invalid type
     if (type < 0 || type >= MCP_OBJECT_CACHE_TYPE_COUNT) {
         mcp_log_error("Invalid object cache type: %d", type);
         return NULL;
     }
 
+    // Fast path for zero-size allocation
+    if (size == 0) {
+        size = 1; // Ensure we return a valid pointer
+    }
+
+    // Align the size for better memory access
+    size_t aligned_size = MCP_OBJECT_ALIGN_UP(size);
+
     // If object cache is not initialized, initialize it with default configuration
     if (!tls_cache_initialized[type]) {
         if (!mcp_object_cache_init(type, NULL)) {
-            // Fall back to direct allocation
-            void* ptr = malloc(size);
+            // Fall back to direct allocation with alignment
+            void* ptr = aligned_malloc(aligned_size);
             if (ptr && tls_constructors[type]) {
                 tls_constructors[type](ptr);
             }
@@ -211,12 +306,12 @@ void* mcp_object_cache_alloc(mcp_object_cache_type_t type, size_t size) {
     }
 
     // Increment operation counter for adaptive sizing
-    tls_operations_since_adjustment[type]++;
+    ATOMIC_INCREMENT(tls_operations_since_adjustment[type]);
 
-    // Check if we have a cached object
+    // Fast path: Check if we have a cached object
     if (tls_object_counts[type] > 0) {
         void* ptr = tls_object_caches[type][--tls_object_counts[type]];
-        tls_cache_hits[type]++;
+        ATOMIC_INCREMENT(tls_cache_hits[type]);
 
         // Call constructor if registered
         if (tls_constructors[type]) {
@@ -227,7 +322,7 @@ void* mcp_object_cache_alloc(mcp_object_cache_type_t type, size_t size) {
     }
 
     // Cache miss
-    tls_cache_misses[type]++;
+    ATOMIC_INCREMENT(tls_cache_misses[type]);
 
     // Check if we need to adjust cache sizes
     if (tls_adaptive_sizing[type] &&
@@ -235,13 +330,14 @@ void* mcp_object_cache_alloc(mcp_object_cache_type_t type, size_t size) {
         adjust_cache_size(type);
     }
 
-    // Allocate a new object
+    // Allocate a new object with proper alignment
     void* ptr = NULL;
     if (mcp_memory_pool_system_is_initialized()) {
-        ptr = mcp_pool_alloc(size);
+        // Memory pool system handles alignment internally
+        ptr = mcp_pool_alloc(aligned_size);
     } else {
-        // Fall back to malloc if memory pool system is not initialized
-        ptr = malloc(size);
+        // Use aligned allocation
+        ptr = aligned_malloc(aligned_size);
     }
 
     // Call constructor if registered
@@ -253,12 +349,14 @@ void* mcp_object_cache_alloc(mcp_object_cache_type_t type, size_t size) {
 }
 
 void mcp_object_cache_free(mcp_object_cache_type_t type, void* ptr, size_t size) {
+    // Fast path for NULL pointer
     if (!ptr) return;
 
+    // Fast path for invalid type
     if (type < 0 || type >= MCP_OBJECT_CACHE_TYPE_COUNT) {
         mcp_log_error("Invalid object cache type: %d", type);
-        // Fall back to regular free
-        free(ptr);
+        // Fall back to aligned free
+        aligned_free(ptr);
         return;
     }
 
@@ -269,36 +367,34 @@ void mcp_object_cache_free(mcp_object_cache_type_t type, void* ptr, size_t size)
             if (tls_destructors[type]) {
                 tls_destructors[type](ptr);
             }
-            free(ptr);
+            aligned_free(ptr);
             return;
         }
     }
 
     // Increment operation counter for adaptive sizing
-    tls_operations_since_adjustment[type]++;
+    ATOMIC_INCREMENT(tls_operations_since_adjustment[type]);
 
     // Call destructor if registered
     if (tls_destructors[type]) {
         tls_destructors[type](ptr);
     }
 
-    // Check if we can cache the object
+    // Fast path: Check if we can cache the object
     if (tls_object_counts[type] < tls_max_sizes[type]) {
         tls_object_caches[type][tls_object_counts[type]++] = ptr;
         return;
     }
 
     // Cache is full, determine if this is a pool block
-    if (size == 0) {
-        size = mcp_pool_get_block_size(ptr);
-    }
+    size_t block_size = (size > 0) ? size : mcp_pool_get_block_size(ptr);
 
-    if (size > 0) {
+    if (block_size > 0) {
         // It's a pool-allocated block, return it to the pool
         mcp_pool_free(ptr);
     } else {
-        // It's a malloc-allocated block, use free
-        free(ptr);
+        // It's a malloc-allocated block, use aligned free
+        aligned_free(ptr);
     }
 
     // Check if we need to adjust cache sizes
@@ -407,36 +503,65 @@ bool mcp_object_cache_enable_adaptive_sizing(mcp_object_cache_type_t type, bool 
 }
 
 void mcp_object_cache_flush(mcp_object_cache_type_t type) {
+    // Fast path for invalid type
     if (type < 0 || type >= MCP_OBJECT_CACHE_TYPE_COUNT) {
         return;
     }
 
+    // Fast path for uninitialized cache
     if (!tls_cache_initialized[type]) {
         return;
     }
 
-    // Flush the cache
-    for (size_t i = 0; i < tls_object_counts[type]; i++) {
-        void* ptr = tls_object_caches[type][i];
-
-        // Call destructor if registered
-        if (tls_destructors[type]) {
-            tls_destructors[type](ptr);
-        }
-
-        // Check if this is a pool-allocated block
-        size_t block_size = mcp_pool_get_block_size(ptr);
-        if (block_size > 0) {
-            // It's a pool-allocated block, return it to the pool
-            mcp_pool_free(ptr);
-        } else {
-            // It's a malloc-allocated block, use free
-            free(ptr);
-        }
-        tls_object_caches[type][i] = NULL;
+    // Fast path for empty cache
+    if (tls_object_counts[type] == 0) {
+        return;
     }
+
+    // Process objects in batches for better cache locality
+    size_t remaining = tls_object_counts[type];
+    size_t batch_count = (remaining + FLUSH_BATCH_SIZE - 1) / FLUSH_BATCH_SIZE;
+
+    // Use fixed-size array instead of VLA for MSVC compatibility
+    size_t block_sizes[8]; // FLUSH_BATCH_SIZE is 8
+
+    for (size_t batch = 0; batch < batch_count; batch++) {
+        size_t start_idx = batch * FLUSH_BATCH_SIZE;
+        size_t end_idx = start_idx + FLUSH_BATCH_SIZE;
+        if (end_idx > tls_object_counts[type]) {
+            end_idx = tls_object_counts[type];
+        }
+
+        // Pre-fetch block sizes for the batch
+        for (size_t i = start_idx; i < end_idx; i++) {
+            void* ptr = tls_object_caches[type][i];
+            block_sizes[i - start_idx] = mcp_pool_get_block_size(ptr);
+        }
+
+        // Process the batch
+        for (size_t i = start_idx; i < end_idx; i++) {
+            void* ptr = tls_object_caches[type][i];
+
+            // Call destructor if registered
+            if (tls_destructors[type]) {
+                tls_destructors[type](ptr);
+            }
+
+            // Free the object based on its source
+            if (block_sizes[i - start_idx] > 0) {
+                // It's a pool-allocated block, return it to the pool
+                mcp_pool_free(ptr);
+            } else {
+                // It's a malloc-allocated block, use aligned free
+                aligned_free(ptr);
+            }
+            tls_object_caches[type][i] = NULL;
+        }
+    }
+
+    // Reset counter and update statistics
     tls_object_counts[type] = 0;
-    tls_cache_flushes[type]++;
+    ATOMIC_INCREMENT(tls_cache_flushes[type]);
 
     mcp_log_debug("Object cache flushed for type %s", object_cache_type_names[type]);
 }
@@ -473,10 +598,12 @@ const char* mcp_object_cache_type_name(mcp_object_cache_type_t type) {
 }
 
 static bool adjust_cache_size(mcp_object_cache_type_t type) {
+    // Fast path for invalid type
     if (type < 0 || type >= MCP_OBJECT_CACHE_TYPE_COUNT) {
         return false;
     }
 
+    // Fast path for uninitialized cache
     if (!tls_cache_initialized[type]) {
         return false;
     }
@@ -484,7 +611,7 @@ static bool adjust_cache_size(mcp_object_cache_type_t type) {
     // Reset operation counter
     tls_operations_since_adjustment[type] = 0;
 
-    // If adaptive sizing is disabled, do nothing
+    // Fast path: If adaptive sizing is disabled, do nothing
     if (!tls_adaptive_sizing[type]) {
         return true;
     }
@@ -515,24 +642,46 @@ static bool adjust_cache_size(mcp_object_cache_type_t type) {
 
         // If current count exceeds new max size, flush excess objects
         if (tls_object_counts[type] > new_size) {
-            for (size_t i = new_size; i < tls_object_counts[type]; i++) {
-                void* ptr = tls_object_caches[type][i];
+            // Process objects in batches for better cache locality
+            size_t start_idx = new_size;
+            size_t remaining = tls_object_counts[type] - new_size;
+            size_t batch_count = (remaining + ADJUST_BATCH_SIZE - 1) / ADJUST_BATCH_SIZE;
 
-                // Call destructor if registered
-                if (tls_destructors[type]) {
-                    tls_destructors[type](ptr);
+            // Use fixed-size array instead of VLA for MSVC compatibility
+            size_t block_sizes[8]; // ADJUST_BATCH_SIZE is 8
+
+            for (size_t batch = 0; batch < batch_count; batch++) {
+                size_t batch_start = start_idx + batch * ADJUST_BATCH_SIZE;
+                size_t batch_end = batch_start + ADJUST_BATCH_SIZE;
+                if (batch_end > tls_object_counts[type]) {
+                    batch_end = tls_object_counts[type];
                 }
 
-                // Check if this is a pool-allocated block
-                size_t block_size = mcp_pool_get_block_size(ptr);
-                if (block_size > 0) {
-                    // It's a pool-allocated block, return it to the pool
-                    mcp_pool_free(ptr);
-                } else {
-                    // It's a malloc-allocated block, use free
-                    free(ptr);
+                // Pre-fetch block sizes for the batch
+                for (size_t i = batch_start; i < batch_end; i++) {
+                    void* ptr = tls_object_caches[type][i];
+                    block_sizes[i - batch_start] = mcp_pool_get_block_size(ptr);
                 }
-                tls_object_caches[type][i] = NULL;
+
+                // Process the batch
+                for (size_t i = batch_start; i < batch_end; i++) {
+                    void* ptr = tls_object_caches[type][i];
+
+                    // Call destructor if registered
+                    if (tls_destructors[type]) {
+                        tls_destructors[type](ptr);
+                    }
+
+                    // Free the object based on its source
+                    if (block_sizes[i - batch_start] > 0) {
+                        // It's a pool-allocated block, return it to the pool
+                        mcp_pool_free(ptr);
+                    } else {
+                        // It's a malloc-allocated block, use aligned free
+                        aligned_free(ptr);
+                    }
+                    tls_object_caches[type][i] = NULL;
+                }
             }
             tls_object_counts[type] = new_size;
         }
@@ -546,6 +695,7 @@ static bool adjust_cache_size(mcp_object_cache_type_t type) {
 }
 
 static void apply_default_config(mcp_object_cache_type_t type) {
+    // Apply default configuration
     tls_max_sizes[type] = DEFAULT_CACHE_SIZE;
     tls_adaptive_sizing[type] = false;
     tls_growth_thresholds[type] = DEFAULT_GROWTH_THRESHOLD;
@@ -556,10 +706,16 @@ static void apply_default_config(mcp_object_cache_type_t type) {
     tls_constructors[type] = NULL;
     tls_destructors[type] = NULL;
 
-    // Reset counters
+    // Reset counters atomically
     tls_object_counts[type] = 0;
     tls_cache_hits[type] = 0;
     tls_cache_misses[type] = 0;
     tls_cache_flushes[type] = 0;
     tls_operations_since_adjustment[type] = 0;
+
+    // Log configuration
+    mcp_log_debug("Applied default configuration for %s cache: size=%zu, adaptive=%s",
+                 object_cache_type_names[type],
+                 DEFAULT_CACHE_SIZE,
+                 "disabled");
 }
