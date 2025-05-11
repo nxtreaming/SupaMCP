@@ -399,12 +399,15 @@ int mcp_template_matches_optimized(const char* uri, const char* template_uri) {
         return 0;
     }
 
+    mcp_log_debug("Matching URI '%s' against template '%s'", uri, template_uri);
+
     // Get or create cached template
     mcp_cached_template_t* cached = mcp_template_cache_find(template_uri);
     if (cached == NULL) {
         cached = mcp_template_cache_add(template_uri);
         if (cached == NULL) {
             // Fall back to the original implementation
+            mcp_log_debug("Failed to create cached template, falling back to original implementation");
             return mcp_template_matches(uri, template_uri);
         }
     }
@@ -414,6 +417,7 @@ int mcp_template_matches_optimized(const char* uri, const char* template_uri) {
 
     // Check if the URI starts with the first static part
     if (strncmp(u, cached->static_parts[0], cached->static_part_lengths[0]) != 0) {
+        mcp_log_debug("URI does not start with first static part '%s'", cached->static_parts[0]);
         return 0;
     }
 
@@ -427,13 +431,18 @@ int mcp_template_matches_optimized(const char* uri, const char* template_uri) {
         const size_t next_static_len = cached->static_part_lengths[i + 1];
         const char* next_static_in_uri = find_next_static_part(u, next_static, next_static_len);
 
+        mcp_log_debug("Parameter %zu: name='%s', type=%d, next_static='%s'",
+                     i, cached->param_names[i], cached->validations[i].type, next_static);
+
         // If the next static part is not found, check if the parameter is optional
         if (next_static_in_uri == NULL) {
             if (!cached->validations[i].required) {
                 // Optional parameter, skip it
+                mcp_log_debug("Optional parameter '%s' not found in URI, skipping", cached->param_names[i]);
                 continue;
             } else {
                 // Required parameter not found
+                mcp_log_debug("Required parameter '%s' not found in URI", cached->param_names[i]);
                 return 0;
             }
         }
@@ -443,14 +452,19 @@ int mcp_template_matches_optimized(const char* uri, const char* template_uri) {
         char param_value[256];
         if (param_len >= sizeof(param_value)) {
             // Parameter value too long
+            mcp_log_debug("Parameter '%s' value too long", cached->param_names[i]);
             return 0;
         }
 
         memcpy(param_value, u, param_len);
         param_value[param_len] = '\0';
 
+        mcp_log_debug("Extracted parameter '%s' value: '%s'", cached->param_names[i], param_value);
+
         // Validate the parameter value
         if (!validate_param_value(param_value, &cached->validations[i])) {
+            mcp_log_debug("Parameter '%s' value '%s' is invalid for type %d",
+                         cached->param_names[i], param_value, cached->validations[i].type);
             return 0;
         }
 
@@ -459,6 +473,7 @@ int mcp_template_matches_optimized(const char* uri, const char* template_uri) {
     }
 
     // If we've consumed the entire URI, it's a match
+    mcp_log_debug("URI match result: %d", (*u == '\0'));
     return (*u == '\0');
 }
 
@@ -581,19 +596,88 @@ mcp_json_t* mcp_template_extract_params_optimized(const char* uri, const char* t
         mcp_json_t* value = NULL;
 
         switch (cached->validations[i].type) {
-            case MCP_TEMPLATE_PARAM_TYPE_INT:
-                value = mcp_json_number_create(atoi(param_value));
+            case MCP_TEMPLATE_PARAM_TYPE_INT: {
+                // Validate that the string is a valid integer
+                char* endptr;
+                long int_val = strtol(param_value, &endptr, 10);
+
+                // If endptr points to the first character, no conversion was performed
+                if (endptr == param_value) {
+                    mcp_log_debug("Integer validation failed: '%s' is not a valid integer (no conversion)", param_value);
+                    mcp_json_destroy(params);
+                    return NULL;
+                }
+
+                // If endptr doesn't point to the null terminator, there are invalid characters
+                if (*endptr != '\0') {
+                    mcp_log_debug("Integer validation failed: '%s' is not a valid integer (invalid chars: '%s')", param_value, endptr);
+                    mcp_json_destroy(params);
+                    return NULL;
+                }
+
+                // Check range
+                if (int_val < cached->validations[i].range.int_range.min || int_val > cached->validations[i].range.int_range.max) {
+                    mcp_log_debug("Integer range validation failed: %ld not in range [%d, %d]",
+                                 int_val, cached->validations[i].range.int_range.min, cached->validations[i].range.int_range.max);
+                    mcp_json_destroy(params);
+                    return NULL;
+                }
+
+                value = mcp_json_number_create((double)int_val);
                 break;
-            case MCP_TEMPLATE_PARAM_TYPE_FLOAT:
-                value = mcp_json_number_create(atof(param_value));
+            }
+            case MCP_TEMPLATE_PARAM_TYPE_FLOAT: {
+                // Validate that the string is a valid float
+                char* endptr;
+                float float_val = strtof(param_value, &endptr);
+
+                // If endptr points to the first character, no conversion was performed
+                if (endptr == param_value) {
+                    mcp_log_debug("Float validation failed: '%s' is not a valid float (no conversion)", param_value);
+                    mcp_json_destroy(params);
+                    return NULL;
+                }
+
+                // If endptr doesn't point to the null terminator, there are invalid characters
+                if (*endptr != '\0') {
+                    mcp_log_debug("Float validation failed: '%s' is not a valid float (invalid chars: '%s')", param_value, endptr);
+                    mcp_json_destroy(params);
+                    return NULL;
+                }
+
+                // Check range
+                if (float_val < cached->validations[i].range.float_range.min || float_val > cached->validations[i].range.float_range.max) {
+                    mcp_log_debug("Float range validation failed: %f not in range [%f, %f]",
+                                 float_val, cached->validations[i].range.float_range.min, cached->validations[i].range.float_range.max);
+                    mcp_json_destroy(params);
+                    return NULL;
+                }
+
+                value = mcp_json_number_create((double)float_val);
                 break;
+            }
             case MCP_TEMPLATE_PARAM_TYPE_BOOL:
+                // Validate that the string is a valid boolean
+                if (strcmp(param_value, "true") != 0 && strcmp(param_value, "false") != 0 &&
+                    strcmp(param_value, "1") != 0 && strcmp(param_value, "0") != 0) {
+                    mcp_log_debug("Boolean validation failed: '%s' is not a valid boolean", param_value);
+                    mcp_json_destroy(params);
+                    return NULL;
+                }
+
                 value = mcp_json_boolean_create(
                     strcmp(param_value, "true") == 0 ||
                     strcmp(param_value, "1") == 0
                 );
                 break;
             default:
+                // For string and custom types, just validate using the standard function
+                if (!validate_param_value(param_value, &cached->validations[i])) {
+                    mcp_log_debug("Parameter '%s' value '%s' is invalid", cached->param_names[i], param_value);
+                    mcp_json_destroy(params);
+                    return NULL;
+                }
+
                 value = mcp_json_string_create(param_value);
                 break;
         }

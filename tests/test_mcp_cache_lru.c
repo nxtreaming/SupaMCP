@@ -438,14 +438,14 @@ void test_lru_stress(void) {
 // --- Test Runner ---
 
 void run_cache_lru_tests(void) {
-    UNITY_BEGIN();
+    // Remove UNITY_BEGIN() and UNITY_END() calls
+    // These should only be called in the main function
     RUN_TEST(test_lru_basic_eviction);
     RUN_TEST(test_lru_update_on_get);
     RUN_TEST(test_lru_update_on_put);
     RUN_TEST(test_lru_invalidate);
     RUN_TEST(test_lru_expiry);
     RUN_TEST(test_lru_stress);
-    UNITY_END();
 }
 
 // If running this file directly (optional)

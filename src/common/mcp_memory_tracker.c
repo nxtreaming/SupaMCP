@@ -91,6 +91,8 @@ static mcp_memory_tracker_t g_tracker = {0};
 // Forward declarations
 static unsigned long ptr_hash(const void* key);
 static bool ptr_compare(const void* key1, const void* key2);
+static void* ptr_dup(const void* key);
+static void ptr_free(void* key);
 static void record_free(void* value);
 
 // String table functions
@@ -125,8 +127,8 @@ bool mcp_memory_tracker_init(bool track_allocations, bool track_backtraces) {
             0.75f,                      // Load factor
             ptr_hash,                   // Hash function
             ptr_compare,                // Key comparison function
-            NULL,                       // Key duplication function (not needed for pointers)
-            NULL,                       // Key free function (not needed for pointers)
+            ptr_dup,                    // Key duplication function for pointers
+            ptr_free,                   // Key free function for pointers
             record_free                 // Value free function
         );
 
@@ -496,6 +498,18 @@ static unsigned long ptr_hash(const void* key) {
 // Comparison function for pointer keys
 static bool ptr_compare(const void* key1, const void* key2) {
     return key1 == key2;
+}
+
+// Duplication function for pointer keys
+// For pointers, we just return the same pointer since we don't need to copy it
+static void* ptr_dup(const void* key) {
+    return (void*)key;
+}
+
+// Free function for pointer keys
+// For pointers, we don't need to free anything since we didn't allocate memory
+static void ptr_free(void* key) {
+    (void)key; // Unused parameter
 }
 
 // Free function for allocation records

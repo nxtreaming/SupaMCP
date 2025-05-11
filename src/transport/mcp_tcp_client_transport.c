@@ -372,8 +372,20 @@ mcp_transport_t* mcp_tcp_client_create_reconnect(
     uint16_t port,
     const mcp_reconnect_config_t* reconnect_config
 ) {
+    // Validate input parameters
     if (!host)
         return NULL;
+
+    // Check for invalid port values
+    // Port 0 is reserved and not valid for TCP connections
+    if (port == 0) {
+        mcp_log_error("Invalid port value: %u", port);
+        return NULL;
+    }
+
+    // Note: We don't need to check for port > 65535 because port is uint16_t,
+    // which can only hold values up to 65535. Any larger value will be truncated.
+    // For example, 70000 will become 70000 % 65536 = 4464.
 
     mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
     if (!transport)

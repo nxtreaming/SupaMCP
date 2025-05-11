@@ -87,9 +87,16 @@ static void* aligned_malloc(size_t size) {
 
 // Helper function for aligned memory deallocation
 static void aligned_free(void* ptr) {
+    // Add NULL check
+    if (ptr == NULL) {
+        return;
+    }
+
 #ifdef _WIN32
+    // On Windows, _aligned_free handles NULL pointers safely
     _aligned_free(ptr);
 #else
+    // On POSIX systems, free handles NULL pointers safely
     free(ptr);
 #endif
 }
@@ -200,10 +207,39 @@ void mcp_object_pool_destroy(mcp_object_pool_t* pool) {
 #if TLS_CACHE_ENABLED
     for (int i = 0; i < MAX_CACHED_POOLS; i++) {
         if (tls_caches[i].pool == pool) {
-            // Free cached objects
+            // Free cached objects with careful validation
             for (size_t j = 0; j < tls_caches[i].count; j++) {
-                aligned_free(tls_caches[i].objects[j]);
+                void* obj = tls_caches[i].objects[j];
+
+                // Skip NULL pointers
+                if (obj == NULL) {
+                    continue;
+                }
+
+                // Check if the object is part of the memory block (if we have one)
+                if (pool->memory_block) {
+                    char* block_start = (char*)pool->memory_block;
+                    char* block_end = block_start + (pool->total_objects * pool->aligned_size);
+
+                    // Only free if the object is within our memory block
+                    if ((char*)obj >= block_start && (char*)obj < block_end) {
+                        // Object is part of our memory block, safe to free
+                        // But actually we don't need to free individual objects if they're part of the memory block
+                        // as we'll free the whole block later
+                    } else {
+                        // Object is not part of our memory block, might be individually allocated
+                        // or might be invalid - log a warning and skip it
+                        mcp_log_warn("Object pool destroy: cached object %p is outside memory block range [%p-%p]",
+                                    obj, (void*)block_start, (void*)block_end);
+                        continue;
+                    }
+                } else {
+                    // We don't have a memory block, so objects were individually allocated
+                    // We'll try to free them, but be careful
+                    aligned_free(obj);
+                }
             }
+
             // Clear the cache
             memset(&tls_caches[i], 0, sizeof(mcp_object_pool_tls_cache_t));
         }
@@ -215,6 +251,7 @@ void mcp_object_pool_destroy(mcp_object_pool_t* pool) {
     // If objects were allocated in a single block, just free the block
     if (pool->memory_block) {
         aligned_free(pool->memory_block);
+        pool->memory_block = NULL;
     } else {
         // Otherwise, need to free individually (only those currently in the free list)
         // Note: This assumes acquired objects are managed/freed elsewhere or released before destroy.
@@ -222,13 +259,18 @@ void mcp_object_pool_destroy(mcp_object_pool_t* pool) {
         mcp_pool_node_t* current = pool->free_list_head;
         mcp_pool_node_t* next;
         size_t freed_count = 0;
+
         while (current) {
             next = current->next;
-            aligned_free(current);
-            freed_count++;
+            // Add NULL check before freeing
+            if (current != NULL) {
+                aligned_free(current);
+                freed_count++;
+            }
             current = next;
         }
-        if (freed_count != pool->free_objects) {
+
+        if (freed_count != pool->free_objects && pool->free_objects > 0) {
             mcp_log_warn("Mismatch freeing objects: freed %zu, expected %zu (acquired objects not freed)",
                         freed_count, pool->free_objects);
         }
@@ -252,7 +294,9 @@ void mcp_object_pool_destroy(mcp_object_pool_t* pool) {
                 pool->total_objects, pool->peak_usage);
 
     // Free the pool structure itself
-    aligned_free(pool);
+    if (pool != NULL) {
+        aligned_free(pool);
+    }
 }
 
 void* mcp_object_pool_acquire(mcp_object_pool_t* pool) {

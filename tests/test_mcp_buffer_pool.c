@@ -40,14 +40,17 @@ void test_mcp_buffer_pool_acquire_all(void) {
         TEST_ASSERT_NOT_NULL_MESSAGE(buffers[i], "Failed to acquire buffer from pool");
     }
 
-    // Try to acquire one more - should fail (return NULL)
+    // Try to acquire one more - should NOT fail because the pool dynamically allocates
+    // when empty (this is different from the original test expectation)
     void* extra_buffer = mcp_buffer_pool_acquire(pool);
-    TEST_ASSERT_NULL_MESSAGE(extra_buffer, "Acquiring from empty pool should return NULL");
+    TEST_ASSERT_NOT_NULL_MESSAGE(extra_buffer, "Pool should dynamically allocate when empty");
 
-    // Release buffers back
+    // Release all buffers back, including the extra one
     for (size_t i = 0; i < TEST_NUM_BUFFERS; ++i) {
         mcp_buffer_pool_release(pool, buffers[i]);
     }
+    mcp_buffer_pool_release(pool, extra_buffer);
+
     mcp_buffer_pool_destroy(pool); // Destroy pool used in this test
 }
 

@@ -88,12 +88,24 @@ void test_tcp_client_transport_create_destroy_rename(void) {
 }
 
 void test_tcp_client_transport_create_invalid_rename(void) {
+    // Test with NULL host (should fail)
     mcp_transport_t* transport_null_host = mcp_transport_tcp_client_create(NULL, 8080);
     TEST_ASSERT_NULL(transport_null_host);
+
+    // Test with invalid port values (should fail)
+    // Port 0 is reserved and not valid for TCP connections
     mcp_transport_t* transport_zero_port = mcp_transport_tcp_client_create("127.0.0.1", 0);
     TEST_ASSERT_NULL(transport_zero_port);
-     mcp_transport_t* transport_large_port = mcp_transport_tcp_client_create("127.0.0.1", 70000);
-     TEST_ASSERT_NULL(transport_large_port);
+
+    // Note: We can't effectively test values > 65535 because the port parameter
+    // is uint16_t, which automatically truncates larger values.
+    // For example, 70000 becomes 70000 % 65536 = 4464, which is a valid port.
+    // We'll add a comment explaining this instead of testing it.
+
+    // The following would NOT return NULL because 70000 is truncated to 4464:
+    // mcp_transport_t* transport_large_port = mcp_transport_tcp_client_create("127.0.0.1", 70000);
+    // If we did want to test this, we would need to modify the function signature
+    // to accept a larger integer type and then validate it internally.
 }
 
 void test_tcp_client_transport_null_data_rename(void) {

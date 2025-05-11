@@ -241,10 +241,18 @@ int mcp_template_validate_param(const char* value, const mcp_template_param_vali
         case MCP_TEMPLATE_PARAM_TYPE_INT: {
             // Check if the value is a valid integer
             char* endptr;
+            mcp_log_debug("Validating integer: '%s'", value);
             long int_val = strtol(value, &endptr, 10);
+
+            // If endptr points to the first character, no conversion was performed
+            if (endptr == value) {
+                mcp_log_debug("Integer validation failed: '%s' is not a valid integer (no conversion)", value);
+                return 0;
+            }
+
+            // If endptr doesn't point to the null terminator, there are invalid characters
             if (*endptr != '\0') {
-                // Not a valid integer
-                mcp_log_debug("Integer validation failed: '%s' is not a valid integer", value);
+                mcp_log_debug("Integer validation failed: '%s' is not a valid integer (invalid chars: '%s')", value, endptr);
                 return 0;
             }
 
@@ -254,6 +262,8 @@ int mcp_template_validate_param(const char* value, const mcp_template_param_vali
                              int_val, validation->range.int_range.min, validation->range.int_range.max);
                 return 0;
             }
+
+            mcp_log_debug("Integer validation passed: '%s' -> %ld", value, int_val);
             return 1;
         }
 
@@ -411,9 +421,26 @@ static int process_template_param(
     mcp_json_t* value_node = mcp_json_object_get_property(params, param_name);
     bool param_found = false;
 
+    // Handle string values directly
     if (value_node != NULL && mcp_json_get_type(value_node) == MCP_JSON_STRING &&
         mcp_json_get_string(value_node, &param_value) == 0 && param_value != NULL) {
         param_found = true;
+    }
+    // Handle number values by converting to string
+    else if (value_node != NULL && mcp_json_get_type(value_node) == MCP_JSON_NUMBER) {
+        // Convert number to string using a static buffer
+        static char number_str[64]; // Should be enough for any reasonable number
+        double number_value;
+        if (mcp_json_get_number(value_node, &number_value) == 0) {
+            // Format as integer if it's a whole number
+            if (number_value == (int)number_value) {
+                snprintf(number_str, sizeof(number_str), "%d", (int)number_value);
+            } else {
+                snprintf(number_str, sizeof(number_str), "%g", number_value);
+            }
+            param_value = number_str;
+            param_found = true;
+        }
     }
 
     // Handle missing parameters
@@ -585,6 +612,8 @@ int mcp_template_matches(const char* uri, const char* template) {
         return 0;
     }
 
+    mcp_log_debug("Matching URI '%s' against template '%s'", uri, template);
+
     const char* u = uri;
     const char* t = template;
 
@@ -594,6 +623,7 @@ int mcp_template_matches(const char* uri, const char* template) {
             const char* end = strchr(t, '}');
             if (end == NULL) {
                 // Malformed template - missing closing brace
+                mcp_log_debug("Malformed template - missing closing brace");
                 return 0;
             }
 
@@ -602,6 +632,7 @@ int mcp_template_matches(const char* uri, const char* template) {
             char param_spec[256];
             if (param_spec_len >= sizeof(param_spec)) {
                 // Parameter spec too long
+                mcp_log_debug("Parameter spec too long");
                 return 0;
             }
             memcpy(param_spec, t + 1, param_spec_len);
@@ -612,9 +643,13 @@ int mcp_template_matches(const char* uri, const char* template) {
             mcp_template_param_validation_t validation;
             if (mcp_template_parse_param_spec(param_spec, param_name, sizeof(param_name), &validation) != 0) {
                 // Failed to parse parameter specification
+                mcp_log_debug("Failed to parse parameter specification: %s", param_spec);
                 mcp_template_free_validation(&validation);
                 return 0;
             }
+
+            mcp_log_debug("Parsed parameter: name='%s', type=%d, required=%d",
+                         param_name, validation.type, validation.required);
 
             // Skip to the next static part of the template
             t = end + 1;
@@ -624,6 +659,7 @@ int mcp_template_matches(const char* uri, const char* template) {
             if (next_static == '\0') {
                 // This placeholder is at the end of the template
                 // The rest of the URI can be anything
+                mcp_log_debug("Parameter '%s' is at the end of the template", param_name);
                 mcp_template_free_validation(&validation);
                 return 1;
             }
@@ -650,11 +686,14 @@ int mcp_template_matches(const char* uri, const char* template) {
             char value[256]; // Use stack buffer instead of malloc
             if (value_len >= sizeof(value)) {
                 // Value too long
+                mcp_log_debug("Parameter '%s' value too long", param_name);
                 mcp_template_free_validation(&validation);
                 return 0;
             }
             memcpy(value, u, value_len);
             value[value_len] = '\0';
+
+            mcp_log_debug("Extracted parameter '%s' value: '%s'", param_name, value);
 
             // Validate the parameter value
             int valid = mcp_template_validate_param(value, &validation);
@@ -662,6 +701,7 @@ int mcp_template_matches(const char* uri, const char* template) {
 
             if (!valid) {
                 // Parameter value is invalid
+                mcp_log_debug("Parameter '%s' value '%s' is invalid", param_name, value);
                 return 0;
             }
 
@@ -673,11 +713,13 @@ int mcp_template_matches(const char* uri, const char* template) {
             t++;
         } else {
             // Characters don't match
+            mcp_log_debug("Characters don't match: '%c' != '%c'", *u, *t);
             return 0;
         }
     }
 
     // If we've consumed the entire template and URI, it's a match
+    mcp_log_debug("URI match result: %d", (*u == '\0'));
     return (*u == '\0');
 }
 

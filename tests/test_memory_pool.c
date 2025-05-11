@@ -14,7 +14,7 @@ void memory_pool_test_setup(void) {
     // Initialize the thread cache
     mcp_thread_cache_init();
 
-    // Initialize the memory tracker
+    // Initialize the memory tracker with track_allocations=true
     mcp_memory_tracker_init(true, false);
 }
 
@@ -166,7 +166,16 @@ void test_thread_cache(void) {
 
 // Test the memory tracker
 void test_memory_tracker(void) {
-    memory_pool_test_setup();
+    // Initialize the memory pool system
+    mcp_memory_pool_system_init(64, 32, 16);
+
+    // Initialize the thread cache
+    mcp_thread_cache_init();
+
+    // Initialize the memory tracker with track_allocations=true
+    bool init_result = mcp_memory_tracker_init(true, false);
+    TEST_ASSERT_TRUE(init_result);
+
     // Get initial stats
     mcp_memory_stats_t initial_stats;
     TEST_ASSERT_TRUE(mcp_memory_tracker_get_stats(&initial_stats));
@@ -203,10 +212,17 @@ void test_memory_tracker(void) {
     TEST_ASSERT_TRUE(mcp_memory_tracker_would_exceed_limit(1024));
     TEST_ASSERT_FALSE(mcp_memory_tracker_would_exceed_limit(256));
 
-    // Dump leaks to a file
+    // Test dump_leaks functionality
     TEST_ASSERT_TRUE(mcp_memory_tracker_dump_leaks("memory_leaks.txt"));
 
-    memory_pool_test_teardown();
+    // Clean up the memory tracker
+    mcp_memory_tracker_cleanup();
+
+    // Clean up the thread cache
+    mcp_thread_cache_cleanup();
+
+    // Clean up the memory pool system
+    mcp_memory_pool_system_cleanup();
 }
 
 // These tests are run from the test runner

@@ -96,19 +96,26 @@ void test_cache_put_get_simple(void) {
     mcp_resource_cache_t* cache = mcp_cache_create(10, 60);
     mcp_content_item_t* item1 = create_text_item("value1");
     mcp_content_item_t** content_to_put = &item1;
+
     // Pass test_pool to put
     int put_result = mcp_cache_put(cache, "key1", test_pool, content_to_put, 1, 0);
     TEST_ASSERT_EQUAL_INT(0, put_result);
 
     mcp_content_item_t** retrieved_content = NULL;
     size_t retrieved_count = 0;
+
     // Pass test_pool to get
     int get_result = mcp_cache_get(cache, "key1", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(0, get_result);
     check_content(retrieved_content, retrieved_count, "value1");
 
-    release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
-    mcp_content_item_free(item1); // Free original item
+    // Release retrieved content
+    release_retrieved_content(retrieved_content, retrieved_count);
+
+    // IMPORTANT: Do NOT free item1 here, as it's now owned by the cache/pool
+    // and will be freed when the pool is destroyed in tearDown
+    // mcp_content_item_free(item1); // This causes double-free!
+
     mcp_cache_destroy(cache);
 }
 
@@ -143,8 +150,12 @@ void test_cache_overwrite(void) {
     check_content(retrieved_content, retrieved_count, "value2"); // Check overwritten value
 
     release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
-    mcp_content_item_free(item1);
-    mcp_content_item_free(item2);
+
+    // IMPORTANT: Do NOT free items here, as they're now owned by the cache/pool
+    // and will be freed when the pool is destroyed in tearDown
+    // mcp_content_item_free(item1); // This causes double-free!
+    // mcp_content_item_free(item2); // This causes double-free!
+
     mcp_cache_destroy(cache);
 }
 
@@ -167,7 +178,10 @@ void test_cache_invalidate(void) {
     invalidate_result = mcp_cache_invalidate(cache, "nonexistent");
     TEST_ASSERT_EQUAL_INT(-1, invalidate_result); // Invalidate non-existent
 
-    mcp_content_item_free(item1);
+    // IMPORTANT: Do NOT free item1 here, as it's now owned by the cache/pool
+    // and will be freed when the pool is destroyed in tearDown
+    // mcp_content_item_free(item1); // This causes double-free!
+
     mcp_cache_destroy(cache);
 }
 
@@ -214,8 +228,11 @@ void test_cache_expiry(void) {
     get_result = mcp_cache_get(cache, "key_ttl2", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(-1, get_result); // Expired one should be gone
 
-    mcp_content_item_free(item1);
-    mcp_content_item_free(item_perm);
+    // IMPORTANT: Do NOT free items here, as they're now owned by the cache/pool
+    // and will be freed when the pool is destroyed in tearDown
+    // mcp_content_item_free(item1); // This causes double-free!
+    // mcp_content_item_free(item_perm); // This causes double-free!
+
     mcp_cache_destroy(cache);
 }
 
@@ -271,7 +288,10 @@ void test_lruk_evict_less_than_k_accessed(void) {
     TEST_ASSERT_EQUAL_INT(0, get_result);
     release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
-    for (int i = 0; i < 4; ++i) mcp_content_item_free(items[i]);
+    // IMPORTANT: Do NOT free items here, as they're now owned by the cache/pool
+    // and will be freed when the pool is destroyed in tearDown
+    // for (int i = 0; i < 4; ++i) mcp_content_item_free(items[i]); // This causes double-free!
+
     mcp_cache_destroy(cache);
 }
 
@@ -330,7 +350,10 @@ void test_lruk_evict_k_accessed(void) {
     TEST_ASSERT_EQUAL_INT(0, get_result);
     release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
 
-    for (int i = 0; i < 4; ++i) mcp_content_item_free(items[i]);
+    // IMPORTANT: Do NOT free items here, as they're now owned by the cache/pool
+    // and will be freed when the pool is destroyed in tearDown
+    // for (int i = 0; i < 4; ++i) mcp_content_item_free(items[i]); // This causes double-free!
+
     mcp_cache_destroy(cache);
 }
 
@@ -355,7 +378,10 @@ void test_cache_zero_capacity(void) {
     int get_result = mcp_cache_get(cache, "key1", test_pool, &retrieved_content, &retrieved_count);
     TEST_ASSERT_EQUAL_INT(-1, get_result); // Should miss
 
-    mcp_content_item_free(item1);
+    // IMPORTANT: Do NOT free item1 here, as it's now owned by the cache/pool
+    // and will be freed when the pool is destroyed in tearDown
+    // mcp_content_item_free(item1); // This causes double-free!
+
     mcp_cache_destroy(cache);
 }
 
@@ -388,8 +414,12 @@ void test_cache_multiple_items(void) {
     }
 
     release_retrieved_content(retrieved_content, retrieved_count); // Use release helper
-    mcp_content_item_free(item1); // Free original items
-    mcp_content_item_free(item2);
+
+    // IMPORTANT: Do NOT free items here, as they're now owned by the cache/pool
+    // and will be freed when the pool is destroyed in tearDown
+    // mcp_content_item_free(item1); // This causes double-free!
+    // mcp_content_item_free(item2); // This causes double-free!
+
     mcp_cache_destroy(cache);
 }
 
@@ -397,7 +427,8 @@ void test_cache_multiple_items(void) {
 // --- Test Runner ---
 
 void run_cache_tests(void) {
-    UNITY_BEGIN();
+    // Remove UNITY_BEGIN() and UNITY_END() calls
+    // These should only be called in the main function
     RUN_TEST(test_cache_create_destroy);
     RUN_TEST(test_cache_put_get_simple);
     RUN_TEST(test_cache_get_miss);
@@ -408,7 +439,6 @@ void run_cache_tests(void) {
     RUN_TEST(test_lruk_evict_k_accessed);
     RUN_TEST(test_cache_zero_capacity); // Add new test
     RUN_TEST(test_cache_multiple_items); // Add new test
-    UNITY_END();
 }
 
 // If running this file directly (optional)

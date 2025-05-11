@@ -128,8 +128,16 @@ extern void test_server_init_invalid_config(void);
 extern void test_server_capabilities(void);
 extern void test_server_config_validation(void);
 
+// Forward declarations for server handler test setup/teardown
+extern void setUp_test_mcp_server_handlers(void);
+extern void tearDown_test_mcp_server_handlers(void);
+
 // Runner function for server handler tests
 void run_test_mcp_server_handlers(void) {
+    // Call setup function before running tests
+    setUp_test_mcp_server_handlers();
+
+    // Run tests
     RUN_TEST(test_handle_ping_request_success);
     RUN_TEST(test_handle_list_resources_empty);
     RUN_TEST(test_handle_list_resources_with_data);
@@ -151,6 +159,9 @@ void run_test_mcp_server_handlers(void) {
     RUN_TEST(test_server_init_invalid_config);
     RUN_TEST(test_server_capabilities);
     RUN_TEST(test_server_config_validation);
+
+    // Call teardown function after running tests
+    tearDown_test_mcp_server_handlers();
 }
 
 // --- Buffer Pool Test Suite ---
