@@ -358,9 +358,7 @@ mcp_content_item_t* mcp_content_item_copy(const mcp_content_item_t* original);
  * @param data Pointer to the content data to be copied.
  * @param data_size Size of the content data in bytes.
  * @return Pointer to the acquired and initialized mcp_content_item_t, or NULL on error (pool empty or allocation failure).
- * @note The caller is responsible for releasing the returned structure back to the pool using mcp_object_pool_release()
- *       AND freeing the internal `data` and `mime_type` fields manually before release, or by calling a dedicated release function.
- *       (Consider adding mcp_content_item_release_pooled which handles internal freeing + pool release).
+ * @note The caller is responsible for releasing the returned structure back to the pool using mcp_content_item_release_pooled().
  */
 mcp_content_item_t* mcp_content_item_acquire_pooled(
     struct mcp_object_pool_s* pool, // Use the forward-declared struct
@@ -369,6 +367,19 @@ mcp_content_item_t* mcp_content_item_acquire_pooled(
     const void* data,
     size_t data_size
 );
+
+/**
+ * @brief Releases a content item back to its object pool after freeing internal data.
+ *
+ * This function frees the internal data and mime_type strings of a content item
+ * and then returns the item to its object pool. This is the proper way to release
+ * content items that were acquired using mcp_content_item_acquire_pooled().
+ *
+ * @param pool The object pool the item was acquired from.
+ * @param item The content item to release.
+ * @return true if the item was successfully released, false otherwise.
+ */
+bool mcp_content_item_release_pooled(struct mcp_object_pool_s* pool, mcp_content_item_t* item);
 
 /**
  * @brief Creates a new heap-allocated mcp_message_t representing a request.

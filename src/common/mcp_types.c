@@ -6,6 +6,23 @@
 #include "mcp_log.h"
 
 /**
+ * @brief Helper function to duplicate a string and handle error checking.
+ *
+ * @param src Source string to duplicate (can be NULL).
+ * @param dest Pointer to the destination string pointer.
+ * @return true if successful or src was NULL, false on allocation failure.
+ */
+static bool duplicate_string_safe(const char* src, char** dest) {
+    if (src == NULL) {
+        *dest = NULL;
+        return true;
+    }
+
+    *dest = mcp_strdup(src);
+    return (*dest != NULL);
+}
+
+/**
  * @brief Frees an mcp_resource_t structure and its contained strings.
  */
 void mcp_resource_free(mcp_resource_t* resource) {
@@ -123,8 +140,9 @@ void mcp_message_release_contents(mcp_message_t* message) {
             // No members to free for an invalid type
             break;
     }
-    // Reset type? Optional, but might help catch use-after-release errors.
-    // message->type = MCP_MESSAGE_TYPE_INVALID;
+
+    // Reset type to help catch use-after-release errors
+    message->type = MCP_MESSAGE_TYPE_INVALID;
 }
 
 /**
@@ -149,40 +167,14 @@ mcp_resource_t* mcp_resource_create(
     resource->mime_type = NULL;
     resource->description = NULL;
 
-    // Duplicate URI string if provided
-    if (uri != NULL) {
-        resource->uri = mcp_strdup(uri);
-        if (resource->uri == NULL) {
-            mcp_resource_free(resource); // Cleanup partially allocated struct
-            return NULL;
-        }
-    }
-
-    // Duplicate name string if provided
-    if (name != NULL) {
-        resource->name = mcp_strdup(name);
-        if (resource->name == NULL) {
-            mcp_resource_free(resource); // Cleanup partially allocated struct
-            return NULL;
-        }
-    }
-
-    // Duplicate MIME type string if provided
-    if (mime_type != NULL) {
-        resource->mime_type = mcp_strdup(mime_type);
-        if (resource->mime_type == NULL) {
-            mcp_resource_free(resource); // Cleanup partially allocated struct
-            return NULL;
-        }
-    }
-
-    // Duplicate description string if provided
-    if (description != NULL) {
-        resource->description = mcp_strdup(description);
-        if (resource->description == NULL) {
-            mcp_resource_free(resource); // Cleanup partially allocated struct
-            return NULL;
-        }
+    // Duplicate strings using helper function
+    if (!duplicate_string_safe(uri, &resource->uri) ||
+        !duplicate_string_safe(name, &resource->name) ||
+        !duplicate_string_safe(mime_type, &resource->mime_type) ||
+        !duplicate_string_safe(description, &resource->description)) {
+        // Cleanup on any allocation failure
+        mcp_resource_free(resource);
+        return NULL;
     }
 
     return resource;
@@ -209,40 +201,14 @@ mcp_resource_template_t* mcp_resource_template_create(
     tmpl->mime_type = NULL;
     tmpl->description = NULL;
 
-    // Duplicate URI template string if provided
-    if (uri_template != NULL) {
-        tmpl->uri_template = mcp_strdup(uri_template);
-        if (tmpl->uri_template == NULL) {
-            mcp_resource_template_free(tmpl);
-            return NULL;
-        }
-    }
-
-    // Duplicate name string if provided
-    if (name != NULL) {
-        tmpl->name = mcp_strdup(name);
-        if (tmpl->name == NULL) {
-            mcp_resource_template_free(tmpl);
-            return NULL;
-        }
-    }
-
-    // Duplicate MIME type string if provided
-    if (mime_type != NULL) {
-        tmpl->mime_type = mcp_strdup(mime_type);
-        if (tmpl->mime_type == NULL) {
-            mcp_resource_template_free(tmpl);
-            return NULL;
-        }
-    }
-
-    // Duplicate description string if provided
-    if (description != NULL) {
-        tmpl->description = mcp_strdup(description);
-        if (tmpl->description == NULL) {
-            mcp_resource_template_free(tmpl);
-            return NULL;
-        }
+    // Duplicate strings using helper function
+    if (!duplicate_string_safe(uri_template, &tmpl->uri_template) ||
+        !duplicate_string_safe(name, &tmpl->name) ||
+        !duplicate_string_safe(mime_type, &tmpl->mime_type) ||
+        !duplicate_string_safe(description, &tmpl->description)) {
+        // Cleanup on any allocation failure
+        mcp_resource_template_free(tmpl);
+        return NULL;
     }
 
     return tmpl;
@@ -256,6 +222,11 @@ mcp_tool_t* mcp_tool_create(
     const char* name,
     const char* description
 ) {
+    // Name is mandatory for a tool
+    if (name == NULL) {
+        return NULL;
+    }
+
     mcp_tool_t* tool = (mcp_tool_t*)malloc(sizeof(mcp_tool_t));
     if (tool == NULL) {
         return NULL;
@@ -267,26 +238,12 @@ mcp_tool_t* mcp_tool_create(
     tool->input_schema = NULL; // No parameters initially
     tool->input_schema_count = 0;
 
-    // Duplicate name string if provided
-    if (name != NULL) {
-        tool->name = mcp_strdup(name);
-        if (tool->name == NULL) {
-            mcp_tool_free(tool); // Use free function for cleanup
-            return NULL;
-        }
-    } else {
-        // Name is mandatory for a tool
+    // Duplicate strings using helper function
+    if (!duplicate_string_safe(name, &tool->name) ||
+        !duplicate_string_safe(description, &tool->description)) {
+        // Cleanup on any allocation failure
         mcp_tool_free(tool);
         return NULL;
-    }
-
-    // Duplicate description string if provided
-    if (description != NULL) {
-        tool->description = mcp_strdup(description);
-        if (tool->description == NULL) {
-            mcp_tool_free(tool);
-            return NULL;
-        }
     }
 
     return tool;
@@ -313,27 +270,15 @@ int mcp_tool_add_param(
     new_param.description = NULL;
     new_param.required = required;
 
-    // Duplicate name string
-    new_param.name = mcp_strdup(name);
-    if (new_param.name == NULL) {
+    // Duplicate strings using helper function
+    if (!duplicate_string_safe(name, &new_param.name) ||
+        !duplicate_string_safe(type, &new_param.type) ||
+        !duplicate_string_safe(description, &new_param.description)) {
+        // Clean up any allocated strings
+        free(new_param.name);
+        free(new_param.type);
+        free(new_param.description);
         return -1;
-    }
-
-    // Duplicate type string
-    new_param.type = mcp_strdup(type);
-    if (new_param.type == NULL) {
-        free(new_param.name); // Clean up already allocated name
-        return -1;
-    }
-
-    // Duplicate description string if provided
-    if (description != NULL) {
-        new_param.description = mcp_strdup(description);
-        if (new_param.description == NULL) {
-            free(new_param.name);
-            free(new_param.type);
-            return -1;
-        }
     }
 
     // Resize the input_schema array using realloc
@@ -380,13 +325,10 @@ mcp_content_item_t* mcp_content_item_create(
     item->data = NULL;
     item->data_size = 0;
 
-    // Duplicate mime_type string if provided
-    if (mime_type != NULL) {
-        item->mime_type = mcp_strdup(mime_type);
-        if (item->mime_type == NULL) {
-            mcp_content_item_free(item); // Use free function for cleanup
-            return NULL;
-        }
+    // Duplicate mime_type string using helper function
+    if (!duplicate_string_safe(mime_type, &item->mime_type)) {
+        mcp_content_item_free(item);
+        return NULL;
     }
 
     // Allocate buffer and copy data if provided
@@ -450,14 +392,11 @@ mcp_content_item_t* mcp_content_item_acquire_pooled(
     item->data = NULL;      // Initialize for safe cleanup
     item->data_size = 0;
 
-    // Duplicate mime_type string if provided (using standard malloc)
-    if (mime_type != NULL) {
-        item->mime_type = mcp_strdup(mime_type);
-        if (item->mime_type == NULL) {
-            mcp_log_error("Failed to allocate memory for pooled content item mime_type.");
-            mcp_object_pool_release(pool, item); // Release item back to pool on error
-            return NULL;
-        }
+    // Duplicate mime_type string using helper function
+    if (!duplicate_string_safe(mime_type, &item->mime_type)) {
+        mcp_log_error("Failed to allocate memory for pooled content item mime_type.");
+        mcp_object_pool_release(pool, item); // Release item back to pool on error
+        return NULL;
     }
 
     // Allocate buffer and copy data if provided (using standard malloc)
@@ -478,6 +417,35 @@ mcp_content_item_t* mcp_content_item_acquire_pooled(
     return item;
 }
 
+/**
+ * @brief Releases a content item back to its object pool after freeing internal data.
+ *
+ * This function frees the internal data and mime_type strings of a content item
+ * and then returns the item to its object pool. This is the proper way to release
+ * content items that were acquired using mcp_content_item_acquire_pooled().
+ *
+ * @param pool The object pool the item was acquired from.
+ * @param item The content item to release.
+ * @return true if the item was successfully released, false otherwise.
+ */
+bool mcp_content_item_release_pooled(mcp_object_pool_t* pool, mcp_content_item_t* item) {
+    if (pool == NULL || item == NULL) {
+        return false;
+    }
+
+    // Free the internal data (but not the item struct itself)
+    free(item->mime_type);
+    free(item->data);
+
+    // Reset fields to prevent use-after-free issues if the object is accessed erroneously
+    item->mime_type = NULL;
+    item->data = NULL;
+    item->data_size = 0;
+
+    // Return the item to the pool
+    return mcp_object_pool_release(pool, item);
+}
+
 // --- Deprecated Message Creation Functions ---
 // These allocate the top-level mcp_message_t struct using malloc, which is often less flexible
 // than stack allocation combined with mcp_message_release_contents.
@@ -487,6 +455,11 @@ mcp_message_t* mcp_request_create(
     const char* method,
     const void* params // Assumed to be a string here
 ) {
+    // Method is mandatory for request
+    if (method == NULL) {
+        return NULL;
+    }
+
     mcp_message_t* message = (mcp_message_t*)malloc(sizeof(mcp_message_t));
     if (message == NULL) {
         return NULL;
@@ -498,28 +471,13 @@ mcp_message_t* mcp_request_create(
     message->request.method = NULL;
     message->request.params = NULL;
 
-    // Duplicate method string
-    if (method != NULL) {
-        message->request.method = mcp_strdup(method);
-        if (message->request.method == NULL) {
-            // No need to call release_contents as nothing else was allocated
-            free(message);
-            return NULL;
-        }
-    } else {
-        // Method is mandatory for request
+    // Duplicate strings using helper function
+    if (!duplicate_string_safe(method, &message->request.method) ||
+        (params != NULL && !duplicate_string_safe((const char*)params, (char**)&message->request.params))) {
+        // Cleanup on any allocation failure
+        mcp_message_release_contents(message);
         free(message);
         return NULL;
-    }
-
-    // Duplicate params string (assuming input is string)
-    if (params != NULL) {
-        message->request.params = mcp_strdup((const char*)params);
-        if (message->request.params == NULL) {
-            mcp_message_release_contents(message); // Free already allocated method
-            free(message);
-            return NULL;
-        }
     }
 
     return message;
@@ -535,9 +493,9 @@ void mcp_free_resources(mcp_resource_t** resources, size_t count) {
         return;
     }
     for (size_t i = 0; i < count; i++) {
-        mcp_resource_free(resources[i]); // Frees individual resource and its strings
+        mcp_resource_free(resources[i]);
     }
-    free(resources); // Frees the array itself
+    free(resources);
 }
 
 /**
@@ -550,9 +508,9 @@ void mcp_free_resource_templates(mcp_resource_template_t** templates, size_t cou
         return;
     }
     for (size_t i = 0; i < count; i++) {
-        mcp_resource_template_free(templates[i]); // Frees individual template and its strings
+        mcp_resource_template_free(templates[i]);
     }
-    free(templates); // Frees the array itself
+    free(templates);
 }
 
 /**
@@ -565,9 +523,9 @@ void mcp_free_content(mcp_content_item_t** content, size_t count) {
         return;
     }
     for (size_t i = 0; i < count; i++) {
-        mcp_content_item_free(content[i]); // Frees individual item and its data/strings
+        mcp_content_item_free(content[i]);
     }
-    free(content); // Frees the array itself
+    free(content);
 }
 
 /**
@@ -580,9 +538,9 @@ void mcp_free_tools(mcp_tool_t** tools, size_t count) {
         return;
     }
     for (size_t i = 0; i < count; i++) {
-        mcp_tool_free(tools[i]); // Frees individual tool and its contents
+        mcp_tool_free(tools[i]);
     }
-    free(tools); // Frees the array itself
+    free(tools);
 }
 
 mcp_message_t* mcp_response_create(
@@ -603,24 +561,18 @@ mcp_message_t* mcp_response_create(
     message->response.error_message = NULL;
     message->response.result = NULL;
 
-    // Duplicate error message string if provided
-    if (error_message != NULL) {
-        // Need to cast away const for assignment, but free needs void* anyway
-        message->response.error_message = mcp_strdup(error_message);
-        if (message->response.error_message == NULL) {
-            free(message);
-            return NULL;
-        }
+    // Duplicate error message if provided
+    if (error_message != NULL && !duplicate_string_safe(error_message, (char**)&message->response.error_message)) {
+        free(message);
+        return NULL;
     }
 
     // Duplicate result string if provided (and no error)
-    if (error_code == MCP_ERROR_NONE && result != NULL) {
-        message->response.result = mcp_strdup((const char*)result);
-        if (message->response.result == NULL) {
-            mcp_message_release_contents(message); // Free potential error message
-            free(message);
-            return NULL;
-        }
+    if (error_code == MCP_ERROR_NONE && result != NULL &&
+        !duplicate_string_safe((const char*)result, (char**)&message->response.result)) {
+        mcp_message_release_contents(message);
+        free(message);
+        return NULL;
     }
 
     return message;
@@ -630,6 +582,11 @@ mcp_message_t* mcp_notification_create(
     const char* method,
     const void* params // Assumed to be a string here
 ) {
+    // Method is mandatory for notification
+    if (method == NULL) {
+        return NULL;
+    }
+
     mcp_message_t* message = (mcp_message_t*)malloc(sizeof(mcp_message_t));
     if (message == NULL) {
         return NULL;
@@ -640,27 +597,13 @@ mcp_message_t* mcp_notification_create(
     message->notification.method = NULL;
     message->notification.params = NULL;
 
-    // Duplicate method string
-    if (method != NULL) {
-        message->notification.method = mcp_strdup(method);
-        if (message->notification.method == NULL) {
-            free(message);
-            return NULL;
-        }
-    } else {
-        // Method is mandatory for notification
+    // Duplicate strings using helper function
+    if (!duplicate_string_safe(method, &message->notification.method) ||
+        (params != NULL && !duplicate_string_safe((const char*)params, (char**)&message->notification.params))) {
+        // Cleanup on any allocation failure
+        mcp_message_release_contents(message);
         free(message);
         return NULL;
-    }
-
-    // Duplicate params string if provided
-    if (params != NULL) {
-        message->notification.params = mcp_strdup((const char*)params);
-        if (message->notification.params == NULL) {
-            mcp_message_release_contents(message); // Free allocated method
-            free(message);
-            return NULL;
-        }
     }
 
     return message;
