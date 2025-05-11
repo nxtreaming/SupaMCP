@@ -306,50 +306,55 @@ int mcp_template_validate_param(const char* value, const mcp_template_param_vali
                 return 1;
             }
 
-            // Simple pattern matching (supports only * wildcard)
+            // Improved pattern matching with * wildcard
             // For example: "abc*" matches "abcdef", "*abc" matches "xyzabc", "a*c" matches "abc"
             const char* pattern = validation->pattern;
-            const char* p = pattern;
-            const char* v = value;
 
             mcp_log_debug("Validating '%s' against pattern '%s'", value, pattern);
 
-            while (*p != '\0' && *v != '\0') {
-                if (*p == '*') {
-                    // Wildcard - skip ahead in pattern
-                    p++;
-                    if (*p == '\0') {
-                        // Pattern ends with *, match anything
-                        mcp_log_debug("Pattern ends with *, match anything");
-                        return 1;
-                    }
-
-                    // Find next occurrence of the character after * in value
-                    while (*v != '\0' && *v != *p) {
-                        v++;
-                    }
-
-                    if (*v == '\0') {
-                        // Reached end of value without finding match
-                        mcp_log_debug("Reached end of value without finding match for character after *");
-                        return 0;
-                    }
-                } else if (*p == *v) {
-                    // Characters match
-                    p++;
-                    v++;
-                } else {
-                    // Characters don't match
-                    mcp_log_debug("Characters don't match: '%c' != '%c'", *p, *v);
-                    return 0;
-                }
+            // If the pattern ends with *, match anything that starts with the pattern prefix
+            size_t pattern_len = strlen(pattern);
+            if (pattern_len > 0 && pattern[pattern_len - 1] == '*') {
+                // Match prefix
+                size_t prefix_len = pattern_len - 1;
+                mcp_log_debug("Pattern ends with *, match anything that starts with prefix");
+                return strncmp(value, pattern, prefix_len) == 0;
             }
 
-            // If we've consumed the entire pattern and value, it's a match
-            // Or if pattern ends with * and we've consumed the value
-            bool match = (*p == '\0' && *v == '\0') || (*p == '*' && *(p+1) == '\0');
-            mcp_log_debug("Pattern match result: %d", match);
-            return match;
+            // If the pattern starts with *, match anything that ends with the pattern suffix
+            if (pattern_len > 0 && pattern[0] == '*') {
+                // Match suffix
+                size_t value_len = strlen(value);
+                size_t suffix_len = pattern_len - 1;
+                if (value_len < suffix_len) {
+                    return 0;
+                }
+                return strcmp(value + (value_len - suffix_len), pattern + 1) == 0;
+            }
+
+            // If the pattern contains * in the middle, split and match both sides
+            const char* star = strchr(pattern, '*');
+            if (star != NULL) {
+                // Split the pattern at the *
+                size_t prefix_len = star - pattern;
+                const char* suffix = star + 1;
+                size_t suffix_len = strlen(suffix);
+                size_t value_len = strlen(value);
+
+                // Match prefix
+                if (strncmp(value, pattern, prefix_len) != 0) {
+                    return 0;
+                }
+
+                // Match suffix
+                if (value_len < prefix_len + suffix_len) {
+                    return 0;
+                }
+                return strcmp(value + (value_len - suffix_len), suffix) == 0;
+            }
+
+            // No wildcards, exact match
+            return strcmp(value, pattern) == 0;
         }
 
         default:
@@ -376,6 +381,67 @@ int mcp_template_validate_param(const char* value, const mcp_template_param_vali
  * @param params A JSON object containing parameter values (e.g., {"name": "test"})
  * @return A newly allocated string with the expanded URI, or NULL on error
  */
+/**
+ * @brief Helper function to process a template parameter during expansion.
+ *
+ * @param param_spec The parameter specification string
+ * @param param_name Buffer to store the parameter name
+ * @param param_name_size Size of the param_name buffer
+ * @param params JSON object containing parameter values
+ * @param param_value_out Pointer to store the parameter value
+ * @param validation Validation structure to fill
+ * @return 0 on success, -1 on error
+ */
+static int process_template_param(
+    const char* param_spec,
+    char* param_name,
+    size_t param_name_size,
+    const mcp_json_t* params,
+    const char** param_value_out,
+    mcp_template_param_validation_t* validation
+) {
+    // Parse parameter specification
+    if (mcp_template_parse_param_spec(param_spec, param_name, param_name_size, validation) != 0) {
+        mcp_log_warn("Failed to parse template parameter specification: %s", param_spec);
+        return -1;
+    }
+
+    // Look up parameter value
+    const char* param_value = NULL;
+    mcp_json_t* value_node = mcp_json_object_get_property(params, param_name);
+    bool param_found = false;
+
+    if (value_node != NULL && mcp_json_get_type(value_node) == MCP_JSON_STRING &&
+        mcp_json_get_string(value_node, &param_value) == 0 && param_value != NULL) {
+        param_found = true;
+    }
+
+    // Handle missing parameters
+    if (!param_found) {
+        if (validation->required) {
+            // Required parameter is missing
+            mcp_log_warn("Required template parameter '%s' not found", param_name);
+            return -1;
+        } else if (validation->default_value != NULL) {
+            // Use default value for optional parameter
+            param_value = validation->default_value;
+        } else {
+            // Optional parameter with no default, use empty string
+            param_value = "";
+        }
+    }
+
+    // Validate parameter value
+    if (param_value != NULL && !mcp_template_validate_param(param_value, validation)) {
+        // Parameter value is invalid
+        mcp_log_warn("Template parameter '%s' value '%s' is invalid", param_name, param_value);
+        return -1;
+    }
+
+    *param_value_out = param_value;
+    return 0;
+}
+
 char* mcp_template_expand(const char* template, const mcp_json_t* params) {
     if (template == NULL) {
         mcp_log_error("Template is NULL in mcp_template_expand");
@@ -417,45 +483,17 @@ char* mcp_template_expand(const char* template, const mcp_json_t* params) {
             memcpy(param_spec, p + 1, param_spec_len);
             param_spec[param_spec_len] = '\0';
 
-            // Parse parameter specification
+            // Process parameter
             char param_name[128];
             mcp_template_param_validation_t validation;
-            if (mcp_template_parse_param_spec(param_spec, param_name, sizeof(param_name), &validation) != 0) {
-                // Failed to parse parameter specification
-                mcp_log_warn("Failed to parse template parameter specification: %s", param_spec);
-                return NULL;
-            }
-
-            // Look up parameter value
             const char* param_value = NULL;
-            mcp_json_t* value_node = mcp_json_object_get_property(params, param_name);
-            bool param_found = false;
 
-            if (value_node != NULL && mcp_json_get_type(value_node) == MCP_JSON_STRING &&
-                mcp_json_get_string(value_node, &param_value) == 0 && param_value != NULL) {
-                param_found = true;
-            }
+            int result = process_template_param(
+                param_spec, param_name, sizeof(param_name),
+                params, &param_value, &validation
+            );
 
-            // Handle missing parameters
-            if (!param_found) {
-                if (validation.required) {
-                    // Required parameter is missing
-                    mcp_log_warn("Required template parameter '%s' not found", param_name);
-                    mcp_template_free_validation(&validation);
-                    return NULL;
-                } else if (validation.default_value != NULL) {
-                    // Use default value for optional parameter
-                    param_value = validation.default_value;
-                } else {
-                    // Optional parameter with no default, use empty string
-                    param_value = "";
-                }
-            }
-
-            // Validate parameter value
-            if (param_value != NULL && !mcp_template_validate_param(param_value, &validation)) {
-                // Parameter value is invalid
-                mcp_log_warn("Template parameter '%s' value '%s' is invalid", param_name, param_value);
+            if (result != 0) {
                 mcp_template_free_validation(&validation);
                 return NULL;
             }
@@ -495,30 +533,20 @@ char* mcp_template_expand(const char* template, const mcp_json_t* params) {
             memcpy(param_spec, p + 1, param_spec_len);
             param_spec[param_spec_len] = '\0';
 
-            // Parse parameter specification
+            // Process parameter
             char param_name[128];
             mcp_template_param_validation_t validation;
-            mcp_template_parse_param_spec(param_spec, param_name, sizeof(param_name), &validation);
-
-            // Look up parameter value
             const char* param_value = NULL;
-            mcp_json_t* value_node = mcp_json_object_get_property(params, param_name);
-            bool param_found = false;
 
-            if (value_node != NULL && mcp_json_get_type(value_node) == MCP_JSON_STRING &&
-                mcp_json_get_string(value_node, &param_value) == 0 && param_value != NULL) {
-                param_found = true;
-            }
+            int result = process_template_param(
+                param_spec, param_name, sizeof(param_name),
+                params, &param_value, &validation
+            );
 
-            // Handle missing parameters
-            if (!param_found) {
-                if (validation.default_value != NULL) {
-                    // Use default value for optional parameter
-                    param_value = validation.default_value;
-                } else {
-                    // Optional parameter with no default, use empty string
-                    param_value = "";
-                }
+            if (result != 0) {
+                mcp_template_free_validation(&validation);
+                free(expanded);
+                return NULL;
             }
 
             // Copy parameter value to output

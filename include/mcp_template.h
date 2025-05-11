@@ -3,6 +3,10 @@
 
 #include "mcp_json.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Parameter type enumeration for template parameters
  */
@@ -123,5 +127,63 @@ int mcp_template_init_validation(
  * @param validation The validation structure to clean up
  */
 void mcp_template_free_validation(mcp_template_param_validation_t* validation);
+
+/**
+ * @brief Optimized version of mcp_template_matches that uses a template cache.
+ *
+ * This function is faster than mcp_template_matches for templates that are used repeatedly.
+ * It caches parsed templates to avoid the overhead of parsing the template every time.
+ *
+ * @param uri The URI to check
+ * @param template The template pattern to match against
+ * @return 1 if the URI matches the template pattern, 0 otherwise
+ */
+int mcp_template_matches_optimized(const char* uri, const char* template);
+
+/**
+ * @brief Optimized version of mcp_template_extract_params that uses a template cache.
+ *
+ * This function is faster than mcp_template_extract_params for templates that are used repeatedly.
+ * It caches parsed templates to avoid the overhead of parsing the template every time.
+ *
+ * @param uri The URI to extract parameters from
+ * @param template The template pattern to match against
+ * @return A newly created JSON object containing parameter values, or NULL on error
+ */
+mcp_json_t* mcp_template_extract_params_optimized(const char* uri, const char* template);
+
+/**
+ * @brief Cleans up the template cache.
+ *
+ * This function should be called when the application is shutting down
+ * to free all cached templates.
+ */
+void mcp_template_cache_cleanup(void);
+
+/**
+ * @brief Get statistics about the template cache.
+ *
+ * This function returns statistics about the template cache, which can be
+ * useful for monitoring and optimization.
+ *
+ * @param hits Pointer to store the number of cache hits (can be NULL)
+ * @param misses Pointer to store the number of cache misses (can be NULL)
+ * @param evictions Pointer to store the number of cache evictions (can be NULL)
+ * @param total_lookups Pointer to store the total number of cache lookups (can be NULL)
+ * @param cache_size Pointer to store the current cache size (can be NULL)
+ * @param max_cache_size Pointer to store the maximum cache size (can be NULL)
+ */
+void mcp_template_cache_get_stats(
+    size_t* hits,
+    size_t* misses,
+    size_t* evictions,
+    size_t* total_lookups,
+    size_t* cache_size,
+    size_t* max_cache_size
+);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MCP_TEMPLATE_H */

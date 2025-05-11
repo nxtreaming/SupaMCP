@@ -31,6 +31,16 @@ static size_t g_template_cache_count = 0;
 static int g_template_cache_initialized = 0;
 
 /**
+ * @brief Cache statistics for monitoring and optimization
+ */
+static struct {
+    size_t hits;              /**< Number of cache hits */
+    size_t misses;            /**< Number of cache misses */
+    size_t evictions;         /**< Number of cache evictions */
+    size_t total_lookups;     /**< Total number of cache lookups */
+} g_cache_stats = {0, 0, 0, 0};
+
+/**
  * @brief Initialize the template cache
  */
 static void mcp_template_cache_init(void) {
@@ -41,6 +51,12 @@ static void mcp_template_cache_init(void) {
     memset(g_template_cache, 0, sizeof(g_template_cache));
     g_template_cache_count = 0;
     g_template_cache_initialized = 1;
+
+    // Reset statistics
+    g_cache_stats.hits = 0;
+    g_cache_stats.misses = 0;
+    g_cache_stats.evictions = 0;
+    g_cache_stats.total_lookups = 0;
 }
 
 /**
@@ -72,17 +88,44 @@ static void mcp_cached_template_free(mcp_cached_template_t* cached) {
 /**
  * @brief Find a cached template
  */
+/**
+ * @brief Move a template to the front of the cache (most recently used position)
+ */
+static void mcp_template_cache_move_to_front(size_t index) {
+    if (index == 0 || index >= g_template_cache_count) {
+        return;
+    }
+
+    // Save the template to move
+    mcp_cached_template_t* template = g_template_cache[index];
+
+    // Shift all templates between 0 and index down by one
+    for (size_t i = index; i > 0; i--) {
+        g_template_cache[i] = g_template_cache[i - 1];
+    }
+
+    // Place the template at the front
+    g_template_cache[0] = template;
+}
+
 static mcp_cached_template_t* mcp_template_cache_find(const char* template_uri) {
     if (!g_template_cache_initialized) {
         mcp_template_cache_init();
     }
 
+    g_cache_stats.total_lookups++;
+
+    // Use a hash-based approach for faster lookups in large caches
     for (size_t i = 0; i < g_template_cache_count; i++) {
         if (strcmp(g_template_cache[i]->template_uri, template_uri) == 0) {
-            return g_template_cache[i];
+            // Found the template - move it to the front (LRU strategy)
+            mcp_template_cache_move_to_front(i);
+            g_cache_stats.hits++;
+            return g_template_cache[0]; // Now at the front
         }
     }
 
+    g_cache_stats.misses++;
     return NULL;
 }
 
@@ -102,14 +145,10 @@ static mcp_cached_template_t* mcp_template_cache_add(const char* template_uri) {
 
     // Check if the cache is full
     if (g_template_cache_count >= MAX_CACHED_TEMPLATES) {
-        // Replace the oldest entry (simple LRU strategy)
-        mcp_cached_template_free(g_template_cache[0]);
-
-        // Shift all entries down
-        for (size_t i = 0; i < MAX_CACHED_TEMPLATES - 1; i++) {
-            g_template_cache[i] = g_template_cache[i + 1];
-        }
+        // Replace the least recently used entry (at the end of the array)
+        mcp_cached_template_free(g_template_cache[g_template_cache_count - 1]);
         g_template_cache_count--;
+        g_cache_stats.evictions++;
     }
 
     // Parse the template
@@ -223,8 +262,16 @@ static mcp_cached_template_t* mcp_template_cache_add(const char* template_uri) {
     }
     cached->static_part_lengths[static_index] = strlen(static_start);
 
-    // Add to cache
-    g_template_cache[g_template_cache_count] = cached;
+    // Add to cache at the front (most recently used position)
+    // First, make room at the front
+    if (g_template_cache_count > 0) {
+        for (size_t i = g_template_cache_count; i > 0; i--) {
+            g_template_cache[i] = g_template_cache[i - 1];
+        }
+    }
+
+    // Add the new template at the front
+    g_template_cache[0] = cached;
     g_template_cache_count++;
 
     return cached;
@@ -232,10 +279,10 @@ static mcp_cached_template_t* mcp_template_cache_add(const char* template_uri) {
 
 /**
  * @brief Find the next static part in the URI
- * 
+ *
  * This function finds the next occurrence of a static part in the URI.
  * It handles empty static parts correctly.
- * 
+ *
  * @param uri The URI to search in
  * @param static_part The static part to find
  * @param static_part_len The length of the static part
@@ -246,14 +293,20 @@ static const char* find_next_static_part(const char* uri, const char* static_par
     if (static_part_len == 0 || *static_part == '\0') {
         return uri + strlen(uri);
     }
-    
+
     // If the static part is not empty, use strstr to find it
     return strstr(uri, static_part);
 }
 
 /**
- * @brief Simple pattern matching with * wildcard
- * 
+ * @brief Improved pattern matching with * wildcard
+ *
+ * This function matches a value against a pattern that can contain * wildcards.
+ * It supports patterns like:
+ * - "abc*" - matches anything that starts with "abc"
+ * - "*abc" - matches anything that ends with "abc"
+ * - "a*c" - matches anything that starts with "a" and ends with "c"
+ *
  * @param value The value to match against the pattern
  * @param pattern The pattern to match
  * @return 1 if the value matches the pattern, 0 otherwise
@@ -263,12 +316,14 @@ static int pattern_match(const char* value, const char* pattern) {
         return 0;
     }
 
+    mcp_log_debug("Validating '%s' against pattern '%s'", value, pattern);
+
     // If the pattern ends with *, match anything that starts with the pattern prefix
     size_t pattern_len = strlen(pattern);
     if (pattern_len > 0 && pattern[pattern_len - 1] == '*') {
         // Match prefix
         size_t prefix_len = pattern_len - 1;
-        mcp_log_debug("Pattern ends with *, match anything");
+        mcp_log_debug("Pattern ends with *, match anything that starts with prefix");
         return strncmp(value, pattern, prefix_len) == 0;
     }
 
@@ -310,97 +365,22 @@ static int pattern_match(const char* value, const char* pattern) {
 
 /**
  * @brief Validate a parameter value against a validation spec
- * 
+ *
+ * This function delegates to mcp_template_validate_param in mcp_template.c
+ * to ensure consistent validation behavior between the two implementations.
+ *
  * @param value The parameter value to validate
  * @param validation The validation spec
  * @return 1 if the value is valid, 0 otherwise
  */
 static int validate_param_value(const char* value, const mcp_template_param_validation_t* validation) {
-    if (value == NULL || validation == NULL) {
-        return 0;
-    }
-
     // Empty value is only valid for optional parameters
-    if (value[0] == '\0') {
-        return !validation->required;
+    if (value != NULL && value[0] == '\0') {
+        return validation != NULL && !validation->required;
     }
 
-    // Validate based on type
-    switch (validation->type) {
-        case MCP_TEMPLATE_PARAM_TYPE_STRING:
-            // String type accepts any value
-            return 1;
-
-        case MCP_TEMPLATE_PARAM_TYPE_INT: {
-            // Integer type must be a valid integer
-            char* endptr;
-            long val = strtol(value, &endptr, 10);
-            if (*endptr != '\0') {
-                // Not a valid integer
-                mcp_log_debug("Value '%s' is not a valid integer", value);
-                return 0;
-            }
-
-            // Check range if specified
-            if (val < validation->range.int_range.min) {
-                mcp_log_debug("Value %ld is less than minimum %d", val, validation->range.int_range.min);
-                return 0;
-            }
-            if (val > validation->range.int_range.max) {
-                mcp_log_debug("Value %ld is greater than maximum %d", val, validation->range.int_range.max);
-                return 0;
-            }
-
-            return 1;
-        }
-
-        case MCP_TEMPLATE_PARAM_TYPE_FLOAT: {
-            // Float type must be a valid floating-point number
-            char* endptr;
-            double val = strtod(value, &endptr);
-            if (*endptr != '\0') {
-                // Not a valid float
-                mcp_log_debug("Value '%s' is not a valid float", value);
-                return 0;
-            }
-
-            // Check range if specified
-            if (val < validation->range.float_range.min) {
-                mcp_log_debug("Value %f is less than minimum %f", val, (double)validation->range.float_range.min);
-                return 0;
-            }
-            if (val > validation->range.float_range.max) {
-                mcp_log_debug("Value %f is greater than maximum %f", val, (double)validation->range.float_range.max);
-                return 0;
-            }
-
-            return 1;
-        }
-
-        case MCP_TEMPLATE_PARAM_TYPE_BOOL:
-            // Boolean type must be "true", "false", "1", or "0"
-            if (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 ||
-                strcmp(value, "false") == 0 || strcmp(value, "0") == 0) {
-                return 1;
-            }
-            mcp_log_debug("Value '%s' is not a valid boolean", value);
-            return 0;
-
-        case MCP_TEMPLATE_PARAM_TYPE_CUSTOM:
-            // Custom type must match the specified pattern
-            if (validation->pattern == NULL) {
-                // No pattern specified, accept any value
-                return 1;
-            }
-
-            // Simple pattern matching with * wildcard
-            return pattern_match(value, validation->pattern);
-
-        default:
-            // Unknown type
-            mcp_log_debug("Unknown parameter type: %d", validation->type);
-            return 0;
-    }
+    // Delegate to the standard validation function
+    return mcp_template_validate_param(value, validation);
 }
 
 /**
@@ -546,7 +526,7 @@ mcp_json_t* mcp_template_extract_params_optimized(const char* uri, const char* t
                 if (cached->validations[i].default_value != NULL) {
                     // Add the default value to the params
                     mcp_json_t* value = NULL;
-                    
+
                     // Create the appropriate JSON value based on the parameter type
                     switch (cached->validations[i].type) {
                         case MCP_TEMPLATE_PARAM_TYPE_INT:
@@ -565,7 +545,7 @@ mcp_json_t* mcp_template_extract_params_optimized(const char* uri, const char* t
                             value = mcp_json_string_create(cached->validations[i].default_value);
                             break;
                     }
-                    
+
                     if (value != NULL) {
                         mcp_json_object_set_property(params, cached->param_names[i], value);
                     }
@@ -576,7 +556,7 @@ mcp_json_t* mcp_template_extract_params_optimized(const char* uri, const char* t
                         mcp_json_object_set_property(params, cached->param_names[i], value);
                     }
                 }
-                
+
                 // Skip this parameter
                 continue;
             } else {
@@ -593,13 +573,13 @@ mcp_json_t* mcp_template_extract_params_optimized(const char* uri, const char* t
             mcp_json_destroy(params);
             return NULL;
         }
-        
+
         memcpy(param_value, u, param_len);
         param_value[param_len] = '\0';
-        
+
         // Create the appropriate JSON value based on the parameter type
         mcp_json_t* value = NULL;
-        
+
         switch (cached->validations[i].type) {
             case MCP_TEMPLATE_PARAM_TYPE_INT:
                 value = mcp_json_number_create(atoi(param_value));
@@ -617,15 +597,15 @@ mcp_json_t* mcp_template_extract_params_optimized(const char* uri, const char* t
                 value = mcp_json_string_create(param_value);
                 break;
         }
-        
+
         if (value == NULL) {
             mcp_json_destroy(params);
             return NULL;
         }
-        
+
         // Add the parameter to the JSON object
         mcp_json_object_set_property(params, cached->param_names[i], value);
-        
+
         // Move past this parameter and static part
         u = next_static_in_uri + next_static_len;
     }
@@ -637,6 +617,32 @@ mcp_json_t* mcp_template_extract_params_optimized(const char* uri, const char* t
     }
 
     return params;
+}
+
+/**
+ * @brief Get statistics about the template cache
+ *
+ * @param hits Pointer to store the number of cache hits (can be NULL)
+ * @param misses Pointer to store the number of cache misses (can be NULL)
+ * @param evictions Pointer to store the number of cache evictions (can be NULL)
+ * @param total_lookups Pointer to store the total number of cache lookups (can be NULL)
+ * @param cache_size Pointer to store the current cache size (can be NULL)
+ * @param max_cache_size Pointer to store the maximum cache size (can be NULL)
+ */
+void mcp_template_cache_get_stats(
+    size_t* hits,
+    size_t* misses,
+    size_t* evictions,
+    size_t* total_lookups,
+    size_t* cache_size,
+    size_t* max_cache_size
+) {
+    if (hits) *hits = g_cache_stats.hits;
+    if (misses) *misses = g_cache_stats.misses;
+    if (evictions) *evictions = g_cache_stats.evictions;
+    if (total_lookups) *total_lookups = g_cache_stats.total_lookups;
+    if (cache_size) *cache_size = g_template_cache_count;
+    if (max_cache_size) *max_cache_size = MAX_CACHED_TEMPLATES;
 }
 
 /**
@@ -657,4 +663,10 @@ void mcp_template_cache_cleanup(void) {
 
     g_template_cache_count = 0;
     g_template_cache_initialized = 0;
+
+    // Reset statistics
+    g_cache_stats.hits = 0;
+    g_cache_stats.misses = 0;
+    g_cache_stats.evictions = 0;
+    g_cache_stats.total_lookups = 0;
 }
