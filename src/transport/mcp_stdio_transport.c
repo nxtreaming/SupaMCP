@@ -13,16 +13,18 @@
 #include <stdbool.h>
 #include <errno.h>
 
-// Platform-specific includes for threading
+// Platform-specific includes
 #ifdef _WIN32
+#include <winsock2.h>
 #include <windows.h>
 #else
+#include <arpa/inet.h>
 #include <pthread.h>
 #include <unistd.h>
 #endif
 
-// Max line length for reading from stdin
-#define MAX_LINE_LENGTH 4096 // Max length for a single line read from stdin
+#define MAX_LINE_LENGTH 4096          // Max length for a single line read from stdin
+#define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Maximum message size (1MB)
 
 /**
  * @internal
@@ -37,8 +39,6 @@ typedef struct {
     pthread_t read_thread;              /**< Handle for the background stdin reading thread. */
 #endif
 } mcp_stdio_transport_data_t;
-
-// --- Static Function Declarations ---
 
 // Implementation of the send function for stdio transport.
 static int stdio_transport_send(mcp_transport_t* transport, const void* data_to_send, size_t size);
@@ -57,10 +57,6 @@ static DWORD WINAPI stdio_read_thread_func(LPVOID arg);
 static void* stdio_read_thread_func(void* arg);
 #endif
 
-// --- Static Implementation Functions ---
-
-// Note: MAX_LINE_LENGTH is defined globally near the top of the file.
-
 /**
  * @internal
  * @brief Synchronously reads a single line (message) from stdin.
@@ -73,35 +69,39 @@ static void* stdio_read_thread_func(void* arg);
  * @return 0 on success, -1 on error or EOF.
  */
 static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
-    (void)transport; // Unused in this function
-    (void)timeout_ms; // Timeout is ignored, fgets is blocking
+    (void)transport;   // Unused in this function
+    (void)timeout_ms;  // Timeout is ignored, fgets is blocking
 
+    // Validate parameters
     if (data_out == NULL || size_out == NULL) {
-         return -1;
-     }
-     *data_out = NULL;
-     *size_out = 0;
+        return -1;
+    }
 
-     char line_buffer[MAX_LINE_LENGTH]; // Use the globally defined MAX_LINE_LENGTH
+    // Initialize output parameters
+    *data_out = NULL;
+    *size_out = 0;
+
+    // Stack buffer for reading the line
+    char line_buffer[MAX_LINE_LENGTH];
 
     // Blocking read using fgets
     if (fgets(line_buffer, sizeof(line_buffer), stdin) == NULL) {
+        // Handle EOF or error
         if (feof(stdin)) {
             mcp_log_info("EOF reached on stdin during receive.");
-            return -1; // Or a specific EOF code? -1 for general error for now.
+            return -1;
         } else {
+            // Format error message
             char err_buf[128];
 #ifdef _WIN32
             strerror_s(err_buf, sizeof(err_buf), errno);
-            mcp_log_error("Failed to read from stdin: %s (errno: %d)", err_buf, errno);
 #else
-            if (strerror_r(errno, err_buf, sizeof(err_buf)) == 0) {
-                mcp_log_error("Failed to read from stdin: %s (errno: %d)", err_buf, errno);
-            } else {
-                mcp_log_error("Failed to read from stdin: (errno: %d, strerror_r failed)", errno);
+            if (strerror_r(errno, err_buf, sizeof(err_buf)) != 0) {
+                snprintf(err_buf, sizeof(err_buf), "Unknown error");
             }
 #endif
-            return -1; // Read error
+            mcp_log_error("Failed to read from stdin: %s (errno: %d)", err_buf, errno);
+            return -1;
         }
     }
 
@@ -116,18 +116,20 @@ static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, 
         *size_out = 0;
         return -1;
     }
-    memcpy(*data_out, line_buffer, *size_out + 1); // Copy including null terminator
+
+    // Copy data including null terminator
+    memcpy(*data_out, line_buffer, *size_out + 1);
 
     return 0;
 }
 
 /**
  * @internal
- * @brief Background thread function that continuously reads lines from stdin.
- * This is used when the stdio transport is started via mcp_transport_start
- * (typically in a server role). Each line read is treated as a message and
- * passed to the registered message callback. Responses from the callback are
- * sent to stdout.
+ * @brief Background thread function that continuously reads messages from stdin.
+ * This is used when the stdio transport is started via mcp_transport_start.
+ * Each message is read with a length prefix, processed via the registered callback,
+ * and any response is sent back via stdout.
+ *
  * @param arg Pointer to the mcp_stdio_transport_data_t structure.
  * @return 0 on Windows, NULL on POSIX.
  */
@@ -142,16 +144,16 @@ static void* stdio_read_thread_func(void* arg) {
     uint32_t message_length_net, message_length_host;
     char* message_buf = NULL;
 
-    mcp_log_debug("Stdio read thread started (using length prefix framing).");
+    mcp_log_debug("Read thread started (using length prefix framing).");
 
     // Loop reading messages as long as the transport is running
     while (data->running) {
         // 1. Read the 4-byte length prefix
         if (fread(length_buf, 1, sizeof(length_buf), stdin) != sizeof(length_buf)) {
             if (feof(stdin)) {
-                mcp_log_info("[MCP Stdio Transport] EOF reached on stdin while reading length.");
+                mcp_log_info("EOF reached on stdin while reading length.");
             } else {
-                mcp_log_error("[MCP Stdio Transport] Error reading length prefix from stdin: %s", strerror(errno));
+                mcp_log_error("Error reading length prefix from stdin: %s", strerror(errno));
             }
             data->running = false; // Stop reading on EOF or error
             break;
@@ -161,10 +163,9 @@ static void* stdio_read_thread_func(void* arg) {
         memcpy(&message_length_net, length_buf, 4);
         message_length_host = ntohl(message_length_net);
 
-        // 3. Sanity check length (using MAX_MCP_MESSAGE_SIZE from TCP transport for consistency)
-        #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Re-define or include from common header
+        // 3. Sanity check length
         if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
-            mcp_log_error("[MCP Stdio Transport] Invalid message length received: %u", message_length_host);
+            mcp_log_error("Invalid message length received: %u", message_length_host);
             data->running = false; // Treat as fatal error
             break;
         }
@@ -172,17 +173,21 @@ static void* stdio_read_thread_func(void* arg) {
         // 4. Allocate buffer for message body (+1 for null terminator)
         message_buf = (char*)malloc(message_length_host + 1);
         if (message_buf == NULL) {
-            mcp_log_error("[MCP Stdio Transport] Failed to allocate buffer for message size %u", message_length_host);
+            mcp_log_error("Failed to allocate buffer for message size %u",
+                         message_length_host);
             data->running = false; // Treat as fatal error
             break;
         }
 
         // 5. Read the message body
-        if (fread(message_buf, 1, message_length_host, stdin) != message_length_host) {
+        size_t bytes_read = fread(message_buf, 1, message_length_host, stdin);
+        if (bytes_read != message_length_host) {
             if (feof(stdin)) {
-                mcp_log_info("[MCP Stdio Transport] EOF reached on stdin while reading body.");
+                mcp_log_info("EOF reached on stdin while reading body. "
+                            "Expected %u bytes, got %zu", message_length_host, bytes_read);
             } else {
-                mcp_log_error("[MCP Stdio Transport] Error reading message body from stdin: %s", strerror(errno));
+                mcp_log_error("Error reading message body from stdin: %s",
+                             strerror(errno));
             }
             free(message_buf);
             message_buf = NULL;
@@ -192,8 +197,10 @@ static void* stdio_read_thread_func(void* arg) {
 
         // 6. Null-terminate and process the message via callback
         message_buf[message_length_host] = '\0';
+
         if (transport->message_callback != NULL) {
             int callback_error_code = 0;
+
             // Invoke the message callback with the message data
             char* response_str = transport->message_callback(
                 transport->callback_user_data, // Pass user data
@@ -202,18 +209,19 @@ static void* stdio_read_thread_func(void* arg) {
                 &callback_error_code
             );
 
+            // Handle the response
             if (response_str != NULL) {
                 // Send the response back via stdout (send function handles framing)
                 if (stdio_transport_send(transport, response_str, strlen(response_str)) != 0) {
-                     mcp_log_error("[MCP Stdio Transport] Failed to send response via stdout.");
-                     // Error sending response, maybe stop?
-                     // data->running = false;
+                    mcp_log_error("Failed to send response via stdout.");
+                    // We continue processing despite send errors
                 }
                 free(response_str); // Free the malloc'd response string
-            } else if (callback_error_code != 0) {
+            }
+            else if (callback_error_code != 0) {
                 // Callback indicated an error but returned no response
-                 mcp_log_warn("[MCP Stdio Transport] Message callback indicated error (%d) but returned no response string.", callback_error_code);
-                 // data->running = false; // Optional: stop on callback error
+                mcp_log_warn("Message callback indicated error (%d) "
+                            "but returned no response string.", callback_error_code);
             }
             // If response_str is NULL and no error, it was a notification or response not needed.
         }
@@ -223,7 +231,7 @@ static void* stdio_read_thread_func(void* arg) {
         message_buf = NULL;
     } // End while(data->running)
 
-    mcp_log_info("[MCP Stdio Transport] Read thread exiting.");
+    mcp_log_info("Read thread exiting.");
 
 #ifdef _WIN32
     return 0;
@@ -251,35 +259,45 @@ static int stdio_transport_start(
     // by the generic mcp_transport_start function before this is called.
     (void)message_callback;
     (void)user_data;
-    (void)error_callback; // Stdio transport doesn't currently signal transport errors via callback
+    (void)error_callback;
 
+    // Validate parameters
     if (transport == NULL || transport->transport_data == NULL) {
-        return -1; // Invalid arguments
+        mcp_log_error("Invalid transport handle in start function.");
+        return -1;
     }
+
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
 
+    // Check if already running
     if (data->running) {
-        return 0; // Already running
+        mcp_log_debug("Transport already running, ignoring start request.");
+        return 0;
     }
 
+    // Set running flag before creating thread
     data->running = true;
 
+    // Create the read thread
 #ifdef _WIN32
     data->read_thread = CreateThread(NULL, 0, stdio_read_thread_func, data, 0, NULL);
     if (data->read_thread == NULL) {
-        mcp_log_error("[MCP Stdio Transport] Failed to create read thread.");
+        DWORD error = GetLastError();
+        mcp_log_error("Failed to create read thread. Error code: %lu", error);
         data->running = false;
         return -1;
     }
 #else
-    if (pthread_create(&data->read_thread, NULL, stdio_read_thread_func, data) != 0) {
-        perror("[MCP Stdio Transport] Failed to create read thread");
+    int thread_result = pthread_create(&data->read_thread, NULL, stdio_read_thread_func, data);
+    if (thread_result != 0) {
+        mcp_log_error("Failed to create read thread: %s (errno: %d)",
+                     strerror(thread_result), thread_result);
         data->running = false;
         return -1;
     }
 #endif
-    mcp_log_info("[MCP Stdio Transport] Read thread started.");
 
+    mcp_log_info("Read thread started successfully.");
     return 0;
 }
 
@@ -290,71 +308,99 @@ static int stdio_transport_start(
  * @return 0 on success, -1 on error.
  */
 static int stdio_transport_stop(mcp_transport_t* transport) {
+    // Validate parameters
     if (transport == NULL || transport->transport_data == NULL) {
-        return -1; // Invalid arguments
+        mcp_log_error("Invalid transport handle in stop function.");
+        return -1;
     }
+
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
 
+    // Check if already stopped
     if (!data->running) {
-        return 0; // Already stopped
+        mcp_log_debug("Transport already stopped, ignoring stop request.");
+        return 0;
     }
 
+    // Set running flag to false to signal thread to exit
     data->running = false;
 
-    // How to reliably stop the fgets call?
-    // On POSIX, we could potentially close(STDIN_FILENO) or use pthread_cancel.
-    // On Windows, closing stdin might be tricky.
-    // For now, we rely on the thread checking the 'running' flag or hitting EOF/error.
-    // A more robust solution might involve select/poll or platform-specific IPC.
-
+    // Wait for thread to exit
 #ifdef _WIN32
-    // Wait for the thread to finish (with a timeout?)
-    // WaitForSingleObject(data->read_thread, INFINITE); // Could block indefinitely if fgets doesn't return
-    // CloseHandle(data->read_thread); // Close handle after thread exits
-#else
-    // pthread_cancel(data->read_thread); // Force cancellation (might leave resources locked)
-    pthread_join(data->read_thread, NULL); // Wait for thread to exit cleanly
-#endif
-    mcp_log_info("[MCP Stdio Transport] Read thread stopped.");
+    if (data->read_thread != NULL) {
+        // Wait with a reasonable timeout (5 seconds)
+        DWORD wait_result = WaitForSingleObject(data->read_thread, 5000);
+        if (wait_result == WAIT_TIMEOUT) {
+            mcp_log_warn("Read thread did not exit within timeout period.");
+            // We could use TerminateThread here, but it's dangerous
+        }
+        else if (wait_result != WAIT_OBJECT_0) {
+            DWORD error = GetLastError();
+            mcp_log_error("Error waiting for thread to exit: %lu", error);
+        }
 
+        // Close the thread handle
+        CloseHandle(data->read_thread);
+        data->read_thread = NULL;
+    }
+#else
+    // For POSIX, we join the thread to wait for it to exit
+    if (pthread_join(data->read_thread, NULL) != 0) {
+        mcp_log_error("Error joining read thread: %s", strerror(errno));
+    }
+#endif
+
+    mcp_log_info("Read thread stopped.");
     return 0;
 }
 
 /**
  * @internal
  * @brief Sends data via the stdio transport (writes to stdout).
- * Appends a newline character and flushes stdout after writing the data.
+ * Uses length-prefixed framing and flushes stdout after writing.
+ *
  * @param transport The transport handle (unused).
- * @param data_to_send Pointer to the data buffer to send.
- * @param size Number of bytes in the payload to send.
+ * @param payload_data Pointer to the data buffer to send.
+ * @param payload_size Number of bytes in the payload to send.
  * @return 0 on success, -1 on error (e.g., write error, flush error).
  */
 static int stdio_transport_send(mcp_transport_t* transport, const void* payload_data, size_t payload_size) {
     (void)transport; // Unused in this function
+
+    // Validate parameters
     if (payload_data == NULL || payload_size == 0) {
-        return -1; // Invalid arguments
+        mcp_log_error("Invalid payload in send function.");
+        return -1;
     }
-    // Ensure payload size isn't too large (optional sanity check)
-    // if (payload_size > SOME_MAX_LIMIT) return -1;
+
+    // Sanity check payload size
+    if (payload_size > MAX_MCP_MESSAGE_SIZE) {
+        mcp_log_error("Payload size %zu exceeds maximum allowed size (%d).",
+                     payload_size, MAX_MCP_MESSAGE_SIZE);
+        return -1;
+    }
 
     // 1. Send 4-byte length prefix (network byte order)
     uint32_t net_len = htonl((uint32_t)payload_size);
     if (fwrite(&net_len, 1, sizeof(net_len), stdout) != sizeof(net_len)) {
-        mcp_log_error("[MCP Stdio Transport] Failed to write length prefix to stdout");
+        mcp_log_error("Failed to write length prefix to stdout: %s",
+                     strerror(errno));
         return -1;
     }
 
     // 2. Send the actual payload data
     if (fwrite(payload_data, 1, payload_size, stdout) != payload_size) {
-        mcp_log_error("[MCP Stdio Transport] Failed to write payload data to stdout");
+        mcp_log_error("Failed to write payload data to stdout: %s",
+                     strerror(errno));
         return -1;
     }
 
     // 3. Ensure the output is flushed immediately
     if (fflush(stdout) != 0) {
-        mcp_log_error("[MCP Stdio Transport] Failed to flush stdout");
+        mcp_log_error("Failed to flush stdout: %s", strerror(errno));
         return -1;
     }
+
     return 0;
 }
 
@@ -362,16 +408,23 @@ static int stdio_transport_send(mcp_transport_t* transport, const void* payload_
  * @internal
  * @brief Destroys the stdio transport specific data.
  * Ensures the transport is stopped and frees the internal data structure.
+ *
  * @param transport The transport handle.
  */
 static void stdio_transport_destroy(mcp_transport_t* transport) {
     if (transport == NULL) {
-        return; // Nothing to do
+        mcp_log_debug("Attempted to destroy NULL transport.");
+        return;
     }
 
     if (transport->transport_data != NULL) {
+        mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
+
         // Ensure transport is stopped first
-        stdio_transport_stop(transport);
+        if (data->running) {
+            mcp_log_debug("Stopping transport during destroy.");
+            stdio_transport_stop(transport);
+        }
 
         // Free the specific stdio data
         free(transport->transport_data);
@@ -380,33 +433,48 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
 
     // Free the main transport struct
     free(transport);
+
+    mcp_log_debug("Transport destroyed.");
 }
 
+/**
+ * @brief Creates a transport layer instance that uses standard input/output.
+ *
+ * This transport reads messages with length prefixes from stdin and sends messages
+ * with length prefixes to stdout. It's suitable for inter-process communication
+ * where the other process also uses length-prefixed framing.
+ *
+ * @return A pointer to the created transport instance, or NULL on failure.
+ *         The caller is responsible for destroying the transport using
+ *         mcp_transport_destroy().
+ */
 mcp_transport_t* mcp_transport_stdio_create(void) {
     // Allocate the generic transport struct
     mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
     if (transport == NULL) {
+        mcp_log_error("Failed to allocate transport structure.");
         return NULL;
     }
+
+    // Zero-initialize the transport structure
+    memset(transport, 0, sizeof(mcp_transport_t));
 
     // Allocate the stdio-specific data struct
     mcp_stdio_transport_data_t* stdio_data = (mcp_stdio_transport_data_t*)malloc(sizeof(mcp_stdio_transport_data_t));
     if (stdio_data == NULL) {
+        mcp_log_error("Failed to allocate transport data structure.");
         free(transport);
         return NULL;
     }
 
     // Initialize stdio data
+    memset(stdio_data, 0, sizeof(mcp_stdio_transport_data_t));
     stdio_data->running = false;
     stdio_data->transport_handle = transport; // Link back
-#ifdef _WIN32
-    stdio_data->read_thread = NULL;
-#else
-    // pthread_t doesn't need explicit NULL initialization
-#endif
 
-    // Set transport type to client (stdio transport is treated as a client transport)
+    // Set transport type and protocol
     transport->type = MCP_TRANSPORT_TYPE_CLIENT;
+    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_STDIO;
 
     // Initialize client operations
     transport->client.start = stdio_transport_start;
@@ -416,11 +484,9 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     transport->client.sendv = NULL; // No vectored send implementation for stdio
     transport->client.receive = stdio_transport_receive;
 
-    // Set transport data and initialize callbacks
-    transport->transport_data = stdio_data; // Store specific data
-    transport->message_callback = NULL;     // Will be set by mcp_transport_start
-    transport->callback_user_data = NULL;   // Will be set by mcp_transport_start
-    transport->error_callback = NULL;       // Will be set by mcp_transport_start
+    // Set transport data
+    transport->transport_data = stdio_data;
 
+    mcp_log_debug("Transport created successfully.");
     return transport;
 }
