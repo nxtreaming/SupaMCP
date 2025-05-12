@@ -1,5 +1,5 @@
-#ifndef MCP_HTTP_CLIENT_REQUEST_H
-#define MCP_HTTP_CLIENT_REQUEST_H
+#ifndef HTTP_CLIENT_REQUEST_H
+#define HTTP_CLIENT_REQUEST_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -26,4 +26,4 @@ void http_response_free(http_response_t* response);
 }
 #endif
 
-#endif // MCP_HTTP_CLIENT_REQUEST_H
+#endif // HTTP_CLIENT_REQUEST_H

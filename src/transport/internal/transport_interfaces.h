@@ -1,5 +1,5 @@
-#ifndef MCP_TRANSPORT_INTERFACES_H
-#define MCP_TRANSPORT_INTERFACES_H
+#ifndef TRANSPORT_INTERFACES_H
+#define TRANSPORT_INTERFACES_H
 
 #include "mcp_transport.h"
 
@@ -61,4 +61,4 @@ typedef enum {
     MCP_TRANSPORT_TYPE_CLIENT
 } mcp_transport_type_enum_t;
 
-#endif // MCP_TRANSPORT_INTERFACES_H
+#endif // TRANSPORT_INTERFACES_H

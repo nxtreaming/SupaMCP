@@ -1,5 +1,5 @@
-#ifndef MCP_JSON_SCHEMA_CACHE_H
-#define MCP_JSON_SCHEMA_CACHE_H
+#ifndef JSON_SCHEMA_CACHE_H
+#define JSON_SCHEMA_CACHE_H
 
 #include "mcp_hashtable.h"
 #include "mcp_rwlock.h"
@@ -104,4 +104,4 @@ int mcp_json_schema_cache_get_stats(mcp_json_schema_cache_t* cache, size_t* size
  */
 int mcp_json_schema_validate(mcp_json_schema_cache_t* cache, const char* json_str, const char* schema_str);
 
-#endif /* MCP_JSON_SCHEMA_CACHE_H */
+#endif /* JSON_SCHEMA_CACHE_H */

@@ -9,7 +9,7 @@
 #define strcasecmp _stricmp
 #endif
 
-#include "internal/mcp_http_transport_internal.h"
+#include "internal/http_transport_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

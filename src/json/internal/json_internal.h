@@ -1,5 +1,5 @@
-#ifndef MCP_JSON_INTERNAL_H
-#define MCP_JSON_INTERNAL_H
+#ifndef JSON_INTERNAL_H
+#define JSON_INTERNAL_H
 
 #include "mcp_json.h"
 #include "mcp_arena.h"
@@ -67,4 +67,4 @@ mcp_json_t* parse_value(const char** json, int depth);
 // From mcp_json.c (or potentially moved)
 mcp_json_t* mcp_json_alloc_node(void); // Helper to allocate node from arena
 
-#endif // MCP_JSON_INTERNAL_H
+#endif // JSON_INTERNAL_H

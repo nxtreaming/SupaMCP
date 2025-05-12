@@ -1,5 +1,5 @@
-#ifndef MCP_TCP_TRANSPORT_INTERNAL_H
-#define MCP_TCP_TRANSPORT_INTERNAL_H
+#ifndef TCP_TRANSPORT_INTERNAL_H
+#define TCP_TRANSPORT_INTERNAL_H
 
 #include "mcp_socket_utils.h"
 #include "mcp_transport.h"
@@ -106,4 +106,4 @@ void tcp_stats_update_message_received(tcp_server_stats_t* stats, size_t bytes);
 void tcp_stats_update_message_sent(tcp_server_stats_t* stats, size_t bytes);
 void tcp_stats_update_error(tcp_server_stats_t* stats);
 
-#endif // MCP_TCP_TRANSPORT_INTERNAL_H
+#endif // TCP_TRANSPORT_INTERNAL_H

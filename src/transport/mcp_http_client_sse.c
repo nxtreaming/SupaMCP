@@ -4,8 +4,8 @@
 #   endif
 #endif
 
-#include "internal/mcp_http_client_sse.h"
-#include "internal/mcp_http_client_internal.h"
+#include "internal/http_client_sse.h"
+#include "internal/http_client_internal.h"
 #include "internal/transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"

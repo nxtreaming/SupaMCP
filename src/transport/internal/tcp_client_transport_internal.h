@@ -1,5 +1,5 @@
-#ifndef MCP_TCP_CLIENT_TRANSPORT_INTERNAL_H
-#define MCP_TCP_CLIENT_TRANSPORT_INTERNAL_H
+#ifndef TCP_CLIENT_TRANSPORT_INTERNAL_H
+#define TCP_CLIENT_TRANSPORT_INTERNAL_H
 
 #include "mcp_socket_utils.h"
 #include "mcp_tcp_client_transport.h"
@@ -58,4 +58,4 @@ typedef struct {
 void mcp_tcp_client_update_connection_state(mcp_tcp_client_transport_data_t* data, mcp_connection_state_t new_state);
 void* tcp_client_receive_thread_func(void* arg);
 
-#endif // MCP_TCP_CLIENT_TRANSPORT_INTERNAL_H
+#endif // TCP_CLIENT_TRANSPORT_INTERNAL_H

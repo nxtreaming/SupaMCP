@@ -1,5 +1,5 @@
-#ifndef MCP_SERVER_TEMPLATE_ROUTER_H
-#define MCP_SERVER_TEMPLATE_ROUTER_H
+#ifndef SERVER_TEMPLATE_ROUTER_H
+#define SERVER_TEMPLATE_ROUTER_H
 
 #include "server_internal.h"
 #include <mcp_types.h>
@@ -43,4 +43,4 @@ mcp_error_code_t mcp_server_handle_template_resource(
  */
 void mcp_server_free_template_routes(const void* key, void* value, void* user_data);
 
-#endif /* MCP_SERVER_TEMPLATE_ROUTER_H */
+#endif /* SERVER_TEMPLATE_ROUTER_H */

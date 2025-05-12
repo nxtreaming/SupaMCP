@@ -1,5 +1,5 @@
-#ifndef MCP_CONNECTION_POOL_INTERNAL_H
-#define MCP_CONNECTION_POOL_INTERNAL_H
+#ifndef CONNECTION_POOL_INTERNAL_H
+#define CONNECTION_POOL_INTERNAL_H
 
 #include "mcp_connection_pool.h"
 #include "mcp_log.h"
@@ -158,4 +158,4 @@ struct addrinfo* dns_cache_get(const char* hostname, int port, const struct addr
 void dns_cache_release(struct addrinfo* addr_info);
 void dns_cache_clear();
 
-#endif // MCP_CONNECTION_POOL_INTERNAL_H
+#endif // CONNECTION_POOL_INTERNAL_H

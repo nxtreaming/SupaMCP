@@ -1,4 +1,4 @@
-#include "internal/mcp_json_schema_cache.h"
+#include "internal/json_schema_cache.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
 #include "mcp_json.h"

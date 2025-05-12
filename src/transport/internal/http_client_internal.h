@@ -1,5 +1,5 @@
-#ifndef MCP_HTTP_CLIENT_INTERNAL_H
-#define MCP_HTTP_CLIENT_INTERNAL_H
+#ifndef HTTP_CLIENT_INTERNAL_H
+#define HTTP_CLIENT_INTERNAL_H
 
 #include "mcp_transport.h"
 #include "mcp_socket_utils.h"
@@ -43,4 +43,4 @@ typedef struct http_client_transport_data {
 }
 #endif
 
-#endif // MCP_HTTP_CLIENT_INTERNAL_H
+#endif // HTTP_CLIENT_INTERNAL_H

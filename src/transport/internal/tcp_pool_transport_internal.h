@@ -1,5 +1,5 @@
-#ifndef MCP_TCP_POOL_TRANSPORT_INTERNAL_H
-#define MCP_TCP_POOL_TRANSPORT_INTERNAL_H
+#ifndef TCP_POOL_TRANSPORT_INTERNAL_H
+#define TCP_POOL_TRANSPORT_INTERNAL_H
 
 #include <mcp_transport.h>
 #include <mcp_connection_pool.h>
@@ -53,4 +53,4 @@ typedef struct {
     mcp_buffer_pool_t* buffer_pool; // Buffer pool for message buffers
 } mcp_tcp_pool_transport_data_t;
 
-#endif // MCP_TCP_POOL_TRANSPORT_INTERNAL_H
+#endif // TCP_POOL_TRANSPORT_INTERNAL_H

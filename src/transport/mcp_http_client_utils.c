@@ -4,7 +4,7 @@
 #   endif
 #endif
 
-#include "internal/mcp_http_client_utils.h"
+#include "internal/http_client_utils.h"
 #include <stdlib.h>
 #include <string.h>
 

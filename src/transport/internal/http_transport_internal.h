@@ -1,5 +1,5 @@
-#ifndef MCP_HTTP_TRANSPORT_INTERNAL_H
-#define MCP_HTTP_TRANSPORT_INTERNAL_H
+#ifndef HTTP_TRANSPORT_INTERNAL_H
+#define HTTP_TRANSPORT_INTERNAL_H
 
 #include "mcp_http_transport.h"
 #include "internal/transport_internal.h"
@@ -102,4 +102,4 @@ extern struct lws_protocols http_protocols[];
 }
 #endif
 
-#endif // MCP_HTTP_TRANSPORT_INTERNAL_H
+#endif // HTTP_TRANSPORT_INTERNAL_H

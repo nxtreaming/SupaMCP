@@ -23,7 +23,7 @@
 #include "mcp_hashtable.h"
 #include "mcp_object_pool.h"
 #include "mcp_template_security.h"
-#include "mcp_server_template_router.h"
+#include "server_template_router.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>

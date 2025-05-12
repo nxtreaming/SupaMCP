@@ -10,7 +10,7 @@
 #endif
 
 #include "mcp_http_transport.h"
-#include "internal/mcp_http_transport_internal.h"
+#include "internal/http_transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_sync.h"
 #include "mcp_thread_pool.h"

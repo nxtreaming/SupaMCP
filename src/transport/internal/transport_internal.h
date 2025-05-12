@@ -1,5 +1,5 @@
-#ifndef MCP_TRANSPORT_INTERNAL_H
-#define MCP_TRANSPORT_INTERNAL_H
+#ifndef TRANSPORT_INTERNAL_H
+#define TRANSPORT_INTERNAL_H
 
 #include "mcp_transport.h"
 #include "transport_interfaces.h"
@@ -35,4 +35,4 @@ struct mcp_transport {
 #   pragma warning(pop)
 #endif
 
-#endif // MCP_TRANSPORT_INTERNAL_H
+#endif // TRANSPORT_INTERNAL_H

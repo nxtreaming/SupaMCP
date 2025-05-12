@@ -1,5 +1,5 @@
-#ifndef MCP_HTTP_CLIENT_SSE_H
-#define MCP_HTTP_CLIENT_SSE_H
+#ifndef HTTP_CLIENT_SSE_H
+#define HTTP_CLIENT_SSE_H
 
 #include "mcp_transport.h"
 #include "mcp_socket_utils.h"
@@ -32,4 +32,4 @@ void* http_client_event_thread_func(void* arg);
 }
 #endif
 
-#endif // MCP_HTTP_CLIENT_SSE_H
+#endif // HTTP_CLIENT_SSE_H
