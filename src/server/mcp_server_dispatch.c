@@ -381,7 +381,7 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
         // Special handling for ping requests, all servers should support this connection health check
         return handle_ping_request(server, arena, request, auth_context, error_code);
     }
-    else if (method_len == 10 && memcmp(method, "call_tool", 9) == 0) {
+    else if (method_len == 9 && memcmp(method, "call_tool", 9) == 0) {
         return handle_call_tool_request(server, arena, request, auth_context, error_code);
     }
     else if (method_len == 13 && memcmp(method, "read_resource", 13) == 0) {
