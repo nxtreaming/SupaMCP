@@ -98,20 +98,20 @@ static int ws_client_send_response(ws_client_t* client, struct lws* wsi, const c
 // WebSocket protocol definitions
 static struct lws_protocols server_protocols[3];
 
-// Bitmap helper functions for client slot management
+// Optimized bitmap helper functions for client slot management
 static inline void ws_server_set_client_bit(uint32_t* bitmap, int index) {
-    bitmap[index / 32] |= (1 << (index % 32));
+    bitmap[index >> 5] |= (1U << (index & 31));
 }
 
 static inline void ws_server_clear_client_bit(uint32_t* bitmap, int index) {
-    bitmap[index / 32] &= ~(1 << (index % 32));
+    bitmap[index >> 5] &= ~(1U << (index & 31));
 }
 
 static inline bool ws_server_test_client_bit(uint32_t* bitmap, int index) {
-    return (bitmap[index / 32] & (1 << (index % 32))) != 0;
+    return (bitmap[index >> 5] & (1U << (index & 31))) != 0;
 }
 
-// Find first free client slot using bitmap
+// Find first free client slot using bitmap with optimized bit scanning
 static int ws_server_find_free_client_slot(ws_server_data_t* data) {
     // Quick check if we're already at max capacity
     if (data->active_clients >= MAX_WEBSOCKET_CLIENTS) {
@@ -119,7 +119,9 @@ static int ws_server_find_free_client_slot(ws_server_data_t* data) {
     }
 
     // Use bitmap to find first free slot
-    for (int i = 0; i < (MAX_WEBSOCKET_CLIENTS / 32 + 1); i++) {
+    const int num_words = (MAX_WEBSOCKET_CLIENTS >> 5) + 1;
+
+    for (int i = 0; i < num_words; i++) {
         uint32_t word = data->client_bitmap[i];
 
         // If word is full (all bits set), skip to next word
@@ -127,16 +129,30 @@ static int ws_server_find_free_client_slot(ws_server_data_t* data) {
             continue;
         }
 
-        // Find first zero bit in this word
-        for (int j = 0; j < 32; j++) {
-            int index = i * 32 + j;
-            if (index >= MAX_WEBSOCKET_CLIENTS) {
-                break; // Don't go beyond array bounds
-            }
+        // Find first zero bit in this word using optimized approach
+        // ~word gives us 1s where the original had 0s (free slots)
+        uint32_t free_bits = ~word;
 
-            if ((word & (1 << j)) == 0) {
-                return index;
+        // Use compiler intrinsics for bit scanning if available
+        #if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+            // MSVC on x86/x64
+            unsigned long bit_pos;
+            _BitScanForward(&bit_pos, free_bits);
+            int j = (int)bit_pos;
+        #elif defined(__GNUC__) || defined(__clang__)
+            // GCC or Clang
+            int j = __builtin_ffs(free_bits) - 1;
+        #else
+            // Fallback for other compilers - find first set bit manually
+            int j = 0;
+            while (j < 32 && (free_bits & (1U << j)) == 0) {
+                j++;
             }
+        #endif
+
+        int index = (i << 5) + j;
+        if (index < MAX_WEBSOCKET_CLIENTS) {
+            return index;
         }
     }
 
@@ -205,24 +221,41 @@ static void ws_client_cleanup(ws_client_t* client, ws_server_data_t* server_data
     }
 }
 
-// Helper function to resize a client's receive buffer
+// Helper function to resize a client's receive buffer with optimized allocation strategy
 static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_server_data_t* server_data) {
     if (!client) {
         return -1;
     }
 
-    // Calculate new buffer size
-    size_t new_len = client->receive_buffer_len == 0 ? WS_DEFAULT_BUFFER_SIZE : (int)(client->receive_buffer_len * WS_BUFFER_GROWTH_FACTOR);
-    while (new_len < needed_size) {
-        new_len = (size_t)(new_len * WS_BUFFER_GROWTH_FACTOR);
+    // Calculate new buffer size with more efficient growth strategy
+    size_t new_len;
+
+    if (client->receive_buffer_len == 0) {
+        // Start with default buffer size
+        new_len = WS_DEFAULT_BUFFER_SIZE;
+    } else {
+        // Use a more efficient growth factor (1.5x) with 4KB alignment for better memory allocation
+        new_len = client->receive_buffer_len + (client->receive_buffer_len >> 1);
+        // Round up to next 4KB boundary for better memory allocation
+        new_len = (new_len + 4095) & ~4095;
     }
 
-    // Round up to the nearest multiple of WS_DEFAULT_BUFFER_SIZE for better reuse
-    new_len = ((new_len + WS_DEFAULT_BUFFER_SIZE - 1) / WS_DEFAULT_BUFFER_SIZE) * WS_DEFAULT_BUFFER_SIZE;
+    // Ensure the new size is at least as large as needed
+    while (new_len < needed_size) {
+        new_len = new_len + (new_len >> 1);
+        // Round up to next 4KB boundary
+        new_len = (new_len + 4095) & ~4095;
+    }
+
+    // Fast path: If the current buffer is already large enough, just return success
+    if (client->receive_buffer && client->receive_buffer_len >= needed_size) {
+        return 0;
+    }
 
     char* new_buffer = NULL;
 
     // Try to get buffer from pool if server_data is provided and buffer pool exists
+    // Only use pool for buffers that fit within pool buffer size
     if (server_data && server_data->buffer_pool && new_len <= WS_BUFFER_POOL_BUFFER_SIZE) {
         // Try to get a buffer from the pool
         new_buffer = (char*)mcp_buffer_pool_acquire(server_data->buffer_pool);
@@ -243,7 +276,9 @@ static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_s
                     mcp_buffer_pool_release(server_data->buffer_pool, client->receive_buffer);
                 } else {
                     free(client->receive_buffer);
-                    server_data->total_buffer_memory -= client->receive_buffer_len;
+                    if (server_data) {
+                        server_data->total_buffer_memory -= client->receive_buffer_len;
+                    }
                 }
             }
 
@@ -251,7 +286,7 @@ static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_s
             client->receive_buffer = new_buffer;
             client->receive_buffer_len = WS_BUFFER_POOL_BUFFER_SIZE;
             return 0;
-        } else {
+        } else if (server_data) {
             // Failed to get buffer from pool
             server_data->buffer_misses++;
         }
@@ -259,6 +294,7 @@ static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_s
 
     // Fall back to regular allocation if pool is not available or buffer is too large
     if (client->receive_buffer) {
+        // Try to reuse existing buffer with realloc for better performance
         new_buffer = (char*)realloc(client->receive_buffer, new_len);
 
         // Update memory statistics if server_data is provided
@@ -268,6 +304,7 @@ static int ws_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_s
             server_data->buffer_allocs++;
         }
     } else {
+        // Allocate new buffer
         new_buffer = (char*)malloc(new_len);
 
         // Update memory statistics if server_data is provided
@@ -311,43 +348,89 @@ static int ws_client_send_ping(ws_client_t* client) {
     return lws_callback_on_writable(client->wsi);
 }
 
-// Helper function to find a client by WebSocket instance
+// Helper function to find a client by WebSocket instance with optimized search
 static ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* wsi) {
     if (!data || !wsi) {
         return NULL;
     }
 
-    // First try to get the client from opaque user data (faster)
+    // First try to get the client from opaque user data (fastest path)
     ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
     if (client) {
         return client;
     }
 
-    // If not found, search through the client list
+    // If not found, search through the client list using bitmap for efficiency
     mcp_mutex_lock(data->clients_mutex);
 
-    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
-        if (data->clients[i].wsi == wsi) {
-            client = &data->clients[i];
-            break;
+    // Use bitmap to quickly skip inactive clients
+    const int num_words = (MAX_WEBSOCKET_CLIENTS >> 5) + 1;
+
+    for (int i = 0; i < num_words; i++) {
+        uint32_t word = data->client_bitmap[i];
+
+        // Skip words with no active clients
+        if (word == 0) {
+            continue;
+        }
+
+        // Process only active bits in this word
+        while (word) {
+            // Find position of least significant 1 bit
+            int bit_pos;
+
+            #if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+                // MSVC on x86/x64
+                unsigned long pos;
+                _BitScanForward(&pos, word);
+                bit_pos = (int)pos;
+            #elif defined(__GNUC__) || defined(__clang__)
+                // GCC or Clang
+                bit_pos = __builtin_ffs(word) - 1;
+            #else
+                // Fallback for other compilers
+                bit_pos = 0;
+                while ((word & (1U << bit_pos)) == 0) {
+                    bit_pos++;
+                }
+            #endif
+
+            // Calculate client index
+            int index = (i << 5) + bit_pos;
+            if (index >= MAX_WEBSOCKET_CLIENTS) {
+                break;
+            }
+
+            // Check if this client matches the wsi
+            if (data->clients[index].wsi == wsi) {
+                client = &data->clients[index];
+
+                // Store client pointer in opaque user data for faster lookup next time
+                lws_set_opaque_user_data(wsi, client);
+
+                mcp_mutex_unlock(data->clients_mutex);
+                return client;
+            }
+
+            // Clear the bit we just processed and continue
+            word &= ~(1U << bit_pos);
         }
     }
 
     mcp_mutex_unlock(data->clients_mutex);
-
-    return client;
+    return NULL;
 }
 
-// Helper function to send a response to a client
+// Helper function to send a response to a client with optimized buffer handling
 static int ws_client_send_response(ws_client_t* client, struct lws* wsi, const char* response, size_t response_len) {
     if (!client || !wsi || !response || response_len == 0) {
         return -1;
     }
 
-    // Allocate buffer with LWS_PRE padding
+    // Always use heap allocation for WebSocket buffer to avoid MSVC stack array issues
     unsigned char* buffer = (unsigned char*)malloc(LWS_PRE + response_len);
     if (!buffer) {
-        mcp_log_error("Failed to allocate WebSocket response buffer");
+        mcp_log_error("Failed to allocate WebSocket response buffer of size %zu", response_len);
         return -1;
     }
 
@@ -839,17 +922,24 @@ static void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
     mcp_mutex_unlock(data->clients_mutex);
 }
 
-// Server event loop thread function
+// Server event loop thread function with adaptive timeout
 static void* ws_server_event_thread(void* arg) {
     ws_server_data_t* data = (ws_server_data_t*)arg;
 
-    // Use a shorter service timeout for more responsive handling
-    // but not too short to avoid excessive CPU usage
-    const int service_timeout_ms = 20; // 20ms timeout (reduced from 50ms)
+    // Use adaptive service timeout based on activity level
+    int service_timeout_ms = 20; // Start with 20ms timeout
 
     // Track last service time for performance monitoring
     time_t last_service_time = time(NULL);
+    time_t last_activity_check = time(NULL);
+    time_t last_ping_check = time(NULL);
+    time_t last_cleanup_check = time(NULL);
     unsigned long service_count = 0;
+
+    // Constants for periodic operations
+    const int ACTIVITY_CHECK_INTERVAL = 1;  // Check activity level every 1 second
+    const int PING_CHECK_INTERVAL = 5;      // Check for client timeouts every 5 seconds
+    const int CLEANUP_CHECK_INTERVAL = 10;  // Clean up inactive clients every 10 seconds
 
     // Initialize thread-local arena for this thread
     mcp_log_debug("Initializing thread-local arena for WebSocket server event thread");
@@ -860,34 +950,64 @@ static void* ws_server_event_thread(void* arg) {
     mcp_log_info("WebSocket server event thread started");
 
     while (data->running) {
-        // Service libwebsockets
+        // Service libwebsockets with current timeout
         int service_result = lws_service(data->context, service_timeout_ms);
         if (service_result < 0) {
             mcp_log_warn("lws_service returned error: %d", service_result);
             // Don't exit the loop, just continue and try again
+            // Add a small delay to avoid spinning on persistent errors
+            if (service_result == -1) {
+                mcp_sleep_ms(100);
+            }
         }
 
         // Increment service counter
         service_count++;
 
-        // Log performance stats every ~60 seconds
+        // Get current time once per loop iteration
         time_t now = time(NULL);
+
+        // Adjust service timeout based on activity level (every 1 second)
+        if (difftime(now, last_activity_check) >= ACTIVITY_CHECK_INTERVAL) {
+            last_activity_check = now;
+
+            // Use shorter timeout when there are active clients
+            if (data->active_clients > 0) {
+                // More clients = shorter timeout for better responsiveness
+                if (data->active_clients > 10) {
+                    service_timeout_ms = 10; // Very responsive for many clients
+                } else {
+                    service_timeout_ms = 20; // Balanced for few clients
+                }
+            } else {
+                // No clients = longer timeout to reduce CPU usage
+                service_timeout_ms = 50;
+            }
+        }
+
+        // Log performance stats every ~60 seconds
         if (difftime(now, last_service_time) >= 60) {
             double elapsed = difftime(now, last_service_time);
             double rate = service_count / elapsed;
-            mcp_log_debug("WebSocket server performance: %.1f service calls/sec, %lu active clients",
-                         rate, data->active_clients);
+            mcp_log_debug("WebSocket server performance: %.1f service calls/sec, %lu active clients, timeout: %d ms",
+                         rate, data->active_clients, service_timeout_ms);
 
             // Reset counters
             last_service_time = now;
             service_count = 0;
         }
 
-        // Check for client timeouts and send pings
-        ws_server_check_timeouts(data);
+        // Check for client timeouts and send pings (every 5 seconds)
+        if (difftime(now, last_ping_check) >= PING_CHECK_INTERVAL) {
+            last_ping_check = now;
+            ws_server_check_timeouts(data);
+        }
 
-        // Clean up inactive clients
-        ws_server_cleanup_inactive_clients(data);
+        // Clean up inactive clients (every 10 seconds)
+        if (difftime(now, last_cleanup_check) >= CLEANUP_CHECK_INTERVAL) {
+            last_cleanup_check = now;
+            ws_server_cleanup_inactive_clients(data);
+        }
     }
 
     mcp_log_info("WebSocket server event thread exiting");
