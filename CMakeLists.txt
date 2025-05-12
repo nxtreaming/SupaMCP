@@ -139,6 +139,8 @@ set(COMMON_SOURCES
     src/transport/mcp_websocket_common.c
     src/transport/mcp_websocket_transport.c
     src/transport/mcp_websocket_client_transport.c
+    src/transport/mcp_websocket_client_connection.c
+    src/transport/mcp_websocket_client_message.c
     src/transport/mcp_http_transport.c
     src/transport/mcp_http_server_sse.c
     src/transport/mcp_http_server_handlers.c
