@@ -1,5 +1,5 @@
 /**
- * @file mcp_http_client_tool.c
+ * @file http_client_tool.c
  * @brief Implementation of the HTTP client tool for MCP server.
  *
  * This tool allows making HTTP requests from the MCP server to external services.
@@ -17,11 +17,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Default timeout in milliseconds
-#define HTTP_CLIENT_DEFAULT_TIMEOUT_MS 30000
-
-// Maximum response size
-#define HTTP_CLIENT_MAX_RESPONSE_SIZE (10 * 1024 * 1024) // 10MB
+// Configuration constants
+#define HTTP_CLIENT_DEFAULT_TIMEOUT_MS 30000  // Default timeout: 30 seconds
+#define HTTP_CLIENT_MAX_RESPONSE_SIZE (10 * 1024 * 1024)  // Max response: 10MB
+#define HTTP_CLIENT_INITIAL_BUFFER_SIZE 4096  // Initial buffer: 4KB
+#define HTTP_CLIENT_REQUEST_BUFFER_SIZE 8192  // Request buffer: 8KB
 
 // HTTP response structure
 typedef struct {
@@ -39,6 +39,123 @@ static http_response_t* http_request(const char* method, const char* url,
                                     uint32_t timeout_ms);
 static void http_response_free(http_response_t* response);
 static char* parse_url(const char* url, char** host, int* port, char** path, bool* use_ssl);
+static bool extract_http_headers(http_response_t* response);
+static const char* extract_mime_type(const char* headers);
+static mcp_content_item_t* create_content_item(mcp_content_type_t type, const char* mime_type,
+                                              const void* data, size_t data_size);
+static void free_content_items(mcp_content_item_t** content, size_t count);
+
+/**
+ * @brief Extract MIME type from HTTP headers
+ *
+ * @param headers HTTP headers string
+ * @return const char* MIME type string (static buffer, do not free)
+ */
+static const char* extract_mime_type(const char* headers)
+{
+    static char mime_type_buf[128];
+    static const char* default_mime_type = "text/plain";
+
+    if (!headers) {
+        return default_mime_type;
+    }
+
+    const char* content_type_header = strstr(headers, "Content-Type:");
+    if (!content_type_header) {
+        return default_mime_type;
+    }
+
+    // Skip "Content-Type:" and whitespace
+    content_type_header += 13;
+    while (*content_type_header == ' ') {
+        content_type_header++;
+    }
+
+    // Extract MIME type (up to semicolon or newline)
+    size_t i = 0;
+    while (i < sizeof(mime_type_buf) - 1 &&
+           *content_type_header &&
+           *content_type_header != ';' &&
+           *content_type_header != '\r' &&
+           *content_type_header != '\n') {
+        mime_type_buf[i++] = *content_type_header++;
+    }
+    mime_type_buf[i] = '\0';
+
+    return mime_type_buf[0] ? mime_type_buf : default_mime_type;
+}
+
+/**
+ * @brief Create a content item
+ *
+ * @param type Content type
+ * @param mime_type MIME type string
+ * @param data Data buffer
+ * @param data_size Size of data
+ * @return mcp_content_item_t* Created content item or NULL on failure
+ */
+static mcp_content_item_t* create_content_item(
+    mcp_content_type_t type,
+    const char* mime_type,
+    const void* data,
+    size_t data_size)
+{
+    mcp_content_item_t* item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+    if (!item) {
+        return NULL;
+    }
+
+    item->type = type;
+    item->mime_type = mcp_strdup(mime_type);
+
+    if (data && data_size > 0) {
+        item->data = malloc(data_size + 1);
+        if (item->data) {
+            memcpy(item->data, data, data_size);
+            ((char*)item->data)[data_size] = '\0';
+            item->data_size = data_size;
+        } else {
+            item->data = NULL;
+            item->data_size = 0;
+        }
+    } else {
+        item->data = NULL;
+        item->data_size = 0;
+    }
+
+    // Check if allocation failed
+    if (!item->mime_type || (data_size > 0 && !item->data)) {
+        if (item->mime_type) free(item->mime_type);
+        if (item->data) free(item->data);
+        free(item);
+        return NULL;
+    }
+
+    return item;
+}
+
+/**
+ * @brief Free content items array
+ *
+ * @param content Array of content items
+ * @param count Number of items in the array
+ */
+static void free_content_items(mcp_content_item_t** content, size_t count)
+{
+    if (!content) {
+        return;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        if (content[i]) {
+            free(content[i]->mime_type);
+            free(content[i]->data);
+            free(content[i]);
+        }
+    }
+
+    free(content);
+}
 
 /**
  * @brief HTTP client tool handler function.
@@ -68,8 +185,6 @@ mcp_error_code_t http_client_tool_handler(
     (void)server;
     (void)user_data;
     (void)name;
-
-    mcp_log_info("HTTP client tool called");
 
     // Initialize output parameters
     *is_error = false;
@@ -130,20 +245,7 @@ mcp_error_code_t http_client_tool_handler(
         }
     }
 
-    // Log the request
-    mcp_log_info("HTTP client request: %s %s", method, url);
-
-    // Log all parameters
-    mcp_log_info("HTTP client parameters:");
-    mcp_log_info("  URL: %s", url);
-    mcp_log_info("  Method: %s", method);
-    mcp_log_info("  Content-Type: %s", content_type ? content_type : "NULL");
-    mcp_log_info("  Headers: %s", headers ? headers : "NULL");
-    mcp_log_info("  Body: %s", body ? body : "NULL");
-    mcp_log_info("  Timeout: %u ms", timeout_ms);
-
     // Send the HTTP request
-    mcp_log_info("Sending HTTP request...");
     http_response_t* response = http_request(
         method,
         url,
@@ -155,31 +257,17 @@ mcp_error_code_t http_client_tool_handler(
     );
 
     if (!response) {
-        mcp_log_error("HTTP request failed");
         *is_error = true;
         *error_message = mcp_strdup("Failed to send HTTP request");
         return MCP_ERROR_INTERNAL_ERROR;
     }
 
-    mcp_log_info("HTTP request succeeded, status code: %d", response->status_code);
-
-    // Create content items based on the response
-    *content_count = 2; // One for metadata, one for the actual content
+    // Allocate content items array (metadata + response)
+    *content_count = 2;
     *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*) * *content_count);
     if (!*content) {
         *is_error = true;
         *error_message = mcp_strdup("Failed to allocate memory for content array");
-        http_response_free(response);
-        return MCP_ERROR_INTERNAL_ERROR;
-    }
-
-    // First content item: metadata as JSON
-    (*content)[0] = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
-    if (!(*content)[0]) {
-        *is_error = true;
-        *error_message = mcp_strdup("Failed to allocate memory for metadata content item");
-        free(*content);
-        *content = NULL;
         http_response_free(response);
         return MCP_ERROR_INTERNAL_ERROR;
     }
@@ -190,94 +278,86 @@ mcp_error_code_t http_client_tool_handler(
             "{\"status_code\": %d, \"content_length\": %zu, \"success\": true}",
             response->status_code, response->size);
 
-    // Initialize metadata content item - using text field instead of data for JSON compatibility
-    (*content)[0]->type = MCP_CONTENT_TYPE_JSON;
-    (*content)[0]->mime_type = mcp_strdup("application/json");
-    (*content)[0]->data = mcp_strdup(metadata_json);
-    (*content)[0]->data_size = strlen(metadata_json) + 1;
+    // Create metadata content item
+    (*content)[0] = create_content_item(
+        MCP_CONTENT_TYPE_JSON,
+        "application/json",
+        metadata_json,
+        strlen(metadata_json)
+    );
 
-    if (!(*content)[0]->mime_type || !(*content)[0]->data) {
+    // Create response content item
+    const char* mime_type = extract_mime_type(response->headers);
+    (*content)[1] = create_content_item(
+        MCP_CONTENT_TYPE_TEXT,
+        mime_type,
+        response->data,
+        response->size
+    );
+
+    // Check if content item creation failed
+    if (!(*content)[0] || !(*content)[1]) {
         *is_error = true;
-        *error_message = mcp_strdup("Failed to allocate memory for metadata content");
-        if ((*content)[0]->mime_type) free((*content)[0]->mime_type);
-        if ((*content)[0]->data) free((*content)[0]->data);
-        free((*content)[0]);
-        free(*content);
+        *error_message = mcp_strdup("Failed to create content items");
+        free_content_items(*content, *content_count);
         *content = NULL;
+        *content_count = 0;
         http_response_free(response);
         return MCP_ERROR_INTERNAL_ERROR;
     }
-
-    // Second content item: actual response content
-    (*content)[1] = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
-    if (!(*content)[1]) {
-        *is_error = true;
-        *error_message = mcp_strdup("Failed to allocate memory for response content item");
-        free((*content)[0]->mime_type);
-        free((*content)[0]->data);
-        free((*content)[0]);
-        free(*content);
-        *content = NULL;
-        http_response_free(response);
-        return MCP_ERROR_INTERNAL_ERROR;
-    }
-
-    // Determine MIME type from response headers
-    const char* mime_type = "text/plain";
-    if (response->headers) {
-        const char* content_type_header = strstr(response->headers, "Content-Type:");
-        if (content_type_header) {
-            content_type_header += 13; // Skip "Content-Type:"
-            // Skip whitespace
-            while (*content_type_header == ' ') content_type_header++;
-            // Extract MIME type (up to semicolon or newline)
-            char mime_type_buf[128] = {0};
-            size_t i = 0;
-            while (i < sizeof(mime_type_buf) - 1 && *content_type_header && *content_type_header != ';' && *content_type_header != '\r' && *content_type_header != '\n') {
-                mime_type_buf[i++] = *content_type_header++;
-            }
-            mime_type = mime_type_buf;
-        }
-    }
-
-    // Initialize response content item
-    (*content)[1]->type = MCP_CONTENT_TYPE_TEXT;
-    (*content)[1]->mime_type = mcp_strdup(mime_type);
-    (*content)[1]->data = NULL;
-    (*content)[1]->data_size = 0;
-
-    // Copy response data
-    if (response->data && response->size > 0) {
-        (*content)[1]->data = malloc(response->size + 1);
-        if ((*content)[1]->data) {
-            memcpy((*content)[1]->data, response->data, response->size);
-            ((char*)(*content)[1]->data)[response->size] = '\0';
-            (*content)[1]->data_size = response->size;
-        }
-    }
-
-    if (!(*content)[1]->mime_type || (response->size > 0 && !(*content)[1]->data)) {
-        *is_error = true;
-        *error_message = mcp_strdup("Failed to allocate memory for response content");
-        if ((*content)[1]->mime_type) free((*content)[1]->mime_type);
-        if ((*content)[1]->data) free((*content)[1]->data);
-        free((*content)[1]);
-        free((*content)[0]->mime_type);
-        free((*content)[0]->data);
-        free((*content)[0]);
-        free(*content);
-        *content = NULL;
-        http_response_free(response);
-        return MCP_ERROR_INTERNAL_ERROR;
-    }
-
-    // Content items already created above
-    *content_count = 2;
 
     // Clean up
     http_response_free(response);
 
     return MCP_ERROR_NONE;
+}
+
+/**
+ * @brief Extract HTTP headers and status code from response data
+ *
+ * @param response The HTTP response structure to update
+ * @return bool True if headers were successfully extracted, false otherwise
+ */
+static bool extract_http_headers(http_response_t* response)
+{
+    if (!response || !response->data || response->size < 4) {
+        return false;
+    }
+
+    // Find the end of headers marker
+    char* headers_end = strstr(response->data, "\r\n\r\n");
+    if (!headers_end || headers_end < response->data || headers_end >= response->data + response->size) {
+        return false;
+    }
+
+    // Calculate header size and body position
+    size_t headers_end_offset = headers_end - response->data;
+    size_t headers_size = headers_end_offset + 2; // Include the first \r\n
+    size_t headers_total_size = headers_end_offset + 4; // Include \r\n\r\n
+
+    // Allocate and copy headers
+    response->headers = (char*)malloc(headers_size + 1);
+    if (!response->headers) {
+        return false;
+    }
+
+    memcpy(response->headers, response->data, headers_size);
+    response->headers[headers_size] = '\0';
+
+    // Extract status code
+    char* status_line = response->headers;
+    char* space = strchr(status_line, ' ');
+    if (space) {
+        response->status_code = atoi(space + 1);
+    }
+
+    // Move body to beginning of buffer
+    size_t body_size = response->size - headers_total_size;
+    memmove(response->data, response->data + headers_total_size, body_size);
+    response->size = body_size;
+    response->data[response->size] = '\0';
+
+    return true;
 }
 
 /**
@@ -307,18 +387,11 @@ static http_response_t* http_request(const char* method, const char* url,
     char* path = NULL;
     bool use_ssl = false;
 
-    mcp_log_info("Parsing URL: %s", url);
     char* url_copy = parse_url(url, &host, &port, &path, &use_ssl);
     if (!url_copy) {
         mcp_log_error("Failed to parse URL: %s", url);
         return NULL;
     }
-
-    mcp_log_info("URL parsed - host: %s, port: %d, path: %s, use_ssl: %s",
-                host ? host : "NULL",
-                port,
-                path ? path : "NULL",
-                use_ssl ? "true" : "false");
 
     // Check for SSL
     if (use_ssl) {
@@ -327,21 +400,16 @@ static http_response_t* http_request(const char* method, const char* url,
         return NULL;
     }
 
-    // Log connection attempt
-    mcp_log_info("Connecting to %s:%d...", host, port);
-
-    // Connect to server using mcp_socket_utils
-    socket_t sock = mcp_socket_connect(host, (uint16_t)port, timeout_ms);
+    // Connect to server using non-blocking socket
+    socket_t sock = mcp_socket_connect_nonblocking(host, (uint16_t)port, timeout_ms);
     if (sock == MCP_INVALID_SOCKET) {
-        mcp_log_error("Failed to connect to server: %s:%d (error: %d)", host, port, mcp_socket_get_last_error());
+        mcp_log_error("Failed to connect to server: %s:%d", host, port);
         free(url_copy);
         return NULL;
     }
 
-    mcp_log_info("Connected to %s:%d successfully", host, port);
-
     // Build HTTP request
-    char request[8192] = {0};
+    char request[HTTP_CLIENT_REQUEST_BUFFER_SIZE] = {0};
     int request_len = 0;
 
     // Request line
@@ -377,7 +445,7 @@ static http_response_t* http_request(const char* method, const char* url,
     // End of headers
     request_len += snprintf(request + request_len, sizeof(request) - request_len, "\r\n");
 
-    // Send request headers using mcp_socket_utils
+    // Send request headers
     if (mcp_socket_send_exact(sock, request, request_len, NULL) != 0) {
         mcp_log_error("Failed to send HTTP request headers");
         free(url_copy);
@@ -385,7 +453,7 @@ static http_response_t* http_request(const char* method, const char* url,
         return NULL;
     }
 
-    // Send request body (if provided) using mcp_socket_utils
+    // Send request body (if provided)
     if (data && data_size > 0) {
         if (mcp_socket_send_exact(sock, (const char*)data, data_size, NULL) != 0) {
             mcp_log_error("Failed to send HTTP request body");
@@ -405,7 +473,7 @@ static http_response_t* http_request(const char* method, const char* url,
     }
 
     // Allocate initial buffer for response
-    response->capacity = 4096;
+    response->capacity = HTTP_CLIENT_INITIAL_BUFFER_SIZE;
     response->data = (char*)malloc(response->capacity);
     if (!response->data) {
         mcp_log_error("Failed to allocate memory for HTTP response data");
@@ -416,25 +484,17 @@ static http_response_t* http_request(const char* method, const char* url,
     }
 
     // Receive response
-    char buffer[4096];
+    char buffer[HTTP_CLIENT_INITIAL_BUFFER_SIZE];
     int bytes_received;
     bool headers_complete = false;
-    char* headers_end = NULL;
-    size_t headers_end_offset = 0;
-
-    mcp_log_info("Waiting for response from server...");
 
     // Use mcp_socket_wait_readable to check if data is available
     while (mcp_socket_wait_readable(sock, (int)timeout_ms, NULL) > 0) {
-        // Receive data using standard recv since mcp_socket_utils doesn't have a non-exact receive function
+        // Receive data
         bytes_received = recv(sock, buffer, sizeof(buffer) - 1, 0);
         if (bytes_received <= 0) {
-            mcp_log_info("Connection closed or error (bytes_received=%d, error=%d)",
-                        bytes_received, mcp_socket_get_last_error());
             break; // Connection closed or error
         }
-
-        mcp_log_info("Received %d bytes from server", bytes_received);
 
         // Ensure buffer is null-terminated
         buffer[bytes_received] = '\0';
@@ -442,6 +502,10 @@ static http_response_t* http_request(const char* method, const char* url,
         // Check if we need to resize the response buffer
         if (response->size + bytes_received >= response->capacity) {
             size_t new_capacity = response->capacity * 2;
+            if (new_capacity > HTTP_CLIENT_MAX_RESPONSE_SIZE) {
+                new_capacity = HTTP_CLIENT_MAX_RESPONSE_SIZE;
+            }
+
             char* new_data = (char*)realloc(response->data, new_capacity);
             if (!new_data) {
                 mcp_log_error("Failed to resize HTTP response buffer");
@@ -460,60 +524,8 @@ static http_response_t* http_request(const char* method, const char* url,
         response->data[response->size] = '\0';
 
         // Check if we've received the complete headers
-        if (!headers_complete) {
-            mcp_log_info("Checking for headers end marker...");
-            // Make sure response->data is valid and contains at least 4 bytes
-            if (response->data && response->size >= 4) {
-                headers_end = strstr(response->data, "\r\n\r\n");
-                if (headers_end) {
-                    // Sanity check to ensure headers_end is within the response buffer
-                    if (headers_end >= response->data && headers_end < response->data + response->size) {
-                        headers_end_offset = headers_end - response->data;
-                        mcp_log_info("Headers end marker found at offset %zu", headers_end_offset);
-                    } else {
-                        mcp_log_error("Headers end marker found but pointer is out of bounds");
-                        headers_end = NULL;
-                    }
-                } else {
-                    mcp_log_info("Headers end marker not found");
-                }
-            } else {
-                mcp_log_error("Response data is invalid or too small");
-                headers_end = NULL;
-            }
-
-            if (headers_end) {
-                headers_complete = true;
-
-                // Extract headers
-                size_t headers_size = headers_end_offset + 2; // Include the first \r\n
-                mcp_log_info("Allocating %zu bytes for headers", headers_size + 1);
-                response->headers = (char*)malloc(headers_size + 1);
-                if (response->headers) {
-                    memcpy(response->headers, response->data, headers_size);
-                    response->headers[headers_size] = '\0';
-                    mcp_log_info("Headers extracted: %s", response->headers);
-
-                    // Extract status code
-                    char* status_line = response->headers;
-                    if (status_line && *status_line) {
-                        mcp_log_info("Status line: %s", status_line);
-                        char* space = strchr(status_line, ' ');
-                        if (space) {
-                            response->status_code = atoi(space + 1);
-                            mcp_log_info("Status code extracted: %d", response->status_code);
-                        } else {
-                            mcp_log_warn("No space found in status line, cannot extract status code");
-                        }
-                    } else {
-                        mcp_log_warn("Empty status line");
-                    }
-                } else {
-                    mcp_log_error("Failed to allocate memory for headers");
-                }
-            } else {
-                mcp_log_info("Headers end marker not found yet");
-            }
+        if (!headers_complete && strstr(response->data, "\r\n\r\n")) {
+            headers_complete = true;
         }
 
         // Check if we've reached the maximum response size
@@ -524,8 +536,6 @@ static http_response_t* http_request(const char* method, const char* url,
     }
 
     mcp_socket_close(sock);
-
-    // Clean up
     free(url_copy);
 
     // If we didn't get any data, return error
@@ -535,87 +545,10 @@ static http_response_t* http_request(const char* method, const char* url,
         return NULL;
     }
 
-    // If we didn't find the headers, extract them now
-    if (!headers_complete) {
-        mcp_log_info("Headers not complete, checking for headers end marker...");
-        // Make sure response->data is valid and contains at least 4 bytes
-        if (response->data && response->size >= 4) {
-            headers_end = strstr(response->data, "\r\n\r\n");
-            if (headers_end) {
-                // Sanity check to ensure headers_end is within the response buffer
-                if (headers_end >= response->data && headers_end < response->data + response->size) {
-                    headers_end_offset = headers_end - response->data;
-                    mcp_log_info("Headers end marker found at offset %zu", headers_end_offset);
-                } else {
-                    mcp_log_error("Headers end marker found but pointer is out of bounds");
-                    headers_end = NULL;
-                }
-            } else {
-                mcp_log_info("Headers end marker not found");
-            }
-        } else {
-            mcp_log_error("Response data is invalid or too small");
-            headers_end = NULL;
-        }
-
-        if (headers_end) {
-            // Extract headers
-            size_t headers_size = headers_end_offset + 2; // Include the first \r\n
-            mcp_log_info("Allocating %zu bytes for headers", headers_size + 1);
-            response->headers = (char*)malloc(headers_size + 1);
-            if (response->headers) {
-                memcpy(response->headers, response->data, headers_size);
-                response->headers[headers_size] = '\0';
-                mcp_log_info("Headers extracted: %s", response->headers);
-
-                // Extract status code
-                char* status_line = response->headers;
-                if (status_line && *status_line) {
-                    mcp_log_info("Status line: %s", status_line);
-                    char* space = strchr(status_line, ' ');
-                    if (space) {
-                        response->status_code = atoi(space + 1);
-                        mcp_log_info("Status code extracted: %d", response->status_code);
-                    } else {
-                        mcp_log_warn("No space found in status line, cannot extract status code");
-                    }
-                } else {
-                    mcp_log_warn("Empty status line");
-                }
-            } else {
-                mcp_log_error("Failed to allocate memory for headers");
-            }
-        } else {
-            mcp_log_warn("Headers end marker not found in complete response");
-        }
+    // Extract headers and move body to beginning of buffer
+    if (!extract_http_headers(response)) {
+        mcp_log_warn("Failed to extract HTTP headers, returning raw response");
     }
-
-    // If we found headers, move the body to the beginning of the data buffer
-    if (headers_end) {
-        mcp_log_info("Moving body to beginning of buffer");
-        size_t headers_size = headers_end_offset + 4; // Include the \r\n\r\n
-
-        // Sanity check to prevent integer overflow
-        if (headers_size > response->size) {
-            mcp_log_error("Headers size (%zu) is greater than response size (%zu), keeping response as is",
-                         headers_size, response->size);
-        } else {
-            size_t body_size = response->size - headers_size;
-
-            mcp_log_info("Headers size: %zu, Body size: %zu", headers_size, body_size);
-
-            // Move body to beginning of buffer
-            memmove(response->data, response->data + headers_size, body_size);
-            response->size = body_size;
-            response->data[response->size] = '\0';
-
-            mcp_log_info("Body moved successfully");
-        }
-    } else {
-        mcp_log_warn("No headers end marker found, keeping response as is");
-    }
-
-    mcp_log_info("HTTP request completed successfully");
 
     return response;
 }
@@ -658,49 +591,34 @@ static char* parse_url(const char* url, char** host, int* port, char** path, boo
 
     // Default values
     *host = NULL;
-    *port = 80;
+    *port = 80;  // Default HTTP port
     *path = NULL;
     *use_ssl = false;
 
-    // Check for protocol
-    char* protocol_end = strstr(url_copy, "://");
+    // Parse protocol (http:// or https://)
     char* host_start = url_copy;
-
-    if (protocol_end) {
-        // Null-terminate the protocol
-        *protocol_end = '\0';
-
-        // Check if it's HTTPS
-        if (strcmp(url_copy, "https") == 0) {
-            *use_ssl = true;
-            *port = 443;
-        }
-
-        // Move host_start past the protocol
-        host_start = protocol_end + 3;
+    if (strncmp(url_copy, "http://", 7) == 0) {
+        host_start = url_copy + 7;
+    } else if (strncmp(url_copy, "https://", 8) == 0) {
+        host_start = url_copy + 8;
+        *use_ssl = true;
+        *port = 443;  // Default HTTPS port
     }
 
     // Find the path
     char* path_start = strchr(host_start, '/');
     if (path_start) {
-        // Null-terminate the host
-        *path_start = '\0';
-
-        // Set the path (skip the leading slash)
-        *path = path_start + 1;
+        *path_start = '\0';  // Null-terminate the host:port part
+        *path = path_start + 1;  // Skip the leading slash
     } else {
-        // No path, use empty string
         static char empty_path[] = "";
         *path = empty_path;
     }
 
-    // Check for port
+    // Check for port in host
     char* port_start = strchr(host_start, ':');
     if (port_start) {
-        // Null-terminate the host
-        *port_start = '\0';
-
-        // Parse the port
+        *port_start = '\0';  // Null-terminate the host part
         *port = atoi(port_start + 1);
     }
 
