@@ -1,7 +1,7 @@
 #include "internal/websocket_client_internal.h"
 
 // Helper function to resize receive buffer with optimized growth strategy
-int ws_client_resize_receive_buffer(ws_client_data_t* data, size_t needed_size) {
+static int ws_client_resize_receive_buffer(ws_client_data_t* data, size_t needed_size) {
     if (!data) {
         return -1;
     }
@@ -40,7 +40,7 @@ int ws_client_resize_receive_buffer(ws_client_data_t* data, size_t needed_size) 
 }
 
 // Helper function to process a complete message with optimized memory handling
-int ws_client_process_complete_message(ws_client_data_t* data) {
+static int ws_client_process_complete_message(ws_client_data_t* data) {
     if (!data) {
         return -1;
     }

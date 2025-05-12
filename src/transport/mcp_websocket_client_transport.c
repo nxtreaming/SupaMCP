@@ -12,7 +12,6 @@ struct lws_protocols client_protocols[3];
 // Client callback function implementation
 static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
                       void* user, void* in, size_t len) {
-    // Suppress unused parameter warning
     (void)user;
     struct lws_context* context = lws_get_context(wsi);
     ws_client_data_t* data = (ws_client_data_t*)lws_context_user(context);
@@ -30,7 +29,6 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
     switch (reason) {
         case LWS_CALLBACK_CLIENT_ESTABLISHED: {
-            // Connection established
             mcp_log_info("WebSocket client connection established");
             data->wsi = wsi;
 
@@ -54,7 +52,6 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
-            // Connection error
             mcp_log_error("WebSocket client connection error: %s",
                          in ? (char*)in : "unknown error");
             data->wsi = NULL;
@@ -68,7 +65,6 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLIENT_CLOSED: {
-            // Connection closed
             mcp_log_info("WebSocket client connection closed");
             data->wsi = NULL;
 
@@ -81,7 +77,6 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLIENT_RECEIVE_PONG: {
-            // Received pong from server
             mcp_log_debug("Received pong from server");
 
             // Update pong time and activity time
@@ -95,17 +90,11 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLIENT_RECEIVE: {
-            // Receive data
-
-            // Handle the received data
             ws_client_handle_received_data(data, in, len, lws_is_final_fragment(wsi));
             break;
         }
 
         case LWS_CALLBACK_CLIENT_WRITEABLE: {
-            // Ready to send data to server
-
-            // Update activity time
             ws_client_update_activity(data);
 
             // Check if we need to send a ping
@@ -165,7 +154,7 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 }
 
 // Helper function to clean up resources
-void ws_client_cleanup_resources(ws_client_data_t* data) {
+static void ws_client_cleanup_resources(ws_client_data_t* data) {
     if (!data) {
         return;
     }
@@ -189,7 +178,6 @@ void ws_client_cleanup_resources(ws_client_data_t* data) {
         data->wsi = NULL; // wsi is owned by context, so it's invalid now
     }
 
-    // Free receive buffer
     if (data->receive_buffer) {
         free(data->receive_buffer);
         data->receive_buffer = NULL;
@@ -197,7 +185,6 @@ void ws_client_cleanup_resources(ws_client_data_t* data) {
         data->receive_buffer_used = 0;
     }
 
-    // Free response data
     if (data->response_data) {
         free(data->response_data);
         data->response_data = NULL;
@@ -248,7 +235,6 @@ static int ws_client_transport_send(mcp_transport_t* transport, const void* data
 
     ws_client_data_t* ws_data = (ws_client_data_t*)transport->transport_data;
 
-    // Check if client is running
     if (!ws_data->running) {
         mcp_log_error("WebSocket client is not running");
         return -1;
@@ -259,7 +245,6 @@ static int ws_client_transport_send(mcp_transport_t* transport, const void* data
         return -1;
     }
 
-    // Send the message
     return ws_client_send_buffer(ws_data, data, size);
 }
 
@@ -270,8 +255,6 @@ static int ws_client_transport_receive(mcp_transport_t* transport, char** data, 
     }
 
     ws_client_data_t* ws_data = (ws_client_data_t*)transport->transport_data;
-
-    // Check if client is running
     if (!ws_data->running) {
         mcp_log_error("WebSocket client is not running");
         return -1;
@@ -398,8 +381,6 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
     }
 
     ws_client_data_t* ws_data = (ws_client_data_t*)transport->transport_data;
-
-    // Check if client is running
     if (!ws_data->running) {
         mcp_log_error("WebSocket client is not running");
         return -1;
@@ -620,8 +601,6 @@ static int ws_client_transport_stop(mcp_transport_t* transport) {
     }
 
     ws_client_data_t* data = (ws_client_data_t*)transport->transport_data;
-
-    // Check if already stopped
     if (!data->running) {
         mcp_log_debug("WebSocket client already stopped");
         return 0;
@@ -724,8 +703,6 @@ int mcp_transport_websocket_client_is_connected(mcp_transport_t* transport) {
     }
 
     ws_client_data_t* data = (ws_client_data_t*)transport->transport_data;
-
-    // Check if client is running
     if (!data->running) {
         return -1;
     }

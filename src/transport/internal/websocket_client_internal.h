@@ -70,8 +70,6 @@ typedef struct {
 } ws_client_data_t;
 
 // Buffer management functions
-int ws_client_resize_receive_buffer(ws_client_data_t* data, size_t needed_size);
-int ws_client_process_complete_message(ws_client_data_t* data);
 int ws_client_handle_received_data(ws_client_data_t* data, void* in, size_t len, bool is_final);
 int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t size);
 
@@ -95,8 +93,5 @@ int ws_client_send_and_wait_response(
 
 // Thread functions
 void* ws_client_event_thread(void* arg);
-
-// Cleanup function
-void ws_client_cleanup_resources(ws_client_data_t* data);
 
 #endif // WEBSOCKET_CLIENT_INTERNAL_H
