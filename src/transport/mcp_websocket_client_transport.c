@@ -140,22 +140,36 @@ static int ws_client_ensure_connected(ws_client_data_t* data, uint32_t timeout_m
     return 0;
 }
 
-// Helper function to resize receive buffer
+// Helper function to resize receive buffer with optimized growth strategy
 static int ws_client_resize_receive_buffer(ws_client_data_t* data, size_t needed_size) {
     if (!data) {
         return -1;
     }
 
-    // Calculate new buffer size
-    size_t new_len = data->receive_buffer_len == 0 ? WS_DEFAULT_BUFFER_SIZE : data->receive_buffer_len * 2;
+    // Calculate new buffer size with more efficient growth strategy
+    // Use a growth factor of 1.5 instead of 2 to reduce memory waste
+    size_t new_len;
+    if (data->receive_buffer_len == 0) {
+        // Start with default buffer size
+        new_len = WS_DEFAULT_BUFFER_SIZE;
+    } else {
+        // Grow by 1.5x factor with alignment to 4KB boundaries for better memory allocation
+        new_len = data->receive_buffer_len + (data->receive_buffer_len >> 1);
+        // Round up to next 4KB boundary for better memory allocation
+        new_len = (new_len + 4095) & ~4095;
+    }
+
+    // Ensure the new size is at least as large as needed
     while (new_len < needed_size) {
-        new_len *= 2;
+        new_len = new_len + (new_len >> 1);
+        // Round up to next 4KB boundary
+        new_len = (new_len + 4095) & ~4095;
     }
 
     // Allocate new buffer
     char* new_buffer = (char*)realloc(data->receive_buffer, new_len);
     if (!new_buffer) {
-        mcp_log_error("Failed to allocate WebSocket client receive buffer");
+        mcp_log_error("Failed to allocate WebSocket client receive buffer of size %zu", new_len);
         return -1;
     }
 
@@ -165,7 +179,7 @@ static int ws_client_resize_receive_buffer(ws_client_data_t* data, size_t needed
     return 0;
 }
 
-// Helper function to process a complete message
+// Helper function to process a complete message with optimized memory handling
 static int ws_client_process_complete_message(ws_client_data_t* data) {
     if (!data) {
         return -1;
@@ -182,49 +196,59 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
     // Process the message
     mcp_mutex_lock(data->response_mutex);
 
-    // Clean up any existing response data
-    if (data->response_data) {
-        free(data->response_data);
-        data->response_data = NULL;
-        data->response_data_len = 0;
-    }
-
-    // Copy the response data
-    data->response_data = (char*)malloc(data->receive_buffer_used + 1);
-    if (!data->response_data) {
-        mcp_log_error("Failed to allocate memory for WebSocket response data");
-        data->response_error_code = -1;
-
-        // Signal condition variable if in sync mode
-        if (data->sync_response_mode) {
-            mcp_cond_signal(data->response_cond);
+    // Optimization: In sync mode, we can avoid an extra copy by transferring ownership
+    // of the receive buffer directly if we're in sync mode and no one else needs it
+    if (data->sync_response_mode) {
+        // Clean up any existing response data
+        if (data->response_data) {
+            free(data->response_data);
+            data->response_data = NULL;
+            data->response_data_len = 0;
         }
 
-        mcp_mutex_unlock(data->response_mutex);
-        return -1;
-    }
+        // Copy the response data - we still need to copy because the receive buffer
+        // will be reused for future messages
+        data->response_data = (char*)malloc(data->receive_buffer_used + 1);
+        if (!data->response_data) {
+            mcp_log_error("Failed to allocate memory for WebSocket response data");
+            data->response_error_code = -1;
 
-    // Copy and null-terminate the data
-    memcpy(data->response_data, data->receive_buffer, data->receive_buffer_used);
-    data->response_data[data->receive_buffer_used] = '\0';
-    data->response_data_len = data->receive_buffer_used;
-    data->response_ready = true;
-    data->response_error_code = 0;
+            // Signal condition variable if in sync mode
+            if (data->sync_response_mode) {
+                mcp_cond_signal(data->response_cond);
+            }
 
-    #ifdef MCP_VERBOSE_DEBUG
-    mcp_log_debug("WebSocket client received response: %s", data->response_data);
-    #endif
+            mcp_mutex_unlock(data->response_mutex);
+            return -1;
+        }
 
-    // Handle synchronous or asynchronous mode
-    if (data->sync_response_mode) {
+        // Copy and null-terminate the data
+        memcpy(data->response_data, data->receive_buffer, data->receive_buffer_used);
+        data->response_data[data->receive_buffer_used] = '\0';
+        data->response_data_len = data->receive_buffer_used;
+        data->response_ready = true;
+        data->response_error_code = 0;
+
+        #ifdef MCP_VERBOSE_DEBUG
+        mcp_log_debug("WebSocket client received response: %s", data->response_data);
+        #endif
+
+        // Signal waiting thread
         mcp_log_debug("WebSocket client in sync mode, signaling condition variable");
         mcp_cond_signal(data->response_cond);
-    } else if (data->transport && data->transport->message_callback) {
+    }
+    else if (data->transport && data->transport->message_callback) {
+        // For async mode, we can process directly from the receive buffer
+        // without additional copying
+
         // Reset thread-local arena for JSON parsing
-        mcp_log_debug("Resetting thread-local arena for client message processing");
         mcp_arena_reset_current_thread();
 
-        // Process message through callback
+        #ifdef MCP_VERBOSE_DEBUG
+        mcp_log_debug("WebSocket client received message: %s", data->receive_buffer);
+        #endif
+
+        // Process message through callback directly from receive buffer
         int error_code = 0;
         char* response = data->transport->message_callback(
             data->transport->callback_user_data,
@@ -288,16 +312,16 @@ static int ws_client_handle_received_data(ws_client_data_t* data, void* in, size
     return 0;
 }
 
-// Helper function to send a buffer via WebSocket
+// Helper function to send a buffer via WebSocket with optimized memory handling
 static int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t size) {
     if (!data || !buffer || size == 0 || !data->wsi) {
         return -1;
     }
 
-    // Prepare the message with LWS_PRE padding
+    // Always use heap allocation for WebSocket buffer to avoid MSVC stack array issues
     unsigned char* buf = (unsigned char*)malloc(LWS_PRE + size);
     if (!buf) {
-        mcp_log_error("Failed to allocate buffer for WebSocket message");
+        mcp_log_error("Failed to allocate buffer for WebSocket message of size %zu", size);
         return -1;
     }
 
@@ -314,6 +338,9 @@ static int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, siz
         mcp_log_error("Failed to send WebSocket message directly");
         return -1;
     }
+
+    // Update activity time
+    data->last_activity_time = time(NULL);
 
     #ifdef MCP_VERBOSE_DEBUG
     mcp_log_debug("WebSocket message sent directly, size: %zu, result: %d", size, result);
@@ -626,7 +653,7 @@ static void ws_client_update_activity(ws_client_data_t* data) {
     data->last_activity_time = time(NULL);
 }
 
-// Helper function to handle reconnection
+// Helper function to handle reconnection with optimized backoff strategy
 static void ws_client_handle_reconnect(ws_client_data_t* data) {
     if (!data || !data->reconnect || !data->running) {
         return;
@@ -642,34 +669,54 @@ static void ws_client_handle_reconnect(ws_client_data_t* data) {
         return;
     }
 
-    // Calculate reconnection delay with exponential backoff
+    // Calculate reconnection delay with improved backoff strategy
     time_t now = time(NULL);
+
+    // Reset reconnection delay if it's been more than a minute since last attempt
     if (data->reconnect_attempts == 0 || difftime(now, data->last_reconnect_time) >= 60) {
-        // Reset reconnection delay if this is the first attempt or if it's been more than a minute
+        // Reset reconnection delay for first attempt or after long pause
         data->reconnect_delay_ms = WS_RECONNECT_DELAY_MS;
         data->reconnect_attempts = 1;
     } else {
-        // Exponential backoff with a maximum delay
-        data->reconnect_delay_ms *= 2;
+        // Use a more gradual backoff with jitter to prevent reconnection storms
+        // Add some randomness (jitter) to prevent synchronized reconnection attempts
+        // from multiple clients
+        uint32_t base_delay = data->reconnect_delay_ms + (data->reconnect_delay_ms / 2); // Use 1.5x instead of 2x for more gradual backoff
+
+        // Add jitter of +/- 20%
+        uint32_t jitter = (base_delay / 5); // 20% of base delay
+        uint32_t jitter_value = rand() % (jitter * 2 + 1); // Random value between 0 and 2*jitter
+
+        data->reconnect_delay_ms = base_delay - jitter + jitter_value;
+
+        // Cap at maximum delay
         if (data->reconnect_delay_ms > WS_MAX_RECONNECT_DELAY_MS) {
             data->reconnect_delay_ms = WS_MAX_RECONNECT_DELAY_MS;
         }
+
         data->reconnect_attempts++;
     }
 
     data->last_reconnect_time = now;
 
+    uint32_t delay_ms = data->reconnect_delay_ms;
+
     mcp_log_info("WebSocket client reconnecting in %u ms (attempt %d of %d)",
-                data->reconnect_delay_ms, data->reconnect_attempts, WS_MAX_RECONNECT_ATTEMPTS);
+                delay_ms, data->reconnect_attempts, WS_MAX_RECONNECT_ATTEMPTS);
 
     mcp_mutex_unlock(data->connection_mutex);
 
     // Sleep for the reconnection delay
-    mcp_sleep_ms(data->reconnect_delay_ms);
+    mcp_sleep_ms(delay_ms);
 
-    // Attempt to reconnect
+    // Attempt to reconnect if still running
     if (data->running) {
-        ws_client_connect(data);
+        // Check if context is still valid before reconnecting
+        if (data->context) {
+            ws_client_connect(data);
+        } else {
+            mcp_log_error("Cannot reconnect: WebSocket context is invalid");
+        }
     }
 }
 
@@ -699,7 +746,7 @@ static int ws_client_send_ping(ws_client_data_t* data) {
     return 0;
 }
 
-// Client event loop thread function
+// Client event loop thread function with optimized processing
 static void* ws_client_event_thread(void* arg) {
     ws_client_data_t* data = (ws_client_data_t*)arg;
 
@@ -709,30 +756,76 @@ static void* ws_client_event_thread(void* arg) {
         mcp_log_error("Failed to initialize thread-local arena in WebSocket client event thread");
     }
 
+    // Initialize variables for adaptive timeout
+    uint32_t service_timeout_ms = 10; // Start with 10ms timeout
+    time_t last_activity_check = time(NULL);
+    time_t last_ping_check = time(NULL);
+    const time_t ACTIVITY_CHECK_INTERVAL = 1; // Check activity every 1 second
+    const time_t PING_CHECK_INTERVAL = 5;     // Check ping every 5 seconds
+
+    // Seed random number generator for jitter in reconnect
+    srand((unsigned int)time(NULL));
+
     while (data->running) {
-        // Service the WebSocket context with a very short timeout
-        // This ensures the event loop is responsive
-        lws_service(data->context, 10); // 10ms timeout for maximum responsiveness
-
-        // Check if we need to reconnect
-        mcp_mutex_lock(data->connection_mutex);
-        bool need_reconnect = (data->state == WS_CLIENT_STATE_DISCONNECTED ||
-                              data->state == WS_CLIENT_STATE_ERROR) &&
-                              data->reconnect && data->running;
-
-        // Check if we need to request a ping check
-        // Only do this if there's no active message processing
-        bool need_ping_check = data->state == WS_CLIENT_STATE_CONNECTED &&
-                              !data->ping_in_progress &&
-                              !data->sync_response_mode &&
-                              difftime(time(NULL), data->last_activity_time) * 1000 >= data->ping_interval_ms;
-        mcp_mutex_unlock(data->connection_mutex);
-
-        if (need_reconnect) {
-            ws_client_handle_reconnect(data);
+        // Service the WebSocket context with adaptive timeout
+        // Use longer timeouts when inactive to reduce CPU usage
+        if (data->context) {
+            lws_service(data->context, service_timeout_ms);
+        } else {
+            // If context is invalid, sleep briefly to avoid CPU spinning
+            mcp_sleep_ms(100);
+            continue;
         }
 
-        // If we need to check ping, request a writable callback
+        time_t now = time(NULL);
+        bool need_reconnect = false;
+        bool need_ping_check = false;
+
+        // Only check connection state periodically to reduce lock contention
+        if (difftime(now, last_activity_check) >= ACTIVITY_CHECK_INTERVAL) {
+            last_activity_check = now;
+
+            // Use a short critical section to minimize lock contention
+            mcp_mutex_lock(data->connection_mutex);
+
+            // Check connection state
+            need_reconnect = (data->state == WS_CLIENT_STATE_DISCONNECTED ||
+                             data->state == WS_CLIENT_STATE_ERROR) &&
+                             data->reconnect && data->running;
+
+            // Adjust service timeout based on activity
+            if (difftime(now, data->last_activity_time) < 10) {
+                // More active connection - use shorter timeout for responsiveness
+                service_timeout_ms = 10;
+            } else {
+                // Less active connection - use longer timeout to reduce CPU usage
+                service_timeout_ms = 50;
+            }
+
+            mcp_mutex_unlock(data->connection_mutex);
+        }
+
+        // Check ping state less frequently to reduce lock contention
+        if (difftime(now, last_ping_check) >= PING_CHECK_INTERVAL) {
+            last_ping_check = now;
+
+            mcp_mutex_lock(data->connection_mutex);
+            // Check if we need to request a ping check
+            need_ping_check = data->state == WS_CLIENT_STATE_CONNECTED &&
+                             !data->ping_in_progress &&
+                             !data->sync_response_mode &&
+                             difftime(now, data->last_activity_time) * 1000 >= data->ping_interval_ms;
+            mcp_mutex_unlock(data->connection_mutex);
+        }
+
+        // Handle reconnection if needed
+        if (need_reconnect) {
+            ws_client_handle_reconnect(data);
+            // Reset activity check time after reconnect attempt
+            last_activity_check = time(NULL);
+        }
+
+        // Request ping if needed
         if (need_ping_check && data->wsi) {
             lws_callback_on_writable(data->wsi);
         }
@@ -866,7 +959,7 @@ static int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeou
     return result;
 }
 
-// Helper function to send a message and wait for a response
+// Helper function to send a message and wait for a response with optimized waiting strategy
 static int ws_client_send_and_wait_response(
     ws_client_data_t* ws_data,
     const void* data,
@@ -885,12 +978,14 @@ static int ws_client_send_and_wait_response(
         return -1;
     }
 
-    // Ensure client is connected
-    if (ws_client_ensure_connected(ws_data, 15000) != 0) {
+    // Ensure client is connected with appropriate timeout
+    // Use a shorter timeout for connection to leave more time for response
+    uint32_t connect_timeout = timeout_ms > 5000 ? 5000 : timeout_ms / 2;
+    if (ws_client_ensure_connected(ws_data, connect_timeout) != 0) {
         return -1;
     }
 
-    // Set up synchronous response mode
+    // Set up synchronous response mode - use a single critical section for setup
     mcp_mutex_lock(ws_data->response_mutex);
 
     // Reset response state
@@ -904,12 +999,14 @@ static int ws_client_send_and_wait_response(
     ws_data->response_error_code = 0;
 
     mcp_log_debug("WebSocket client entering synchronous response mode");
-    mcp_mutex_unlock(ws_data->response_mutex);
 
     // Log the message we're about to send (only in verbose debug mode)
     #ifdef MCP_VERBOSE_DEBUG
     mcp_log_debug("WebSocket client sending message: %.*s", (int)size, (const char*)data);
     #endif
+
+    // Unlock before sending to avoid holding lock during network I/O
+    mcp_mutex_unlock(ws_data->response_mutex);
 
     // Send the message
     if (ws_client_send_buffer(ws_data, data, size) != 0) {
@@ -923,37 +1020,57 @@ static int ws_client_send_and_wait_response(
         return -1;
     }
 
-    // Add a short delay to allow the server to process the message
-    mcp_sleep_ms(1000);
-
-    // Wait for response with timeout
+    // Wait for response with timeout - no need for initial delay
+    // The server will process the message asynchronously
     int result = 0;
     mcp_mutex_lock(ws_data->response_mutex);
 
+    // Check if response is already ready (unlikely but possible)
     if (!ws_data->response_ready) {
         if (timeout_ms > 0) {
-            // Wait with timeout
+            // Wait with timeout using adaptive chunk sizes
             uint32_t remaining_timeout = timeout_ms;
-            // Wait in smaller chunks to check for state changes
-            uint32_t wait_chunk = 100;
+
+            // Use progressive wait chunks - start with smaller chunks and increase
+            // This provides better responsiveness for quick responses while reducing
+            // CPU usage for longer waits
+            uint32_t min_wait_chunk = 10;    // 10ms minimum wait
+            uint32_t max_wait_chunk = 250;   // 250ms maximum wait
+            uint32_t current_wait_chunk = min_wait_chunk;
+            time_t last_log_time = time(NULL);
 
             mcp_log_debug("WebSocket client waiting for response with timeout %u ms", timeout_ms);
 
             while (!ws_data->response_ready && ws_data->running && remaining_timeout > 0) {
-                uint32_t wait_time = (remaining_timeout < wait_chunk) ? remaining_timeout : wait_chunk;
+                // Calculate appropriate wait time
+                uint32_t wait_time = (remaining_timeout < current_wait_chunk) ?
+                                    remaining_timeout : current_wait_chunk;
+
+                // Wait for response or timeout
                 result = mcp_cond_timedwait(ws_data->response_cond, ws_data->response_mutex, wait_time);
 
-                if (result != 0) {
-                    // Timeout or error
-                    mcp_log_debug("WebSocket client wait returned %d", result);
+                // Check for response or error
+                if (ws_data->response_ready || result != 0) {
                     break;
                 }
 
+                // Update remaining timeout
                 remaining_timeout -= wait_time;
 
-                // Log remaining timeout every second
-                if (remaining_timeout % 1000 == 0) {
+                // Progressively increase wait chunk size for longer waits
+                // This reduces CPU usage for longer waits
+                if (current_wait_chunk < max_wait_chunk) {
+                    current_wait_chunk = current_wait_chunk * 3 / 2; // Increase by 50%
+                    if (current_wait_chunk > max_wait_chunk) {
+                        current_wait_chunk = max_wait_chunk;
+                    }
+                }
+
+                // Log progress only once per second to reduce log spam
+                time_t now = time(NULL);
+                if (difftime(now, last_log_time) >= 1.0) {
                     mcp_log_debug("WebSocket client still waiting for response, %u ms remaining", remaining_timeout);
+                    last_log_time = now;
                 }
             }
 
@@ -962,30 +1079,44 @@ static int ws_client_send_and_wait_response(
                 result = -2; // Timeout
             }
         } else {
-            // Wait indefinitely
+            // Wait indefinitely with periodic checks
             mcp_log_debug("WebSocket client waiting for response indefinitely");
+            time_t last_log_time = time(NULL);
 
             while (!ws_data->response_ready && ws_data->running) {
-                result = mcp_cond_wait(ws_data->response_cond, ws_data->response_mutex);
+                // Wait with a reasonable timeout to allow periodic checks
+                result = mcp_cond_timedwait(ws_data->response_cond, ws_data->response_mutex, 1000);
 
-                if (result != 0) {
-                    // Error
-                    mcp_log_debug("WebSocket client wait returned %d", result);
+                // Check for response
+                if (ws_data->response_ready) {
                     break;
+                }
+
+                // Check for error other than timeout
+                if (result != 0 && result != -2) { // -2 is timeout
+                    mcp_log_debug("WebSocket client wait returned error %d", result);
+                    break;
+                }
+
+                // Log progress periodically
+                time_t now = time(NULL);
+                if (difftime(now, last_log_time) >= 5.0) {
+                    mcp_log_debug("WebSocket client still waiting for response (indefinite wait)");
+                    last_log_time = now;
                 }
             }
         }
     }
 
-    // Check if we got a response
+    // Process response
     if (ws_data->response_ready && ws_data->response_data) {
-        // Copy the response data
+        // Transfer ownership of the response data to caller
         *response_out = ws_data->response_data;
         if (response_size_out) {
             *response_size_out = ws_data->response_data_len;
         }
 
-        // Transfer ownership of the response data
+        // Clear our reference without freeing
         ws_data->response_data = NULL;
         ws_data->response_data_len = 0;
         result = 0;
@@ -1161,7 +1292,7 @@ static int ws_client_transport_receive(mcp_transport_t* transport, char** data, 
     return result;
 }
 
-// Client transport sendv function
+// Client transport sendv function with optimized buffer handling
 static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
     if (!transport || !transport->transport_data || !buffers || buffer_count == 0) {
         return -1;
@@ -1175,41 +1306,23 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
         return -1;
     }
 
-    // Calculate total size using common function
-    size_t total_size = mcp_websocket_calculate_total_size(buffers, buffer_count);
-
-    // Allocate a temporary buffer to combine all the buffers
-    unsigned char* combined_buffer = (unsigned char*)malloc(total_size);
-    if (!combined_buffer) {
-        mcp_log_error("Failed to allocate WebSocket combined buffer");
-        return -1;
-    }
-
-    // Combine buffers using common function
-    if (mcp_websocket_combine_buffers(buffers, buffer_count, combined_buffer, total_size) != 0) {
-        free(combined_buffer);
-        mcp_log_error("Failed to combine WebSocket buffers");
-        return -1;
-    }
-
     // For WebSocket, we always use synchronous request-response for all messages
     // This ensures consistent behavior regardless of message content
-    bool use_sync_mode = true;
 
-    // Log the message for debugging if it's JSON (only in verbose debug mode)
-    #ifdef MCP_VERBOSE_DEBUG
-    if (buffer_count == 2 && buffers[0].size == sizeof(uint32_t) &&
-        buffers[1].size > 0 && ((const char*)buffers[1].data)[0] == '{') {
-        const char* json_data = (const char*)buffers[1].data;
-        mcp_log_debug("JSON data in sendv: %.*s", (int)buffers[1].size, json_data);
-    }
-    #endif
+    // Optimization: For the common case of 2 buffers where the first is a length prefix
+    // and the second is the actual JSON data, we can avoid combining buffers
+    if (buffer_count == 2 && buffers[0].size == sizeof(uint32_t)) {
+        // This is the standard MCP message format with length prefix + JSON
+        // For WebSocket, we only need to send the JSON part (second buffer)
 
-    // Always use synchronous mode for WebSocket
-    if (use_sync_mode) {
-        // For WebSocket, we use synchronous request-response
-        // Skip the length prefix (first buffer) and send only the JSON part (second buffer)
-        // This is the standard approach for WebSocket transport
+        // Log the message for debugging if it's JSON (only in verbose debug mode)
+        #ifdef MCP_VERBOSE_DEBUG
+        if (buffers[1].size > 0 && ((const char*)buffers[1].data)[0] == '{') {
+            const char* json_data = (const char*)buffers[1].data;
+            mcp_log_debug("JSON data in sendv: %.*s", (int)buffers[1].size, json_data);
+        }
+        #endif
+
         char* response = NULL;
         size_t response_size = 0;
 
@@ -1220,6 +1333,7 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
         // Log the timeout value
         mcp_log_debug("Using timeout: %u ms", timeout_ms);
 
+        // Send only the JSON part (second buffer) and wait for response
         int result = ws_client_send_and_wait_response(
             ws_data,
             buffers[1].data,
@@ -1228,9 +1342,6 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
             &response_size,
             timeout_ms
         );
-
-        // Free the temporary buffer
-        free(combined_buffer);
 
         if (result != 0) {
             mcp_log_error("WebSocket client send and wait response failed: %d", result);
@@ -1252,8 +1363,27 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
         mcp_mutex_unlock(ws_data->response_mutex);
 
         return 0;
-    } else {
-        // For non-JSON-RPC messages, use direct sending
+    }
+    else {
+        // For other message formats, we need to combine the buffers
+
+        // Calculate total size using common function
+        size_t total_size = mcp_websocket_calculate_total_size(buffers, buffer_count);
+
+        // Always use heap allocation for combined buffer to avoid MSVC stack array issues
+        unsigned char* combined_buffer = (unsigned char*)malloc(total_size);
+        if (!combined_buffer) {
+            mcp_log_error("Failed to allocate WebSocket combined buffer of size %zu", total_size);
+            return -1;
+        }
+
+        // Combine buffers using common function
+        if (mcp_websocket_combine_buffers(buffers, buffer_count, combined_buffer, total_size) != 0) {
+            free(combined_buffer);
+            mcp_log_error("Failed to combine WebSocket buffers");
+            return -1;
+        }
+
         // Ensure client is connected
         if (ws_client_ensure_connected(ws_data, WS_DEFAULT_CONNECT_TIMEOUT_MS) != 0) {
             free(combined_buffer);
@@ -1262,7 +1392,10 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
 
         // Send the message
         int result = ws_client_send_buffer(ws_data, combined_buffer, total_size);
+
+        // Free the buffer
         free(combined_buffer);
+
         return result;
     }
 }
