@@ -7,6 +7,8 @@
 #include "mcp_types.h"
 #include "mcp_string_utils.h"
 #include "mcp_sync.h"
+#include "mcp_cache_aligned.h"
+#include "mcp_rwlock.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +21,9 @@
 
 // DNS cache entry expiration time in seconds
 #define DNS_CACHE_EXPIRY 300 // 5 minutes
+
+// Maximum hostname length (including port and null terminator)
+#define DNS_CACHE_MAX_HOSTNAME 256
 
 // Platform-specific includes for sockets
 #ifdef _WIN32
@@ -130,18 +135,33 @@ bool is_connection_healthy_by_score(mcp_pooled_connection_t* conn);
 
 // DNS cache structure and functions
 typedef struct {
-    char* hostname;                  // Hostname (key)
-    struct addrinfo* addr_info;      // Resolved address info
-    time_t timestamp;                // When this entry was created/updated
-    int ref_count;                   // Reference count for this entry
-    mcp_mutex_t* mutex;              // Mutex for thread-safe access to this entry
-} dns_cache_entry_t;
+    char hostname[DNS_CACHE_MAX_HOSTNAME];  // Fixed-size buffer for hostname (key)
+    struct addrinfo* addr_info;             // Resolved address info
+    time_t timestamp;                       // When this entry was created/updated
+    int ref_count;                          // Reference count for this entry
+    mcp_mutex_t* mutex;                     // Mutex for thread-safe access to this entry
+
+    // Statistics
+    uint32_t hit_count;                     // Number of cache hits for this entry
+
+    // Padding to align to cache line boundary (fixed size for simplicity)
+    char padding[MCP_CACHE_LINE_SIZE];
+} MCP_CACHE_ALIGNED dns_cache_entry_t;
 
 typedef struct {
-    dns_cache_entry_t entries[DNS_CACHE_SIZE];  // Fixed-size array of cache entries
-    mcp_mutex_t* mutex;                         // Mutex for thread-safe access to the cache
-    bool initialized;                           // Whether the cache has been initialized
-} dns_cache_t;
+    MCP_CACHE_ALIGNED dns_cache_entry_t entries[DNS_CACHE_SIZE];  // Fixed-size array of cache entries
+    mcp_mutex_t* mutex;                                           // Mutex for thread-safe access to the cache
+    mcp_rwlock_t* rwlock;                                         // Read-write lock for better concurrency
+    bool initialized;                                             // Whether the cache has been initialized
+
+    // Statistics
+    uint32_t hits;                                                // Total number of cache hits
+    uint32_t misses;                                              // Total number of cache misses
+    uint32_t evictions;                                           // Total number of cache evictions
+
+    // Padding to align to cache line boundary (fixed size for simplicity)
+    char padding[MCP_CACHE_LINE_SIZE];
+} MCP_CACHE_ALIGNED dns_cache_t;
 
 // Global DNS cache
 extern dns_cache_t g_dns_cache;
