@@ -259,6 +259,9 @@ typedef struct {
 /**
  * @brief Sends a batch of requests to the MCP server and receives responses.
  *
+ * This function processes multiple requests in a batch, sending each request
+ * individually and collecting the responses.
+ *
  * @param client The client instance.
  * @param requests Array of batch request structures.
  * @param request_count Number of requests in the array.
@@ -278,7 +281,34 @@ int mcp_client_send_batch_request(
 );
 
 /**
+ * @brief Sends a batch of requests to the MCP server with optimized processing.
+ *
+ * This function processes batch requests with improved efficiency by using
+ * optimized memory management and potentially parallel processing in the future.
+ *
+ * @param client The client instance.
+ * @param requests Array of batch request structures.
+ * @param request_count Number of requests in the array.
+ * @param[out] responses Pointer to receive an array of batch response structures.
+ *                      The caller is responsible for freeing this array and its contents
+ *                      using mcp_client_free_batch_responses().
+ * @param[out] response_count Pointer to receive the number of responses in the array.
+ * @return 0 on successful communication (check individual response error_codes),
+ *         -1 on failure (e.g., transport error, timeout, parse error).
+ */
+int mcp_client_send_batch_request_optimized(
+    mcp_client_t* client,
+    const mcp_batch_request_t* requests,
+    size_t request_count,
+    mcp_batch_response_t** responses,
+    size_t* response_count
+);
+
+/**
  * @brief Frees an array of batch responses and their contents.
+ *
+ * This function properly cleans up all memory allocated for batch responses,
+ * including dynamically allocated fields within each response.
  *
  * @param responses Array of batch response structures.
  * @param count Number of responses in the array.
