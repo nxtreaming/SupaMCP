@@ -11,7 +11,7 @@
 #include "mcp_string_utils.h"
 
 char* mcp_json_format_request(uint64_t id, const char* method, const char* params) {
-    if (method == NULL) { // Params can be NULL for request without params
+    if (method == NULL) {
         return NULL;
     }
 
@@ -67,15 +67,13 @@ char* mcp_json_format_request(uint64_t id, const char* method, const char* param
         }
     }
 
-    // Stringify the request
     char* json = mcp_json_stringify(request);
-    mcp_json_destroy(request); // Destroys all nodes created with arena
-    return json; // Return malloc'd string
+    mcp_json_destroy(request);
+    return json;
 }
 
+// Result can be NULL (represents JSON null)
 char* mcp_json_format_response(uint64_t id, const char* result) {
-    // Result can be NULL (represents JSON null)
-
     mcp_json_t* response = mcp_json_object_create();
     if (response == NULL) {
         return NULL;
@@ -112,10 +110,12 @@ char* mcp_json_format_response(uint64_t id, const char* result) {
             result_json = mcp_json_null_create(); // Fallback to null
         }
     } else {
-        result_json = mcp_json_null_create(); // Create JSON null
+        // Create JSON null
+        result_json = mcp_json_null_create();
     }
 
-    if (result_json == NULL) { // Check if fallback/creation failed
+    if (result_json == NULL) {
+        // Failed to create JSON null
         mcp_json_destroy(response);
         return NULL;
     }
@@ -139,31 +139,63 @@ char* mcp_json_format_error_response(uint64_t id, mcp_error_code_t error_code, c
 
     // Add jsonrpc version
     mcp_json_t* jsonrpc = mcp_json_string_create("2.0");
-    if (jsonrpc == NULL) { mcp_json_destroy(response); return NULL; }
-    if (mcp_json_object_set_property(response, "jsonrpc", jsonrpc) != 0) { mcp_json_destroy(response); return NULL; }
+    if (jsonrpc == NULL) {
+        mcp_json_destroy(response);
+        return NULL;
+    }
+    if (mcp_json_object_set_property(response, "jsonrpc", jsonrpc) != 0) {
+        mcp_json_destroy(response);
+        return NULL;
+    }
 
     // Add id
     mcp_json_t* id_json = mcp_json_number_create((double)id);
-    if (id_json == NULL) { mcp_json_destroy(response); return NULL; }
-    if (mcp_json_object_set_property(response, "id", id_json) != 0) { mcp_json_destroy(response); return NULL; }
+    if (id_json == NULL) {
+        mcp_json_destroy(response);
+        return NULL;
+    }
+    if (mcp_json_object_set_property(response, "id", id_json) != 0) {
+        mcp_json_destroy(response);
+        return NULL;
+    }
 
     // Add error object
     mcp_json_t* error_obj = mcp_json_object_create();
-    if (error_obj == NULL) { mcp_json_destroy(response); return NULL; }
+    if (error_obj == NULL) {
+        mcp_json_destroy(response);
+        return NULL;
+    }
 
     // Add error code
     mcp_json_t* code_node = mcp_json_number_create((double)error_code);
-    if (code_node == NULL) { mcp_json_destroy(error_obj); mcp_json_destroy(response); return NULL; }
-    if (mcp_json_object_set_property(error_obj, "code", code_node) != 0) { mcp_json_destroy(error_obj); mcp_json_destroy(response); return NULL; }
+    if (code_node == NULL) {
+        mcp_json_destroy(error_obj);
+        mcp_json_destroy(response);
+        return NULL;
+    }
+    if (mcp_json_object_set_property(error_obj, "code", code_node) != 0) {
+        mcp_json_destroy(error_obj);
+        mcp_json_destroy(response);
+        return NULL;
+    }
 
     // Add error message (use empty string if NULL)
     mcp_json_t* msg_node = mcp_json_string_create(error_message ? error_message : "");
-    if (msg_node == NULL) { mcp_json_destroy(error_obj); mcp_json_destroy(response); return NULL; }
-    if (mcp_json_object_set_property(error_obj, "message", msg_node) != 0) { mcp_json_destroy(error_obj); mcp_json_destroy(response); return NULL; }
+    if (msg_node == NULL) {
+        mcp_json_destroy(error_obj);
+        mcp_json_destroy(response);
+        return NULL;
+    }
+    if (mcp_json_object_set_property(error_obj, "message", msg_node) != 0) {
+        mcp_json_destroy(error_obj);
+        mcp_json_destroy(response);
+        return NULL;
+    }
 
     // Add error object to response
     if (mcp_json_object_set_property(response, "error", error_obj) != 0) {
-        mcp_json_destroy(response); // This will destroy error_obj and its children too
+        // This will destroy error_obj and its children too
+        mcp_json_destroy(response);
         return NULL;
     }
 
@@ -192,24 +224,24 @@ int mcp_json_parse_response(
 
     mcp_json_t* json = mcp_json_parse(json_str);
     if (json == NULL) {
-        return -1; // Parse error
+        return -1;
     }
 
     if (mcp_json_get_type(json) != MCP_JSON_OBJECT) {
         mcp_json_destroy(json);
-        return -1; // Not a JSON object
+        return -1;
     }
 
     // Get id
     mcp_json_t* id_json = mcp_json_object_get_property(json, "id");
     if (id_json == NULL || mcp_json_get_type(id_json) != MCP_JSON_NUMBER) {
         mcp_json_destroy(json);
-        return -1; // Missing or invalid ID
+        return -1;
     }
     double id_value;
     if (mcp_json_get_number(id_json, &id_value) != 0 || id_value < 0 || id_value != floor(id_value) || id_value > (double)UINT64_MAX) {
         mcp_json_destroy(json);
-        return -1; // Invalid ID value
+        return -1;
     }
     *id = (uint64_t)id_value;
 
@@ -221,20 +253,23 @@ int mcp_json_parse_response(
         mcp_json_t* msg_node = mcp_json_object_get_property(error_obj, "message");
 
         if (code_node == NULL || mcp_json_get_type(code_node) != MCP_JSON_NUMBER) {
-            mcp_json_destroy(json); return -1; // Invalid error code
+            mcp_json_destroy(json);
+            return -1;
         }
         double code_value;
         if (mcp_json_get_number(code_node, &code_value) != 0 || code_value != floor(code_value) || code_value < INT_MIN || code_value > INT_MAX) {
-            mcp_json_destroy(json); return -1; // Invalid error code value
+            mcp_json_destroy(json);
+            return -1;
         }
         *error_code = (mcp_error_code_t)(int)code_value;
 
         if (msg_node != NULL && mcp_json_get_type(msg_node) == MCP_JSON_STRING) {
             const char* msg_str;
             if (mcp_json_get_string(msg_node, &msg_str) == 0) {
-                *error_message = mcp_strdup(msg_str); // Caller must free
-                if (*error_message == NULL) { // Allocation failed
-                    mcp_json_destroy(json); return -1;
+                *error_message = mcp_strdup(msg_str);
+                if (*error_message == NULL) {
+                    mcp_json_destroy(json);
+                    return -1;
                 }
             }
         }
@@ -247,9 +282,10 @@ int mcp_json_parse_response(
         // Success response
         mcp_json_t* result_node = mcp_json_object_get_property(json, "result");
         // Result can be any valid JSON type, including null
-        *result = mcp_json_stringify(result_node); // Caller must free
-        if (*result == NULL) { // Stringify failed
-            mcp_json_destroy(json); return -1;
+        *result = mcp_json_stringify(result_node);
+        if (*result == NULL) {
+            mcp_json_destroy(json);
+            return -1;
         }
         *error_code = MCP_ERROR_NONE;
     } else {
@@ -258,8 +294,8 @@ int mcp_json_parse_response(
         return -1;
     }
 
-    mcp_json_destroy(json); // Free parsed structure
-    return 0; // Success
+    mcp_json_destroy(json);
+    return 0;
 }
 
 char* mcp_json_format_read_resource_params(const char* uri) {
@@ -279,7 +315,7 @@ char* mcp_json_format_read_resource_params(const char* uri) {
         return NULL;
     }
     if (mcp_json_object_set_property(params, "uri", uri_json) != 0) {
-        mcp_json_destroy(params); // Destroys uri_json too
+        mcp_json_destroy(params);
         return NULL;
     }
 
@@ -321,7 +357,7 @@ char* mcp_json_format_call_tool_params(const char* name, const char* arguments) 
             return NULL;
         }
         if (mcp_json_object_set_property(params, "arguments", arguments_json) != 0) {
-            mcp_json_destroy(params); // Destroys arguments_json too
+            mcp_json_destroy(params);
             return NULL;
         }
     }
@@ -361,22 +397,23 @@ int mcp_json_parse_resources(
     int array_size = mcp_json_array_get_size(resources_json);
     if (array_size <= 0) {
         mcp_json_destroy(json);
-        return 0; // Empty array is valid
+        // Empty array is valid
+        return 0;
     }
     *count = (size_t)array_size;
 
     // Allocate resources array
-    *resources = (mcp_resource_t**)calloc(*count, sizeof(mcp_resource_t*)); // Use calloc
+    *resources = (mcp_resource_t**)calloc(*count, sizeof(mcp_resource_t*));
     if (*resources == NULL) {
         mcp_json_destroy(json);
-        return -1; // Allocation failure
+        return -1;
     }
 
     // Parse resources
     for (size_t i = 0; i < *count; i++) {
         mcp_json_t* resource_json = mcp_json_array_get_item(resources_json, (int)i);
         if (resource_json == NULL || mcp_json_get_type(resource_json) != MCP_JSON_OBJECT) {
-            goto parse_error; // Invalid item in array
+            goto parse_error;
         }
 
         // Parse properties
@@ -386,30 +423,35 @@ int mcp_json_parse_resources(
         const char* description = NULL;
 
         mcp_json_t* node = mcp_json_object_get_property(resource_json, "uri");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &uri);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &uri);
         node = mcp_json_object_get_property(resource_json, "name");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &name);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &name);
         node = mcp_json_object_get_property(resource_json, "mimeType");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &mime_type);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &mime_type);
         node = mcp_json_object_get_property(resource_json, "description");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &description);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &description);
 
-        if (!uri) goto parse_error; // URI is mandatory
+        if (!uri)
+            goto parse_error;
 
         // Create Resource Struct
         (*resources)[i] = mcp_resource_create(uri, name, mime_type, description);
         if ((*resources)[i] == NULL) {
-            goto parse_error; // Allocation failure
+            goto parse_error;
         }
     }
 
     mcp_json_destroy(json);
-    return 0; // Success
+    return 0;
 
 parse_error:
-    // Cleanup partially created resources
     if (*resources) {
-        for (size_t j = 0; j < *count; j++) { // Iterate up to *count as some might be NULL
+        // Iterate up to *count as some might be NULL
+        for (size_t j = 0; j < *count; j++) {
             mcp_resource_free((*resources)[j]);
         }
         free(*resources);
@@ -417,7 +459,7 @@ parse_error:
     }
     *count = 0;
     mcp_json_destroy(json);
-    return -1; // Indicate error
+    return -1;
 }
 
 int mcp_json_parse_resource_templates(
@@ -449,7 +491,8 @@ int mcp_json_parse_resource_templates(
     int array_size = mcp_json_array_get_size(templates_json);
      if (array_size <= 0) {
         mcp_json_destroy(json);
-        return 0; // Empty array is valid
+        // Empty array is valid
+        return 0;
     }
     *count = (size_t)array_size;
 
@@ -457,14 +500,14 @@ int mcp_json_parse_resource_templates(
     *templates = (mcp_resource_template_t**)calloc(*count, sizeof(mcp_resource_template_t*));
     if (*templates == NULL) {
         mcp_json_destroy(json);
-        return -1; // Allocation failure
+        return -1;
     }
 
     // Parse templates
     for (size_t i = 0; i < *count; i++) {
         mcp_json_t* template_json = mcp_json_array_get_item(templates_json, (int)i);
         if (template_json == NULL || mcp_json_get_type(template_json) != MCP_JSON_OBJECT) {
-            goto parse_error_template; // Invalid item
+            goto parse_error_template;
         }
 
         // Parse properties
@@ -474,25 +517,30 @@ int mcp_json_parse_resource_templates(
         const char* description = NULL;
 
         mcp_json_t* node = mcp_json_object_get_property(template_json, "uriTemplate");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &uri_template);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &uri_template);
         node = mcp_json_object_get_property(template_json, "name");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &name);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &name);
         node = mcp_json_object_get_property(template_json, "mimeType");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &mime_type);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &mime_type);
         node = mcp_json_object_get_property(template_json, "description");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &description);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &description);
 
-        if (!uri_template) goto parse_error_template; // URI template is mandatory
+        if (!uri_template)
+            goto parse_error_template;
 
         // Create Template Struct
         (*templates)[i] = mcp_resource_template_create(uri_template, name, mime_type, description);
         if ((*templates)[i] == NULL) {
-            goto parse_error_template; // Allocation failure
+            goto parse_error_template;
         }
     }
 
     mcp_json_destroy(json);
-    return 0; // Success
+    return 0;
 
 parse_error_template:
     if (*templates) {
@@ -536,7 +584,8 @@ int mcp_json_parse_content(
     int array_size = mcp_json_array_get_size(contents_json);
     if (array_size <= 0) {
         mcp_json_destroy(json);
-        return 0; // Empty array is valid
+        // Empty array is valid
+        return 0;
     }
     *count = (size_t)array_size;
 
@@ -544,18 +593,18 @@ int mcp_json_parse_content(
     *content = (mcp_content_item_t**)calloc(*count, sizeof(mcp_content_item_t*));
     if (*content == NULL) {
         mcp_json_destroy(json);
-        return -1; // Allocation failure
+        return -1;
     }
 
     // Parse items
     for (size_t i = 0; i < *count; i++) {
         mcp_json_t* item_json = mcp_json_array_get_item(contents_json, (int)i);
         if (item_json == NULL || mcp_json_get_type(item_json) != MCP_JSON_OBJECT) {
-            goto parse_error_content; // Invalid item
+            goto parse_error_content;
         }
 
         // Parse properties
-        mcp_content_type_t type = MCP_CONTENT_TYPE_TEXT; // Default
+        mcp_content_type_t type = MCP_CONTENT_TYPE_TEXT;
         const char* mime_type = NULL;
         const char* text = NULL;
         size_t text_size = 0;
@@ -564,29 +613,32 @@ int mcp_json_parse_content(
         if (node && mcp_json_get_type(node) == MCP_JSON_STRING) {
             const char* type_str;
             if (mcp_json_get_string(node, &type_str) == 0) {
-                if (strcmp(type_str, "json") == 0) type = MCP_CONTENT_TYPE_JSON;
-                else if (strcmp(type_str, "binary") == 0) type = MCP_CONTENT_TYPE_BINARY;
+                if (strcmp(type_str, "json") == 0)
+                    type = MCP_CONTENT_TYPE_JSON;
+                else if (strcmp(type_str, "binary") == 0)
+                    type = MCP_CONTENT_TYPE_BINARY;
                 // else keep default TEXT
             }
         }
         node = mcp_json_object_get_property(item_json, "mimeType");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &mime_type);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &mime_type);
         node = mcp_json_object_get_property(item_json, "text");
         if (node && mcp_json_get_type(node) == MCP_JSON_STRING) {
             if (mcp_json_get_string(node, &text) == 0 && text != NULL) {
-                text_size = strlen(text) + 1; // Include null terminator
+                text_size = strlen(text) + 1;
             }
         }
 
         // Create Content Item Struct
         (*content)[i] = mcp_content_item_create(type, mime_type, text, text_size);
         if ((*content)[i] == NULL) {
-            goto parse_error_content; // Allocation failure
+            goto parse_error_content;
         }
     }
 
     mcp_json_destroy(json);
-    return 0; // Success
+    return 0;
 
 parse_error_content:
     if (*content) {
@@ -630,7 +682,7 @@ int mcp_json_parse_tools(
     int array_size = mcp_json_array_get_size(tools_json);
      if (array_size <= 0) {
         mcp_json_destroy(json);
-        return 0; // Empty array is valid
+        return 0;
     }
     *count = (size_t)array_size;
 
@@ -638,30 +690,33 @@ int mcp_json_parse_tools(
     *tools = (mcp_tool_t**)calloc(*count, sizeof(mcp_tool_t*));
     if (*tools == NULL) {
         mcp_json_destroy(json);
-        return -1; // Allocation failure
+        return -1;
     }
 
     // Parse tools
     for (size_t i = 0; i < *count; i++) {
         mcp_json_t* tool_json = mcp_json_array_get_item(tools_json, (int)i);
         if (tool_json == NULL || mcp_json_get_type(tool_json) != MCP_JSON_OBJECT) {
-            goto parse_error_tool; // Invalid item
+            goto parse_error_tool;
         }
 
         // Parse name and description
         const char* name = NULL;
         const char* description = NULL;
         mcp_json_t* node = mcp_json_object_get_property(tool_json, "name");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &name);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &name);
         node = mcp_json_object_get_property(tool_json, "description");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &description);
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &description);
 
-        if (!name) goto parse_error_tool; // Name is mandatory
+        if (!name)
+            goto parse_error_tool;
 
         // Create Tool Struct
         (*tools)[i] = mcp_tool_create(name, description);
         if ((*tools)[i] == NULL) {
-            goto parse_error_tool; // Allocation failure
+            goto parse_error_tool;
         }
 
         // Parse Input Schema
@@ -683,9 +738,11 @@ int mcp_json_parse_tools(
                             bool required = false;
 
                             mcp_json_t* type_node = mcp_json_object_get_property(prop_obj, "type");
-                            if (type_node && mcp_json_get_type(type_node) == MCP_JSON_STRING) mcp_json_get_string(type_node, &type);
+                            if (type_node && mcp_json_get_type(type_node) == MCP_JSON_STRING)
+                                mcp_json_get_string(type_node, &type);
                             mcp_json_t* desc_node = mcp_json_object_get_property(prop_obj, "description");
-                            if (desc_node && mcp_json_get_type(desc_node) == MCP_JSON_STRING) mcp_json_get_string(desc_node, &desc);
+                            if (desc_node && mcp_json_get_type(desc_node) == MCP_JSON_STRING)
+                                mcp_json_get_string(desc_node, &desc);
 
                             // Check if required
                             if (req_json && mcp_json_get_type(req_json) == MCP_JSON_ARRAY) {
@@ -714,7 +771,7 @@ int mcp_json_parse_tools(
     }
 
     mcp_json_destroy(json);
-    return 0; // Success
+    return 0;
 
 parse_error_tool:
     if (*tools) {
@@ -767,7 +824,8 @@ int mcp_json_parse_tool_result(
     int array_size = mcp_json_array_get_size(content_array);
     if (array_size <= 0) {
         mcp_json_destroy(json);
-        return 0; // Empty content array is valid
+        // Empty content array is valid
+        return 0;
     }
     *count = (size_t)array_size;
 
@@ -775,18 +833,18 @@ int mcp_json_parse_tool_result(
     *content = (mcp_content_item_t**)calloc(*count, sizeof(mcp_content_item_t*));
     if (*content == NULL) {
         mcp_json_destroy(json);
-        return -1; // Allocation failure
+        return -1;
     }
 
     // Parse items
     for (size_t i = 0; i < *count; i++) {
         mcp_json_t* item_json = mcp_json_array_get_item(content_array, (int)i);
         if (item_json == NULL || mcp_json_get_type(item_json) != MCP_JSON_OBJECT) {
-            goto parse_error_tool_result; // Invalid item
+            goto parse_error_tool_result;
         }
 
         // Parse properties
-        mcp_content_type_t type = MCP_CONTENT_TYPE_TEXT; // Default
+        mcp_content_type_t type = MCP_CONTENT_TYPE_TEXT;
         const char* mime_type = NULL;
         const char* text = NULL;
         size_t text_size = 0;
@@ -795,29 +853,32 @@ int mcp_json_parse_tool_result(
         if (node && mcp_json_get_type(node) == MCP_JSON_STRING) {
             const char* type_str;
             if (mcp_json_get_string(node, &type_str) == 0) {
-                if (strcmp(type_str, "json") == 0) type = MCP_CONTENT_TYPE_JSON;
-                else if (strcmp(type_str, "binary") == 0) type = MCP_CONTENT_TYPE_BINARY;
+                if (strcmp(type_str, "json") == 0)
+                    type = MCP_CONTENT_TYPE_JSON;
+                else if (strcmp(type_str, "binary") == 0)
+                    type = MCP_CONTENT_TYPE_BINARY;
                 // else keep default TEXT
             }
         }
         node = mcp_json_object_get_property(item_json, "mimeType");
-        if (node && mcp_json_get_type(node) == MCP_JSON_STRING) mcp_json_get_string(node, &mime_type);
-        node = mcp_json_object_get_property(item_json, "text"); // Assuming text for now
+        if (node && mcp_json_get_type(node) == MCP_JSON_STRING)
+            mcp_json_get_string(node, &mime_type);
+        node = mcp_json_object_get_property(item_json, "text");
         if (node && mcp_json_get_type(node) == MCP_JSON_STRING) {
             if (mcp_json_get_string(node, &text) == 0 && text != NULL) {
-                text_size = strlen(text) + 1; // Include null terminator
+                text_size = strlen(text) + 1;
             }
         }
 
         // Create Content Item Struct
         (*content)[i] = mcp_content_item_create(type, mime_type, text, text_size);
         if ((*content)[i] == NULL) {
-            goto parse_error_tool_result; // Allocation failure
+            goto parse_error_tool_result;
         }
     }
 
     mcp_json_destroy(json);
-    return 0; // Success
+    return 0;
 
 parse_error_tool_result:
     if (*content) {
