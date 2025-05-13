@@ -194,7 +194,7 @@ mcp_error_code_t http_client_tool_handler(
 
     // Variables for parameter extraction
     const char* url = NULL;
-    const char* method = "GET";  // Default method
+    const char* method = "GET";
     const char* headers = NULL;
     const char* body = NULL;
     const char* content_type = NULL;
@@ -278,22 +278,10 @@ mcp_error_code_t http_client_tool_handler(
             "{\"status_code\": %d, \"content_length\": %zu, \"success\": true}",
             response->status_code, response->size);
 
-    // Create metadata content item
-    (*content)[0] = create_content_item(
-        MCP_CONTENT_TYPE_JSON,
-        "application/json",
-        metadata_json,
-        strlen(metadata_json)
-    );
+    (*content)[0] = create_content_item(MCP_CONTENT_TYPE_JSON, "application/json", metadata_json, strlen(metadata_json));
 
-    // Create response content item
     const char* mime_type = extract_mime_type(response->headers);
-    (*content)[1] = create_content_item(
-        MCP_CONTENT_TYPE_TEXT,
-        mime_type,
-        response->data,
-        response->size
-    );
+    (*content)[1] = create_content_item(MCP_CONTENT_TYPE_TEXT, mime_type, response->data, response->size);
 
     // Check if content item creation failed
     if (!(*content)[0] || !(*content)[1]) {
@@ -493,7 +481,8 @@ static http_response_t* http_request(const char* method, const char* url,
         // Receive data
         bytes_received = recv(sock, buffer, sizeof(buffer) - 1, 0);
         if (bytes_received <= 0) {
-            break; // Connection closed or error
+            // Connection closed or error
+            break;
         }
 
         // Ensure buffer is null-terminated
@@ -591,7 +580,7 @@ static char* parse_url(const char* url, char** host, int* port, char** path, boo
 
     // Default values
     *host = NULL;
-    *port = 80;  // Default HTTP port
+    *port = 80;
     *path = NULL;
     *use_ssl = false;
 
@@ -602,7 +591,7 @@ static char* parse_url(const char* url, char** host, int* port, char** path, boo
     } else if (strncmp(url_copy, "https://", 8) == 0) {
         host_start = url_copy + 8;
         *use_ssl = true;
-        *port = 443;  // Default HTTPS port
+        *port = 443;
     }
 
     // Find the path

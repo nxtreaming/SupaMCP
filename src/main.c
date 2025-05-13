@@ -134,7 +134,7 @@ static mcp_error_code_t server_resource_handler(
         err_code = MCP_ERROR_INTERNAL_ERROR;
         goto cleanup;
     }
-    (*content)[0] = NULL; // Initialize
+    (*content)[0] = NULL;
 
     // Allocate the content item struct
     item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
@@ -162,21 +162,21 @@ static mcp_error_code_t server_resource_handler(
     // Assign item to array
     (*content)[0] = item;
     *content_count = 1;
-    err_code = MCP_ERROR_NONE; // Success
+    err_code = MCP_ERROR_NONE;
 
 cleanup:
     // Free intermediate allocations on error
     free(data_copy);
     if (err_code != MCP_ERROR_NONE) {
         if (item) {
-            mcp_content_item_free(item); // Frees mime_type and data if allocated
+            mcp_content_item_free(item);
         }
         if (*content) {
             free(*content);
             *content = NULL;
         }
         *content_count = 0;
-        if (*error_message == NULL) { // Ensure an error message exists on error
+        if (*error_message == NULL) {
             *error_message = mcp_strdup("An unexpected error occurred processing the resource.");
         }
     }
@@ -193,7 +193,6 @@ static mcp_error_code_t server_tool_handler(
     bool* is_error,
     char** error_message)
 {
-    // Don't void server parameter, we need it to access transport
     (void)user_data;
 
     mcp_log_info("Tool called: %s", name);
@@ -431,7 +430,7 @@ static mcp_error_code_t server_tool_handler(
         mcp_log_warn("Unknown tool name: %s", name);
         *is_error = true;
         *error_message = mcp_strdup("Tool not found.");
-        err_code = MCP_ERROR_TOOL_NOT_FOUND; // More specific error
+        err_code = MCP_ERROR_TOOL_NOT_FOUND;
         goto cleanup;
     }
 
@@ -452,7 +451,7 @@ static mcp_error_code_t server_tool_handler(
         err_code = MCP_ERROR_INTERNAL_ERROR;
         goto cleanup;
     }
-    (*content)[0] = NULL; // Initialize
+    (*content)[0] = NULL;
 
     item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
     if (!item) {
@@ -521,7 +520,7 @@ static void cleanup(void) {
         for (size_t i = 0; i < g_backend_count; ++i) {
             if (g_backends[i].pool != NULL) {
                 mcp_connection_pool_destroy(g_backends[i].pool);
-                g_backends[i].pool = NULL; // Avoid double free
+                g_backends[i].pool = NULL;
             }
         }
     }
@@ -564,12 +563,7 @@ static void signal_handler(int sig) {
         mcp_log_info("Waiting for server to stop (max 1 second)...");
 
         // Wait up to 1 second for server to stop gracefully
-#ifdef _WIN32
-        Sleep(1000); // Wait 1 second
-#else
-        sleep(1);    // Wait 1 second
-#endif
-
+        mcp_sleep_ms(1000);
         // Call cleanup directly to ensure resources are freed
         cleanup();
     }
@@ -670,7 +664,8 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
     }
 
     if (config->daemon) {
-        config->transport_type = "tcp"; // Force TCP for daemon
+        // Force TCP for daemon
+        config->transport_type = "tcp";
         if (config->log_file == NULL) {
             fprintf(stderr, "Log file is required in daemon mode\n");
             return -1;
@@ -681,10 +676,11 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
 
 int main(int argc, char** argv) {
     server_config_t config;
-    if (parse_arguments(argc, argv, &config) != 0) return 1;
+    if (parse_arguments(argc, argv, &config) != 0)
+        return 1;
 
     // Use new shared logging functions
-    if (mcp_log_init(config.log_file, config.log_level) != 0) { // Use renamed function
+    if (mcp_log_init(config.log_file, config.log_level) != 0) {
         // Error already printed to stderr by init_logging
         return 1;
     }
@@ -695,10 +691,10 @@ int main(int argc, char** argv) {
         mcp_log_info("Daemonizing process...");
         if (daemonize() != 0) {
             mcp_log_error("Failed to daemonize");
-            mcp_log_close(); // Use renamed function
+            mcp_log_close();
             return 1;
         }
-        mcp_log_info("Daemonization complete."); // This won't be seen on console
+        mcp_log_info("Daemonization complete.");
     }
 #endif
 
@@ -916,11 +912,7 @@ int main(int argc, char** argv) {
 
     // Main loop (simple wait for signal)
     while (g_server != NULL) {
-#ifdef _WIN32
-        Sleep(1000); // Sleep 1 second
-#else
-        sleep(1);    // Sleep 1 second
-#endif
+        mcp_sleep_ms(1000); // Sleep for 1 second
     }
 
     mcp_log_info("Main loop exiting.");
