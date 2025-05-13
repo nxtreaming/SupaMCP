@@ -10,19 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Platform specific includes for socket types
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <time.h>
-#include <errno.h>
-#endif
-
 // Memory pool initialization parameters
 #define CLIENT_SMALL_POOL_BLOCKS 64
 #define CLIENT_MEDIUM_POOL_BLOCKS 32

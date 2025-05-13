@@ -17,19 +17,6 @@
 #define MAX_BATCH_SIZE 100
 #define INITIAL_RESPONSE_SIZE 1024
 
-// Platform specific includes for socket types
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <time.h>
-#include <errno.h>
-#endif
-
 /**
  * @brief Frees an array of batch responses and their contents.
  *

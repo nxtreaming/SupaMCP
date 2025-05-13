@@ -17,18 +17,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <time.h>
-#include <errno.h>
-#endif
-
 // Performance optimization constants
 #define REQUEST_BUFFER_INITIAL_SIZE 1024
 #define MAX_RESPONSE_SIZE (10 * 1024 * 1024) // 10MB max response size
