@@ -45,11 +45,11 @@ target_link_libraries(test_lru_only PRIVATE unity_lib mcpcore)
 # Add include directories needed by tests
 target_include_directories(mcp_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/client/include
     # Add internal directories needed by some tests, relative to CMAKE_SOURCE_DIR
     ${CMAKE_SOURCE_DIR}/src/common/internal
     ${CMAKE_SOURCE_DIR}/src/transport/internal
     ${CMAKE_SOURCE_DIR}/src/server/internal
+    ${CMAKE_SOURCE_DIR}/src/client
     # Also add parent src directories for includes like "internal/..."
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/server
@@ -59,10 +59,10 @@ target_include_directories(mcp_tests PRIVATE
 # Add the same include directories to the LRU test runner
 target_include_directories(test_lru_only PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/client/include
     ${CMAKE_SOURCE_DIR}/src/common/internal
     ${CMAKE_SOURCE_DIR}/src/transport/internal
     ${CMAKE_SOURCE_DIR}/src/server/internal
+    ${CMAKE_SOURCE_DIR}/src/client
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/server
 )

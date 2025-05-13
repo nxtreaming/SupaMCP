@@ -1,5 +1,5 @@
-#ifndef MCP_CLIENT_INTERNAL_H
-#define MCP_CLIENT_INTERNAL_H
+#ifndef CLIENT_INTERNAL_H
+#define CLIENT_INTERNAL_H
 
 #include <mcp_client.h>
 #include <mcp_transport.h>
@@ -92,4 +92,4 @@ int mcp_json_parse_tool_result(const char* json, mcp_content_item_t*** content, 
 char* mcp_json_format_read_resource_params(const char* uri);
 char* mcp_json_format_call_tool_params(const char* name, const char* arguments);
 
-#endif // MCP_CLIENT_INTERNAL_H
+#endif // CLIENT_INTERNAL_H

@@ -181,12 +181,12 @@ set(COMMON_SOURCES
     src/server/mcp_performance_collector.c
     src/common/mcp_object_cache.c
     src/server/mcp_advanced_rate_limiter.c
-    client/src/mcp_client_template.c
-    client/src/mcp_client_core.c
-    client/src/mcp_client_hash_table.c
-    client/src/mcp_client_request.c
-    client/src/mcp_client_api.c
-    client/src/mcp_client_batch.c
+    src/client/mcp_client_template.c
+    src/client/mcp_client_core.c
+    src/client/mcp_client_hash_table.c
+    src/client/mcp_client_request.c
+    src/client/mcp_client_api.c
+    src/client/mcp_client_batch.c
     src/server/mcp_server.c
     src/server/mcp_server_dispatch.c
     src/server/mcp_server_handlers.c
@@ -216,7 +216,6 @@ set(COMMON_SOURCES
 add_library(mcpcore SHARED ${COMMON_SOURCES})
 target_include_directories(mcpcore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include       # Public API headers
-    ${CMAKE_CURRENT_SOURCE_DIR}/client/include # Make client headers public too
 )
 target_link_libraries(mcpcore PUBLIC websockets ssl crypto)
 
@@ -241,6 +240,8 @@ target_include_directories(mcpcore PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/transport/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/server
     ${CMAKE_CURRENT_SOURCE_DIR}/src/server/internal
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/client
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/client/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/connection_pool
     ${CMAKE_CURRENT_SOURCE_DIR}/src/connection_pool/internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gateway
@@ -256,7 +257,7 @@ set(SERVER_SOURCES
 
 # Client-specific source files
 set(CLIENT_SOURCES
-    client/src/main.c
+    client/main.c
 )
 
 # Create server executable
@@ -278,7 +279,6 @@ endif()
 # Install
 install(TARGETS mcp_server mcp_client DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include) # Install public headers
-install(DIRECTORY client/include/ DESTINATION include) # Install public client headers
 
 # --- Benchmark Setup ---
 # Define benchmark sources

@@ -1,4 +1,4 @@
-#include "mcp_client_internal.h"
+#include "internal/client_internal.h"
 #include <mcp_log.h>
 #include <mcp_json.h>
 #include <mcp_json_rpc.h>
