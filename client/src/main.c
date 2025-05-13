@@ -15,7 +15,6 @@
 #include "mcp_thread_local.h"
 
 int main(int argc, char** argv) {
-    // Default transport
     const char* transport_type = "stdio";
     const char* host = "127.0.0.1";
     uint16_t port = 8080;
@@ -23,13 +22,13 @@ int main(int argc, char** argv) {
     const char* api_key = NULL;
     uint32_t timeout_ms = 30000; // 30 seconds default timeout
 
-    mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG); // Use new init and enum
+    mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG);
 
     // Initialize thread-local storage (arena) for the main thread
     // Using 1MB as the initial size. Adjust if needed.
     if (mcp_arena_init_current_thread(1024 * 1024) != 0) {
         mcp_log_error("Failed to initialize thread-local arena for main thread.");
-        mcp_log_close(); // Close log before exiting
+        mcp_log_close();
         return 1;
     }
 
@@ -99,7 +98,7 @@ int main(int argc, char** argv) {
     mcp_transport_t* transport = NULL;
     if (strcmp(transport_type, "stdio") == 0) {
         mcp_log_info("Using stdio transport");
-        transport = mcp_transport_stdio_create(); // Use specific create function
+        transport = mcp_transport_stdio_create();
     } else if (strcmp(transport_type, "tcp") == 0) {
         mcp_log_info("Using TCP client transport (%s:%d)", host, port);
         transport = mcp_transport_tcp_client_create(host, port);
@@ -127,9 +126,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Create client configuration (example)
+    // Create client configuration
     mcp_client_config_t client_config;
-    client_config.request_timeout_ms = 50000; // 5 seconds
+    client_config.request_timeout_ms = 50000;
 
     // Create the client
     mcp_client_t* client = mcp_client_create(&client_config, transport);
@@ -146,7 +145,7 @@ int main(int argc, char** argv) {
     while (1) {
         printf("> ");
         if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
-            break; // EOF or error
+            break;
         }
 
         // Remove trailing newline
@@ -174,11 +173,13 @@ int main(int argc, char** argv) {
                 printf("Resources (%zu):\n", count);
                 for (size_t i = 0; i < count; ++i) {
                     printf("  - URI: %s\n", resources[i]->uri);
-                    if (resources[i]->name) printf("    Name: %s\n", resources[i]->name);
-                    if (resources[i]->description) printf("    Desc: %s\n", resources[i]->description);
-                    mcp_resource_free(resources[i]); // Free individual resource
+                    if (resources[i]->name)
+                        printf("    Name: %s\n", resources[i]->name);
+                    if (resources[i]->description)
+                        printf("    Desc: %s\n", resources[i]->description);
+                    mcp_resource_free(resources[i]);
                 }
-                free(resources); // Free the array
+                free(resources);
             } else {
                 mcp_log_error("Error listing resources.");
             }
@@ -189,8 +190,10 @@ int main(int argc, char** argv) {
                 printf("Resource Templates (%zu):\n", count);
                 for (size_t i = 0; i < count; ++i) {
                     printf("  - URI Template: %s\n", templates[i]->uri_template);
-                     if (templates[i]->name) printf("    Name: %s\n", templates[i]->name);
-                    if (templates[i]->description) printf("    Desc: %s\n", templates[i]->description);
+                    if (templates[i]->name)
+                        printf("    Name: %s\n", templates[i]->name);
+                    if (templates[i]->description)
+                        printf("    Desc: %s\n", templates[i]->description);
                     mcp_resource_template_free(templates[i]);
                 }
                 free(templates);
@@ -232,7 +235,8 @@ int main(int argc, char** argv) {
                         printf("Resource Content (%zu items):\n", count);
                         for (size_t i = 0; i < count; ++i) {
                             printf("  - Item %zu:\n", i + 1);
-                            if (content[i]->mime_type) printf("    MIME: %s\n", content[i]->mime_type);
+                            if (content[i]->mime_type)
+                                printf("    MIME: %s\n", content[i]->mime_type);
                             if (content[i]->type == MCP_CONTENT_TYPE_TEXT && content[i]->data) {
                                 printf("    Text: %s\n", (char*)content[i]->data);
                             } else {
@@ -259,7 +263,8 @@ int main(int argc, char** argv) {
                  for (size_t i = 0; i < count; ++i) {
                      printf("  - Item %zu:\n", i + 1);
                      printf("    URI: %s\n", uri); // Assuming URI is same for all items in response
-                     if (content[i]->mime_type) printf("    MIME: %s\n", content[i]->mime_type);
+                     if (content[i]->mime_type)
+                         printf("    MIME: %s\n", content[i]->mime_type);
                      if (content[i]->type == MCP_CONTENT_TYPE_TEXT && content[i]->data) {
                          printf("    Text: %s\n", (char*)content[i]->data);
                      } else {
@@ -278,7 +283,8 @@ int main(int argc, char** argv) {
                 printf("Tools (%zu):\n", count);
                 for (size_t i = 0; i < count; ++i) {
                     printf("  - Name: %s\n", tools[i]->name);
-                    if (tools[i]->description) printf("    Desc: %s\n", tools[i]->description);
+                    if (tools[i]->description)
+                        printf("    Desc: %s\n", tools[i]->description);
                     if (tools[i]->input_schema_count > 0) {
                         printf("    Params:\n");
                         for(size_t j=0; j < tools[i]->input_schema_count; ++j) {
@@ -287,7 +293,8 @@ int main(int argc, char** argv) {
                                    tools[i]->input_schema[j].type,
                                    tools[i]->input_schema[j].required ? " [required]" : "",
                                    tools[i]->input_schema[j].description ? ": " : "");
-                            if(tools[i]->input_schema[j].description) printf("        %s\n", tools[i]->input_schema[j].description);
+                            if(tools[i]->input_schema[j].description)
+                                printf("        %s\n", tools[i]->input_schema[j].description);
                         }
                     }
                     mcp_tool_free(tools[i]);
@@ -307,7 +314,8 @@ int main(int argc, char** argv) {
                     printf("Tool Result (%s, %zu items):\n", is_error ? "ERROR" : "OK", count);
                     for (size_t i = 0; i < count; ++i) {
                          printf("  - Item %zu:\n", i + 1);
-                         if (content[i]->mime_type) printf("    MIME: %s\n", content[i]->mime_type);
+                         if (content[i]->mime_type)
+                             printf("    MIME: %s\n", content[i]->mime_type);
                          if (content[i]->type == MCP_CONTENT_TYPE_TEXT && content[i]->data) {
                              printf("    Text: %s\n", (char*)content[i]->data);
                          } else {
@@ -329,10 +337,12 @@ int main(int argc, char** argv) {
     }
 
     printf("Exiting client...\n");
-    mcp_client_destroy(client); // This will also stop and destroy the transport
+    // This will also stop and destroy the transport
+    mcp_client_destroy(client);
 
-    mcp_arena_destroy_current_thread(); // Clean up thread-local arena
-    mcp_log_close(); // Close log file if open
+    // Clean up thread-local arena
+    mcp_arena_destroy_current_thread();
+    mcp_log_close();
 
     return 0;
 }
