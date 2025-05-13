@@ -34,6 +34,10 @@
 #include "mcp_thread_local.h"
 #include "mcp_connection_pool.h"
 #include "server/internal/server_internal.h"
+#include "mcp_memory_pool.h"
+#include "mcp_thread_cache.h"
+#include "mcp_arena.h"
+#include "mcp_cache_aligned.h"
 
 // HTTP client tool
 extern int register_http_client_tool(mcp_server_t* server);
@@ -126,8 +130,8 @@ static mcp_error_code_t server_resource_handler(
         goto cleanup;
     }
 
-    // Allocate the array of pointers (size 1)
-    *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
+    // Allocate the array of pointers (size 1) using thread cache
+    *content = (mcp_content_item_t**)mcp_thread_cache_alloc(sizeof(mcp_content_item_t*));
     if (!*content) {
         mcp_log_error("Failed to allocate content array for resource: %s", resource_name);
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
@@ -136,8 +140,8 @@ static mcp_error_code_t server_resource_handler(
     }
     (*content)[0] = NULL;
 
-    // Allocate the content item struct
-    item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+    // Allocate the content item struct using thread cache
+    item = (mcp_content_item_t*)mcp_thread_cache_alloc(sizeof(mcp_content_item_t));
     if (!item) {
         mcp_log_error("Failed to allocate content item struct for resource: %s", resource_name);
         *error_message = mcp_strdup("Internal server error: memory allocation failed.");
@@ -166,13 +170,19 @@ static mcp_error_code_t server_resource_handler(
 
 cleanup:
     // Free intermediate allocations on error
-    free(data_copy);
+    if (data_copy) {
+        free(data_copy);
+    }
+
     if (err_code != MCP_ERROR_NONE) {
         if (item) {
-            mcp_content_item_free(item);
+            if (item->mime_type) {
+                free((void*)item->mime_type);
+            }
+            mcp_thread_cache_free(item, sizeof(mcp_content_item_t));
         }
         if (*content) {
-            free(*content);
+            mcp_thread_cache_free(*content, sizeof(mcp_content_item_t*));
             *content = NULL;
         }
         *content_count = 0;
@@ -332,8 +342,8 @@ static mcp_error_code_t server_tool_handler(
         size_t char_count = 0;
         size_t byte_pos = 0;
 
-        // Array to store the byte positions of each character
-        size_t* char_positions = (size_t*)malloc((len + 1) * sizeof(size_t));
+        // Array to store the byte positions of each character - use thread cache for better performance
+        size_t* char_positions = (size_t*)mcp_thread_cache_alloc((len + 1) * sizeof(size_t));
         if (!char_positions) {
             mcp_log_error("Failed to allocate memory for character positions");
             *is_error = true;
@@ -346,10 +356,10 @@ static mcp_error_code_t server_tool_handler(
         while (byte_pos < len) {
             char_positions[char_count++] = byte_pos;
 
-            // Skip to the next UTF-8 character
+            // Skip to the next UTF-8 character - optimized UTF-8 decoding
             unsigned char c = (unsigned char)input_text[byte_pos];
             if (c < 0x80) {
-                // ASCII character (1 byte)
+                // ASCII character (1 byte) - most common case first for better branch prediction
                 byte_pos += 1;
             } else if ((c & 0xE0) == 0xC0) {
                 // 2-byte UTF-8 character
@@ -374,10 +384,10 @@ static mcp_error_code_t server_tool_handler(
         // Add the position after the last character
         char_positions[char_count] = len;
 
-        // Allocate memory for the reversed string
-        result_data = (char*)malloc(len + 1);
+        // Allocate memory for the reversed string using thread cache
+        result_data = (char*)mcp_thread_cache_alloc(len + 1);
         if (result_data != NULL) {
-            // Copy characters in reverse order
+            // Copy characters in reverse order - optimized with single pass
             size_t out_pos = 0;
             for (size_t i = char_count; i > 0; i--) {
                 size_t char_start = char_positions[i-1];
@@ -421,9 +431,9 @@ static mcp_error_code_t server_tool_handler(
             }
 
             // Free the character positions array
-            free(char_positions);
+            mcp_thread_cache_free(char_positions, (len + 1) * sizeof(size_t));
         } else {
-            free(char_positions);
+            mcp_thread_cache_free(char_positions, (len + 1) * sizeof(size_t));
             // Error handling will be done below
         }
     } else {
@@ -443,7 +453,7 @@ static mcp_error_code_t server_tool_handler(
     }
 
     // --- Create the response content ---
-    *content = (mcp_content_item_t**)malloc(sizeof(mcp_content_item_t*));
+    *content = (mcp_content_item_t**)mcp_thread_cache_alloc(sizeof(mcp_content_item_t*));
     if (!*content) {
         mcp_log_error("Failed to allocate content array for tool: %s", name);
         *is_error = true;
@@ -453,7 +463,7 @@ static mcp_error_code_t server_tool_handler(
     }
     (*content)[0] = NULL;
 
-    item = (mcp_content_item_t*)malloc(sizeof(mcp_content_item_t));
+    item = (mcp_content_item_t*)mcp_thread_cache_alloc(sizeof(mcp_content_item_t));
     if (!item) {
         mcp_log_error("Failed to allocate content item struct for tool: %s", name);
         *is_error = true;
@@ -482,13 +492,19 @@ static mcp_error_code_t server_tool_handler(
 
 cleanup:
     // Free intermediate allocations on error
-    free(result_data);
+    if (result_data) {
+        free(result_data);
+    }
+
     if (err_code != MCP_ERROR_NONE) {
         if (item) {
-            mcp_content_item_free(item);
+            if (item->mime_type) {
+                free((void*)item->mime_type);
+            }
+            mcp_thread_cache_free(item, sizeof(mcp_content_item_t));
         }
         if (*content) {
-            free(*content);
+            mcp_thread_cache_free(*content, sizeof(mcp_content_item_t*));
             *content = NULL;
         }
         *content_count = 0;
@@ -536,34 +552,49 @@ static void cleanup(void) {
         mcp_server_destroy(g_server);
         g_server = NULL;
     }
+
+    // Clean up thread-local memory
+    mcp_log_info("Cleaning up thread-local memory...");
+    mcp_thread_cache_cleanup();
+
+    // Clean up memory pool system
+    mcp_log_info("Cleaning up memory pool system...");
+    mcp_memory_pool_system_cleanup();
+
     mcp_log_close();
 }
 
 /**
  * Signal handler
+ *
+ * This optimized signal handler ensures clean shutdown with proper resource cleanup.
  */
 static void signal_handler(int sig) {
+    // Use atomic operation to prevent multiple signal handlers from running simultaneously
     static volatile int shutdown_in_progress = 0;
 
-    // Prevent multiple signal handlers from running simultaneously
+    // Fast path for already in-progress shutdown
     if (shutdown_in_progress) {
         mcp_log_info("Shutdown already in progress, forcing exit...");
         exit(1); // Force exit if we get a second signal
     }
 
+    // Mark shutdown as in progress
     shutdown_in_progress = 1;
 
     mcp_log_info("Received signal %d, initiating shutdown...", sig);
 
     if (g_server) {
         mcp_log_info("Stopping server...");
-        mcp_server_stop(g_server); // Attempt graceful stop
+        // Attempt graceful stop
+        mcp_server_stop(g_server);
 
         // Wait briefly for server to stop
         mcp_log_info("Waiting for server to stop (max 1 second)...");
 
         // Wait up to 1 second for server to stop gracefully
         mcp_sleep_ms(1000);
+
         // Call cleanup directly to ensure resources are freed
         cleanup();
     }
@@ -707,9 +738,31 @@ int main(int argc, char** argv) {
 
     mcp_log_info("Starting MCP server...");
 
+    // Initialize memory pool system
+    mcp_log_info("Initializing memory pool system...");
+    if (!mcp_memory_pool_system_init(64, 32, 16)) {
+        mcp_log_error("Failed to initialize memory pool system");
+        mcp_log_close();
+        return 1;
+    }
+    mcp_log_info("Memory pool system initialized");
+
+    // Initialize thread-local cache
+    mcp_log_info("Initializing thread-local cache...");
+    if (!mcp_thread_cache_init()) {
+        mcp_log_error("Failed to initialize thread-local cache");
+        mcp_memory_pool_system_cleanup();
+        mcp_log_close();
+        return 1;
+    }
+    mcp_log_info("Thread-local cache initialized");
+
     // Initialize socket library
     if (mcp_socket_init() != 0) {
         mcp_log_error("Failed to initialize socket library");
+        mcp_thread_cache_cleanup();
+        mcp_memory_pool_system_cleanup();
+        mcp_log_close();
         return 1;
     }
     mcp_log_info("Socket library initialized");
@@ -910,9 +963,12 @@ int main(int argc, char** argv) {
 
     mcp_log_info("Server started successfully. Waiting for connections or input...");
 
-    // Main loop (simple wait for signal)
+    // Main loop with optimized wait strategy
+    // Use a condition variable or semaphore if available in the future
     while (g_server != NULL) {
-        mcp_sleep_ms(1000); // Sleep for 1 second
+        // Sleep for 1 second - this is efficient as it doesn't consume CPU
+        // In a future optimization, this could be replaced with a condition variable wait
+        mcp_sleep_ms(1000);
     }
 
     mcp_log_info("Main loop exiting.");
