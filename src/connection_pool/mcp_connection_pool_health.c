@@ -333,7 +333,8 @@ int update_connection_health_score(mcp_pooled_connection_t* conn, bool is_health
         // Unhealthy connection: decrease score significantly
         // The higher the score, the more dramatic the decrease
         int decrease = current_score / 4; // 25% decrease
-        if (decrease < 10) decrease = 10; // Minimum decrease of 10
+        if (decrease < 10)
+            decrease = 10; // Minimum decrease of 10
 
         current_score -= decrease;
         if (current_score < 0) current_score = 0;

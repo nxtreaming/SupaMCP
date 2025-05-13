@@ -1,11 +1,11 @@
 #include "internal/connection_pool_internal.h"
+#include "mcp_socket_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <time.h>
 
-// Thread function for pool maintenance
 void* pool_maintenance_thread_func(void* arg) {
     mcp_connection_pool_t* pool = (mcp_connection_pool_t*)arg;
     if (!pool) {
@@ -15,14 +15,8 @@ void* pool_maintenance_thread_func(void* arg) {
 
     mcp_log_info("Connection pool maintenance thread started for %s:%d.", pool->host, pool->port);
 
-    // Main maintenance loop
     while (true) {
-        // Sleep for a reasonable interval (e.g., 1 second)
-#ifdef _WIN32
-        Sleep(1000);
-#else
-        usleep(1000000); // 1 second in microseconds
-#endif
+         mcp_sleep_ms(1000);
 
         // Check if we should exit
         pool_lock(pool);
@@ -152,12 +146,12 @@ void* pool_maintenance_thread_func(void* arg) {
                         // Failed to allocate node, close the connection
                         mcp_log_error("Failed to allocate node for new connection %d.", (int)new_sock);
                         close_connection(new_sock);
-                        pool->total_count--; // Decrement since we couldn't add it
+                        pool->total_count--;
                     }
                 } else {
                     // Failed to create connection
                     mcp_log_warn("Failed to create new connection to maintain minimum pool size.");
-                    pool->total_count--; // Decrement since creation failed
+                    pool->total_count--;
                 }
             }
         }
@@ -172,7 +166,7 @@ void* pool_maintenance_thread_func(void* arg) {
 // Function to pre-populate the pool with min_connections
 int prepopulate_pool(mcp_connection_pool_t* pool) {
     if (!pool || pool->min_connections == 0) {
-        return 0; // Nothing to do
+        return 0;
     }
 
     mcp_log_info("Pre-populating connection pool with %zu connections.", pool->min_connections);
@@ -225,12 +219,12 @@ int prepopulate_pool(mcp_connection_pool_t* pool) {
                 // Failed to allocate node, close the connection
                 mcp_log_error("Failed to allocate node for pre-populated connection %d.", (int)new_sock);
                 close_connection(new_sock);
-                pool->total_count--; // Decrement since we couldn't add it
+                pool->total_count--;
             }
         } else {
             // Failed to create connection
             mcp_log_warn("Failed to create connection during pre-population.");
-            pool->total_count--; // Decrement since creation failed
+            pool->total_count--;
         }
     }
 
@@ -250,7 +244,7 @@ int start_maintenance_thread(mcp_connection_pool_t* pool) {
     if (pool->idle_timeout_ms <= 0 && pool->min_connections == 0) {
         mcp_log_debug("No maintenance thread needed (idle_timeout_ms=%d, min_connections=%zu).",
                      pool->idle_timeout_ms, pool->min_connections);
-        return 0; // No maintenance needed
+        return 0;
     }
 
     // Create and start the maintenance thread
@@ -274,7 +268,7 @@ void stop_maintenance_thread(mcp_connection_pool_t* pool) {
 
     // Wait for thread to exit
     mcp_thread_join(pool->maintenance_thread, NULL);
-    pool->maintenance_thread = 0; // Reset handle
+    pool->maintenance_thread = 0;
 
     mcp_log_info("Maintenance thread stopped.");
 }

@@ -29,7 +29,7 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
     socket_handle_t sock = INVALID_SOCKET_HANDLE;
     struct addrinfo hints, *servinfo = NULL, *p = NULL;
     int rv;
-    int err = 0; // Initialize err
+    int err = 0;
 
     // Note: WSAStartup is assumed to be called once elsewhere (e.g., pool create or globally)
     // It's generally not safe to call WSAStartup/WSACleanup per connection.
@@ -105,7 +105,7 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
             err = WSAEWOULDBLOCK; // Set err for unified handling below
         }
         // else rv == 0 means immediate success (less common for non-blocking)
-#else // POSIX
+#else
         if (rv == -1) {
             err = errno;
             if (err != EINPROGRESS) {
@@ -173,18 +173,18 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 #endif
                 close_connection(sock);
                 sock = INVALID_SOCKET_HANDLE;
-                continue; // Try next address
+                continue;
             }
 
             if (optval != 0) { // Connect failed
 #ifdef _WIN32
-                mcp_log_warn("connect() failed after wait: SO_ERROR=%d (WSA: %d)", optval, optval); // Use optval as error code
+                mcp_log_warn("connect() failed after wait: SO_ERROR=%d (WSA: %d)", optval, optval);
 #else
-                mcp_log_warn("connect() failed after wait: %s", strerror(optval)); // Use optval as errno
+                mcp_log_warn("connect() failed after wait: %s", strerror(optval));
 #endif
                 close_connection(sock);
                 sock = INVALID_SOCKET_HANDLE;
-                continue; // Try next address
+                continue;
             }
             // Connection successful!
         } else {
