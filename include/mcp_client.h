@@ -164,6 +164,49 @@ int mcp_client_expand_template(mcp_client_t* client, const char* template_uri, c
 int mcp_client_read_resource_with_template(mcp_client_t* client, const char* template_uri, const char* params_json, mcp_content_item_t*** content, size_t* count);
 
 /**
+ * @brief Read multiple resources using the same template with different parameters
+ *
+ * This optimized function efficiently reads multiple resources by expanding the same
+ * template with different parameter sets, then fetching each resource.
+ *
+ * @param client The MCP client instance
+ * @param template_uri The URI template to expand
+ * @param params_json_array Array of JSON parameter strings
+ * @param params_count Number of parameter sets in the array
+ * @param content_array Pointer to store array of content item arrays
+ * @param count_array Pointer to store array of content item counts
+ * @param result_array Pointer to store array of result codes
+ * @return Number of successful resource reads, or -1 on critical failure
+ */
+int mcp_client_read_resources_with_template_batch(
+    mcp_client_t* client,
+    const char* template_uri,
+    const char** params_json_array,
+    size_t params_count,
+    mcp_content_item_t**** content_array,
+    size_t** count_array,
+    int** result_array
+);
+
+/**
+ * @brief Free resources allocated by mcp_client_read_resources_with_template_batch
+ *
+ * This function properly cleans up all memory allocated during a batch resource read
+ * operation, including content items, arrays, and other resources.
+ *
+ * @param content_array Array of content item arrays
+ * @param count_array Array of content item counts
+ * @param result_array Array of result codes
+ * @param params_count Number of parameter sets processed
+ */
+void mcp_client_free_batch_resources(
+    mcp_content_item_t*** content_array,
+    size_t* count_array,
+    int* result_array,
+    size_t params_count
+);
+
+/**
  * @brief Sends a pre-formatted request and receives the raw response.
  *
  * This is useful for scenarios like gateways where the request JSON might already
