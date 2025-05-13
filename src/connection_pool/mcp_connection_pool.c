@@ -1,4 +1,5 @@
 #include "internal/connection_pool_internal.h"
+#include "mcp_socket_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -99,7 +100,7 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
     socket_handle_t sock = INVALID_SOCKET_HANDLE;
     long long start_time_ms = 0; // For tracking overall timeout
     if (timeout_ms > 0) {
-        start_time_ms = get_current_time_ms();
+        start_time_ms = mcp_get_time_ms();
     }
 
     pool_lock(pool);
@@ -231,7 +232,7 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
 
              int wait_timeout = timeout_ms;
              if (timeout_ms > 0) {
-                 long long elapsed_ms = get_current_time_ms() - start_time_ms;
+                 long long elapsed_ms = mcp_get_time_ms() - start_time_ms;
                  wait_timeout = timeout_ms - (int)elapsed_ms;
                  if (wait_timeout <= 0) {
                      mcp_log_warn("mcp_connection_pool_get: Timed out waiting for connection.");

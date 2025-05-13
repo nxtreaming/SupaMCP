@@ -49,6 +49,12 @@ extern "C" {
 void mcp_sleep_ms(uint32_t milliseconds);
 
 /**
+ * @brief Get the current time in the unit of  milliseconds.
+ * @return current time in milliseconds.
+ */
+long long mcp_get_time_ms();
+
+/**
  * @brief Initializes the socket library (required on Windows).
  * Call once at application startup.
  * @return 0 on success, -1 on failure.

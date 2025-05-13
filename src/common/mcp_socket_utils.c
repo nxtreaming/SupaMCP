@@ -96,6 +96,17 @@ void mcp_sleep_ms(uint32_t milliseconds) {
 #endif
 }
 
+long long mcp_get_time_ms() {
+#ifdef _WIN32
+    // GetTickCount64 is simpler and often sufficient for intervals
+    return (long long)GetTickCount64();
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return ((long long)tv.tv_sec * 1000) + (tv.tv_usec / 1000);
+#endif
+}
+
 int mcp_socket_init(void) {
 #ifdef _WIN32
     WSADATA wsaData;

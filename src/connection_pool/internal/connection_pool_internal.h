@@ -42,8 +42,6 @@ typedef int socket_handle_t;
 #define SOCKET_ERROR_HANDLE (-1)
 #endif
 
-// --- Internal Structures ---
-
 /**
  * @internal
  * @brief Represents a single connection stored within the pool.
@@ -116,9 +114,6 @@ void pool_unlock(mcp_connection_pool_t* pool);
 void pool_signal(mcp_connection_pool_t* pool);
 void pool_broadcast(mcp_connection_pool_t* pool);
 int pool_wait(mcp_connection_pool_t* pool, int timeout_ms);
-
-// From mcp_connection_pool_utils.c
-long long get_current_time_ms();
 
 // From mcp_connection_pool_maintenance.c
 int prepopulate_pool(mcp_connection_pool_t* pool);

@@ -5,13 +5,11 @@
 #include "mcp_transport_factory.h"
 #include "mcp_sync.h"
 #include "mcp_tcp_client_transport.h"
+#include "mcp_socket_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <errno.h>
-
-// Forward declare helper if needed (assuming it's in utils or similar)
-extern long long get_current_time_ms(void);
 
 // Default pool settings (can be made configurable later)
 #define DEFAULT_MIN_CONNECTIONS 1
@@ -287,7 +285,7 @@ void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_bac
     bool use_timeout = (timeout_ms >= 0); // Use timeout if >= 0 (-1 means wait indefinitely)
 
     if (use_timeout) {
-        start_time_ms = get_current_time_ms(); // Assuming get_current_time_ms() exists
+        start_time_ms = mcp_get_time_ms();
     }
 
     // Lock the manager mutex to safely access the hashtable
@@ -444,7 +442,7 @@ void* gateway_pool_get_connection(gateway_pool_manager_t* manager, const mcp_bac
         int remaining_timeout_ms = timeout_ms; // Initialize with original timeout
 
         if (use_timeout) {
-            long long elapsed_ms = get_current_time_ms() - start_time_ms;
+            long long elapsed_ms = mcp_get_time_ms() - start_time_ms;
             remaining_timeout_ms = timeout_ms - (int)elapsed_ms;
             if (remaining_timeout_ms <= 0) {
                 mcp_log_warn("Timeout expired before waiting for connection to %s", pool->backend_address);

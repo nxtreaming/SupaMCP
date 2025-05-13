@@ -200,7 +200,6 @@ set(COMMON_SOURCES
     src/connection_pool/mcp_connection_pool.c
     src/connection_pool/mcp_connection_pool_socket.c
     src/connection_pool/mcp_connection_pool_sync.c
-    src/connection_pool/mcp_connection_pool_utils.c
     src/connection_pool/mcp_connection_pool_maintenance.c
     src/connection_pool/mcp_connection_pool_health.c
     src/connection_pool/mcp_connection_pool_dns_cache.c
