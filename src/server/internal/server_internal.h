@@ -1,5 +1,5 @@
-#ifndef MCP_SERVER_INTERNAL_H
-#define MCP_SERVER_INTERNAL_H
+#ifndef SERVER_INTERNAL_H
+#define SERVER_INTERNAL_H
 
 #ifdef _WIN32
 #include <win_socket_compat.h>
@@ -108,4 +108,4 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
 char* create_error_response(uint64_t id, mcp_error_code_t code, const char* message);
 char* create_success_response(uint64_t id, char* result_str); // Takes ownership of result_str
 
-#endif // MCP_SERVER_INTERNAL_H
+#endif // SERVER_INTERNAL_H

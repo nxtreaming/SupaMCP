@@ -1,5 +1,5 @@
-#ifndef MCP_ARENA_INTERNAL_H
-#define MCP_ARENA_INTERNAL_H
+#ifndef ARENA_INTERNAL_H
+#define ARENA_INTERNAL_H
 
 #include "mcp_arena.h"
 
@@ -18,4 +18,4 @@ typedef MCP_CACHE_ALIGNED struct mcp_arena_block {
 
 // Block structure is internal implementation detail
 
-#endif // MCP_ARENA_INTERNAL_H
+#endif // ARENA_INTERNAL_H
