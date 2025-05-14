@@ -9,6 +9,7 @@
 #include "mcp_sync.h"
 #include "mcp_cache_aligned.h"
 #include "mcp_rwlock.h"
+#include "mcp_object_pool.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -60,7 +61,12 @@ typedef struct mcp_pooled_connection {
     int use_count;                      // Number of times this connection has been used
     struct mcp_pooled_connection* next; // Link for idle list
     struct mcp_pooled_connection* prev; // Link for idle list (double-linked)
-} mcp_pooled_connection_t;
+
+    // Padding to ensure cache line alignment and prevent false sharing
+    char padding[MCP_CACHE_LINE_SIZE -
+                (sizeof(socket_handle_t) + 2 * sizeof(time_t) + sizeof(int) +
+                 sizeof(bool) + sizeof(int) + 2 * sizeof(void*)) % MCP_CACHE_LINE_SIZE];
+} MCP_CACHE_ALIGNED mcp_pooled_connection_t;
 
 /**
  * @internal
@@ -78,6 +84,10 @@ struct mcp_connection_pool {
 
     mcp_mutex_t* mutex;                 // Mutex for thread safety (using abstracted type)
     mcp_cond_t* cond_var;               // Condition variable for waiting clients (using abstracted type)
+    mcp_rwlock_t* rwlock;               // Read-write lock for better concurrency
+
+    // Object pool for connection structures
+    mcp_object_pool_t* conn_pool;       // Object pool for connection structures
 
     // Double-linked list of idle connections (head and tail for efficient operations)
     mcp_pooled_connection_t* idle_head; // Head of idle list
@@ -95,9 +105,16 @@ struct mcp_connection_pool {
     long long total_wait_time_ms;       // Total time spent waiting for connections
     long long max_wait_time_ms;         // Maximum time spent waiting for a connection
 
+    // Maintenance statistics
+    size_t maintenance_cycles;          // Total number of maintenance cycles run
+    time_t last_maintenance_time;       // Timestamp of last maintenance cycle
+    long long total_maintenance_time_ms;// Total time spent in maintenance
+    long long max_maintenance_time_ms;  // Maximum time spent in a single maintenance cycle
+
     // Health check statistics
     size_t health_checks_performed;     // Total number of health checks performed
     size_t failed_health_checks;        // Number of failed health checks
+    time_t last_health_check_time;      // Timestamp of last health check
 
     bool shutting_down;                 // Flag indicating pool destruction is in progress
 
@@ -125,6 +142,9 @@ int prepopulate_pool(mcp_connection_pool_t* pool);
 int start_maintenance_thread(mcp_connection_pool_t* pool);
 void stop_maintenance_thread(mcp_connection_pool_t* pool);
 void* pool_maintenance_thread_func(void* arg);
+mcp_pooled_connection_t* create_and_add_connection(mcp_connection_pool_t* pool, bool add_to_idle_list);
+bool remove_idle_connection(mcp_connection_pool_t* pool, mcp_pooled_connection_t* conn, mcp_pooled_connection_t* prev);
+void close_and_free_connection(mcp_connection_pool_t* pool, mcp_pooled_connection_t* conn);
 
 // From mcp_connection_pool_health.c
 bool check_connection_health(socket_handle_t socket_fd, int timeout_ms);
