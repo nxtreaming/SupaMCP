@@ -757,6 +757,8 @@ mcp_transport_t* mcp_transport_websocket_client_create(const mcp_websocket_confi
     data->response_data_len = 0;
     data->response_ready = false;
     data->response_error_code = 0;
+    data->current_request_id = 0;
+    data->request_timedout = false;
 
     // Set transport type and operations
     transport->type = MCP_TRANSPORT_TYPE_CLIENT;

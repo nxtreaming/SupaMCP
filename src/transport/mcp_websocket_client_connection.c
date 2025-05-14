@@ -22,28 +22,55 @@ bool ws_client_is_connected(ws_client_data_t* data) {
 // Helper function to ensure client is connected, with optional timeout
 int ws_client_ensure_connected(ws_client_data_t* data, uint32_t timeout_ms) {
     if (!data || !data->running) {
+        mcp_log_error("WebSocket client ensure_connected: Invalid data or client not running");
         return -1;
     }
 
     // Check if already connected
     if (ws_client_is_connected(data)) {
+        mcp_log_debug("WebSocket client already connected, proceeding immediately");
         return 0;
     }
 
+    // Get current connection state for logging
+    int state = -1;
+    if (data->connection_mutex) {
+        mcp_mutex_lock(data->connection_mutex);
+        state = data->state;
+        mcp_mutex_unlock(data->connection_mutex);
+    }
+
     // Wait for connection with timeout
-    mcp_log_debug("WebSocket client not connected, waiting for connection...");
-    if (ws_client_wait_for_connection(data, timeout_ms) != 0) {
-        mcp_log_error("WebSocket client not connected, cannot send message");
+    mcp_log_debug("WebSocket client not connected (state=%d), waiting for connection with timeout %u ms...",
+                 state, timeout_ms);
+
+    time_t start_time = time(NULL);
+    int wait_result = ws_client_wait_for_connection(data, timeout_ms);
+    time_t end_time = time(NULL);
+    double elapsed_seconds = difftime(end_time, start_time);
+
+    if (wait_result != 0) {
+        mcp_log_error("WebSocket client connection failed after %.1f seconds (timeout was %u ms)",
+                     elapsed_seconds, timeout_ms);
         return -1;
     }
 
     // Check if connected after wait
     if (!ws_client_is_connected(data)) {
-        mcp_log_error("WebSocket client still not connected after wait");
+        // Get current state for more detailed error
+        if (data->connection_mutex) {
+            mcp_mutex_lock(data->connection_mutex);
+            state = data->state;
+            mcp_mutex_unlock(data->connection_mutex);
+        }
+
+        mcp_log_error("WebSocket client still not connected after %.1f seconds (state=%d)",
+                     elapsed_seconds, state);
         return -1;
     }
 
-    mcp_log_debug("WebSocket client connected, proceeding with operation");
+    mcp_log_debug("WebSocket client connected after %.1f seconds, proceeding with operation",
+                 elapsed_seconds);
     return 0;
 }
 
@@ -284,8 +311,14 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
 
             if (result != 0) {
                 // Timeout or error
-                mcp_log_debug("WebSocket client connection wait returned %d", result);
-                break;
+                mcp_log_debug("WebSocket client connection wait returned %d, wait_time=%u ms, remaining=%u ms",
+                             result, wait_time, remaining_timeout);
+
+                // Only break on serious errors, not on timeout (-2)
+                if (result != -2) { // -2 is timeout error
+                    mcp_log_error("WebSocket client connection wait error: %d", result);
+                    break;
+                }
             }
 
             remaining_timeout -= wait_time;

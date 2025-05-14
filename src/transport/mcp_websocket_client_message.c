@@ -1,5 +1,25 @@
 #include "internal/websocket_client_internal.h"
 
+// Helper function to extract request/response ID from JSON data
+static int64_t websocket_extract_request_id(const char* json_data, size_t data_len) {
+    int64_t id = -1;  // Initialize to -1 to indicate "no valid ID"
+
+    if (data_len > 0 && json_data && json_data[0] == '{') {
+        // Try to extract the ID from the JSON
+        const char* id_pos = strstr(json_data, "\"id\":");
+        if (id_pos) {
+            // Skip "id": and any whitespace
+            id_pos += 5;
+            while (*id_pos == ' ' || *id_pos == '\t') id_pos++;
+
+            // Parse the ID
+            id = strtoll(id_pos, NULL, 10);
+        }
+    }
+
+    return id;
+}
+
 // Helper function to resize receive buffer with optimized growth strategy
 static int ws_client_resize_receive_buffer(ws_client_data_t* data, size_t needed_size) {
     if (!data) {
@@ -59,6 +79,31 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
     // Optimization: In sync mode, we can avoid an extra copy by transferring ownership
     // of the receive buffer directly if we're in sync mode and no one else needs it
     if (data->sync_response_mode) {
+        // If the request has timed out, silently discard the response
+        if (data->request_timedout) {
+            // Extract the response ID to verify it matches our current request ID
+            int64_t response_id = websocket_extract_request_id(
+                data->receive_buffer,
+                data->receive_buffer_used
+            );
+
+            // Check if this response matches our timed-out request
+            if (response_id >= 0 && response_id == data->current_request_id) {
+                mcp_log_debug("Received response for timed-out request ID %llu, discarding silently",
+                             (unsigned long long)response_id);
+
+                // Now we can exit sync mode
+                data->sync_response_mode = false;
+                data->response_ready = false;
+                data->current_request_id = 0;
+                data->request_timedout = false;
+
+                mcp_mutex_unlock(data->response_mutex);
+                data->receive_buffer_used = 0;
+                return 0;
+            }
+        }
+
         // Clean up any existing response data
         if (data->response_data) {
             free(data->response_data);
@@ -229,12 +274,23 @@ int ws_client_send_and_wait_response(
     // Reset response state
     ws_data->sync_response_mode = true;
     ws_data->response_ready = false;
+    ws_data->request_timedout = false;
     if (ws_data->response_data) {
         free(ws_data->response_data);
         ws_data->response_data = NULL;
         ws_data->response_data_len = 0;
     }
     ws_data->response_error_code = 0;
+
+    // Extract and store the request ID
+    int64_t request_id = websocket_extract_request_id((const char*)data, size);
+
+    // Store the current request ID
+    ws_data->current_request_id = request_id;
+    if (request_id >= 0) {
+        mcp_log_debug("WebSocket client expecting response for request ID: %llu",
+                     (unsigned long long)request_id);
+    }
 
     mcp_log_debug("WebSocket client entering synchronous response mode");
 
@@ -253,6 +309,8 @@ int ws_client_send_and_wait_response(
         // Reset synchronous response mode
         mcp_mutex_lock(ws_data->response_mutex);
         ws_data->sync_response_mode = false;
+        ws_data->current_request_id = 0;
+        ws_data->request_timedout = false;
         mcp_mutex_unlock(ws_data->response_mutex);
 
         return -1;
@@ -287,8 +345,19 @@ int ws_client_send_and_wait_response(
                 // Wait for response or timeout
                 result = mcp_cond_timedwait(ws_data->response_cond, ws_data->response_mutex, wait_time);
 
-                // Check for response or error
-                if (ws_data->response_ready || result != 0) {
+                // Add detailed logging for debugging
+                mcp_log_debug("WebSocket client wait result: %d, wait_time: %u ms, remaining_timeout: %u ms",
+                             result, wait_time, remaining_timeout);
+
+                // Only exit loop if we got a response
+                if (ws_data->response_ready) {
+                    mcp_log_debug("WebSocket client received response, exiting wait loop");
+                    break;
+                }
+
+                // Only exit loop on serious errors, not on timeout (-2)
+                if (result != 0 && result != -2) { // -2 is timeout error
+                    mcp_log_error("WebSocket client wait error: %d", result);
                     break;
                 }
 
@@ -313,7 +382,21 @@ int ws_client_send_and_wait_response(
             }
 
             if (!ws_data->response_ready) {
-                mcp_log_error("WebSocket client response timeout after %u ms", timeout_ms);
+                mcp_log_error("WebSocket client response timeout after %u ms (actual elapsed time may be different)", timeout_ms);
+
+                // Log detailed timeout information
+                mcp_log_error("WebSocket client timeout details: initial timeout=%u ms, remaining=%u ms, elapsed=%u ms",
+                             timeout_ms, remaining_timeout, timeout_ms - remaining_timeout);
+
+                // Mark the request as timed out, but don't exit sync mode
+                ws_data->request_timedout = true;
+
+                // Log the request ID that timed out
+                if (ws_data->current_request_id >= 0) {
+                    mcp_log_error("Request with ID %llu timed out",
+                                 (unsigned long long)ws_data->current_request_id);
+                }
+
                 result = -2; // Timeout
             }
         } else {
@@ -325,14 +408,18 @@ int ws_client_send_and_wait_response(
                 // Wait with a reasonable timeout to allow periodic checks
                 result = mcp_cond_timedwait(ws_data->response_cond, ws_data->response_mutex, 1000);
 
+                // Add detailed logging for debugging
+                mcp_log_debug("WebSocket client indefinite wait result: %d", result);
+
                 // Check for response
                 if (ws_data->response_ready) {
+                    mcp_log_debug("WebSocket client received response, exiting indefinite wait loop");
                     break;
                 }
 
                 // Check for error other than timeout
                 if (result != 0 && result != -2) { // -2 is timeout
-                    mcp_log_debug("WebSocket client wait returned error %d", result);
+                    mcp_log_error("WebSocket client indefinite wait returned error %d", result);
                     break;
                 }
 
@@ -370,9 +457,18 @@ int ws_client_send_and_wait_response(
         }
     }
 
-    // Reset synchronous response mode
-    ws_data->sync_response_mode = false;
-    ws_data->response_ready = false;
+    // Only exit sync mode if we got a response or client is shutting down
+    if (ws_data->response_ready || !ws_data->running) {
+        ws_data->sync_response_mode = false;
+        ws_data->response_ready = false;
+        ws_data->current_request_id = 0;
+        ws_data->request_timedout = false;
+    }
+    // Otherwise, keep sync mode active to handle late responses
+    else if (ws_data->request_timedout) {
+        mcp_log_debug("WebSocket client keeping sync mode active for timed-out request ID %llu",
+                     (unsigned long long)ws_data->current_request_id);
+    }
 
     mcp_mutex_unlock(ws_data->response_mutex);
 

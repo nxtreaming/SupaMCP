@@ -362,8 +362,19 @@ char* mcp_client_receive_callback(void* user_data, const void* data, size_t size
             free(resp_result);
         }
     } else {
-        // Response received for an unknown/unexpected ID
-        mcp_log_warn("Received response with unexpected ID: %llu", (unsigned long long)id);
+        // For WebSocket transport, this warning should never be triggered
+        // because WebSocket client handles timed-out requests internally.
+        // If we see this warning with WebSocket, it indicates a bug.
+        mcp_transport_protocol_t protocol = mcp_transport_get_protocol(client->transport);
+        if (protocol == MCP_TRANSPORT_PROTOCOL_WEBSOCKET) {
+            // This should never happen with WebSocket, so log as an error
+            mcp_log_error("BUG: Received response with unexpected ID: %llu in WebSocket transport",
+                         (unsigned long long)id);
+        } else {
+            // For other transports, log a warning as before
+            mcp_log_warn("Received response with unexpected ID: %llu", (unsigned long long)id);
+        }
+
         free(resp_error_message);
         free(resp_result);
         *error_code = MCP_ERROR_INVALID_REQUEST;

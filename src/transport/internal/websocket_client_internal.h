@@ -67,6 +67,8 @@ typedef struct {
     size_t response_data_len;       // Response data length
     bool response_ready;            // Whether a response is ready
     int response_error_code;        // Response error code
+    int64_t current_request_id;     // Current request ID being processed
+    bool request_timedout;         // Whether the current request has timed out
 } ws_client_data_t;
 
 // Buffer management functions
