@@ -189,29 +189,29 @@ static mcp_json_t* parse_object(const char** json, int depth) {
     if (**json != '{') {
         return NULL;
     }
-    mcp_json_t* object = mcp_json_object_create(); // Uses thread-local arena
+    mcp_json_t* object = mcp_json_object_create();
     if (object == NULL) {
         // Error already logged by create function
         return NULL;
     }
-    (*json)++; // Skip '{'
+    (*json)++;
     skip_whitespace(json);
     if (**json == '}') {
-        (*json)++; // Skip '}'
-        return object; // Empty object
+        (*json)++;
+        return object;
     }
     while (1) {
         skip_whitespace(json);
-        char* name = parse_string(json); // Name uses malloc
+        char* name = parse_string(json)
         if (name == NULL) {
             // Don't destroy object here, let caller handle cleanup via arena reset/destroy
-            return NULL; // Invalid key
+            return NULL;
         }
         skip_whitespace(json);
         if (**json != ':') {
             mcp_log_error("JSON parse error: Expected ':' after object key '%s'.", name);
             free(name);
-            return NULL; // Expected colon
+            return NULL;
         }
         (*json)++; // Skip ':'
         skip_whitespace(json);
@@ -219,7 +219,7 @@ static mcp_json_t* parse_object(const char** json, int depth) {
         if (value == NULL) {
             mcp_log_error("JSON parse error: Failed to parse value for object key '%s'.", name);
             free(name);
-            return NULL; // Invalid value
+            return NULL;
         }
         // Set property using generic hash table
         // mcp_hashtable_put will handle key duplication (using mcp_hashtable_string_dup)
@@ -228,19 +228,19 @@ static mcp_json_t* parse_object(const char** json, int depth) {
             mcp_log_error("JSON parse error: Failed to set property '%s' using mcp_hashtable_put.", name);
             free(name); // Free the parsed name string
             // Don't destroy value (it's in arena), don't destroy object
-            return NULL; // Set property failed
+            return NULL;
         }
-        free(name); // Free the malloc'd name string
+        free(name);
         skip_whitespace(json);
         if (**json == '}') {
-            (*json)++; // Skip '}'
+            (*json)++;
             return object;
         }
         if (**json != ',') {
             mcp_log_error("JSON parse error: Expected ',' or '}' after object property.");
-            return NULL; // Expected comma or closing brace
+            return NULL;
         }
-        (*json)++; // Skip ','
+        (*json)++;
     }
 }
 
@@ -252,16 +252,16 @@ static mcp_json_t* parse_array(const char** json, int depth) {
     if (**json != '[') {
         return NULL;
     }
-    mcp_json_t* array = mcp_json_array_create(); // Uses thread-local arena
+    mcp_json_t* array = mcp_json_array_create();
     if (array == NULL) {
         // Error logged by create function
         return NULL;
     }
-    (*json)++; // Skip '['
+    (*json)++;
     skip_whitespace(json);
     if (**json == ']') {
-        (*json)++; // Skip ']'
-        return array; // Empty array
+        (*json)++;
+        return array;
     }
     while (1) {
         skip_whitespace(json);
@@ -269,50 +269,58 @@ static mcp_json_t* parse_array(const char** json, int depth) {
         if (value == NULL) {
             mcp_log_error("JSON parse error: Failed to parse value in array.");
             // Don't destroy array, let caller handle via arena
-            return NULL; // Invalid value in array
+            return NULL;
         }
         // Add item uses realloc for backing store, not arena
         if (mcp_json_array_add_item(array, value) != 0) {
             mcp_log_error("JSON parse error: Failed to add item to array.");
             // Don't destroy value (it's in arena)
-            return NULL; // Add item failed
+            return NULL;
         }
         skip_whitespace(json);
         if (**json == ']') {
-            (*json)++; // Skip ']'
+            (*json)++;
             return array;
         }
         if (**json != ',') {
             mcp_log_error("JSON parse error: Expected ',' or ']' after array element.");
-            return NULL; // Expected comma or closing bracket
+            return NULL;
         }
-        (*json)++; // Skip ','
+        (*json)++;
     }
 }
 
 static mcp_json_t* parse_number(const char** json) {
     const char* start = *json;
-    if (**json == '-') (*json)++;
-    if (**json < '0' || **json > '9') return NULL; // Must have at least one digit
-    while (**json >= '0' && **json <= '9') (*json)++;
+    if (**json == '-')
+        (*json)++;
+    if (**json < '0' || **json > '9')
+        return NULL;
+    while (**json >= '0' && **json <= '9')
+        (*json)++;
     if (**json == '.') {
         (*json)++;
-        if (**json < '0' || **json > '9') return NULL; // Digit must follow '.'
-        while (**json >= '0' && **json <= '9') (*json)++;
+        if (**json < '0' || **json > '9')
+            return NULL;
+        while (**json >= '0' && **json <= '9')
+            (*json)++;
     }
     if (**json == 'e' || **json == 'E') {
         (*json)++;
-        if (**json == '+' || **json == '-') (*json)++;
-        if (**json < '0' || **json > '9') return NULL; // Digit must follow 'e'/'E'
-        while (**json >= '0' && **json <= '9') (*json)++;
+        if (**json == '+' || **json == '-')
+            (*json)++;
+        if (**json < '0' || **json > '9')
+            return NULL;
+        while (**json >= '0' && **json <= '9')
+            (*json)++;
     }
     char* end;
     double value = strtod(start, &end);
     if (end != *json) {
         mcp_log_error("JSON parse error: Invalid number format near '%s'.", start);
-        return NULL; // Invalid number format
+        return NULL;
     }
-    return mcp_json_number_create(value); // Uses thread-local arena
+    return mcp_json_number_create(value);
 }
 
 // Main recursive parsing function
@@ -322,30 +330,30 @@ mcp_json_t* parse_value(const char** json, int depth) {
         case '{': return parse_object(json, depth);
         case '[': return parse_array(json, depth);
         case '"': {
-            char* string = parse_string(json); // Uses malloc
+            char* string = parse_string(json);
             if (string == NULL) return NULL;
-            mcp_json_t* result = mcp_json_string_create(string); // Uses thread-local arena for node
-            free(string); // Free malloc'd string
+            mcp_json_t* result = mcp_json_string_create(string);
+            free(string);
             return result;
         }
         case 'n':
             if (strncmp(*json, "null", 4) == 0) {
                 *json += 4;
-                return mcp_json_null_create(); // Uses thread-local arena
+                return mcp_json_null_create();
             }
             mcp_log_error("JSON parse error: Expected 'null'.");
             return NULL;
         case 't':
             if (strncmp(*json, "true", 4) == 0) {
                *json += 4;
-                return mcp_json_boolean_create(true); // Uses thread-local arena
+                return mcp_json_boolean_create(true);
             }
             mcp_log_error("JSON parse error: Expected 'true'.");
             return NULL;
          case 'f':
             if (strncmp(*json, "false", 5) == 0) {
                 *json += 5;
-                return mcp_json_boolean_create(false); // Uses thread-local arena
+                return mcp_json_boolean_create(false);
             }
             mcp_log_error("JSON parse error: Expected 'false'.");
             return NULL;
@@ -355,7 +363,7 @@ mcp_json_t* parse_value(const char** json, int depth) {
             return parse_number(json);
         default:
             mcp_log_error("JSON parse error: Unexpected character '%c'.", **json);
-            return NULL; // Invalid character
+            return NULL;
      }
 }
 
@@ -364,9 +372,9 @@ mcp_json_t* mcp_json_parse(const char* json) {
     if (json == NULL) {
         return NULL;
     }
-    const char* current = json; // Use a temporary pointer
+    const char* current = json;
     skip_whitespace(&current);
-    mcp_json_t* result = parse_value(&current, 0); // Start parsing at depth 0
+    mcp_json_t* result = parse_value(&current, 0);
     if (result == NULL) {
         // Parsing failed, thread-local arena contains partially allocated nodes.
         // Caller should reset/destroy the thread-local arena if appropriate.

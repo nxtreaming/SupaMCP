@@ -191,7 +191,7 @@ int mcp_json_parse_resources_direct(
         }
     }
 
-    return 0; // Success
+    return 0;
 
 parse_error:
     // Cleanup partially created resources
@@ -205,5 +205,5 @@ parse_error:
         *resources = NULL;
     }
     *count = 0;
-    return -1; // Indicate error
+    return -1;
 }
