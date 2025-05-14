@@ -34,70 +34,6 @@
 #define MAX_BATCH_SIZE 16
 
 /**
- * @brief Sets a socket to non-blocking mode.
- *
- * @param socket_fd The socket handle.
- * @param original_flags Pointer to store the original flags (POSIX only).
- * @param original_mode Pointer to store the original mode (Windows only).
- * @return true if successful, false otherwise.
- */
-static bool set_socket_nonblocking(socket_handle_t socket_fd,
-#ifdef _WIN32
-                                  u_long* original_mode
-#else
-                                  int* original_flags
-#endif
-                                  ) {
-    // Use the enhanced core function with state preservation
-    int result = mcp_socket_set_non_blocking_ex((socket_t)socket_fd,
-#ifdef _WIN32
-                                              original_mode
-#else
-                                              original_flags
-#endif
-                                              );
-
-    if (result != 0) {
-        mcp_log_warn("Health check: Failed to set socket to non-blocking mode");
-        return false;
-    }
-
-    return true;
-}
-
-/**
- * @brief Restores a socket to its original blocking mode.
- *
- * @param socket_fd The socket handle.
- * @param original_flags The original flags to restore (POSIX only).
- * @param original_mode The original mode to restore (Windows only).
- * @return true if successful, false otherwise.
- */
-static bool restore_socket_blocking(socket_handle_t socket_fd,
-#ifdef _WIN32
-                                   u_long original_mode
-#else
-                                   int original_flags
-#endif
-                                   ) {
-    // Use the core function to restore blocking mode
-    int result = mcp_socket_restore_blocking((socket_t)socket_fd,
-#ifdef _WIN32
-                                           original_mode
-#else
-                                           original_flags
-#endif
-                                           );
-
-    if (result != 0) {
-        mcp_log_warn("Health check: Failed to restore socket blocking mode");
-        return false;
-    }
-
-    return true;
-}
-
-/**
  * @brief Checks if a socket is readable or has an error.
  *
  * This function uses platform-specific mechanisms (select on Windows, poll on POSIX)
@@ -206,13 +142,15 @@ bool check_connection_health(socket_handle_t socket_fd, int timeout_ms) {
 #endif
 
     // Set socket to non-blocking mode
-    if (!set_socket_nonblocking(socket_fd,
+    int result = mcp_socket_set_non_blocking_ex((socket_t)socket_fd,
 #ifdef _WIN32
-                               &original_mode
+        &original_mode
 #else
-                               &original_flags
+        &original_flags
 #endif
-                               )) {
+    );
+    if (result != 0) {
+        mcp_log_warn("Health check: Failed to set socket to non-blocking mode");
         return false;
     }
 
@@ -268,13 +206,17 @@ bool check_connection_health(socket_handle_t socket_fd, int timeout_ms) {
     }
 
     // Restore original socket flags
-    restore_socket_blocking(socket_fd,
+    result = mcp_socket_restore_blocking((socket_t)socket_fd,
 #ifdef _WIN32
-                           original_mode
+        original_mode
 #else
-                           original_flags
+        original_flags
 #endif
-                           );
+    );
+    if (result != 0) {
+        // should not fail, but log if it does
+        mcp_log_warn("Health check: Failed to restore socket blocking mode");
+    }
 
     // Calculate and log the time taken for slow health checks
     long long check_end_ms = mcp_get_time_ms();

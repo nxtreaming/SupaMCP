@@ -25,32 +25,8 @@
 #endif
 
 // Forward declarations for static helper functions
-static bool set_socket_nonblocking(socket_handle_t sock);
 static bool restore_socket_blocking(socket_handle_t sock);
 static bool wait_for_connection(socket_handle_t sock, int timeout_ms);
-
-/**
- * @brief Sets a socket to non-blocking mode.
- *
- * This function sets the specified socket to non-blocking mode.
- *
- * @param sock The socket handle to set to non-blocking mode.
- * @return true if successful, false otherwise.
- */
-static bool set_socket_nonblocking(socket_handle_t sock) {
-    if (sock == INVALID_SOCKET_HANDLE) {
-        return false;
-    }
-
-    // Use the core function
-    int result = mcp_socket_set_non_blocking((socket_t)sock);
-    if (result != 0) {
-        mcp_log_error("Failed to set socket to non-blocking mode");
-        return false;
-    }
-
-    return true;
-}
 
 /**
  * @brief Restores a socket to blocking mode.
@@ -215,8 +191,9 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
         // Apply socket optimizations
         mcp_socket_optimize(sock, false); // false = client socket
 
-        // Set non-blocking mode for timeout connect
-        if (!set_socket_nonblocking(sock)) {
+        int result = mcp_socket_set_non_blocking((socket_t)sock);
+        if (result != 0) {
+            mcp_log_error("Failed to set socket to non-blocking mode");
             mcp_socket_close(sock);
             sock = INVALID_SOCKET_HANDLE;
             continue;
