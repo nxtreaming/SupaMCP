@@ -14,6 +14,30 @@
 #include <string.h>
 #include <stdio.h>
 
+// HTTP endpoint paths
+#define HTTP_ENDPOINT_EVENTS "/events"
+#define HTTP_ENDPOINT_TOOLS "/tools"
+#define HTTP_ENDPOINT_CALL_TOOL "/call_tool"
+#define HTTP_ENDPOINT_ROOT "/"
+
+// HTTP methods
+#define HTTP_METHOD_GET "GET"
+#define HTTP_METHOD_POST "POST"
+#define HTTP_METHOD_OPTIONS "OPTIONS"
+
+// HTTP content types
+#define HTTP_CONTENT_TYPE_JSON "application/json"
+#define HTTP_CONTENT_TYPE_TEXT "text/plain"
+#define HTTP_CONTENT_TYPE_HTML "text/html"
+
+// Buffer sizes
+#define HTTP_HEADER_BUFFER_SIZE 1024
+#define HTTP_PATH_BUFFER_SIZE 512
+#define HTTP_METHOD_BUFFER_SIZE 16
+#define HTTP_QUERY_BUFFER_SIZE 256
+#define HTTP_ERROR_BUFFER_SIZE 512
+
+// Forward declarations of static functions
 static void handle_http_call_reason(struct lws* wsi, enum lws_callback_reasons reason);
 static int handle_wsi_create(struct lws* wsi, http_session_data_t* session);
 static int handle_http_sse_request(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session);
@@ -25,49 +49,87 @@ static int handle_http_404(struct lws* wsi, const char* uri);
 static int handle_http_body(struct lws* wsi, http_session_data_t* session, void* in, size_t len);
 static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session);
 static int handle_closed_http(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session);
+static int send_http_response(struct lws* wsi, int status_code, const char* content_type, const char* body, size_t body_len);
+static int send_http_error_response(struct lws* wsi, int status_code, const char* error_message);
+static int send_http_json_response(struct lws* wsi, int status_code, const char* json_body);
+static char* extract_session_id_from_query(const char* query);
 
-// LWS callback function
+/**
+ * @brief Main HTTP callback function for libwebsockets
+ *
+ * This function handles all HTTP-related callbacks from libwebsockets.
+ * It routes the callbacks to appropriate handler functions based on the reason and URI.
+ *
+ * @param wsi WebSocket instance
+ * @param reason Callback reason
+ * @param user User data (session data)
+ * @param in Input data
+ * @param len Length of input data
+ * @return int 0 on success, non-zero on failure
+ */
 static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
-                    void* user, void* in, size_t len) {
+                           void* user, void* in, size_t len) {
+    // Validate input parameters
+    if (wsi == NULL) {
+        mcp_log_error("Invalid WebSocket instance (NULL)");
+        return -1;
+    }
+
+    // Get session data and transport data
     http_session_data_t* session = (http_session_data_t*)user;
     http_transport_data_t* data = (http_transport_data_t*)lws_context_user(lws_get_context(wsi));
 
+    if (data == NULL) {
+        mcp_log_error("Failed to get transport data from WebSocket context");
+        return -1;
+    }
+
+    // Log the callback reason for debugging
     handle_http_call_reason(wsi, reason);
 
+    // Handle the callback based on the reason
     switch (reason) {
         case LWS_CALLBACK_WSI_CREATE:
+            // Initialize session data when a new WebSocket instance is created
             return handle_wsi_create(wsi, session);
 
         case LWS_CALLBACK_HTTP:
             {
+                // This is the main HTTP request handler
+                if (in == NULL) {
+                    mcp_log_error("Invalid HTTP request (NULL URI)");
+                    return -1;
+                }
+
                 char* uri = (char*)in;
                 mcp_log_info("HTTP request: %s", uri);
 
-                // Check if this is an SSE request
-                if (strcmp(uri, "/events") == 0) {
+                // Route the request based on the URI
+
+                // Handle SSE requests
+                if (strcmp(uri, HTTP_ENDPOINT_EVENTS) == 0) {
                     return handle_http_sse_request(wsi, data, session);
                 }
 
-                // Check if this is a tool discovery request
-                if (strcmp(uri, "/tools") == 0) {
+                // Handle tool discovery requests
+                if (strcmp(uri, HTTP_ENDPOINT_TOOLS) == 0) {
                     return handle_http_tools_request(wsi, data);
                 }
 
-                // Check if this is a tool call
-                if (strcmp(uri, "/call_tool") == 0) {
-                    // Check the request method
-                    char method[16] = {0};
+                // Handle tool call requests
+                if (strcmp(uri, HTTP_ENDPOINT_CALL_TOOL) == 0) {
+                    // Determine the HTTP method
+                    char method[HTTP_METHOD_BUFFER_SIZE] = {0};
 
-                    // Try to get the request method
-                    // In libwebsockets, the HTTP method is part of the URI
+                    // In libwebsockets, the HTTP method is determined by checking specific tokens
                     if (lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI) > 0) {
-                        strcpy(method, "POST");
+                        strncpy(method, HTTP_METHOD_POST, sizeof(method) - 1);
                         mcp_log_info("HTTP method: POST");
                     } else if (lws_hdr_total_length(wsi, WSI_TOKEN_GET_URI) > 0) {
-                        strcpy(method, "GET");
+                        strncpy(method, HTTP_METHOD_GET, sizeof(method) - 1);
                         mcp_log_info("HTTP method: GET");
                     } else if (lws_hdr_total_length(wsi, WSI_TOKEN_OPTIONS_URI) > 0) {
-                        strcpy(method, "OPTIONS");
+                        strncpy(method, HTTP_METHOD_OPTIONS, sizeof(method) - 1);
                         mcp_log_info("HTTP method: OPTIONS (CORS preflight)");
                     } else {
                         mcp_log_error("Failed to determine HTTP method");
@@ -76,30 +138,35 @@ static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                     return handle_http_call_tool_request(wsi, data, method);
                 }
 
-                // For the root path, return a simple HTML page
-                if (strcmp(uri, "/") == 0) {
+                // Handle root path requests
+                if (strcmp(uri, HTTP_ENDPOINT_ROOT) == 0) {
                     return handle_http_root_request(wsi);
                 }
 
-                // For other requests, try to serve static files if doc_root is set
-                if (data->config.doc_root) {
+                // Handle static file requests if doc_root is configured
+                if (data->config.doc_root != NULL) {
                     return handle_http_static_file_request(wsi, data, uri);
                 }
 
-                // If we get here, return a 404 error
+                // If no handler matched, return a 404 error
+                mcp_log_warn("No handler found for URI: %s", uri);
                 return handle_http_404(wsi, uri);
             }
 
         case LWS_CALLBACK_HTTP_BODY:
+            // Handle HTTP request body data
             return handle_http_body(wsi, session, in, len);
 
         case LWS_CALLBACK_HTTP_BODY_COMPLETION:
+            // Handle HTTP request body completion
             return handle_http_body_completion(wsi, data, session);
 
         case LWS_CALLBACK_CLOSED_HTTP:
+            // Handle HTTP connection closure
             return handle_closed_http(wsi, data, session);
 
         default:
+            // For other callbacks, use the default dummy handler
             return lws_callback_http_dummy(wsi, reason, user, in, len);
     }
 }
@@ -217,32 +284,203 @@ static int handle_wsi_create(struct lws* wsi, http_session_data_t* session) {
     return 0;
 }
 
-// Handle HTTP_BODY callback
+/**
+ * @brief Helper function to send an HTTP response
+ *
+ * @param wsi WebSocket instance
+ * @param status_code HTTP status code
+ * @param content_type Content type of the response
+ * @param body Response body
+ * @param body_len Length of the response body
+ * @return int 0 on success, non-zero on failure
+ */
+static int send_http_response(struct lws* wsi, int status_code, const char* content_type,
+                             const char* body, size_t body_len) {
+    if (wsi == NULL || content_type == NULL) {
+        mcp_log_error("Invalid parameters for send_http_response");
+        return -1;
+    }
+
+    // Prepare response headers
+    unsigned char buffer[LWS_PRE + HTTP_HEADER_BUFFER_SIZE];
+    unsigned char* p = &buffer[LWS_PRE];
+    unsigned char* end = &buffer[sizeof(buffer) - 1];
+
+    // Add common headers
+    if (lws_add_http_common_headers(wsi, status_code, content_type,
+                                   body ? body_len : LWS_ILLEGAL_HTTP_CONTENT_LEN,
+                                   &p, end)) {
+        mcp_log_error("Failed to add HTTP headers");
+        return -1;
+    }
+
+    // Finalize headers
+    if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
+        mcp_log_error("Failed to finalize HTTP headers");
+        return -1;
+    }
+
+    // Write response body if provided
+    if (body != NULL && body_len > 0) {
+        int bytes_written = lws_write(wsi, (unsigned char*)body, body_len, LWS_WRITE_HTTP);
+        if (bytes_written < 0) {
+            mcp_log_error("Failed to write HTTP response body");
+            return -1;
+        }
+        mcp_log_debug("Wrote %d bytes of %zu total", bytes_written, body_len);
+    }
+
+    // Complete HTTP transaction
+    if (lws_http_transaction_completed(wsi)) {
+        mcp_log_error("Failed to complete HTTP transaction");
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Helper function to send an HTTP error response
+ *
+ * @param wsi WebSocket instance
+ * @param status_code HTTP status code
+ * @param error_message Error message
+ * @return int 0 on success, non-zero on failure
+ */
+static int send_http_error_response(struct lws* wsi, int status_code, const char* error_message) {
+    if (wsi == NULL || error_message == NULL) {
+        mcp_log_error("Invalid parameters for send_http_error_response");
+        return -1;
+    }
+
+    // Create a simple JSON error response
+    char error_buf[HTTP_ERROR_BUFFER_SIZE];
+    int len = snprintf(error_buf, sizeof(error_buf),
+                      "{\"error\":\"%s\",\"status\":%d}",
+                      error_message, status_code);
+
+    if (len < 0 || len >= (int)sizeof(error_buf)) {
+        mcp_log_error("Error buffer overflow");
+        return -1;
+    }
+
+    return send_http_response(wsi, status_code, HTTP_CONTENT_TYPE_JSON, error_buf, len);
+}
+
+/**
+ * @brief Helper function to send an HTTP JSON response
+ *
+ * @param wsi WebSocket instance
+ * @param status_code HTTP status code
+ * @param json_body JSON response body
+ * @return int 0 on success, non-zero on failure
+ */
+static int send_http_json_response(struct lws* wsi, int status_code, const char* json_body) {
+    if (wsi == NULL || json_body == NULL) {
+        mcp_log_error("Invalid parameters for send_http_json_response");
+        return -1;
+    }
+
+    return send_http_response(wsi, status_code, HTTP_CONTENT_TYPE_JSON, json_body, strlen(json_body));
+}
+
+/**
+ * @brief Extract session ID from query string
+ *
+ * @param query Query string
+ * @return char* Extracted session ID or NULL if not found (caller must free)
+ */
+static char* extract_session_id_from_query(const char* query) {
+    if (query == NULL || *query == '\0') {
+        return NULL;
+    }
+
+    // Look for session_id parameter
+    const char* session_id_param = strstr(query, "session_id=");
+    if (session_id_param == NULL) {
+        return NULL;
+    }
+
+    // Skip "session_id="
+    session_id_param += 11;
+
+    // Find the end of the parameter value
+    const char* end_param = strchr(session_id_param, '&');
+    if (end_param != NULL) {
+        // Allocate memory for the session ID
+        size_t param_len = end_param - session_id_param;
+        char* session_id_str = (char*)malloc(param_len + 1);
+        if (session_id_str != NULL) {
+            strncpy(session_id_str, session_id_param, param_len);
+            session_id_str[param_len] = '\0';
+            return session_id_str;
+        }
+    } else {
+        // Session ID is the last parameter
+        return mcp_strdup(session_id_param);
+    }
+
+    return NULL;
+}
+
+/**
+ * @brief Handle HTTP_BODY callback
+ *
+ * This function accumulates the HTTP request body data.
+ *
+ * @param wsi WebSocket instance
+ * @param session Session data
+ * @param in Input data
+ * @param len Length of input data
+ * @return int 0 on success, non-zero on failure
+ */
 static int handle_http_body(struct lws* wsi, http_session_data_t* session, void* in, size_t len) {
     (void)wsi; // Unused parameter
 
+    // Validate input parameters
+    if (session == NULL || in == NULL || len == 0) {
+        mcp_log_error("Invalid parameters for handle_http_body");
+        return -1;
+    }
+
+    mcp_log_debug("Received HTTP body chunk: %zu bytes", len);
+
     // Accumulate request body
     if (session->request_buffer == NULL) {
+        // First chunk - allocate new buffer
         session->request_buffer = (char*)malloc(len + 1);
         if (session->request_buffer == NULL) {
+            mcp_log_error("Failed to allocate memory for request buffer");
             return -1;
         }
+
+        // Copy data and null-terminate
         memcpy(session->request_buffer, in, len);
         session->request_buffer[len] = '\0';
         session->request_len = len;
+
+        mcp_log_debug("Created new request buffer: %zu bytes", len);
     } else {
+        // Subsequent chunk - expand existing buffer
         char* new_buffer = (char*)realloc(session->request_buffer,
                                          session->request_len + len + 1);
         if (new_buffer == NULL) {
+            mcp_log_error("Failed to reallocate memory for request buffer");
             free(session->request_buffer);
             session->request_buffer = NULL;
+            session->request_len = 0;
             return -1;
         }
+
+        // Update buffer pointer, append data, and null-terminate
         session->request_buffer = new_buffer;
         memcpy(session->request_buffer + session->request_len, in, len);
         session->request_len += len;
         session->request_buffer[session->request_len] = '\0';
+
+        mcp_log_debug("Expanded request buffer: %zu bytes total", session->request_len);
     }
+
     return 0;
 }
 
@@ -709,118 +947,173 @@ static int handle_http_404(struct lws* wsi, const char* uri) {
     return 0;
 }
 
-// Handle SSE request
+/**
+ * @brief Handle SSE (Server-Sent Events) request
+ *
+ * This function processes an SSE request, extracts the session ID from the query string,
+ * and sets up the SSE connection.
+ *
+ * @param wsi WebSocket instance
+ * @param data Transport data
+ * @param session Session data
+ * @return int 0 on success, non-zero on failure
+ */
 static int handle_http_sse_request(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session) {
+    // Validate input parameters
+    if (wsi == NULL || data == NULL || session == NULL) {
+        mcp_log_error("Invalid parameters for handle_http_sse_request");
+        return -1;
+    }
+
     mcp_log_info("Handling SSE request");
 
     // Extract session_id from query string
-    char query[256] = {0};
+    char query[HTTP_QUERY_BUFFER_SIZE] = {0};
     int query_len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
+
     if (query_len > 0 && query_len < (int)sizeof(query)) {
-        lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS);
+        // Copy query string
+        if (lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS) < 0) {
+            mcp_log_error("Failed to copy query string");
+            return -1;
+        }
+
         mcp_log_debug("SSE request query string: '%s'", query);
 
-        // Extract and store session_id directly in the HTTP callback
-        if (session) {
-            // Free any existing session_id
-            if (session->session_id) {
-                free(session->session_id);
-                session->session_id = NULL;
-            }
-
-            // Extract session_id from query string
-            char* session_id_param = strstr(query, "session_id=");
-            if (session_id_param) {
-                session_id_param += 11; // Skip "session_id="
-
-                // Find the end of the parameter value
-                char* end_param = strchr(session_id_param, '&');
-                if (end_param) {
-                    // Allocate memory for the session ID
-                    size_t param_len = end_param - session_id_param;
-                    char* session_id_str = (char*)malloc(param_len + 1);
-                    if (session_id_str) {
-                        strncpy(session_id_str, session_id_param, param_len);
-                        session_id_str[param_len] = '\0';
-                        session->session_id = session_id_str;
-                    }
-                } else {
-                    // Session ID is the last parameter
-                    session->session_id = mcp_strdup(session_id_param);
-                }
-
-                mcp_log_info("SSE client connected with session ID: %s",
-                           session->session_id ? session->session_id : "NULL");
-            }
+        // Free any existing session_id
+        if (session->session_id != NULL) {
+            free(session->session_id);
+            session->session_id = NULL;
         }
+
+        // Extract session_id from query string
+        session->session_id = extract_session_id_from_query(query);
+
+        if (session->session_id != NULL) {
+            mcp_log_info("SSE client connected with session ID: %s", session->session_id);
+        } else {
+            mcp_log_debug("SSE client connected without session ID");
+        }
+
+        // Extract other parameters if needed (e.g., event_filter)
+        // TODO: Add support for event filtering
     } else {
         mcp_log_debug("SSE request has no query string (len=%d)", query_len);
     }
 
+    // Set up the SSE connection
     handle_sse_request(wsi, data);
     return 0;
 }
 
-// Handle HTTP_BODY_COMPLETION callback
+/**
+ * @brief Get JSON-RPC error message for a given error code
+ *
+ * @param error_code JSON-RPC error code
+ * @return const char* Error message
+ */
+static const char* get_jsonrpc_error_message(int error_code) {
+    switch (error_code) {
+        case -32700: return "Parse error";
+        case -32600: return "Invalid request";
+        case -32601: return "Method not found";
+        case -32602: return "Invalid params";
+        case -32603: return "Internal error";
+        default:
+            if (error_code <= -32000 && error_code >= -32099) {
+                return "Server error";
+            }
+            return "Internal server error";
+    }
+}
+
+/**
+ * @brief Create a JSON-RPC error response
+ *
+ * @param error_code JSON-RPC error code
+ * @param error_message Error message
+ * @param id Request ID (can be NULL)
+ * @param buffer Buffer to store the response
+ * @param buffer_size Size of the buffer
+ * @return int Length of the response or -1 on failure
+ */
+static int create_jsonrpc_error_response(int error_code, const char* error_message,
+                                        const char* id, char* buffer, size_t buffer_size) {
+    if (buffer == NULL || buffer_size == 0) {
+        return -1;
+    }
+
+    int len;
+    if (id != NULL) {
+        len = snprintf(buffer, buffer_size,
+                      "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":%d,\"message\":\"%s\"},\"id\":%s}",
+                      error_code, error_message, id);
+    } else {
+        len = snprintf(buffer, buffer_size,
+                      "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":%d,\"message\":\"%s\"},\"id\":null}",
+                      error_code, error_message);
+    }
+
+    if (len < 0 || (size_t)len >= buffer_size) {
+        return -1;
+    }
+
+    return len;
+}
+
+/**
+ * @brief Handle HTTP_BODY_COMPLETION callback
+ *
+ * This function processes the complete HTTP request body and generates a response.
+ *
+ * @param wsi WebSocket instance
+ * @param data Transport data
+ * @param session Session data
+ * @return int 0 on success, non-zero on failure
+ */
 static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session) {
+    // Validate input parameters
+    if (wsi == NULL || data == NULL || session == NULL) {
+        mcp_log_error("Invalid parameters for handle_http_body_completion");
+        return -1;
+    }
+
     mcp_log_info("HTTP body completion");
 
     // Check if we have a request buffer
     if (session->request_buffer == NULL || session->request_len == 0) {
         mcp_log_error("No request buffer or empty request");
-
-        // Return a simple JSON response
-        const char* json_response = "{\"error\":\"Empty request\"}";
-
-        // Prepare response headers
-        unsigned char buffer[LWS_PRE + 1024];
-        unsigned char* p = &buffer[LWS_PRE];
-        unsigned char* end = &buffer[sizeof(buffer) - 1];
-
-        // Add headers
-        if (lws_add_http_common_headers(wsi, HTTP_STATUS_BAD_REQUEST,
-                                      "application/json",
-                                      strlen(json_response), &p, end)) {
-            mcp_log_error("Failed to add HTTP headers");
-            return -1;
-        }
-
-        if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
-            mcp_log_error("Failed to finalize HTTP headers");
-            return -1;
-        }
-
-        // Write response body
-        int bytes_written = lws_write(wsi, (unsigned char*)json_response, strlen(json_response), LWS_WRITE_HTTP);
-        mcp_log_info("Wrote %d bytes", bytes_written);
-
-        // Complete HTTP transaction
-        lws_http_transaction_completed(wsi);
-        return 0;
+        return send_http_error_response(wsi, HTTP_STATUS_BAD_REQUEST, "Empty request");
     }
 
-    mcp_log_info("Request body: %s", session->request_buffer);
+    mcp_log_debug("Processing request body: %zu bytes", session->request_len);
 
     // Process the request using the message callback
-    if (data->message_callback) {
+    if (data->message_callback != NULL) {
         int error_code = 0;
         char* response = data->message_callback(data->callback_user_data,
                                               session->request_buffer,
                                               session->request_len,
                                               &error_code);
 
-        if (response) {
-            mcp_log_info("Message callback returned: %s", response);
+        // Handle successful response
+        if (response != NULL) {
+            mcp_log_debug("Message callback returned response: %zu bytes", strlen(response));
+
+            // Write response body in chunks if it's too large
+            size_t response_len = strlen(response);
+            size_t chunk_size = 4096; // 4KB chunks
+            int result = 0;
 
             // Prepare response headers
-            unsigned char buffer[LWS_PRE + 1024];
+            unsigned char buffer[LWS_PRE + HTTP_HEADER_BUFFER_SIZE];
             unsigned char* p = &buffer[LWS_PRE];
             unsigned char* end = &buffer[sizeof(buffer) - 1];
 
             // Add headers
             if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
-                                          "application/json",
-                                          strlen(response), &p, end)) {
+                                          HTTP_CONTENT_TYPE_JSON,
+                                          response_len, &p, end)) {
                 mcp_log_error("Failed to add HTTP headers");
                 free(response);
                 return -1;
@@ -832,18 +1125,19 @@ static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* d
                 return -1;
             }
 
-            // Write response body in chunks if it's too large
-            size_t response_len = strlen(response);
-            size_t chunk_size = 4096; // 4KB chunks
+            // Write response body in chunks
             size_t offset = 0;
             int bytes_written = 0;
 
             while (offset < response_len) {
-                size_t current_chunk_size = (response_len - offset < chunk_size) ? response_len - offset : chunk_size;
-                int result = lws_write(wsi, (unsigned char*)(response + offset), current_chunk_size, LWS_WRITE_HTTP);
+                size_t current_chunk_size = (response_len - offset < chunk_size) ?
+                                           response_len - offset : chunk_size;
+
+                result = lws_write(wsi, (unsigned char*)(response + offset),
+                                  current_chunk_size, LWS_WRITE_HTTP);
 
                 if (result < 0) {
-                    mcp_log_error("Failed to write response chunk: %d, %s", result, response);
+                    mcp_log_error("Failed to write response chunk: %d", result);
                     break;
                 }
 
@@ -860,90 +1154,44 @@ static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* d
 
             // Free the response
             free(response);
-        } else {
-            // Error occurred, return error response with proper JSON-RPC 2.0 format
-            char error_buf[512];
-            const char* error_message = "Internal server error";
 
-            // Map error codes to standard JSON-RPC error codes and messages
-            switch (error_code) {
-                case -32700:
-                    error_message = "Parse error";
-                    break;
-                case -32600:
-                    error_message = "Invalid request";
-                    break;
-                case -32601:
-                    error_message = "Method not found";
-                    break;
-                case -32602:
-                    error_message = "Invalid params";
-                    break;
-                case -32603:
-                    error_message = "Internal error";
-                    break;
-                default:
-                    if (error_code <= -32000 && error_code >= -32099) {
-                        error_message = "Server error";
-                    }
-                    break;
+            // Complete HTTP transaction
+            if (lws_http_transaction_completed(wsi)) {
+                mcp_log_error("Failed to complete HTTP transaction");
+                return -1;
             }
+        }
+        // Handle error response
+        else {
+            mcp_log_error("Message callback returned error: %d", error_code);
 
-            snprintf(error_buf, sizeof(error_buf),
-                    "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":%d,\"message\":\"%s\"},\"id\":null}",
-                    error_code, error_message);
+            // Get error message for the error code
+            const char* error_message = get_jsonrpc_error_message(error_code);
 
-            // Prepare response headers
-            unsigned char buffer[LWS_PRE + 1024];
-            unsigned char* p = &buffer[LWS_PRE];
-            unsigned char* end = &buffer[sizeof(buffer) - 1];
+            // Create JSON-RPC error response
+            char error_buf[HTTP_ERROR_BUFFER_SIZE];
+            int len = create_jsonrpc_error_response(error_code, error_message, NULL,
+                                                  error_buf, sizeof(error_buf));
 
-            // Add headers
-            if (lws_add_http_common_headers(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
-                                          "application/json",
-                                          strlen(error_buf), &p, end)) {
-                mcp_log_error("Failed to add HTTP headers");
+            if (len < 0) {
+                mcp_log_error("Failed to create JSON-RPC error response");
                 return -1;
             }
 
-            if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
-                mcp_log_error("Failed to finalize HTTP headers");
-                return -1;
-            }
+            // Send error response
+            int status_code = (error_code == -32602 || error_code == -32600) ?
+                             HTTP_STATUS_BAD_REQUEST : HTTP_STATUS_INTERNAL_SERVER_ERROR;
 
-            // Write response body
-            int bytes_written = lws_write(wsi, (unsigned char*)error_buf, strlen(error_buf), LWS_WRITE_HTTP);
-            mcp_log_info("Wrote %d bytes", bytes_written);
+            return send_http_response(wsi, status_code, HTTP_CONTENT_TYPE_JSON,
+                                     error_buf, len);
         }
-    } else {
-        // No message callback registered, return error
-        const char* json_response = "{\"error\":\"No message handler registered\"}";
-
-        // Prepare response headers
-        unsigned char buffer[LWS_PRE + 1024];
-        unsigned char* p = &buffer[LWS_PRE];
-        unsigned char* end = &buffer[sizeof(buffer) - 1];
-
-        // Add headers
-        if (lws_add_http_common_headers(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
-                                      "application/json",
-                                      strlen(json_response), &p, end)) {
-            mcp_log_error("Failed to add HTTP headers");
-            return -1;
-        }
-
-        if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
-            mcp_log_error("Failed to finalize HTTP headers");
-            return -1;
-        }
-
-        // Write response body
-        int bytes_written = lws_write(wsi, (unsigned char*)json_response, strlen(json_response), LWS_WRITE_HTTP);
-        mcp_log_info("Wrote %d bytes", bytes_written);
     }
-
-    // Complete HTTP transaction
-    lws_http_transaction_completed(wsi);
+    // No message callback registered
+    else {
+        mcp_log_error("No message callback registered");
+        return send_http_error_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                                       "No message handler registered");
+    }
 
     // Free request buffer
     free(session->request_buffer);
@@ -953,41 +1201,81 @@ static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* d
     return 0;
 }
 
-// Handle CLOSED_HTTP callback
+/**
+ * @brief Handle CLOSED_HTTP callback
+ *
+ * This function cleans up resources when an HTTP connection is closed.
+ *
+ * @param wsi WebSocket instance
+ * @param data Transport data
+ * @param session Session data
+ * @return int 0 on success, non-zero on failure
+ */
 static int handle_closed_http(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session) {
-    // Clean up session
-    if (session->request_buffer) {
+    // Validate input parameters
+    if (wsi == NULL || data == NULL || session == NULL) {
+        mcp_log_error("Invalid parameters for handle_closed_http");
+        return -1;
+    }
+
+    mcp_log_debug("HTTP connection closed");
+
+    // Clean up request buffer
+    if (session->request_buffer != NULL) {
         free(session->request_buffer);
         session->request_buffer = NULL;
+        session->request_len = 0;
     }
 
     // Free event filter if set
-    if (session->event_filter) {
+    if (session->event_filter != NULL) {
         free(session->event_filter);
         session->event_filter = NULL;
     }
 
     // Free session ID if set
-    if (session->session_id) {
+    if (session->session_id != NULL) {
         free(session->session_id);
         session->session_id = NULL;
     }
 
     // Remove from SSE clients if this was an SSE client
     if (session->is_sse_client) {
+        mcp_log_info("SSE client disconnected");
+
+        // Lock the SSE mutex to safely modify the client list
         mcp_mutex_lock(data->sse_mutex);
+
+        // Find the client in the list
+        int client_index = -1;
         for (int i = 0; i < data->sse_client_count; i++) {
             if (data->sse_clients[i] == wsi) {
-                // Remove by shifting remaining clients
-                for (int j = i; j < data->sse_client_count - 1; j++) {
-                    data->sse_clients[j] = data->sse_clients[j + 1];
-                }
-                data->sse_client_count--;
-                mcp_log_info("SSE client disconnected, %d clients remaining", data->sse_client_count);
+                client_index = i;
                 break;
             }
         }
+
+        // Remove the client if found
+        if (client_index >= 0) {
+            // Remove by shifting remaining clients
+            for (int j = client_index; j < data->sse_client_count - 1; j++) {
+                data->sse_clients[j] = data->sse_clients[j + 1];
+            }
+
+            // Decrement the client count
+            data->sse_client_count--;
+
+            mcp_log_info("SSE client removed from list, %d clients remaining", data->sse_client_count);
+        } else {
+            mcp_log_warn("SSE client not found in client list");
+        }
+
+        // Unlock the SSE mutex
         mcp_mutex_unlock(data->sse_mutex);
+
+        // Reset the SSE client flag
+        session->is_sse_client = false;
     }
+
     return 0;
 }
