@@ -202,7 +202,7 @@ static mcp_json_t* parse_object(const char** json, int depth) {
     }
     while (1) {
         skip_whitespace(json);
-        char* name = parse_string(json)
+        char* name = parse_string(json);
         if (name == NULL) {
             // Don't destroy object here, let caller handle cleanup via arena reset/destroy
             return NULL;
