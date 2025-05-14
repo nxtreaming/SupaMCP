@@ -14,45 +14,106 @@
 #include <string.h>
 #include <stdio.h>
 
-// Root path handler
+// HTTP content types
+#define HTTP_CONTENT_TYPE_HTML "text/html"
+#define HTTP_CONTENT_TYPE_EVENT_STREAM "text/event-stream"
+
+// HTTP headers
+#define HTTP_HEADER_CACHE_CONTROL "Cache-Control"
+#define HTTP_HEADER_CONNECTION "Connection"
+#define HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN "Access-Control-Allow-Origin"
+#define HTTP_HEADER_ACCESS_CONTROL_ALLOW_METHODS "Access-Control-Allow-Methods"
+#define HTTP_HEADER_ACCESS_CONTROL_ALLOW_HEADERS "Access-Control-Allow-Headers"
+#define HTTP_HEADER_ACCESS_CONTROL_MAX_AGE "Access-Control-Max-Age"
+#define HTTP_HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS "Access-Control-Allow-Credentials"
+
+// HTTP header values
+#define HTTP_HEADER_VALUE_NO_CACHE "no-cache"
+#define HTTP_HEADER_VALUE_KEEP_ALIVE "keep-alive"
+#define HTTP_HEADER_VALUE_TRUE "true"
+
+// SSE event fields
+#define SSE_FIELD_EVENT "event: "
+#define SSE_FIELD_ID "id: "
+#define SSE_FIELD_DATA "data: "
+
+// URL query parameters
+#define URL_PARAM_LAST_EVENT_ID "lastEventId="
+#define URL_PARAM_FILTER "filter="
+#define URL_PARAM_SESSION_ID "session_id="
+
+// Buffer sizes
+#define HTTP_BUFFER_SIZE 1024
+#define HTTP_QUERY_BUFFER_SIZE 256
+#define HTTP_SESSION_ID_BUFFER_SIZE 256
+#define HTTP_MAX_AGE_BUFFER_SIZE 16
+
+// Forward declarations
+static char* url_decode(const char* src);
+static char* extract_query_param(const char* query, const char* param_name);
+static void replay_stored_events(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session);
+
+/**
+ * @brief Root path handler for HTTP server
+ *
+ * This function handles requests to the root path ("/") of the HTTP server.
+ * It serves a simple HTML page with information about the server and available tools.
+ *
+ * @param wsi WebSocket instance
+ * @param reason Callback reason
+ * @param user User data
+ * @param in Input data
+ * @param len Length of input data
+ * @return int 0 on success, non-zero on failure
+ */
 int lws_root_handler(struct lws* wsi, enum lws_callback_reasons reason,
-               void* user, void* in, size_t len) {
+                    void* user, void* in, size_t len) {
     (void)user; // Unused parameter
     (void)len;  // Unused parameter
+
+    // Log the callback reason for debugging
     mcp_log_debug("Root handler: reason=%d", reason);
 
     // Handle protocol initialization
     if (reason == LWS_CALLBACK_PROTOCOL_INIT) {
-        mcp_log_info("Root handler: Protocol init");
+        mcp_log_info("Root handler: Protocol initialized");
         return 0; // Return 0 to indicate success
     }
 
     // Handle HTTP requests
     if (reason == LWS_CALLBACK_HTTP) {
+        // Validate input parameters
+        if (wsi == NULL || in == NULL) {
+            mcp_log_error("Root handler: Invalid parameters");
+            return -1;
+        }
+
         char* uri = (char*)in;
         mcp_log_info("Root handler: HTTP request: %s", uri);
 
         // Only handle the root path ("/")
         if (strcmp(uri, "/") != 0) {
-            mcp_log_info("Root handler: Not root path, passing to next handler");
+            mcp_log_debug("Root handler: Not root path, passing to next handler");
             return -1; // Return -1 to let libwebsockets try the next protocol handler
         }
 
         mcp_log_info("Root handler: Serving root page");
 
         // Prepare response headers
-        unsigned char buffer[LWS_PRE + 1024];
+        unsigned char buffer[LWS_PRE + HTTP_BUFFER_SIZE];
         unsigned char* p = &buffer[LWS_PRE];
         unsigned char* end = &buffer[sizeof(buffer) - 1];
 
         // Add headers
         if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
-                                       "text/html",
+                                       HTTP_CONTENT_TYPE_HTML,
                                        LWS_ILLEGAL_HTTP_CONTENT_LEN, &p, end)) {
+            mcp_log_error("Root handler: Failed to add HTTP headers");
             return -1;
         }
 
         if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
+            mcp_log_error("Root handler: Failed to finalize HTTP headers");
             return -1;
         }
 
@@ -62,6 +123,11 @@ int lws_root_handler(struct lws* wsi, enum lws_callback_reasons reason,
             "<html>\n"
             "<head>\n"
             "    <title>MCP HTTP Server</title>\n"
+            "    <style>\n"
+            "        body { font-family: Arial, sans-serif; margin: 20px; }\n"
+            "        h1 { color: #333; }\n"
+            "        pre { background-color: #f5f5f5; padding: 10px; border-radius: 5px; }\n"
+            "    </style>\n"
             "</head>\n"
             "<body>\n"
             "    <h1>MCP HTTP Server</h1>\n"
@@ -77,10 +143,20 @@ int lws_root_handler(struct lws* wsi, enum lws_callback_reasons reason,
             "</html>\n";
 
         // Write response body
-        lws_write(wsi, (unsigned char*)html, strlen(html), LWS_WRITE_HTTP);
+        int bytes_written = lws_write(wsi, (unsigned char*)html, strlen(html), LWS_WRITE_HTTP);
+        if (bytes_written < 0) {
+            mcp_log_error("Root handler: Failed to write HTTP response body");
+            return -1;
+        }
+
+        mcp_log_debug("Root handler: Wrote %d bytes", bytes_written);
 
         // Complete HTTP transaction
-        lws_http_transaction_completed(wsi);
+        if (lws_http_transaction_completed(wsi)) {
+            mcp_log_error("Root handler: Failed to complete HTTP transaction");
+            return -1;
+        }
+
         return 0;
     }
 
@@ -88,98 +164,356 @@ int lws_root_handler(struct lws* wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
-// Add CORS headers to HTTP response
+/**
+ * @brief Add CORS headers to HTTP response
+ *
+ * This function adds Cross-Origin Resource Sharing (CORS) headers to an HTTP response
+ * based on the transport configuration.
+ *
+ * @param wsi WebSocket instance
+ * @param data Transport data containing CORS configuration
+ * @param p Pointer to the current position in the header buffer
+ * @param end Pointer to the end of the header buffer
+ * @return int 0 on success, -1 on failure
+ */
 int add_cors_headers(struct lws* wsi, http_transport_data_t* data,
-                   unsigned char** p, unsigned char* end) {
-    if (!data->enable_cors) {
-        return 0; // CORS is disabled, no headers to add
+                    unsigned char** p, unsigned char* end) {
+    // Validate input parameters
+    if (wsi == NULL || data == NULL || p == NULL || *p == NULL || end == NULL) {
+        mcp_log_error("Invalid parameters for add_cors_headers");
+        return -1;
     }
 
+    // Check if CORS is enabled
+    if (!data->enable_cors) {
+        mcp_log_debug("CORS is disabled, no headers added");
+        return 0;
+    }
+
+    mcp_log_debug("Adding CORS headers");
+
     // Add Access-Control-Allow-Origin header
-    if (lws_add_http_header_by_name(wsi,
-                                   (unsigned char*)"Access-Control-Allow-Origin",
-                                   (unsigned char*)data->cors_allow_origin,
-                                   (int)strlen(data->cors_allow_origin),
-                                   p, end)) {
-        return -1;
+    if (data->cors_allow_origin != NULL) {
+        if (lws_add_http_header_by_name(wsi,
+                                       (unsigned char*)HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
+                                       (unsigned char*)data->cors_allow_origin,
+                                       (int)strlen(data->cors_allow_origin),
+                                       p, end)) {
+            mcp_log_error("Failed to add Access-Control-Allow-Origin header");
+            return -1;
+        }
     }
 
     // Add Access-Control-Allow-Methods header
-    if (lws_add_http_header_by_name(wsi,
-                                   (unsigned char*)"Access-Control-Allow-Methods",
-                                   (unsigned char*)data->cors_allow_methods,
-                                   (int)strlen(data->cors_allow_methods),
-                                   p, end)) {
-        return -1;
+    if (data->cors_allow_methods != NULL) {
+        if (lws_add_http_header_by_name(wsi,
+                                       (unsigned char*)HTTP_HEADER_ACCESS_CONTROL_ALLOW_METHODS,
+                                       (unsigned char*)data->cors_allow_methods,
+                                       (int)strlen(data->cors_allow_methods),
+                                       p, end)) {
+            mcp_log_error("Failed to add Access-Control-Allow-Methods header");
+            return -1;
+        }
     }
 
     // Add Access-Control-Allow-Headers header
-    if (lws_add_http_header_by_name(wsi,
-                                   (unsigned char*)"Access-Control-Allow-Headers",
-                                   (unsigned char*)data->cors_allow_headers,
-                                   (int)strlen(data->cors_allow_headers),
-                                   p, end)) {
-        return -1;
+    if (data->cors_allow_headers != NULL) {
+        if (lws_add_http_header_by_name(wsi,
+                                       (unsigned char*)HTTP_HEADER_ACCESS_CONTROL_ALLOW_HEADERS,
+                                       (unsigned char*)data->cors_allow_headers,
+                                       (int)strlen(data->cors_allow_headers),
+                                       p, end)) {
+            mcp_log_error("Failed to add Access-Control-Allow-Headers header");
+            return -1;
+        }
     }
 
     // Add Access-Control-Max-Age header
-    char max_age_str[16];
-    snprintf(max_age_str, sizeof(max_age_str), "%d", data->cors_max_age);
+    char max_age_str[HTTP_MAX_AGE_BUFFER_SIZE];
+    int max_age_len = snprintf(max_age_str, sizeof(max_age_str), "%d", data->cors_max_age);
+    if (max_age_len < 0 || max_age_len >= (int)sizeof(max_age_str)) {
+        mcp_log_error("Failed to format Access-Control-Max-Age value");
+        return -1;
+    }
+
     if (lws_add_http_header_by_name(wsi,
-                                   (unsigned char*)"Access-Control-Max-Age",
+                                   (unsigned char*)HTTP_HEADER_ACCESS_CONTROL_MAX_AGE,
                                    (unsigned char*)max_age_str,
-                                   (int)strlen(max_age_str),
+                                   max_age_len,
                                    p, end)) {
+        mcp_log_error("Failed to add Access-Control-Max-Age header");
         return -1;
     }
 
     // Add Access-Control-Allow-Credentials header
     if (lws_add_http_header_by_name(wsi,
-                                   (unsigned char*)"Access-Control-Allow-Credentials",
-                                   (unsigned char*)"true", 4,
+                                   (unsigned char*)HTTP_HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                                   (unsigned char*)HTTP_HEADER_VALUE_TRUE,
+                                   (int)strlen(HTTP_HEADER_VALUE_TRUE),
                                    p, end)) {
+        mcp_log_error("Failed to add Access-Control-Allow-Credentials header");
         return -1;
     }
 
+    mcp_log_debug("CORS headers added successfully");
     return 0;
 }
 
-// Handle SSE request
+/**
+ * @brief URL decode a string
+ *
+ * This function decodes URL-encoded strings, handling %xx escapes and + as space.
+ *
+ * @param src The URL-encoded string to decode
+ * @return char* The decoded string (caller must free) or NULL on failure
+ */
+static char* url_decode(const char* src) {
+    if (src == NULL) {
+        return NULL;
+    }
+
+    // Allocate memory for the decoded string (will be at most as long as the source)
+    size_t src_len = strlen(src);
+    char* decoded = (char*)malloc(src_len + 1);
+    if (decoded == NULL) {
+        mcp_log_error("Failed to allocate memory for URL decoding");
+        return NULL;
+    }
+
+    // Decode the string
+    const char* src_ptr = src;
+    char* dst_ptr = decoded;
+
+    while (*src_ptr) {
+        if (*src_ptr == '%' && src_ptr[1] && src_ptr[2]) {
+            // Handle %xx escape
+            char hex[3] = {src_ptr[1], src_ptr[2], 0};
+            *dst_ptr = (char)strtol(hex, NULL, 16);
+            src_ptr += 3;
+        } else if (*src_ptr == '+') {
+            // Handle + as space
+            *dst_ptr = ' ';
+            src_ptr++;
+        } else {
+            // Copy character as-is
+            *dst_ptr = *src_ptr;
+            src_ptr++;
+        }
+        dst_ptr++;
+    }
+
+    // Null-terminate the decoded string
+    *dst_ptr = '\0';
+
+    return decoded;
+}
+
+/**
+ * @brief Extract a parameter value from a query string
+ *
+ * This function extracts the value of a parameter from a query string.
+ *
+ * @param query The query string to parse
+ * @param param_name The name of the parameter to extract
+ * @return char* The parameter value (caller must free) or NULL if not found
+ */
+static char* extract_query_param(const char* query, const char* param_name) {
+    if (query == NULL || param_name == NULL || *query == '\0' || *param_name == '\0') {
+        return NULL;
+    }
+
+    // Build the parameter prefix (param_name=)
+    size_t prefix_len = strlen(param_name);
+    char* prefix = (char*)malloc(prefix_len + 2); // +2 for '=' and '\0'
+    if (prefix == NULL) {
+        mcp_log_error("Failed to allocate memory for parameter prefix");
+        return NULL;
+    }
+
+    sprintf(prefix, "%s=", param_name);
+
+    // Find the parameter in the query string
+    const char* param_start = strstr(query, prefix);
+    free(prefix); // Free the prefix buffer
+
+    if (param_start == NULL) {
+        return NULL; // Parameter not found
+    }
+
+    // Skip the parameter name and '='
+    param_start += prefix_len + 1;
+
+    // Find the end of the parameter value
+    const char* param_end = strchr(param_start, '&');
+
+    // Extract the parameter value
+    if (param_end != NULL) {
+        // Parameter is not the last one in the query string
+        size_t value_len = param_end - param_start;
+        char* value = (char*)malloc(value_len + 1);
+        if (value == NULL) {
+            mcp_log_error("Failed to allocate memory for parameter value");
+            return NULL;
+        }
+
+        strncpy(value, param_start, value_len);
+        value[value_len] = '\0';
+        return value;
+    } else {
+        // Parameter is the last one in the query string
+        return mcp_strdup(param_start);
+    }
+}
+
+/**
+ * @brief Replay stored SSE events to a client
+ *
+ * This function replays stored SSE events to a client that has reconnected with a Last-Event-ID.
+ *
+ * @param wsi WebSocket instance
+ * @param data Transport data
+ * @param session Session data
+ */
+static void replay_stored_events(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session) {
+    if (wsi == NULL || data == NULL || session == NULL || session->last_event_id <= 0) {
+        return;
+    }
+
+    mcp_log_info("Replaying missed events for client with Last-Event-ID: %d", session->last_event_id);
+
+    // Lock the event mutex to safely access the stored events
+    mcp_mutex_lock(data->event_mutex);
+
+    // Check if there are any stored events
+    if (data->stored_event_count <= 0) {
+        mcp_log_debug("No stored events to replay");
+        mcp_mutex_unlock(data->event_mutex);
+        return;
+    }
+
+    // Iterate through the circular buffer to find events with ID greater than last_event_id
+    int current = data->event_head;
+    int count = 0;
+    int replayed_count = 0;
+
+    // Process all events in the buffer
+    while (count < data->stored_event_count) {
+        // Get the event ID
+        int event_id = 0;
+        if (data->stored_events[current].id != NULL) {
+            event_id = atoi(data->stored_events[current].id);
+        }
+
+        // Only send events with ID greater than last_event_id
+        if (event_id > session->last_event_id) {
+            // Check if the event matches the filter (if any)
+            bool should_send = true;
+
+            if (session->event_filter != NULL && data->stored_events[current].event_type != NULL) {
+                if (strcmp(session->event_filter, data->stored_events[current].event_type) != 0) {
+                    should_send = false;
+                }
+            }
+
+            // Send the event if it passes the filter
+            if (should_send) {
+                // Replay the event
+                if (data->stored_events[current].event_type != NULL) {
+                    // Write event type
+                    lws_write_http(wsi, SSE_FIELD_EVENT, strlen(SSE_FIELD_EVENT));
+                    lws_write_http(wsi, data->stored_events[current].event_type,
+                                  strlen(data->stored_events[current].event_type));
+                    lws_write_http(wsi, "\n", 1);
+                }
+
+                // Write event ID
+                lws_write_http(wsi, SSE_FIELD_ID, strlen(SSE_FIELD_ID));
+                lws_write_http(wsi, data->stored_events[current].id,
+                              strlen(data->stored_events[current].id));
+                lws_write_http(wsi, "\n", 1);
+
+                // Write event data
+                lws_write_http(wsi, SSE_FIELD_DATA, strlen(SSE_FIELD_DATA));
+                lws_write_http(wsi, data->stored_events[current].data,
+                              strlen(data->stored_events[current].data));
+                lws_write_http(wsi, "\n\n", 2);
+
+                // Request a callback when the socket is writable again
+                lws_callback_on_writable(wsi);
+
+                replayed_count++;
+            }
+        }
+
+        // Move to the next event in the circular buffer
+        current = (current + 1) % MAX_SSE_STORED_EVENTS;
+        count++;
+    }
+
+    mcp_mutex_unlock(data->event_mutex);
+
+    mcp_log_info("Replayed %d events to client", replayed_count);
+}
+
+/**
+ * @brief Handle SSE (Server-Sent Events) request
+ *
+ * This function processes an SSE request, sets up the SSE connection,
+ * and handles event replay for reconnecting clients.
+ *
+ * @param wsi WebSocket instance
+ * @param data Transport data
+ */
 void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
+    // Validate input parameters
+    if (wsi == NULL || data == NULL) {
+        mcp_log_error("Invalid parameters for handle_sse_request");
+        return;
+    }
+
     // Get session data
-    http_session_data_t* session_data = (http_session_data_t*)lws_wsi_user(wsi);
-    if (!session_data) {
+    http_session_data_t* session = (http_session_data_t*)lws_wsi_user(wsi);
+    if (session == NULL) {
         mcp_log_error("No session data for SSE request");
         return;
     }
 
+    mcp_log_info("Handling SSE request");
+
     // Log session data
     mcp_log_debug("SSE request - session data: is_sse_client=%d, session_id=%s",
-                 session_data->is_sse_client,
-                 session_data->session_id ? session_data->session_id : "NULL");
+                 session->is_sse_client,
+                 session->session_id ? session->session_id : "NULL");
 
     // Prepare response headers
-    unsigned char buffer[LWS_PRE + 1024];
+    unsigned char buffer[LWS_PRE + HTTP_BUFFER_SIZE];
     unsigned char* p = &buffer[LWS_PRE];
     unsigned char* end = &buffer[sizeof(buffer) - 1];
 
-    // Add headers
+    // Add common headers
     if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
-                                   "text/event-stream",
+                                   HTTP_CONTENT_TYPE_EVENT_STREAM,
                                    LWS_ILLEGAL_HTTP_CONTENT_LEN, &p, end)) {
+        mcp_log_error("Failed to add common HTTP headers for SSE");
         return;
     }
 
     // Add SSE specific headers
     if (lws_add_http_header_by_name(wsi,
-                                   (unsigned char*)"Cache-Control",
-                                   (unsigned char*)"no-cache", 8, &p, end)) {
+                                   (unsigned char*)HTTP_HEADER_CACHE_CONTROL,
+                                   (unsigned char*)HTTP_HEADER_VALUE_NO_CACHE,
+                                   (int)strlen(HTTP_HEADER_VALUE_NO_CACHE),
+                                   &p, end)) {
+        mcp_log_error("Failed to add Cache-Control header for SSE");
         return;
     }
 
     if (lws_add_http_header_by_name(wsi,
-                                   (unsigned char*)"Connection",
-                                   (unsigned char*)"keep-alive", 10, &p, end)) {
+                                   (unsigned char*)HTTP_HEADER_CONNECTION,
+                                   (unsigned char*)HTTP_HEADER_VALUE_KEEP_ALIVE,
+                                   (int)strlen(HTTP_HEADER_VALUE_KEEP_ALIVE),
+                                   &p, end)) {
+        mcp_log_error("Failed to add Connection header for SSE");
         return;
     }
 
@@ -189,7 +523,9 @@ void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
         return;
     }
 
+    // Finalize headers
     if (lws_finalize_write_http_header(wsi, buffer + LWS_PRE, &p, end)) {
+        mcp_log_error("Failed to finalize HTTP headers for SSE");
         return;
     }
 
@@ -197,236 +533,98 @@ void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
     lws_http_mark_sse(wsi);
 
     // Mark as SSE client
-    session_data->is_sse_client = true;
-    session_data->last_event_id = 0;
+    session->is_sse_client = true;
+    session->last_event_id = 0;
 
-    // Check for Last-Event-ID header
-    // libwebsockets doesn't have a direct token for Last-Event-ID, so we need to use a custom header
-    char last_event_id[32] = {0};
+    // Get query string
+    char query[HTTP_QUERY_BUFFER_SIZE] = {0};
+    int query_len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
 
-    // Try to get the Last-Event-ID from the query string first
-    char query[256] = {0};
-    int len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
-    if (len > 0 && len < (int)sizeof(query)) {
-        lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS);
-
-        // Parse query string for 'lastEventId' parameter
-        char* id_param = strstr(query, "lastEventId=");
-        if (id_param) {
-            id_param += 12; // Skip "lastEventId="
-
-            // Find the end of the parameter value
-            char* end_param = strchr(id_param, '&');
-            if (end_param) {
-                *end_param = '\0';
-            }
-
-            // Copy the ID
-            strncpy(last_event_id, id_param, sizeof(last_event_id) - 1);
-            session_data->last_event_id = atoi(last_event_id);
-            mcp_log_info("SSE client reconnected with Last-Event-ID: %d", session_data->last_event_id);
-        }
-    }
-
-    // Check for event filter in query string (reuse the query string we already parsed)
-    if (len == 0) {
-        // If we didn't get the query string above, get it now
-        len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
-        if (len > 0 && len < (int)sizeof(query)) {
-            lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS);
-        }
-    }
-
-    if (len > 0) {
-        // Parse query string for 'filter' parameter
-        char* filter_param = strstr(query, "filter=");
-        if (filter_param) {
-            filter_param += 7; // Skip "filter="
-
-            // Find the end of the parameter value
-            char* end_param = strchr(filter_param, '&');
-            if (end_param) {
-                *end_param = '\0';
-            }
-
-            // Store the filter
-            session_data->event_filter = mcp_strdup(filter_param);
-            mcp_log_info("SSE client connected with event filter: %s", session_data->event_filter);
+    if (query_len > 0 && query_len < (int)sizeof(query)) {
+        if (lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS) < 0) {
+            mcp_log_error("Failed to copy query string for SSE request");
+            return;
         }
 
-        // Parse query string for 'session_id' parameter
-        mcp_log_info("Parsing query string for session_id: '%s'", query);
-        char* session_id_param = strstr(query, "session_id=");
-        if (session_id_param) {
-            mcp_log_info("Found session_id parameter at position %d", (int)(session_id_param - query));
-            session_id_param += 11; // Skip "session_id="
-            mcp_log_info("After skipping prefix, session_id_param = '%s'", session_id_param);
+        mcp_log_debug("SSE request query string: '%s'", query);
 
-            // Find the end of the parameter value
-            char* end_param = strchr(session_id_param, '&');
-            if (end_param) {
-                mcp_log_info("Found end of session_id at position %d", (int)(end_param - session_id_param));
-                *end_param = '\0';
-                mcp_log_info("After null-terminating, session_id_param = '%s'", session_id_param);
+        // Extract Last-Event-ID from query string
+        char* last_event_id = extract_query_param(query, "lastEventId");
+        if (last_event_id != NULL) {
+            session->last_event_id = atoi(last_event_id);
+            mcp_log_info("SSE client reconnected with Last-Event-ID: %d", session->last_event_id);
+            free(last_event_id);
+        }
+
+        // Extract event filter from query string
+        char* filter = extract_query_param(query, "filter");
+        if (filter != NULL) {
+            // Free any existing filter
+            if (session->event_filter != NULL) {
+                free(session->event_filter);
+            }
+
+            session->event_filter = filter; // Transfer ownership
+            mcp_log_info("SSE client connected with event filter: %s", session->event_filter);
+        }
+
+        // Extract session ID from query string
+        char* session_id = extract_query_param(query, "session_id");
+        if (session_id != NULL) {
+            // Free any existing session ID
+            if (session->session_id != NULL) {
+                free(session->session_id);
+            }
+
+            // URL decode the session ID if needed
+            char* decoded_session_id = url_decode(session_id);
+            if (decoded_session_id != NULL && strcmp(session_id, decoded_session_id) != 0) {
+                mcp_log_debug("URL decoded session_id: '%s' -> '%s'", session_id, decoded_session_id);
+                session->session_id = decoded_session_id; // Transfer ownership
+                free(session_id);
             } else {
-                mcp_log_info("No '&' found, session_id is the last parameter");
+                // Use the original session ID
+                session->session_id = session_id; // Transfer ownership
+                free(decoded_session_id); // Free the decoded version if it was created
             }
 
-            // Log the raw session_id parameter
-            mcp_log_info("SSE client connecting with raw session_id parameter: '%s'", session_id_param);
-
-            // URL decode the session_id parameter if needed
-            // (This is a simple implementation that handles %xx escapes)
-            char decoded_session_id[256] = {0};
-            const char* src = session_id_param;
-            char* dst = decoded_session_id;
-            while (*src) {
-                if (*src == '%' && src[1] && src[2]) {
-                    // Handle %xx escape
-                    char hex[3] = {src[1], src[2], 0};
-                    *dst = (char)strtol(hex, NULL, 16);
-                    src += 3;
-                } else if (*src == '+') {
-                    // Handle + as space
-                    *dst = ' ';
-                    src++;
-                } else {
-                    // Copy character as-is
-                    *dst = *src;
-                    src++;
-                }
-                dst++;
-            }
-            *dst = '\0';
-
-            // TEMPORARY FIX: Store the session ID directly from the query string
-            // Extract the session_id directly from the query string
-            char* direct_session_id = NULL;
-            char* session_id_start = strstr(query, "session_id=");
-            if (session_id_start) {
-                session_id_start += 11; // Skip "session_id="
-                char* session_id_end = strchr(session_id_start, '&');
-                if (session_id_end) {
-                    // Allocate memory for the session ID
-                    size_t id_len = session_id_end - session_id_start;
-                    direct_session_id = (char*)malloc(id_len + 1);
-                    if (direct_session_id) {
-                        strncpy(direct_session_id, session_id_start, id_len);
-                        direct_session_id[id_len] = '\0';
-                    }
-                } else {
-                    // Session ID is the last parameter
-                    direct_session_id = mcp_strdup(session_id_start);
-                }
-            }
-
-            mcp_log_info("Direct session_id extraction: '%s'", direct_session_id ? direct_session_id : "NULL");
-
-            // Store the session ID (use the direct extraction if available)
-            if (direct_session_id) {
-                session_data->session_id = direct_session_id;
-            } else if (strcmp(session_id_param, decoded_session_id) != 0) {
-                mcp_log_info("URL decoded session_id: '%s' -> '%s'", session_id_param, decoded_session_id);
-                session_data->session_id = mcp_strdup(decoded_session_id);
-            } else {
-                session_data->session_id = mcp_strdup(session_id_param);
-            }
-
-            mcp_log_info("SSE client connected with session ID: '%s'", session_data->session_id);
-
-            // Add more detailed logging
-            mcp_log_info("SSE connection details - session_id: '%s', query: '%s'",
-                         session_data->session_id, query);
-
-            // Verify that the session_id was stored correctly
-            if (session_data->session_id == NULL) {
-                mcp_log_error("Failed to store session_id: '%s'", session_id_param);
-            } else if (strcmp(session_data->session_id, session_id_param) != 0 &&
-                       strcmp(session_data->session_id, decoded_session_id) != 0) {
-                mcp_log_error("Session ID mismatch: stored='%s', param='%s', decoded='%s'",
-                             session_data->session_id, session_id_param, decoded_session_id);
-            } else {
-                mcp_log_info("Session ID stored correctly: '%s'", session_data->session_id);
-            }
+            mcp_log_info("SSE client connected with session ID: '%s'", session->session_id);
         } else {
-            mcp_log_debug("SSE client connected without session ID - query: %s", query);
+            mcp_log_debug("SSE client connected without session ID");
         }
+    } else {
+        mcp_log_debug("SSE request has no query string (len=%d)", query_len);
     }
 
     // Add to SSE clients list
     mcp_mutex_lock(data->sse_mutex);
+
     if (data->sse_client_count < MAX_SSE_CLIENTS) {
         data->sse_clients[data->sse_client_count++] = wsi;
 
         // Log the client connection with session details
-        if (session_data) {
-            mcp_log_info("Added SSE client #%d - session_id: %s, filter: %s",
-                        data->sse_client_count,
-                        session_data->session_id ? session_data->session_id : "NULL",
-                        session_data->event_filter ? session_data->event_filter : "ALL");
-        } else {
-            mcp_log_info("Added SSE client #%d - no session data", data->sse_client_count);
-        }
+        mcp_log_info("Added SSE client #%d - session_id: %s, filter: %s",
+                    data->sse_client_count,
+                    session->session_id ? session->session_id : "NULL",
+                    session->event_filter ? session->event_filter : "ALL");
     } else {
         mcp_log_error("Maximum number of SSE clients (%d) reached, rejecting connection", MAX_SSE_CLIENTS);
+        mcp_mutex_unlock(data->sse_mutex);
+        return;
     }
+
     mcp_mutex_unlock(data->sse_mutex);
 
     // Send initial SSE message
     const char* initial_msg = "data: connected\n\n";
-    lws_write(wsi, (unsigned char*)initial_msg, strlen(initial_msg), LWS_WRITE_HTTP);
+    int bytes_written = lws_write(wsi, (unsigned char*)initial_msg, strlen(initial_msg), LWS_WRITE_HTTP);
+    if (bytes_written < 0) {
+        mcp_log_error("Failed to write initial SSE message");
+        return;
+    }
 
     // If client reconnected with Last-Event-ID, replay missed events
-    if (session_data && session_data->last_event_id > 0) {
-        mcp_mutex_lock(data->event_mutex);
-
-        // Iterate through the circular buffer to find events with ID greater than last_event_id
-        if (data->stored_event_count > 0) {
-            int current = data->event_head;
-            int count = 0;
-
-            // Process all events in the buffer
-            while (count < data->stored_event_count) {
-                int event_id = atoi(data->stored_events[current].id);
-
-                // Only send events with ID greater than last_event_id
-                if (event_id > session_data->last_event_id) {
-                    // Skip events that don't match the filter (if any)
-                    if (!(session_data->event_filter && data->stored_events[current].event_type &&
-                        strcmp(session_data->event_filter, data->stored_events[current].event_type) != 0)) {
-
-                        // Replay the event
-                        if (data->stored_events[current].event_type) {
-                            // Write event type
-                            lws_write_http(wsi, "event: ", 7);
-                            lws_write_http(wsi, data->stored_events[current].event_type,
-                                          strlen(data->stored_events[current].event_type));
-                            lws_write_http(wsi, "\n", 1);
-                        }
-
-                        // Write event ID
-                        lws_write_http(wsi, "id: ", 4);
-                        lws_write_http(wsi, data->stored_events[current].id,
-                                      strlen(data->stored_events[current].id));
-                        lws_write_http(wsi, "\n", 1);
-
-                        // Write event data
-                        lws_write_http(wsi, "data: ", 6);
-                        lws_write_http(wsi, data->stored_events[current].data,
-                                      strlen(data->stored_events[current].data));
-                        lws_write_http(wsi, "\n\n", 2);
-
-                        // Request a callback when the socket is writable again
-                        lws_callback_on_writable(wsi);
-                    }
-                }
-
-                // Move to the next event in the circular buffer
-                current = (current + 1) % MAX_SSE_STORED_EVENTS;
-                count++;
-            }
-        }
-
-        mcp_mutex_unlock(data->event_mutex);
+    if (session->last_event_id > 0) {
+        replay_stored_events(wsi, data, session);
     }
 }
