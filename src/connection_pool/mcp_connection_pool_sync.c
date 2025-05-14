@@ -4,6 +4,14 @@
 #include <string.h>
 #include <errno.h>
 
+/**
+ * @brief Initializes synchronization primitives for a connection pool.
+ *
+ * This function creates a mutex and condition variable for the pool.
+ *
+ * @param pool The connection pool.
+ * @return 0 on success, -1 on failure.
+ */
 int init_sync_primitives(mcp_connection_pool_t* pool) {
     pool->mutex = mcp_mutex_create();
     if (!pool->mutex) {
@@ -20,6 +28,13 @@ int init_sync_primitives(mcp_connection_pool_t* pool) {
     return 0;
 }
 
+/**
+ * @brief Destroys synchronization primitives for a connection pool.
+ *
+ * This function destroys the mutex and condition variable for the pool.
+ *
+ * @param pool The connection pool.
+ */
 void destroy_sync_primitives(mcp_connection_pool_t* pool) {
     // Destroy functions are safe to call even if pointer is NULL
     mcp_mutex_destroy(pool->mutex);
@@ -28,32 +43,16 @@ void destroy_sync_primitives(mcp_connection_pool_t* pool) {
     pool->cond_var = NULL;
 }
 
-void pool_lock(mcp_connection_pool_t* pool) {
-    if (mcp_mutex_lock(pool->mutex) != 0) {
-        mcp_log_error("Failed to lock connection pool mutex!");
-    }
-}
-
-void pool_unlock(mcp_connection_pool_t* pool) {
-    if (mcp_mutex_unlock(pool->mutex) != 0) {
-        mcp_log_error("Failed to unlock connection pool mutex!");
-    }
-}
-
-void pool_signal(mcp_connection_pool_t* pool) {
-    if (mcp_cond_signal(pool->cond_var) != 0) {
-        mcp_log_error("Failed to signal connection pool condition variable!");
-    }
-}
-
-void pool_broadcast(mcp_connection_pool_t* pool) {
-    if (mcp_cond_broadcast(pool->cond_var) != 0) {
-        mcp_log_error("Failed to broadcast connection pool condition variable!");
-    }
-}
-
-// Helper function to wait on the condition variable
-// Returns 0 on success (signaled), 1 on timeout, -1 on error
+/**
+ * @brief Waits on the pool's condition variable.
+ *
+ * This function waits on the pool's condition variable for a specified timeout.
+ * It simplifies the handling of timeouts and error conditions.
+ *
+ * @param pool The connection pool.
+ * @param timeout_ms Timeout in milliseconds. Negative value means wait indefinitely.
+ * @return 0 on success (signaled), 1 on timeout, -1 on error.
+ */
 int pool_wait(mcp_connection_pool_t* pool, int timeout_ms) {
     int result;
     if (timeout_ms < 0) {

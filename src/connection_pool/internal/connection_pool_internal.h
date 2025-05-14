@@ -130,11 +130,13 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 // From mcp_connection_pool_sync.c
 int init_sync_primitives(mcp_connection_pool_t* pool);
 void destroy_sync_primitives(mcp_connection_pool_t* pool);
-void pool_lock(mcp_connection_pool_t* pool);
-void pool_unlock(mcp_connection_pool_t* pool);
-void pool_signal(mcp_connection_pool_t* pool);
-void pool_broadcast(mcp_connection_pool_t* pool);
 int pool_wait(mcp_connection_pool_t* pool, int timeout_ms);
+
+// Macros to replace the removed functions
+#define pool_lock(pool) mcp_mutex_lock((pool)->mutex)
+#define pool_unlock(pool) mcp_mutex_unlock((pool)->mutex)
+#define pool_signal(pool) mcp_cond_signal((pool)->cond_var)
+#define pool_broadcast(pool) mcp_cond_broadcast((pool)->cond_var)
 
 // From mcp_connection_pool_maintenance.c
 int prepopulate_pool(mcp_connection_pool_t* pool);
