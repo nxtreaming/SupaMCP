@@ -60,7 +60,7 @@ mcp_pooled_connection_t* create_and_add_connection(mcp_connection_pool_t* pool, 
 
         // Temporarily unlock while closing connection
         pool_unlock(pool);
-        close_connection(new_sock);
+        mcp_socket_close(new_sock);
         pool_lock(pool);
 
         pool->total_count--;
@@ -161,7 +161,7 @@ void close_and_free_connection(mcp_connection_pool_t* pool, mcp_pooled_connectio
 
     // Temporarily unlock while closing connection
     pool_unlock(pool);
-    close_connection(sock_fd);
+    mcp_socket_close(sock_fd);
     pool_lock(pool);
 
     // Update statistics

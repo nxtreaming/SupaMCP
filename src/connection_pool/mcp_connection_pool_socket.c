@@ -1,4 +1,5 @@
 #include "internal/connection_pool_internal.h"
+#include "mcp_socket_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,13 +24,172 @@
 #include <netdb.h>
 #endif
 
-// Creates a TCP socket, connects to host:port with a timeout.
-// Returns connected socket descriptor or INVALID_SOCKET_HANDLE on failure.
+// Forward declarations for static helper functions
+static bool set_socket_nonblocking(socket_handle_t sock);
+static bool restore_socket_blocking(socket_handle_t sock);
+static bool wait_for_connection(socket_handle_t sock, int timeout_ms);
+
+/**
+ * @brief Sets a socket to non-blocking mode.
+ *
+ * This function sets the specified socket to non-blocking mode.
+ *
+ * @param sock The socket handle to set to non-blocking mode.
+ * @return true if successful, false otherwise.
+ */
+static bool set_socket_nonblocking(socket_handle_t sock) {
+    if (sock == INVALID_SOCKET_HANDLE) {
+        return false;
+    }
+
+#ifdef _WIN32
+    u_long mode = 1; // 1 to enable non-blocking socket
+    if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR_HANDLE) {
+        mcp_log_error("ioctlsocket(FIONBIO) failed: %d", WSAGetLastError());
+        return false;
+    }
+#else
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags == -1) {
+        mcp_log_error("fcntl(F_GETFL) failed: %s", strerror(errno));
+        return false;
+    }
+    if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) == -1) {
+        mcp_log_error("fcntl(F_SETFL, O_NONBLOCK) failed: %s", strerror(errno));
+        return false;
+    }
+#endif
+
+    return true;
+}
+
+/**
+ * @brief Restores a socket to blocking mode.
+ *
+ * This function restores the specified socket to blocking mode.
+ *
+ * @param sock The socket handle to restore to blocking mode.
+ * @return true if successful, false otherwise.
+ */
+static bool restore_socket_blocking(socket_handle_t sock) {
+    if (sock == INVALID_SOCKET_HANDLE) {
+        return false;
+    }
+
+#ifdef _WIN32
+    u_long mode = 0; // 0 to disable non-blocking
+    if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR_HANDLE) {
+        mcp_log_error("ioctlsocket(FIONBIO) failed: %d", WSAGetLastError());
+        return false;
+    }
+#else
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags == -1) {
+        mcp_log_error("fcntl(F_GETFL) failed: %s", strerror(errno));
+        return false;
+    }
+    if (fcntl(sock, F_SETFL, flags & ~O_NONBLOCK) == -1) {
+        mcp_log_error("fcntl(F_SETFL, ~O_NONBLOCK) failed: %s", strerror(errno));
+        return false;
+    }
+#endif
+
+    return true;
+}
+
+/**
+ * @brief Waits for a connection to complete.
+ *
+ * This function waits for a non-blocking connection to complete or timeout.
+ *
+ * @param sock The socket handle that is connecting.
+ * @param timeout_ms The timeout in milliseconds.
+ * @return true if the connection completed successfully, false otherwise.
+ */
+static bool wait_for_connection(socket_handle_t sock, int timeout_ms) {
+    if (sock == INVALID_SOCKET_HANDLE || timeout_ms <= 0) {
+        return false;
+    }
+
+    // Wait for the socket to become writable (connection complete)
+    fd_set write_fds, error_fds;
+    FD_ZERO(&write_fds);
+    FD_ZERO(&error_fds);
+    FD_SET(sock, &write_fds);
+    FD_SET(sock, &error_fds);
+
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    int result;
+#ifdef _WIN32
+    // Windows select first parameter is ignored
+    result = select(0, NULL, &write_fds, &error_fds, &tv);
+#else
+    // POSIX select needs max fd + 1
+    result = select(sock + 1, NULL, &write_fds, &error_fds, &tv);
+#endif
+
+    if (result == 0) {
+        // Timeout
+        mcp_log_warn("Connection timed out after %d ms", timeout_ms);
+        return false;
+    } else if (result < 0) {
+        mcp_log_error("select() failed: %d", mcp_socket_get_last_error());
+        return false;
+    }
+
+    // Check if socket has an error
+    if (FD_ISSET(sock, &error_fds)) {
+        mcp_log_error("Socket has error condition");
+        return false;
+    }
+
+    // Check if socket is writable
+    if (!FD_ISSET(sock, &write_fds)) {
+        mcp_log_error("Socket is not writable after select()");
+        return false;
+    }
+
+    // Check for socket error
+    int error = 0;
+    socklen_t len = sizeof(error);
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &len) < 0) {
+        mcp_log_error("getsockopt(SO_ERROR) failed: %d", mcp_socket_get_last_error());
+        return false;
+    }
+
+    if (error != 0) {
+        // Connection failed
+        mcp_log_error("Connection failed: %d", error);
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * @brief Creates a TCP socket, connects to host:port with a timeout.
+ *
+ * This function creates a TCP socket and connects it to the specified host and port
+ * with a timeout. It uses the DNS cache to resolve the hostname and tries each
+ * address returned by the DNS resolver until one succeeds or all fail.
+ *
+ * @param host The hostname or IP address to connect to.
+ * @param port The port number to connect to.
+ * @param connect_timeout_ms The timeout for the connection attempt in milliseconds.
+ * @return The connected socket descriptor or INVALID_SOCKET_HANDLE on failure.
+ */
 socket_handle_t create_new_connection(const char* host, int port, int connect_timeout_ms) {
+    // Start timing for performance measurement
+    long long connect_start_ms = mcp_get_time_ms();
+
     socket_handle_t sock = INVALID_SOCKET_HANDLE;
     struct addrinfo hints, *servinfo = NULL, *p = NULL;
     int rv;
     int err = 0;
+    int attempts = 0;
 
     // Note: WSAStartup is assumed to be called once elsewhere (e.g., pool create or globally)
     // It's generally not safe to call WSAStartup/WSACleanup per connection.
@@ -52,176 +212,92 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
     }
 
     // Loop through all the results and connect to the first we can
-    for(p = servinfo; p != NULL; p = p->ai_next) {
+    for (p = servinfo; p != NULL; p = p->ai_next) {
+        attempts++;
+
+        // Create socket
         if ((sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == INVALID_SOCKET_HANDLE) {
-#ifdef _WIN32
-            mcp_log_warn("socket() failed: %d", WSAGetLastError());
-#else
-            mcp_log_warn("socket() failed: %s", strerror(errno));
-#endif
+            mcp_log_warn("socket() failed: %d", mcp_socket_get_last_error());
             continue;
         }
 
-        // Set non-blocking for timeout connect
-#ifdef _WIN32
-        u_long mode = 1; // 1 to enable non-blocking socket
-        if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR_HANDLE) {
-            mcp_log_error("ioctlsocket(FIONBIO) failed: %d", WSAGetLastError());
-            closesocket(sock);
+        // Apply socket optimizations
+        mcp_socket_optimize(sock, false); // false = client socket
+
+        // Set non-blocking mode for timeout connect
+        if (!set_socket_nonblocking(sock)) {
+            mcp_socket_close(sock);
             sock = INVALID_SOCKET_HANDLE;
             continue;
         }
-#else
-        int flags = fcntl(sock, F_GETFL, 0);
-        if (flags == -1) {
-             mcp_log_error("fcntl(F_GETFL) failed: %s", strerror(errno));
-             close(sock);
-             sock = INVALID_SOCKET_HANDLE;
-             continue;
-        }
-        if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) == -1) {
-            mcp_log_error("fcntl(F_SETFL, O_NONBLOCK) failed: %s", strerror(errno));
-            close(sock);
-            sock = INVALID_SOCKET_HANDLE;
-            continue;
-        }
-#endif
 
         // Initiate non-blocking connect
-        rv = connect(sock, p->ai_addr, (int)p->ai_addrlen); // Cast addrlen
+        rv = connect(sock, p->ai_addr, (int)p->ai_addrlen);
 
+        // Check connect result
 #ifdef _WIN32
         if (rv == SOCKET_ERROR_HANDLE) {
             err = WSAGetLastError();
-            // WSAEINPROGRESS is not typically returned on Windows for non-blocking connect,
-            // WSAEWOULDBLOCK indicates the operation is in progress.
+            // WSAEWOULDBLOCK indicates the operation is in progress on Windows
             if (err != WSAEWOULDBLOCK) {
                 mcp_log_warn("connect() failed immediately: %d", err);
-                closesocket(sock);
+                mcp_socket_close(sock);
                 sock = INVALID_SOCKET_HANDLE;
                 continue;
             }
-            // Connection is in progress (WSAEWOULDBLOCK), use poll/select to wait
-            err = WSAEWOULDBLOCK; // Set err for unified handling below
+            // Connection is in progress, need to wait
+        } else {
+            // Immediate success (rare but possible)
+            mcp_log_debug("Immediate connection success to %s:%d", host, port);
         }
-        // else rv == 0 means immediate success (less common for non-blocking)
 #else
         if (rv == -1) {
             err = errno;
             if (err != EINPROGRESS) {
                 mcp_log_warn("connect() failed immediately: %s", strerror(err));
-                close(sock);
+                mcp_socket_close(sock);
                 sock = INVALID_SOCKET_HANDLE;
                 continue;
             }
-             // Connection is in progress (EINPROGRESS), use poll/select to wait
-        }
-        // else rv == 0 means immediate success
-#endif
-
-        // If connect returned 0 (immediate success) or EINPROGRESS/WSAEWOULDBLOCK (in progress)
-#ifdef _WIN32
-        if (rv == 0 || err == WSAEWOULDBLOCK) {
-#else
-        if (rv == 0 || err == EINPROGRESS) {
-#endif
-            // If connect succeeded immediately (rv == 0), skip waiting
-            if (rv != 0) {
-                struct pollfd pfd;
-                pfd.fd = sock;
-                pfd.events = POLLOUT; // Check for writability
-
-#ifdef _WIN32
-                // Use WSAPoll if available, otherwise fallback or require newer Windows SDK
-                // For simplicity, using select as a fallback here, but WSAPoll is preferred.
-                fd_set write_fds;
-                struct timeval tv;
-                FD_ZERO(&write_fds);
-                FD_SET(sock, &write_fds);
-                tv.tv_sec = connect_timeout_ms / 1000;
-                tv.tv_usec = (connect_timeout_ms % 1000) * 1000;
-                rv = select(0, NULL, &write_fds, NULL, &tv);
-#else
-                rv = poll(&pfd, 1, connect_timeout_ms);
-#endif
-
-                if (rv <= 0) { // Timeout (rv==0) or error (rv<0)
-                    if (rv == 0) {
-                        mcp_log_warn("connect() timed out after %d ms.", connect_timeout_ms);
-                    } else {
-#ifdef _WIN32
-                        mcp_log_error("select() failed during connect: %d", WSAGetLastError());
-#else
-                        mcp_log_error("poll() failed during connect: %s", strerror(errno));
-#endif
-                    }
-                    close_connection(sock);
-                    sock = INVALID_SOCKET_HANDLE;
-                    continue; // Try next address
-                }
-                // rv > 0, socket is ready, check for errors
-            }
-
-            // Check SO_ERROR to confirm connection success after waiting or immediate success
-            int optval = 0;
-            socklen_t optlen = sizeof(optval);
-            if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&optval, &optlen) == SOCKET_ERROR_HANDLE) {
-#ifdef _WIN32
-                mcp_log_error("getsockopt(SO_ERROR) failed: %d", WSAGetLastError());
-#else
-                mcp_log_error("getsockopt(SO_ERROR) failed: %s", strerror(errno));
-#endif
-                close_connection(sock);
-                sock = INVALID_SOCKET_HANDLE;
-                continue;
-            }
-
-            if (optval != 0) { // Connect failed
-#ifdef _WIN32
-                mcp_log_warn("connect() failed after wait: SO_ERROR=%d (WSA: %d)", optval, optval);
-#else
-                mcp_log_warn("connect() failed after wait: %s", strerror(optval));
-#endif
-                close_connection(sock);
-                sock = INVALID_SOCKET_HANDLE;
-                continue;
-            }
-            // Connection successful!
+            // Connection is in progress, need to wait
         } else {
-            // This case should not be reached if connect returned other errors handled above
-            mcp_log_error("Unexpected state after connect() call (rv=%d, err=%d)", rv, err);
-            close_connection(sock);
-            sock = INVALID_SOCKET_HANDLE;
-            continue;
+            // Immediate success
+            mcp_log_debug("Immediate connection success to %s:%d", host, port);
+        }
+#endif
+
+        // If connect didn't succeed immediately, wait for it to complete
+        if (rv != 0) {
+            if (!wait_for_connection(sock, connect_timeout_ms)) {
+                mcp_socket_close(sock);
+                sock = INVALID_SOCKET_HANDLE;
+                continue;
+            }
         }
 
-        // If we get here with a valid socket, connection succeeded.
-        // Optionally, switch back to blocking mode if desired.
-        // For simplicity, leave it non-blocking for now.
+        // If we get here, connection succeeded
+        // Restore blocking mode if needed (uncomment if needed)
+        // if (!restore_socket_blocking(sock)) {
+        //     mcp_log_warn("Failed to restore blocking mode, but connection succeeded");
+        // }
 
-        break; // If we get here, we must have connected successfully
+        break; // Successfully connected
     }
 
     // Release the DNS cache entry
     dns_cache_release(servinfo);
 
+    // Calculate connection time
+    long long connect_end_ms = mcp_get_time_ms();
+    long long connect_time_ms = connect_end_ms - connect_start_ms;
+
     if (sock == INVALID_SOCKET_HANDLE) {
-        mcp_log_error("Failed to connect to %s:%d after trying all addresses.", host, port);
+        mcp_log_error("Failed to connect to %s:%d after %d attempts (%lld ms)",
+                     host, port, attempts, connect_time_ms);
     } else {
-        mcp_log_debug("Successfully connected socket %d to %s:%d.", (int)sock, host, port);
+        mcp_log_debug("Successfully connected socket %d to %s:%d in %lld ms (attempts: %d)",
+                     (int)sock, host, port, connect_time_ms, attempts);
     }
 
     return sock;
-}
-
-void close_connection(socket_handle_t socket_fd) {
-    if (socket_fd != INVALID_SOCKET_HANDLE) {
-#ifdef _WIN32
-        closesocket(socket_fd);
-        // Note: WSACleanup should be called once when the application exits,
-        // not after closing each socket.
-#else
-        close(socket_fd);
-#endif
-    }
 }

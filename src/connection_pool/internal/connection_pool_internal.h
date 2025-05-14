@@ -126,7 +126,6 @@ struct mcp_connection_pool {
 
 // From mcp_connection_pool_socket.c
 socket_handle_t create_new_connection(const char* host, int port, int connect_timeout_ms);
-void close_connection(socket_handle_t socket_fd);
 
 // From mcp_connection_pool_sync.c
 int init_sync_primitives(mcp_connection_pool_t* pool);

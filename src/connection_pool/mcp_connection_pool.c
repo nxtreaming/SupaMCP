@@ -148,7 +148,7 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
                     // Connection has timed out, close it and try to get another one
                     mcp_log_debug("Idle connection %d timed out (idle for %.1f seconds), closing.",
                                  (int)sock, idle_time_sec);
-                    close_connection(sock);
+                    mcp_socket_close(sock);
                     free(pooled_conn);
 
                     // Update counts but keep total the same
@@ -177,7 +177,7 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
                 if (!is_healthy) {
                     // Connection is unhealthy, close it and try to get another one
                     mcp_log_warn("Connection %d failed health check, closing.", (int)sock);
-                    close_connection(sock);
+                    mcp_socket_close(sock);
                     free(pooled_conn);
 
                     // Update counts and statistics
@@ -282,12 +282,12 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, socket_handle_t con
 
     if (pool->shutting_down) {
         mcp_log_info("Pool shutting down, closing connection %d.", (int)connection);
-        close_connection(connection);
+        mcp_socket_close(connection);
         pool->total_count--;
         // No signal needed, broadcast happens in destroy
     } else if (!is_valid) {
         mcp_log_warn("Closing invalid connection %d.", (int)connection);
-        close_connection(connection);
+        mcp_socket_close(connection);
         pool->total_count--;
         // Signal potentially waiting getters that a slot might be free for creation
         pool_signal(pool);
@@ -327,7 +327,7 @@ int mcp_connection_pool_release(mcp_connection_pool_t* pool, socket_handle_t con
         } else {
             // Failed to allocate node, just close the connection
             mcp_log_error("Failed to allocate node for idle connection %d, closing.", (int)connection);
-            close_connection(connection);
+            mcp_socket_close(connection);
             pool->total_count--;
             // Signal potentially waiting getters that a slot might be free for creation
             pool_signal(pool);
@@ -364,7 +364,7 @@ void mcp_connection_pool_destroy(mcp_connection_pool_t* pool) {
     mcp_pooled_connection_t* current = pool->idle_head;
     while(current) {
         mcp_pooled_connection_t* next = current->next;
-        close_connection(current->socket_fd);
+        mcp_socket_close(current->socket_fd);
         pool->total_connections_closed++;
         free(current);
         current = next;

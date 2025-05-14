@@ -126,6 +126,10 @@ void mcp_socket_cleanup(void) {
 }
 
 int mcp_socket_close(socket_t sock) {
+    if (sock == INVALID_SOCKET) {
+        mcp_log_error("Invalid socket handle");
+        return -1;
+    }
 #ifdef _WIN32
     return closesocket(sock);
 #else
