@@ -48,40 +48,20 @@ static bool set_socket_nonblocking(socket_handle_t socket_fd,
                                   int* original_flags
 #endif
                                   ) {
+    // Use the enhanced core function with state preservation
+    int result = mcp_socket_set_non_blocking_ex((socket_t)socket_fd,
 #ifdef _WIN32
-    // Get current socket mode
-    u_long mode = 0;
-    if (ioctlsocket(socket_fd, FIONREAD, &mode) == SOCKET_ERROR_HANDLE) {
-        mcp_log_warn("Health check: ioctlsocket(FIONREAD) failed: %d", WSAGetLastError());
-        return false;
-    }
-
-    // Store original mode
-    *original_mode = mode;
-
-    // Set non-blocking mode
-    u_long non_blocking = 1;
-    if (ioctlsocket(socket_fd, FIONBIO, &non_blocking) == SOCKET_ERROR_HANDLE) {
-        mcp_log_warn("Health check: ioctlsocket(FIONBIO) failed: %d", WSAGetLastError());
-        return false;
-    }
+                                              original_mode
 #else
-    // Get current socket flags
-    int flags = fcntl(socket_fd, F_GETFL, 0);
-    if (flags == -1) {
-        mcp_log_warn("Health check: fcntl(F_GETFL) failed: %s", strerror(errno));
-        return false;
-    }
-
-    // Store original flags
-    *original_flags = flags;
-
-    // Set non-blocking mode
-    if (fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
-        mcp_log_warn("Health check: fcntl(F_SETFL, O_NONBLOCK) failed: %s", strerror(errno));
-        return false;
-    }
+                                              original_flags
 #endif
+                                              );
+
+    if (result != 0) {
+        mcp_log_warn("Health check: Failed to set socket to non-blocking mode");
+        return false;
+    }
+
     return true;
 }
 
@@ -100,21 +80,20 @@ static bool restore_socket_blocking(socket_handle_t socket_fd,
                                    int original_flags
 #endif
                                    ) {
+    // Use the core function to restore blocking mode
+    int result = mcp_socket_restore_blocking((socket_t)socket_fd,
 #ifdef _WIN32
-    // Restore original mode (always set to blocking for now)
-    u_long blocking = 0;
-    (void)original_mode; // Suppress unused parameter warning
-    if (ioctlsocket(socket_fd, FIONBIO, &blocking) == SOCKET_ERROR_HANDLE) {
-        mcp_log_warn("Health check: ioctlsocket(FIONBIO) restore failed: %d", WSAGetLastError());
-        return false;
-    }
+                                           original_mode
 #else
-    // Restore original flags
-    if (fcntl(socket_fd, F_SETFL, original_flags) == -1) {
-        mcp_log_warn("Health check: fcntl(F_SETFL) restore failed: %s", strerror(errno));
+                                           original_flags
+#endif
+                                           );
+
+    if (result != 0) {
+        mcp_log_warn("Health check: Failed to restore socket blocking mode");
         return false;
     }
-#endif
+
     return true;
 }
 

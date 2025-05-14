@@ -87,6 +87,40 @@ int mcp_socket_get_last_error(void);
  */
 int mcp_socket_set_non_blocking(socket_t sock);
 
+#ifdef _WIN32
+/**
+ * @brief Sets a socket to non-blocking mode and optionally saves the original mode.
+ * @param sock The socket descriptor.
+ * @param original_mode Optional pointer to store the original mode (Windows only).
+ *                     Pass NULL if you don't need to restore the original mode later.
+ * @return 0 on success, -1 on failure.
+ */
+int mcp_socket_set_non_blocking_ex(socket_t sock, u_long* original_mode);
+#else
+/**
+ * @brief Sets a socket to non-blocking mode and optionally saves the original flags.
+ * @param sock The socket descriptor.
+ * @param original_flags Optional pointer to store the original flags (POSIX only).
+ *                      Pass NULL if you don't need to restore the original flags later.
+ * @return 0 on success, -1 on failure.
+ */
+int mcp_socket_set_non_blocking_ex(socket_t sock, int* original_flags);
+#endif
+
+/**
+ * @brief Restores a socket to its original blocking mode.
+ * @param sock The socket descriptor.
+ * @param original_mode_or_flags The original mode (Windows) or flags (POSIX) to restore.
+ * @return 0 on success, -1 on failure.
+ */
+int mcp_socket_restore_blocking(socket_t sock,
+#ifdef _WIN32
+                               u_long original_mode
+#else
+                               int original_flags
+#endif
+                               );
+
 /**
  * @brief Sets the TCP_NODELAY option on a socket to disable Nagle's algorithm.
  *

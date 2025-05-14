@@ -147,19 +147,74 @@ int mcp_socket_get_last_error(void) {
 
 int mcp_socket_set_non_blocking(socket_t sock) {
 #ifdef _WIN32
+    return mcp_socket_set_non_blocking_ex(sock, NULL);
+#else
+    return mcp_socket_set_non_blocking_ex(sock, NULL);
+#endif
+}
+
+#ifdef _WIN32
+int mcp_socket_set_non_blocking_ex(socket_t sock, u_long* original_mode) {
+    // Get current mode if requested
+    if (original_mode != NULL) {
+        u_long mode = 0;
+        if (ioctlsocket(sock, FIONREAD, &mode) != 0) {
+            mcp_log_error("ioctlsocket(FIONREAD) failed: %d", mcp_socket_get_last_error());
+            return -1;
+        }
+        *original_mode = mode;
+    }
+
+    // Set non-blocking mode
     u_long mode = 1; // 1 to enable non-blocking
     if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
         mcp_log_error("ioctlsocket(FIONBIO) failed: %d", mcp_socket_get_last_error());
         return -1;
     }
+    return 0;
+}
 #else
+int mcp_socket_set_non_blocking_ex(socket_t sock, int* original_flags) {
+    // Get current flags
     int flags = fcntl(sock, F_GETFL, 0);
     if (flags == -1) {
         mcp_log_error("fcntl(F_GETFL) failed: %d (%s)", errno, strerror(errno));
         return -1;
     }
+
+    // Save original flags if requested
+    if (original_flags != NULL) {
+        *original_flags = flags;
+    }
+
+    // Set non-blocking mode
     if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) == -1) {
         mcp_log_error("fcntl(F_SETFL, O_NONBLOCK) failed: %d (%s)", errno, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+#endif
+
+int mcp_socket_restore_blocking(socket_t sock,
+#ifdef _WIN32
+                               u_long original_mode
+#else
+                               int original_flags
+#endif
+                               ) {
+#ifdef _WIN32
+    // Restore to blocking mode (or original mode if provided)
+    u_long mode = 0; // 0 to disable non-blocking
+    (void)original_mode; // Suppress unused parameter warning if not used
+    if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
+        mcp_log_error("ioctlsocket(FIONBIO) restore failed: %d", mcp_socket_get_last_error());
+        return -1;
+    }
+#else
+    // Restore original flags
+    if (fcntl(sock, F_SETFL, original_flags) == -1) {
+        mcp_log_error("fcntl(F_SETFL) restore failed: %d (%s)", errno, strerror(errno));
         return -1;
     }
 #endif

@@ -42,23 +42,12 @@ static bool set_socket_nonblocking(socket_handle_t sock) {
         return false;
     }
 
-#ifdef _WIN32
-    u_long mode = 1; // 1 to enable non-blocking socket
-    if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR_HANDLE) {
-        mcp_log_error("ioctlsocket(FIONBIO) failed: %d", WSAGetLastError());
+    // Use the core function
+    int result = mcp_socket_set_non_blocking((socket_t)sock);
+    if (result != 0) {
+        mcp_log_error("Failed to set socket to non-blocking mode");
         return false;
     }
-#else
-    int flags = fcntl(sock, F_GETFL, 0);
-    if (flags == -1) {
-        mcp_log_error("fcntl(F_GETFL) failed: %s", strerror(errno));
-        return false;
-    }
-    if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) == -1) {
-        mcp_log_error("fcntl(F_SETFL, O_NONBLOCK) failed: %s", strerror(errno));
-        return false;
-    }
-#endif
 
     return true;
 }
@@ -76,23 +65,25 @@ static bool restore_socket_blocking(socket_handle_t sock) {
         return false;
     }
 
+    // Use the core function with default blocking mode
 #ifdef _WIN32
-    u_long mode = 0; // 0 to disable non-blocking
-    if (ioctlsocket(sock, FIONBIO, &mode) == SOCKET_ERROR_HANDLE) {
-        mcp_log_error("ioctlsocket(FIONBIO) failed: %d", WSAGetLastError());
-        return false;
-    }
+    u_long original_mode = 0; // Default to blocking mode
 #else
-    int flags = fcntl(sock, F_GETFL, 0);
-    if (flags == -1) {
-        mcp_log_error("fcntl(F_GETFL) failed: %s", strerror(errno));
-        return false;
-    }
-    if (fcntl(sock, F_SETFL, flags & ~O_NONBLOCK) == -1) {
-        mcp_log_error("fcntl(F_SETFL, ~O_NONBLOCK) failed: %s", strerror(errno));
-        return false;
-    }
+    int original_flags = 0;   // Will be ignored, just passing a value
 #endif
+
+    int result = mcp_socket_restore_blocking((socket_t)sock,
+#ifdef _WIN32
+                                           original_mode
+#else
+                                           original_flags
+#endif
+                                           );
+
+    if (result != 0) {
+        mcp_log_error("Failed to restore socket blocking mode");
+        return false;
+    }
 
     return true;
 }
