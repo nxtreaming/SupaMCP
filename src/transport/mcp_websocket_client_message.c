@@ -95,7 +95,7 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
                 // Now we can exit sync mode
                 data->sync_response_mode = false;
                 data->response_ready = false;
-                data->current_request_id = 0;
+                data->current_request_id = -1;
                 data->request_timedout = false;
 
                 mcp_mutex_unlock(data->response_mutex);
@@ -284,7 +284,6 @@ int ws_client_send_and_wait_response(
 
     // Extract and store the request ID
     int64_t request_id = websocket_extract_request_id((const char*)data, size);
-
     // Store the current request ID
     ws_data->current_request_id = request_id;
     if (request_id >= 0) {
@@ -309,7 +308,7 @@ int ws_client_send_and_wait_response(
         // Reset synchronous response mode
         mcp_mutex_lock(ws_data->response_mutex);
         ws_data->sync_response_mode = false;
-        ws_data->current_request_id = 0;
+        ws_data->current_request_id = -1;
         ws_data->request_timedout = false;
         mcp_mutex_unlock(ws_data->response_mutex);
 
@@ -461,7 +460,7 @@ int ws_client_send_and_wait_response(
     if (ws_data->response_ready || !ws_data->running) {
         ws_data->sync_response_mode = false;
         ws_data->response_ready = false;
-        ws_data->current_request_id = 0;
+        ws_data->current_request_id = -1;
         ws_data->request_timedout = false;
     }
     // Otherwise, keep sync mode active to handle late responses
