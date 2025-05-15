@@ -228,6 +228,7 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         default:
+            mcp_log_debug("WebSocket server default callback: reason=%d (%s)", reason, websocket_get_callback_reason_string(reason));
             break;
     }
 

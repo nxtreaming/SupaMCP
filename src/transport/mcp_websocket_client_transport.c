@@ -174,6 +174,7 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         default:
+            mcp_log_debug("WebSocket client callback: reason=%d (%s)", reason, websocket_get_callback_reason_string(reason));
             break;
     }
 
@@ -744,6 +745,7 @@ int mcp_transport_websocket_client_is_connected(mcp_transport_t* transport) {
 
     ws_client_data_t* data = (ws_client_data_t*)transport->transport_data;
     if (!data->running) {
+        mcp_log_warn("WebSocket client is not running");
         return -1;
     }
 
