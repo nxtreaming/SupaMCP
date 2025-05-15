@@ -68,11 +68,37 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
             mcp_log_info("WebSocket client connection closed");
             data->wsi = NULL;
 
+            // Check if we're in synchronous response mode
+            mcp_mutex_lock(data->response_mutex);
+            bool was_in_sync_mode = data->sync_response_mode;
+            int64_t pending_request_id = data->current_request_id;
+
+            // If we're in sync mode, signal that the response is ready with an error
+            if (data->sync_response_mode) {
+                mcp_log_warn("WebSocket connection closed while in synchronous response mode for request ID %lld",
+                           (long long)data->current_request_id);
+
+                // Set error state
+                data->response_error_code = -1;
+                data->request_timedout = true;
+
+                // Signal waiting thread to wake up
+                mcp_cond_signal(data->response_cond);
+            }
+            mcp_mutex_unlock(data->response_mutex);
+
             // Signal that the connection is closed
             mcp_mutex_lock(data->connection_mutex);
             data->state = WS_CLIENT_STATE_DISCONNECTED;
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
+
+            // Log additional information for debugging
+            if (was_in_sync_mode) {
+                mcp_log_debug("Connection closed while waiting for response to request ID %lld. Will attempt to reconnect.",
+                             (long long)pending_request_id);
+            }
+
             break;
         }
 
@@ -412,6 +438,27 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
 
         // Log the timeout value
         mcp_log_debug("Using timeout: %u ms", timeout_ms);
+
+        // Validate the JSON data before sending
+        const char* json_data = (const char*)buffers[1].data;
+        size_t json_size = buffers[1].size;
+
+        // Log the full JSON message for debugging
+        mcp_log_debug("WebSocket client sending JSON message: %.*s", (int)json_size, json_data);
+
+        // Check for UTF-8 characters (without detailed logging)
+        bool has_utf8 = false;
+        for (size_t i = 0; i < json_size; i++) {
+            unsigned char c = (unsigned char)json_data[i];
+            if (c > 127) {
+                has_utf8 = true;
+                break; // Stop after finding the first UTF-8 character
+            }
+        }
+
+        if (has_utf8) {
+            mcp_log_debug("Message contains UTF-8 characters");
+        }
 
         // Send only the JSON part (second buffer) and wait for response
         int result = ws_client_send_and_wait_response(

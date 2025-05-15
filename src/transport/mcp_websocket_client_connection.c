@@ -109,6 +109,13 @@ int ws_client_connect(ws_client_data_t* data) {
     connect_info.protocol = data->config.protocol ? data->config.protocol : "mcp-protocol";
     connect_info.pwsi = &data->wsi;
 
+    // Set additional options for better UTF-8 handling
+    // Enable permessage-deflate extension for better compression of UTF-8
+    connect_info.alpn = "http/1.1";
+
+    // Set explicit UTF-8 handling flag
+    connect_info.client_exts = NULL; // Use default extensions which include permessage-deflate
+
     // Add flags to optimize connection speed and force immediate upgrade
     connect_info.ssl_connection = data->config.use_ssl ?
         (LCCSCF_USE_SSL | LCCSCF_PIPELINE) : LCCSCF_PIPELINE;

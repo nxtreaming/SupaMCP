@@ -212,6 +212,29 @@ int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t siz
         return -1;
     }
 
+    // Log the message content for debugging
+    #ifdef MCP_VERBOSE_DEBUG
+    if (size < 1000) {
+        char debug_buffer[1024] = {0};
+        size_t copy_len = size < 1000 ? size : 1000;
+        memcpy(debug_buffer, buffer, copy_len);
+        debug_buffer[copy_len] = '\0';
+
+        // Log as hex for the first 32 bytes to help diagnose encoding issues
+        char hex_buffer[200] = {0};
+        size_t hex_len = size < 32 ? size : 32;
+        for (size_t i = 0; i < hex_len; i++) {
+            sprintf(hex_buffer + i*3, "%02x ", (unsigned char)((char*)buffer)[i]);
+        }
+        mcp_log_debug("WebSocket client sending data (hex): %s", hex_buffer);
+
+        // Check if this is a JSON message
+        if (size > 0 && ((char*)buffer)[0] == '{') {
+            mcp_log_debug("Sending JSON message: %s", debug_buffer);
+        }
+    }
+    #endif
+
     // Always use heap allocation for WebSocket buffer to avoid MSVC stack array issues
     unsigned char* buf = (unsigned char*)malloc(LWS_PRE + size);
     if (!buf) {
@@ -221,6 +244,67 @@ int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t siz
 
     // Copy the message data
     memcpy(buf + LWS_PRE, buffer, size);
+
+    // Validate and sanitize UTF-8 encoding before sending
+    bool has_utf8 = false;
+    bool needs_sanitization = false;
+
+    // First pass: check if we have UTF-8 characters and if sanitization is needed
+    for (size_t i = 0; i < size; i++) {
+        unsigned char c = ((unsigned char*)buffer)[i];
+
+        // Check for high-bit characters (potential UTF-8)
+        if (c > 127) {
+            has_utf8 = true;
+
+            // Check for invalid UTF-8 sequences
+            if (c == 0xFE || c == 0xFF) {
+                mcp_log_error("Invalid UTF-8 byte detected at position %zu: 0x%02X", i, c);
+                needs_sanitization = true;
+            }
+
+            // Check for incomplete UTF-8 sequences at the end of the buffer
+            if (i == size - 1) {
+                if ((c & 0xE0) == 0xC0 || (c & 0xF0) == 0xE0 || (c & 0xF8) == 0xF0) {
+                    mcp_log_error("Incomplete UTF-8 sequence at end of buffer: 0x%02X", c);
+                    needs_sanitization = true;
+                }
+            }
+        }
+    }
+
+    // If we have UTF-8 characters, log a simple message
+    if (has_utf8) {
+        mcp_log_debug("Message contains UTF-8 characters");
+    }
+
+    // If sanitization is needed, create a sanitized copy
+    if (needs_sanitization) {
+        mcp_log_warn("Invalid UTF-8 detected, sanitizing message");
+
+        // Create a sanitized copy of the buffer
+        unsigned char* sanitized_buf = (unsigned char*)malloc(LWS_PRE + size);
+        if (!sanitized_buf) {
+            mcp_log_error("Failed to allocate buffer for sanitized message");
+            free(buf);
+            return -1;
+        }
+
+        // Copy the message data and sanitize it
+        memcpy(sanitized_buf + LWS_PRE, buffer, size);
+
+        // Replace invalid UTF-8 sequences with '?'
+        for (size_t i = 0; i < size; i++) {
+            unsigned char c = sanitized_buf[LWS_PRE + i];
+            if (c == 0xFE || c == 0xFF) {
+                sanitized_buf[LWS_PRE + i] = '?';
+            }
+        }
+
+        // Free the original buffer and use the sanitized one
+        free(buf);
+        buf = sanitized_buf;
+    }
 
     // Send the message directly
     int result = lws_write(data->wsi, buf + LWS_PRE, size, LWS_WRITE_TEXT);
@@ -236,9 +320,7 @@ int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t siz
     // Update activity time
     data->last_activity_time = time(NULL);
 
-    #ifdef MCP_VERBOSE_DEBUG
     mcp_log_debug("WebSocket message sent directly, size: %zu, result: %d", size, result);
-    #endif
     return 0;
 }
 
