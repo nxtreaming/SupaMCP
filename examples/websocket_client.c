@@ -2,7 +2,7 @@
 #   ifndef _CRT_SECURE_NO_WARNINGS
 #       define _CRT_SECURE_NO_WARNINGS
 #   endif
-#   define WIN32_LEAN_AND_MEAN  // Avoid Windows.h including Winsock.h
+#   define WIN32_LEAN_AND_MEAN
 #   include <windows.h>
 #endif
 
@@ -484,7 +484,7 @@ int main(int argc, char* argv[]) {
 
         // Free the converted string
         free(utf8_input);
-
+#if 0
         // Log the message for debugging, especially for non-ASCII characters
         printf("Input message length: %zu bytes\n", strlen(user_message));
 
@@ -494,7 +494,7 @@ int main(int argc, char* argv[]) {
             printf("%02X ", (unsigned char)user_message[i]);
         }
         printf("\n");
-
+#endif
         // Check if the message contains non-ASCII characters
         bool contains_non_ascii = false;
         for (size_t i = 0; i < strlen(user_message); i++) {
