@@ -116,6 +116,7 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLIENT_RECEIVE: {
+            mcp_log_debug("Receive data from server");
             ws_client_handle_received_data(data, in, len, lws_is_final_fragment(wsi));
             break;
         }
@@ -260,7 +261,6 @@ static int ws_client_transport_send(mcp_transport_t* transport, const void* data
     }
 
     ws_client_data_t* ws_data = (ws_client_data_t*)transport->transport_data;
-
     if (!ws_data->running) {
         mcp_log_error("WebSocket client is not running");
         return -1;
@@ -325,14 +325,14 @@ static int ws_client_transport_receive(mcp_transport_t* transport, char** data, 
     if (timeout_ms > 0) {
         // Wait with timeout
         uint32_t remaining_timeout = timeout_ms;
-        uint32_t wait_chunk = 100; // Wait in smaller chunks to check for state changes
+        uint32_t wait_chunk = 100;
 
         mcp_log_debug("WebSocket client receive: waiting for response with timeout %u ms", timeout_ms);
 
         while (!ws_data->response_ready && ws_data->running && remaining_timeout > 0) {
             uint32_t wait_time = (remaining_timeout < wait_chunk) ? remaining_timeout : wait_chunk;
-            result = mcp_cond_timedwait(ws_data->response_cond, ws_data->response_mutex, wait_time);
 
+            result = mcp_cond_timedwait(ws_data->response_cond, ws_data->response_mutex, wait_time);
             if (result != 0) {
                 // Timeout or error
                 mcp_log_debug("WebSocket client receive: wait returned %d", result);
@@ -357,7 +357,6 @@ static int ws_client_transport_receive(mcp_transport_t* transport, char** data, 
 
         while (!ws_data->response_ready && ws_data->running) {
             result = mcp_cond_wait(ws_data->response_cond, ws_data->response_mutex);
-
             if (result != 0) {
                 // Error
                 mcp_log_debug("WebSocket client receive: wait returned %d", result);
@@ -469,7 +468,6 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
             &response_size,
             timeout_ms
         );
-
         if (result != 0) {
             mcp_log_error("WebSocket client send and wait response failed: %d", result);
             return result;
@@ -520,7 +518,6 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
         // Send the message
         int result = ws_client_send_buffer(ws_data, combined_buffer, total_size);
 
-        // Free the buffer
         free(combined_buffer);
 
         return result;
@@ -560,7 +557,6 @@ static int ws_client_transport_start(
         data->config.cert_path,
         data->config.key_path
     );
-
     if (!data->context) {
         mcp_log_error("Failed to create WebSocket client context");
         return -1;
@@ -669,7 +665,7 @@ static int ws_client_transport_stop(mcp_transport_t* transport) {
     if (data->response_mutex && data->response_cond) {
         mcp_mutex_lock(data->response_mutex);
         data->response_ready = true; // Force any waiting threads to wake up
-        data->response_error_code = -1; // Indicate error
+        data->response_error_code = -1;
         mcp_cond_signal(data->response_cond);
         mcp_mutex_unlock(data->response_mutex);
     }
@@ -734,10 +730,7 @@ static void ws_client_transport_destroy(mcp_transport_t* transport) {
     // but we should check in case that changes in the future
     // We can't compare with the original config since it's not stored in the transport
 
-    // Free transport data
     free(data);
-
-    // Free transport
     free(transport);
 
     mcp_log_info("WebSocket client transport destroyed");
@@ -781,7 +774,7 @@ mcp_transport_t* mcp_transport_websocket_client_create(const mcp_websocket_confi
     data->config = *config;
     data->protocols = client_protocols;
     data->transport = transport;
-    data->reconnect = true; // Enable reconnection by default
+    data->reconnect = true;
 
     // Initialize protocols
     mcp_websocket_init_protocols(client_protocols, ws_client_callback);

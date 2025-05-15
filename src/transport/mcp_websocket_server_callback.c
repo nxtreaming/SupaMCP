@@ -31,15 +31,13 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
             // Find an empty client slot using bitmap
             int client_index = ws_server_find_free_client_slot(data);
-
             if (client_index == -1) {
                 // Update rejection statistics
                 data->rejected_connections++;
-
                 mcp_mutex_unlock(data->clients_mutex);
                 mcp_log_error("Maximum WebSocket clients reached (%d active, %d total connections, %d rejected)",
                              data->active_clients, data->total_connections, data->rejected_connections);
-                return -1; // Reject connection
+                return -1;
             }
 
             // Initialize client data
@@ -69,7 +67,6 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         case LWS_CALLBACK_CLOSED: {
             // Client disconnected
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
-
             if (client) {
                 mcp_log_info("Client %d disconnected", client->client_id);
 
@@ -118,7 +115,6 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         case LWS_CALLBACK_RECEIVE_PONG: {
             // Received pong from client
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
-
             if (client) {
                 mcp_log_debug("Received pong from client %d", client->client_id);
                 ws_server_client_update_activity(client);
@@ -148,7 +144,6 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 return -1;
             }
 
-            // No message queue anymore, so nothing to send here
             // Messages are sent directly in the LWS_CALLBACK_RECEIVE handler
 
             // Update activity timestamp
@@ -215,7 +210,7 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             if (data->active_clients >= MAX_WEBSOCKET_CLIENTS) {
                 mcp_log_warn("WebSocket server at capacity (%d/%d), rejecting connection",
                            data->active_clients, MAX_WEBSOCKET_CLIENTS);
-                return -1; // Reject connection
+                return -1;
             }
             return 0;
         }
