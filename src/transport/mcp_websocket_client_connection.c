@@ -107,8 +107,10 @@ int ws_client_connect(ws_client_data_t* data) {
     connect_info.host = data->config.host;
     connect_info.origin = data->config.origin ? data->config.origin : data->config.host;
     connect_info.protocol = data->config.protocol ? data->config.protocol : "mcp-protocol";
+#if 0
+    // Store the wsi pointer in the client data: it useless in current implementation
     connect_info.pwsi = &data->wsi;
-
+#endif
     // Set additional options for better UTF-8 handling
     // Enable permessage-deflate extension for better compression of UTF-8
     connect_info.alpn = "http/1.1";
