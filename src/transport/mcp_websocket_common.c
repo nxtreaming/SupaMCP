@@ -72,6 +72,12 @@ struct lws_context* mcp_websocket_create_context(
     info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE |
                    LWS_SERVER_OPTION_VALIDATE_UTF8 |
                    LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+    
+#if 0
+    info.connect_timeout_secs = 1;
+    info.timeout_secs = 1;
+    info.timeout_secs_ah_idle = 1;
+#endif
 
     // Client-specific settings to optimize connection speed
     if (!is_server) {
