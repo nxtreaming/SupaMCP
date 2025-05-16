@@ -189,9 +189,21 @@ static void ws_client_cleanup_resources(ws_client_data_t* data) {
 
     // First, make sure we're not in a connected state
     // This helps prevent callbacks from being triggered during cleanup
+    // Use a local variable to avoid locking if not necessary
+    bool need_state_change = false;
+    
+    // Check state without locking first
     if (data->state == WS_CLIENT_STATE_CONNECTED) {
+        need_state_change = true;
+    }
+    
+    // Only lock if we need to change state
+    if (need_state_change && data->connection_mutex) {
         mcp_mutex_lock(data->connection_mutex);
-        data->state = WS_CLIENT_STATE_CLOSING;
+        // Double-check state after acquiring lock
+        if (data->state == WS_CLIENT_STATE_CONNECTED) {
+            data->state = WS_CLIENT_STATE_CLOSING;
+        }
         mcp_mutex_unlock(data->connection_mutex);
     }
 
@@ -221,37 +233,52 @@ static void ws_client_cleanup_resources(ws_client_data_t* data) {
 
     // Destroy mutexes and condition variables
     // First signal any waiting threads to prevent deadlocks
-    if (data->connection_mutex && data->connection_cond) {
-        mcp_mutex_lock(data->connection_mutex);
-        mcp_cond_signal(data->connection_cond);
-        mcp_mutex_unlock(data->connection_mutex);
+    // Store local copies of mutex/cond pointers to avoid null pointer issues during cleanup
+    mcp_mutex_t* conn_mutex = data->connection_mutex;
+    mcp_cond_t* conn_cond = data->connection_cond;
+    mcp_mutex_t* resp_mutex = data->response_mutex;
+    mcp_cond_t* resp_cond = data->response_cond;
+    
+    // Signal connection condition
+    if (conn_mutex && conn_cond) {
+        mcp_mutex_lock(conn_mutex);
+        // Set state to error to ensure waiting threads don't attempt reconnection
+        data->state = WS_CLIENT_STATE_ERROR;
+        mcp_cond_signal(conn_cond);
+        mcp_mutex_unlock(conn_mutex);
     }
 
-    if (data->response_mutex && data->response_cond) {
-        mcp_mutex_lock(data->response_mutex);
-        mcp_cond_signal(data->response_cond);
-        mcp_mutex_unlock(data->response_mutex);
+    // Signal response condition
+    if (resp_mutex && resp_cond) {
+        mcp_mutex_lock(resp_mutex);
+        // Mark response as ready with error to wake up waiting threads
+        data->response_ready = true;
+        data->response_error_code = -1;
+        mcp_cond_signal(resp_cond);
+        mcp_mutex_unlock(resp_mutex);
     }
 
-    // Now destroy the synchronization primitives
-    if (data->connection_cond) {
-        mcp_cond_destroy(data->connection_cond);
-        data->connection_cond = NULL;
+    // Clear pointers in data structure to prevent use-after-free
+    data->connection_mutex = NULL;
+    data->connection_cond = NULL;
+    data->response_mutex = NULL;
+    data->response_cond = NULL;
+
+    // Now destroy the synchronization primitives using local copies
+    if (conn_cond) {
+        mcp_cond_destroy(conn_cond);
     }
 
-    if (data->connection_mutex) {
-        mcp_mutex_destroy(data->connection_mutex);
-        data->connection_mutex = NULL;
+    if (conn_mutex) {
+        mcp_mutex_destroy(conn_mutex);
     }
 
-    if (data->response_cond) {
-        mcp_cond_destroy(data->response_cond);
-        data->response_cond = NULL;
+    if (resp_cond) {
+        mcp_cond_destroy(resp_cond);
     }
 
-    if (data->response_mutex) {
-        mcp_mutex_destroy(data->response_mutex);
-        data->response_mutex = NULL;
+    if (resp_mutex) {
+        mcp_mutex_destroy(resp_mutex);
     }
 }
 
