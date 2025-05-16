@@ -227,5 +227,16 @@ else()
     target_link_libraries(basic_http_server PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# WebSocket Connection Pool Example
+add_executable(websocket_connection_pool websocket_connection_pool.c)
+target_include_directories(websocket_connection_pool PRIVATE ../client/include) # Add client include path
+target_link_libraries(websocket_connection_pool PRIVATE mcpcore)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(websocket_connection_pool PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(websocket_connection_pool PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server websocket_connection_pool DESTINATION bin/examples)

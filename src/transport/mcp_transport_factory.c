@@ -3,6 +3,7 @@
 #include "mcp_tcp_transport.h"
 #include "mcp_tcp_client_transport.h"
 #include "mcp_websocket_transport.h"
+#include "mcp_websocket_connection_pool.h"
 #include "mcp_http_transport.h"
 #include "mcp_http_client_transport.h"
 #include <stdlib.h>
@@ -96,6 +97,41 @@ mcp_transport_t* mcp_transport_factory_create(
                     .timeout_ms = config->http.timeout_ms
                 };
                 return mcp_transport_http_create(&http_config);
+            }
+
+        case MCP_TRANSPORT_WS_POOL:
+            if (config == NULL) {
+                return NULL;
+            }
+            {
+                // Create WebSocket connection pool configuration
+                mcp_ws_pool_config_t pool_config = {
+                    .min_connections = config->ws_pool.min_connections,
+                    .max_connections = config->ws_pool.max_connections,
+                    .idle_timeout_ms = config->ws_pool.idle_timeout_ms,
+                    .health_check_ms = config->ws_pool.health_check_ms,
+                    .connect_timeout_ms = config->ws_pool.connect_timeout_ms,
+                    .ws_config = {
+                        .host = config->ws_pool.host,
+                        .port = config->ws_pool.port,
+                        .path = config->ws_pool.path,
+                        .origin = config->ws_pool.origin,
+                        .protocol = config->ws_pool.protocol,
+                        .use_ssl = config->ws_pool.use_ssl ? true : false,
+                        .cert_path = config->ws_pool.cert_path,
+                        .key_path = config->ws_pool.key_path,
+                        .connect_timeout_ms = config->ws_pool.connect_timeout_ms
+                    }
+                };
+
+                // Create connection pool
+                mcp_ws_connection_pool_t* pool = mcp_ws_connection_pool_create(&pool_config);
+                if (!pool) {
+                    return NULL;
+                }
+
+                // Get a connection from the pool
+                return mcp_ws_connection_pool_get(pool, pool_config.connect_timeout_ms);
             }
 
         case MCP_TRANSPORT_HTTP_CLIENT:

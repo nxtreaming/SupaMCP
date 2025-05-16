@@ -17,6 +17,7 @@ typedef enum mcp_transport_type {
     MCP_TRANSPORT_TCP_CLIENT,  /**< TCP client transport */
     MCP_TRANSPORT_WS_SERVER,   /**< WebSocket server transport */
     MCP_TRANSPORT_WS_CLIENT,   /**< WebSocket client transport */
+    MCP_TRANSPORT_WS_POOL,     /**< WebSocket connection pool transport */
     MCP_TRANSPORT_HTTP_SERVER, /**< HTTP server transport */
     MCP_TRANSPORT_HTTP_CLIENT  /**< HTTP client transport */
 } mcp_transport_type_t;
@@ -45,6 +46,22 @@ typedef union mcp_transport_config {
         const char* key_path;     /**< Path to SSL private key (if use_ssl is true) */
         uint32_t connect_timeout_ms; /**< Connection timeout in milliseconds (0 = default) */
     } ws;
+
+    struct {
+        const char* host;         /**< Hostname or IP address to connect to */
+        uint16_t port;            /**< Port number */
+        const char* path;         /**< WebSocket endpoint path (e.g., "/ws") */
+        const char* origin;       /**< Origin header for client (optional) */
+        const char* protocol;     /**< WebSocket protocol name (optional) */
+        int use_ssl;              /**< Whether to use SSL/TLS (1 for true, 0 for false) */
+        const char* cert_path;    /**< Path to SSL certificate (if use_ssl is true) */
+        const char* key_path;     /**< Path to SSL private key (if use_ssl is true) */
+        uint32_t connect_timeout_ms; /**< Connection timeout in milliseconds (0 = default) */
+        uint32_t min_connections; /**< Minimum number of connections to maintain in the pool */
+        uint32_t max_connections; /**< Maximum number of connections allowed in the pool */
+        uint32_t idle_timeout_ms; /**< Maximum idle time before a connection is closed */
+        uint32_t health_check_ms; /**< Interval for health checks */
+    } ws_pool;
 
     struct {
         const char* host;         /**< Hostname or IP address to bind to */
