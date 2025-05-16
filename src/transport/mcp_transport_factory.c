@@ -54,7 +54,8 @@ mcp_transport_t* mcp_transport_factory_create(
                     .protocol = config->ws.protocol,
                     .use_ssl = config->ws.use_ssl ? true : false,
                     .cert_path = config->ws.cert_path,
-                    .key_path = config->ws.key_path
+                    .key_path = config->ws.key_path,
+                    .connect_timeout_ms = config->ws.connect_timeout_ms
                 };
                 return mcp_transport_websocket_server_create(&ws_config);
             }
@@ -73,7 +74,8 @@ mcp_transport_t* mcp_transport_factory_create(
                     .protocol = config->ws.protocol,
                     .use_ssl = config->ws.use_ssl ? true : false,
                     .cert_path = config->ws.cert_path,
-                    .key_path = config->ws.key_path
+                    .key_path = config->ws.key_path,
+                    .connect_timeout_ms = config->ws.connect_timeout_ms
                 };
                 return mcp_transport_websocket_client_create(&ws_config);
             }

@@ -2,6 +2,13 @@
 #   ifndef _CRT_SECURE_NO_WARNINGS
 #       define _CRT_SECURE_NO_WARNINGS
 #   endif
+#   include <winsock2.h>
+#   include <windows.h>
+#else
+#   include <sys/socket.h>
+#   include <netinet/in.h>
+#   include <netinet/tcp.h>
+#   include <fcntl.h>
 #endif
 
 #include "internal/websocket_client_internal.h"
@@ -20,16 +27,82 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         return 0;
     }
 
-    // Debug log for important callback reasons only
+    // Debug log for all connection-related callback reasons to help diagnose connection issues
     if (reason == LWS_CALLBACK_CLIENT_ESTABLISHED ||
         reason == LWS_CALLBACK_CLIENT_CONNECTION_ERROR ||
-        reason == LWS_CALLBACK_CLIENT_CLOSED) {
-        mcp_log_debug("WebSocket client callback: reason=%d (%s)", reason, websocket_get_callback_reason_string(reason));
+        reason == LWS_CALLBACK_CLIENT_CLOSED ||
+        reason == LWS_CALLBACK_WSI_CREATE ||
+        reason == LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER ||
+        reason == LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH ||
+        reason == LWS_CALLBACK_CONNECTING ||
+        reason == LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP) {
+
+        // Log with timestamp for better tracking of connection timing
+        time_t now = time(NULL);
+        struct tm* timeinfo = localtime(&now);
+        char timestamp[20];
+        strftime(timestamp, sizeof(timestamp), "%H:%M:%S", timeinfo);
+
+        mcp_log_info("[%s] WebSocket client callback: reason=%d (%s)",
+                    timestamp, reason, websocket_get_callback_reason_string(reason));
     }
 
     switch (reason) {
+        case LWS_CALLBACK_CONNECTING: {
+            // This is called when the connection process starts
+            time_t now = time(NULL);
+            struct tm* timeinfo = localtime(&now);
+            char timestamp[20];
+            strftime(timestamp, sizeof(timestamp), "%H:%M:%S", timeinfo);
+
+            mcp_log_info("[%s] WebSocket client starting connection process", timestamp);
+
+            // Update connection state timestamp for tracking connection duration
+            data->last_activity_time = now;
+
+            // Try to set socket options to reduce connection delay
+            // Note: This is a best-effort attempt and may not work on all platforms
+            if (wsi) {
+                lws_sockfd_type fd = lws_get_socket_fd(wsi);
+                if (fd != LWS_SOCK_INVALID) {
+                    // Try to set TCP_NODELAY to reduce connection latency
+                    int val = 1;
+                    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char*)&val, sizeof(val)) < 0) {
+                        mcp_log_warn("Failed to set TCP_NODELAY socket option");
+                    } else {
+                        mcp_log_info("Successfully set TCP_NODELAY socket option");
+                    }
+
+                    // Try to set a shorter connection timeout
+                    #ifdef _WIN32
+                    // Windows doesn't have SO_CONNECT_TIME, use non-blocking mode instead
+                    unsigned long mode = 1;
+                    if (ioctlsocket(fd, FIONBIO, &mode) != 0) {
+                        mcp_log_warn("Failed to set non-blocking mode");
+                    } else {
+                        mcp_log_info("Successfully set non-blocking mode");
+                    }
+                    #else
+                    struct timeval tv;
+                    tv.tv_sec = 1;  // 1 second
+                    tv.tv_usec = 0;
+                    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char*)&tv, sizeof(tv)) < 0) {
+                        mcp_log_warn("Failed to set SO_SNDTIMEO socket option");
+                    } else {
+                        mcp_log_info("Successfully set SO_SNDTIMEO socket option");
+                    }
+                    #endif
+                }
+            }
+            break;
+        }
+
         case LWS_CALLBACK_CLIENT_ESTABLISHED: {
-            mcp_log_info("WebSocket client connection established");
+            // Calculate connection time
+            time_t now = time(NULL);
+            double connection_time = difftime(now, data->last_activity_time);
+
+            mcp_log_info("WebSocket client connection established in %.1f seconds", connection_time);
             data->wsi = wsi;
 
             // Signal that the connection is established
@@ -42,9 +115,9 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Reset ping-related state
             data->ping_in_progress = false;
             data->missed_pongs = 0;
-            data->last_ping_time = time(NULL);
-            data->last_pong_time = time(NULL);
-            data->last_activity_time = time(NULL);
+            data->last_ping_time = now;
+            data->last_pong_time = now;
+            data->last_activity_time = now;
 
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
@@ -52,8 +125,19 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
-            mcp_log_error("WebSocket client connection error: %s",
-                         in ? (char*)in : "unknown error");
+            // Get more detailed error information
+            const char* error_msg = in ? (char*)in : "unknown error";
+            time_t now = time(NULL);
+            double elapsed = difftime(now, data->last_activity_time);
+
+            mcp_log_error("WebSocket client connection error after %.1f seconds: %s",
+                         elapsed, error_msg);
+
+            // Log additional connection details to help diagnose the issue
+            mcp_log_info("Connection details: host=%s, port=%d, path=%s",
+                        data->config.host, data->config.port,
+                        data->config.path ? data->config.path : "/");
+
             data->wsi = NULL;
 
             // Signal that the connection failed
@@ -61,6 +145,11 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
             data->state = WS_CLIENT_STATE_ERROR;
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
+
+            // Try to reconnect after a short delay
+            if (data->reconnect && data->running) {
+                mcp_log_info("Will attempt to reconnect after connection error");
+            }
             break;
         }
 
@@ -173,8 +262,76 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
             break;
         }
 
+        case LWS_CALLBACK_WSI_CREATE: {
+            // This is called when the WebSocket instance is created
+            time_t now = time(NULL);
+            double elapsed = difftime(now, data->last_activity_time);
+
+            mcp_log_info("WebSocket instance created after %.1f seconds", elapsed);
+
+            // Try to set socket options to reduce connection delay
+            if (wsi) {
+                lws_sockfd_type fd = lws_get_socket_fd(wsi);
+                if (fd != LWS_SOCK_INVALID) {
+                    // Try to set TCP_NODELAY to reduce connection latency
+                    int val = 1;
+                    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char*)&val, sizeof(val)) < 0) {
+                        mcp_log_warn("Failed to set TCP_NODELAY socket option in WSI_CREATE");
+                    } else {
+                        mcp_log_info("Successfully set TCP_NODELAY socket option in WSI_CREATE");
+                    }
+
+                    // Try to set a shorter connection timeout
+                    #ifdef _WIN32
+                    // Set non-blocking mode for Windows
+                    unsigned long mode = 1;
+                    if (ioctlsocket(fd, FIONBIO, &mode) != 0) {
+                        mcp_log_warn("Failed to set non-blocking mode");
+                    } else {
+                        mcp_log_info("Successfully set non-blocking mode");
+                    }
+                    #else
+                    // Set non-blocking mode for Unix
+                    int flags = fcntl(fd, F_GETFL, 0);
+                    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+                        mcp_log_warn("Failed to set non-blocking mode");
+                    } else {
+                        mcp_log_info("Successfully set non-blocking mode");
+                    }
+                    #endif
+                }
+            }
+            break;
+        }
+
+        case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
+            // This is called when the handshake headers are being prepared
+            time_t now = time(NULL);
+            double elapsed = difftime(now, data->last_activity_time);
+
+            mcp_log_info("WebSocket handshake headers being prepared after %.1f seconds", elapsed);
+            break;
+        }
+
+        case LWS_CALLBACK_CLOSED_CLIENT_HTTP: {
+            // This is called when the HTTP connection is closed before upgrading to WebSocket
+            time_t now = time(NULL);
+            double elapsed = difftime(now, data->last_activity_time);
+
+            mcp_log_error("HTTP connection closed before WebSocket upgrade after %.1f seconds", elapsed);
+            mcp_log_info("This usually indicates a server-side issue or incompatible protocol");
+
+            // Log the current state
+            mcp_mutex_lock(data->connection_mutex);
+            ws_client_state_t current_state = data->state;
+            mcp_mutex_unlock(data->connection_mutex);
+
+            mcp_log_info("Current connection state: %d", current_state);
+            break;
+        }
+
         default:
-            mcp_log_debug("WebSocket client callback: reason=%d (%s)", reason, websocket_get_callback_reason_string(reason));
+            //mcp_log_debug("WebSocket client callback: reason=%d (%s)", reason, websocket_get_callback_reason_string(reason));
             break;
     }
 

@@ -21,6 +21,7 @@ typedef struct {
     bool use_ssl;               // Whether to use SSL/TLS
     const char* cert_path;      // Path to SSL certificate (if use_ssl is true)
     const char* key_path;       // Path to SSL private key (if use_ssl is true)
+    uint32_t connect_timeout_ms; // Connection timeout in milliseconds (0 = default)
 } mcp_websocket_config_t;
 
 /**

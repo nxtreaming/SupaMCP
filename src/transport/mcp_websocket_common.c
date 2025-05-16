@@ -5,6 +5,7 @@
 #endif
 
 #include "internal/websocket_common.h"
+#include "internal/websocket_client_internal.h"
 #include "mcp_log.h"
 #include <stdlib.h>
 #include <string.h>
@@ -72,12 +73,11 @@ struct lws_context* mcp_websocket_create_context(
     info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE |
                    LWS_SERVER_OPTION_VALIDATE_UTF8 |
                    LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
-    
-#if 0
-    info.connect_timeout_secs = 1;
-    info.timeout_secs = 1;
-    info.timeout_secs_ah_idle = 1;
-#endif
+
+    // Comment out these settings as they may be causing connection issues
+    // info.connect_timeout_secs = 1;
+    // info.timeout_secs = 1;
+    // info.timeout_secs_ah_idle = 1;
 
     // Client-specific settings to optimize connection speed
     if (!is_server) {
@@ -86,8 +86,34 @@ struct lws_context* mcp_websocket_create_context(
         info.ka_interval = 0;
         info.ka_probes = 0;
 
-        // Set shorter timeout for connection establishment
-        info.timeout_secs = 1; // Reduce from default (usually 5 seconds)
+        // Get the connection timeout from the user configuration
+        // This is passed through the user_data pointer, which is a ws_client_data_t*
+        uint32_t connect_timeout_ms = 0;
+        if (user_data) {
+            // Try to extract the timeout from the client data
+            ws_client_data_t* client_data = (ws_client_data_t*)user_data;
+            if (client_data && client_data->config.connect_timeout_ms > 0) {
+                connect_timeout_ms = client_data->config.connect_timeout_ms;
+                mcp_log_info("Using custom connection timeout: %u ms", connect_timeout_ms);
+            }
+        }
+
+        // Set connection timeout (convert from ms to seconds)
+        if (connect_timeout_ms > 0) {
+            // Use custom timeout (convert to seconds, minimum 1 second)
+            info.timeout_secs = (connect_timeout_ms / 1000) > 0 ? (connect_timeout_ms / 1000) : 1;
+
+            // Also set socket timeout for connection
+            info.connect_timeout_secs = info.timeout_secs;
+        } else {
+            // Use default timeout (5 seconds)
+            info.timeout_secs = 5;
+        }
+
+        mcp_log_info("WebSocket connection timeout set to %d seconds", info.timeout_secs);
+
+        // Keep the retry policy as null to avoid automatic reconnection
+        info.retry_and_idle_policy = NULL;
     }
 
     // Server-specific settings

@@ -290,6 +290,7 @@ static bool create_client_connection(const char* host, uint16_t port, const char
     g_transport_config.ws.port = port;
     g_transport_config.ws.path = path;
     g_transport_config.ws.use_ssl = 0; // No SSL for this example
+    g_transport_config.ws.connect_timeout_ms = 1000; // Set 1 second connection timeout
 
     // Create transport
     g_transport = mcp_transport_factory_create(

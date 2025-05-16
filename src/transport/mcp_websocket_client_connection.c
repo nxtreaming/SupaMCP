@@ -117,8 +117,14 @@ int ws_client_connect(ws_client_data_t* data) {
     // Add flags to optimize connection speed and force immediate upgrade
     // Add flags to optimize connection speed
     uint32_t ssl_flags = LCCSCF_USE_SSL | LCCSCF_PIPELINE;
-    
+
+    // Use simpler connection flags to ensure compatibility
     connect_info.ssl_connection = data->config.use_ssl ? ssl_flags : LCCSCF_PIPELINE;
+
+    // Log connection attempt with detailed info
+    mcp_log_info("Initiating WebSocket connection to %s:%d%s with flags: 0x%x",
+                data->config.host, data->config.port,
+                connect_info.path, connect_info.ssl_connection);
 
     connect_info.local_protocol_name = "mcp-protocol";
     // Don't use retry policy
@@ -165,7 +171,7 @@ void ws_client_handle_reconnect(ws_client_data_t* data) {
     int reconnect_attempts = 0;
     bool should_reconnect = false;
     struct lws_context* context = NULL;
-    
+
     // Use smaller critical section to reduce lock contention
     mcp_mutex_lock(data->connection_mutex);
 
@@ -206,7 +212,7 @@ void ws_client_handle_reconnect(ws_client_data_t* data) {
     }
 
     data->last_reconnect_time = now;
-    
+
     // Get all necessary information within critical section
     delay_ms = data->reconnect_delay_ms;
     reconnect_attempts = data->reconnect_attempts;
@@ -214,7 +220,7 @@ void ws_client_handle_reconnect(ws_client_data_t* data) {
     if (data->context) {
         context = data->context;
     }
-    
+
     // Log information within critical section
     mcp_log_info("WebSocket client reconnecting in %u ms (attempt %d of %d)",
                 delay_ms, reconnect_attempts, WS_MAX_RECONNECT_ATTEMPTS);
@@ -277,7 +283,7 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
         mcp_mutex_lock(data->connection_mutex);
         is_connected = (data->state == WS_CLIENT_STATE_CONNECTED);
         mcp_mutex_unlock(data->connection_mutex);
-        
+
         if (is_connected) {
             return 0;
         }
@@ -286,13 +292,13 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
     int result = 0;
     bool need_connect = false;
     ws_client_state_t current_state;
-    
+
     // Minimize critical section - only check state
     mcp_mutex_lock(data->connection_mutex);
     need_connect = (data->state != WS_CLIENT_STATE_CONNECTING);
     current_state = data->state;
     mcp_mutex_unlock(data->connection_mutex);
-    
+
     // If needed, attempt to connect outside critical section
     if (need_connect) {
         mcp_log_debug("WebSocket client not connecting (state=%d), attempting to connect...", current_state);
@@ -301,11 +307,11 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
             return -1;
         }
     }
-    
+
     // Use shorter timeouts for waiting to reduce connection delay
     uint32_t wait_chunk = 50; // Reduced from 100ms to 50ms
     time_t start_time = time(NULL);
-    
+
     // Lock mutex for waiting
     mcp_mutex_lock(data->connection_mutex);
 
@@ -323,13 +329,13 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
 
             // Calculate current wait time
             uint32_t wait_time = (remaining_timeout < wait_chunk) ? remaining_timeout : wait_chunk;
-            
+
             // Use condition variable to wait
             result = mcp_cond_timedwait(data->connection_cond, data->connection_mutex, wait_time);
 
             // Check if we need to trigger a reconnect
             need_reconnect = (data->state == WS_CLIENT_STATE_DISCONNECTED);
-            
+
             // If reconnect needed, do it outside critical section
             if (need_reconnect) {
                 // Store running state to avoid race condition
@@ -351,7 +357,7 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
 
                 // Re-lock mutex to continue waiting
                 mcp_mutex_lock(data->connection_mutex);
-                
+
                 // Recheck state after reconnection attempt
                 continue;
             }
@@ -372,35 +378,40 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
 
             // Check if we've been waiting too long and should force a reconnect
             time_t now = time(NULL);
-            if (difftime(now, start_time) > 1.0 && 
-                data->state == WS_CLIENT_STATE_CONNECTING && 
-                remaining_timeout < timeout_ms / 2) {
-                
-                // If we've been in CONNECTING state for more than 1 second and
-                // we've used more than half our timeout, try reconnecting
-                mcp_log_debug("WebSocket connection taking too long, forcing reconnect");
-                
+            if (difftime(now, start_time) > 2.0 &&
+                data->state == WS_CLIENT_STATE_CONNECTING) {
+
+                // If we've been in CONNECTING state for more than 2 seconds, try reconnecting
+                // This is more moderate than the previous 1-second threshold
+                mcp_log_debug("WebSocket connection taking too long (%.1f seconds), forcing reconnect",
+                             difftime(now, start_time));
+
                 // Store running state
                 bool is_running = data->running;
                 mcp_mutex_unlock(data->connection_mutex);
-                
+
                 if (is_running) {
                     // Cancel any pending connection and try again
                     if (data->context) {
+                        mcp_log_info("Cancelling pending WebSocket service to force reconnection");
                         lws_cancel_service(data->context);
                     }
-                    
+
+                    // Add a small delay before reconnecting to allow resources to be released
+                    mcp_sleep_ms(100);
+
+                    mcp_log_info("Initiating forced WebSocket reconnection");
                     if (ws_client_connect(data) != 0) {
                         mcp_log_error("Failed to initiate forced WebSocket reconnection");
                         return -1;
                     }
-                    
+
                     // Reset start time
                     start_time = time(NULL);
                 } else {
                     return -1;
                 }
-                
+
                 mcp_mutex_lock(data->connection_mutex);
                 continue;
             }
@@ -409,7 +420,7 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
         // Wait indefinitely
         bool need_reconnect = false;
         mcp_log_debug("WebSocket client waiting indefinitely for connection");
-        
+
         while (data->state != WS_CLIENT_STATE_CONNECTED &&
                data->state != WS_CLIENT_STATE_ERROR &&
                data->running) {
@@ -419,7 +430,7 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
 
             // Check if we need to trigger a reconnect
             need_reconnect = (data->state == WS_CLIENT_STATE_DISCONNECTED);
-            
+
             // If reconnect needed, do it outside critical section
             if (need_reconnect) {
                 // Store running state
@@ -439,35 +450,43 @@ int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
 
                 // Re-lock mutex to continue waiting
                 mcp_mutex_lock(data->connection_mutex);
-                
+
                 // Recheck state after reconnection attempt
                 continue;
             }
-            
+
             // Check if we've been waiting too long in CONNECTING state
             time_t now = time(NULL);
-            if (difftime(now, start_time) > 1.0 && data->state == WS_CLIENT_STATE_CONNECTING) {
-                // If we've been in CONNECTING state for more than 1 second, try reconnecting
+            if (difftime(now, start_time) > 2.0 && data->state == WS_CLIENT_STATE_CONNECTING) {
+                // If we've been in CONNECTING state for more than 2 seconds, try reconnecting
+                mcp_log_debug("WebSocket connection taking too long (%.1f seconds), forcing reconnect",
+                             difftime(now, start_time));
+
                 bool is_running = data->running;
                 mcp_mutex_unlock(data->connection_mutex);
-                
+
                 if (is_running) {
                     // Cancel any pending connection and try again
                     if (data->context) {
+                        mcp_log_info("Cancelling pending WebSocket service to force reconnection");
                         lws_cancel_service(data->context);
                     }
-                    
+
+                    // Add a small delay before reconnecting to allow resources to be released
+                    mcp_sleep_ms(100);
+
+                    mcp_log_info("Initiating forced WebSocket reconnection");
                     if (ws_client_connect(data) != 0) {
                         mcp_log_error("Failed to initiate forced WebSocket reconnection");
                         return -1;
                     }
-                    
+
                     // Reset start time
                     start_time = time(NULL);
                 } else {
                     return -1;
                 }
-                
+
                 mcp_mutex_lock(data->connection_mutex);
                 continue;
             }
