@@ -187,37 +187,45 @@ static void ws_client_cleanup_resources(ws_client_data_t* data) {
         return;
     }
 
-    // First, make sure we're not in a connected state
-    // This helps prevent callbacks from being triggered during cleanup
-    // Use a local variable to avoid locking if not necessary
-    bool need_state_change = false;
-    
-    // Check state without locking first
-    if (data->state == WS_CLIENT_STATE_CONNECTED) {
-        need_state_change = true;
-    }
-    
-    // Only lock if we need to change state
-    if (need_state_change && data->connection_mutex) {
+    // Step 1: Set running flag to false to prevent new operations from starting
+    data->running = false;
+
+    // Step 2: Update connection state to closing to prevent new callbacks
+    if (data->connection_mutex) {
         mcp_mutex_lock(data->connection_mutex);
-        // Double-check state after acquiring lock
-        if (data->state == WS_CLIENT_STATE_CONNECTED) {
-            data->state = WS_CLIENT_STATE_CLOSING;
+        data->state = WS_CLIENT_STATE_CLOSING;
+        // Wake up all threads waiting for connection
+        if (data->connection_cond) {
+            mcp_cond_broadcast(data->connection_cond);
         }
         mcp_mutex_unlock(data->connection_mutex);
     }
 
-    // Destroy libwebsockets context first to prevent any further callbacks
+    // Step 3: Update response state and wake up all threads waiting for response
+    if (data->response_mutex) {
+        mcp_mutex_lock(data->response_mutex);
+        // Set error flags to let waiting threads know there will be no response
+        data->response_ready = true;
+        data->response_error_code = -1;
+        data->sync_response_mode = false;
+        // Wake up all threads waiting for response
+        if (data->response_cond) {
+            mcp_cond_broadcast(data->response_cond);
+        }
+        mcp_mutex_unlock(data->response_mutex);
+    }
+
+    // Step 4: Destroy libwebsockets context, which will stop all network operations
     if (data->context) {
         // Cancel any pending service calls
         lws_cancel_service(data->context);
-
         // Destroy the context
         lws_context_destroy(data->context);
         data->context = NULL;
         data->wsi = NULL; // wsi is owned by context, so it's invalid now
     }
 
+    // Step 5: Free buffers
     if (data->receive_buffer) {
         free(data->receive_buffer);
         data->receive_buffer = NULL;
@@ -231,40 +239,18 @@ static void ws_client_cleanup_resources(ws_client_data_t* data) {
         data->response_data_len = 0;
     }
 
-    // Destroy mutexes and condition variables
-    // First signal any waiting threads to prevent deadlocks
-    // Store local copies of mutex/cond pointers to avoid null pointer issues during cleanup
-    mcp_mutex_t* conn_mutex = data->connection_mutex;
+    // Step 6: Wait a short time to allow all awakened threads to exit wait state
+    // This is an empirical value, usually a few milliseconds is enough
+    // But we use a more conservative value to ensure safety
+    mcp_sleep_ms(50);
+
+    // Step 7: Destroy synchronization primitives
+    // Connection-related synchronization primitives
     mcp_cond_t* conn_cond = data->connection_cond;
-    mcp_mutex_t* resp_mutex = data->response_mutex;
-    mcp_cond_t* resp_cond = data->response_cond;
-    
-    // Signal connection condition
-    if (conn_mutex && conn_cond) {
-        mcp_mutex_lock(conn_mutex);
-        // Set state to error to ensure waiting threads don't attempt reconnection
-        data->state = WS_CLIENT_STATE_ERROR;
-        mcp_cond_signal(conn_cond);
-        mcp_mutex_unlock(conn_mutex);
-    }
-
-    // Signal response condition
-    if (resp_mutex && resp_cond) {
-        mcp_mutex_lock(resp_mutex);
-        // Mark response as ready with error to wake up waiting threads
-        data->response_ready = true;
-        data->response_error_code = -1;
-        mcp_cond_signal(resp_cond);
-        mcp_mutex_unlock(resp_mutex);
-    }
-
-    // Clear pointers in data structure to prevent use-after-free
-    data->connection_mutex = NULL;
+    mcp_mutex_t* conn_mutex = data->connection_mutex;
     data->connection_cond = NULL;
-    data->response_mutex = NULL;
-    data->response_cond = NULL;
+    data->connection_mutex = NULL;
 
-    // Now destroy the synchronization primitives using local copies
     if (conn_cond) {
         mcp_cond_destroy(conn_cond);
     }
@@ -272,6 +258,12 @@ static void ws_client_cleanup_resources(ws_client_data_t* data) {
     if (conn_mutex) {
         mcp_mutex_destroy(conn_mutex);
     }
+
+    // Response-related synchronization primitives
+    mcp_cond_t* resp_cond = data->response_cond;
+    mcp_mutex_t* resp_mutex = data->response_mutex;
+    data->response_cond = NULL;
+    data->response_mutex = NULL;
 
     if (resp_cond) {
         mcp_cond_destroy(resp_cond);
