@@ -16,8 +16,11 @@
 #include <stdlib.h>
 #include <time.h>
 
-// Define maximum number of simultaneous WebSocket clients
-#define MAX_WEBSOCKET_CLIENTS 64
+// Define default maximum number of simultaneous WebSocket clients
+#define DEFAULT_MAX_WEBSOCKET_CLIENTS 1024
+#define DEFAULT_SEGMENT_COUNT 16
+#define DEFAULT_BUFFER_POOL_SIZE 256
+#define DEFAULT_BUFFER_POOL_BUFFER_SIZE 4096
 
 // WebSocket client connection state
 typedef enum {
@@ -46,13 +49,24 @@ typedef struct {
     const struct lws_protocols* protocols; // WebSocket protocols
     bool running;                   // Running flag
     mcp_thread_t event_thread;      // Event loop thread
-    mcp_mutex_t* clients_mutex;     // Clients list mutex
-    ws_client_t clients[MAX_WEBSOCKET_CLIENTS]; // Clients list
-    uint32_t client_bitmap[MAX_WEBSOCKET_CLIENTS / 32 + 1]; // Bitmap for quick client slot lookup
+
+    // Dynamic client management
+    ws_client_t* clients;           // Dynamically allocated clients array
+    uint32_t* client_bitmap;        // Dynamically allocated bitmap
+    uint32_t max_clients;           // Maximum number of clients
+    uint32_t bitmap_size;           // Size of bitmap array in uint32_t units
+
+    // Segmented mutex for better concurrency
+    mcp_mutex_t** segment_mutexes;  // Array of segment mutexes
+    uint32_t num_segments;          // Number of mutex segments
+    mcp_mutex_t* global_mutex;      // Global mutex for operations affecting all clients
+
+    // Statistics
     uint32_t active_clients;        // Number of active clients
     uint32_t peak_clients;          // Peak number of active clients
     uint32_t total_connections;     // Total number of connections since start
     uint32_t rejected_connections;  // Number of rejected connections due to max clients
+
     mcp_transport_t* transport;     // Transport handle
     mcp_websocket_config_t config;  // WebSocket configuration
     time_t last_ping_time;          // Time of last ping check
@@ -71,10 +85,17 @@ typedef struct {
 extern struct lws_protocols server_protocols[3];
 
 // Bitmap helper functions
-void ws_server_set_client_bit(uint32_t* bitmap, int index);
-void ws_server_clear_client_bit(uint32_t* bitmap, int index);
-bool ws_server_test_client_bit(uint32_t* bitmap, int index);
+void ws_server_set_client_bit(uint32_t* bitmap, int index, int bitmap_size);
+void ws_server_clear_client_bit(uint32_t* bitmap, int index, int bitmap_size);
+bool ws_server_test_client_bit(uint32_t* bitmap, int index, int bitmap_size);
 int ws_server_find_free_client_slot(ws_server_data_t* data);
+
+// Mutex helper functions
+mcp_mutex_t* ws_server_get_client_mutex(ws_server_data_t* data, int client_index);
+void ws_server_lock_client(ws_server_data_t* data, int client_index);
+void ws_server_unlock_client(ws_server_data_t* data, int client_index);
+void ws_server_lock_all_clients(ws_server_data_t* data);
+void ws_server_unlock_all_clients(ws_server_data_t* data);
 
 // Client management functions
 int ws_server_client_init(ws_client_t* client, int client_id, struct lws* wsi);
@@ -92,7 +113,6 @@ ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* ws
 
 // Server event thread and timeout functions
 void* ws_server_event_thread(void* arg);
-void ws_server_check_timeouts(ws_server_data_t* data);
 void ws_server_cleanup_inactive_clients(ws_server_data_t* data);
 
 #endif // WEBSOCKET_SERVER_INTERNAL_H

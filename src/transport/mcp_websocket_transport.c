@@ -40,7 +40,7 @@ static int ws_server_transport_start(
     }
 
     // Initialize client list
-    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
+    for (uint32_t i = 0; i < data->max_clients; i++) {
         data->clients[i].state = WS_CLIENT_STATE_INACTIVE;
         data->clients[i].wsi = NULL;
         data->clients[i].receive_buffer = NULL;
@@ -52,7 +52,7 @@ static int ws_server_transport_start(
     }
 
     // Initialize bitmap (all bits to 0 = all slots free)
-    memset(data->client_bitmap, 0, sizeof(data->client_bitmap));
+    memset(data->client_bitmap, 0, data->bitmap_size * sizeof(uint32_t));
 
     // Initialize statistics
     data->active_clients = 0;
@@ -72,23 +72,21 @@ static int ws_server_transport_start(
     data->buffer_misses = 0;
     data->total_buffer_memory = 0;
 
+    // Determine buffer pool size and buffer size
+    uint32_t buffer_pool_size = data->config.buffer_pool_size > 0 ?
+                               data->config.buffer_pool_size : DEFAULT_BUFFER_POOL_SIZE;
+
+    uint32_t buffer_size = data->config.buffer_size > 0 ?
+                          data->config.buffer_size : DEFAULT_BUFFER_POOL_BUFFER_SIZE;
+
     // Create buffer pool
-    data->buffer_pool = mcp_buffer_pool_create(WS_BUFFER_POOL_BUFFER_SIZE, WS_BUFFER_POOL_SIZE);
+    data->buffer_pool = mcp_buffer_pool_create(buffer_size, buffer_pool_size);
     if (!data->buffer_pool) {
         mcp_log_error("Failed to create WebSocket buffer pool");
         // Continue without buffer pool, will fall back to regular malloc/free
     } else {
-        mcp_log_info("WebSocket buffer pool created with %d buffers of %d bytes each",
-                    WS_BUFFER_POOL_SIZE, WS_BUFFER_POOL_BUFFER_SIZE);
-    }
-
-    // Create mutex
-    data->clients_mutex = mcp_mutex_create();
-    if (!data->clients_mutex) {
-        mcp_log_error("Failed to create WebSocket server mutex");
-        lws_context_destroy(data->context);
-        data->context = NULL;
-        return -1;
+        mcp_log_info("WebSocket buffer pool created with %u buffers of %u bytes each",
+                    buffer_pool_size, buffer_size);
     }
 
     // Set running flag
@@ -97,7 +95,6 @@ static int ws_server_transport_start(
     // Create event loop thread
     if (mcp_thread_create(&data->event_thread, ws_server_event_thread, data) != 0) {
         mcp_log_error("Failed to create WebSocket server event thread");
-        mcp_mutex_destroy(data->clients_mutex);
         lws_context_destroy(data->context);
         data->context = NULL;
         data->running = false;
@@ -141,16 +138,13 @@ static int ws_server_transport_stop(mcp_transport_t* transport) {
     }
 
     // Clean up client resources
-    mcp_mutex_lock(data->clients_mutex);
-    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
+    ws_server_lock_all_clients(data);
+    for (uint32_t i = 0; i < data->max_clients; i++) {
         if (data->clients[i].state != WS_CLIENT_STATE_INACTIVE) {
             ws_server_client_cleanup(&data->clients[i], data);
         }
     }
-    mcp_mutex_unlock(data->clients_mutex);
-
-    // Destroy mutex
-    mcp_mutex_destroy(data->clients_mutex);
+    ws_server_unlock_all_clients(data);
 
     // Destroy buffer pool
     if (data->buffer_pool) {
@@ -215,6 +209,29 @@ static void ws_server_transport_destroy(mcp_transport_t* transport) {
         mcp_log_debug("Transport already stopped during destroy");
     }
 
+    // Clean up all mutexes
+    if (data->global_mutex) {
+        mcp_mutex_destroy(data->global_mutex);
+    }
+
+    if (data->segment_mutexes) {
+        for (uint32_t i = 0; i < data->num_segments; i++) {
+            if (data->segment_mutexes[i]) {
+                mcp_mutex_destroy(data->segment_mutexes[i]);
+            }
+        }
+        free(data->segment_mutexes);
+    }
+
+    // Free dynamically allocated resources
+    if (data->client_bitmap) {
+        free(data->client_bitmap);
+    }
+
+    if (data->clients) {
+        free(data->clients);
+    }
+
     // Free transport data
     free(data);
 
@@ -241,8 +258,8 @@ int mcp_transport_websocket_server_get_stats(mcp_transport_t* transport,
 
     ws_server_data_t* data = (ws_server_data_t*)transport->transport_data;
 
-    // Lock mutex to ensure consistent data
-    mcp_mutex_lock(data->clients_mutex);
+    // Lock global mutex to ensure consistent data
+    ws_server_lock_all_clients(data);
 
     // Copy statistics
     if (active_clients) *active_clients = data->active_clients;
@@ -256,7 +273,7 @@ int mcp_transport_websocket_server_get_stats(mcp_transport_t* transport,
         *uptime_seconds = difftime(now, data->start_time); // difftime returns double, perfect for uptime
     }
 
-    mcp_mutex_unlock(data->clients_mutex);
+    ws_server_unlock_all_clients(data);
 
     return 0;
 }
@@ -281,8 +298,8 @@ int mcp_transport_websocket_server_get_memory_stats(mcp_transport_t* transport,
 
     ws_server_data_t* data = (ws_server_data_t*)transport->transport_data;
 
-    // Lock mutex to ensure consistent data
-    mcp_mutex_lock(data->clients_mutex);
+    // Lock global mutex to ensure consistent data
+    ws_server_lock_all_clients(data);
 
     // Copy statistics
     if (buffer_allocs) *buffer_allocs = data->buffer_allocs;
@@ -290,11 +307,17 @@ int mcp_transport_websocket_server_get_memory_stats(mcp_transport_t* transport,
     if (buffer_misses) *buffer_misses = data->buffer_misses;
     if (total_buffer_memory) *total_buffer_memory = data->total_buffer_memory;
 
-    // Pool information
-    if (pool_size) *pool_size = WS_BUFFER_POOL_SIZE;
-    if (pool_buffer_size) *pool_buffer_size = WS_BUFFER_POOL_BUFFER_SIZE;
+    // Pool information - use configured values or defaults
+    uint32_t buffer_pool_size = data->config.buffer_pool_size > 0 ?
+                               data->config.buffer_pool_size : DEFAULT_BUFFER_POOL_SIZE;
 
-    mcp_mutex_unlock(data->clients_mutex);
+    uint32_t buffer_size = data->config.buffer_size > 0 ?
+                          data->config.buffer_size : DEFAULT_BUFFER_POOL_BUFFER_SIZE;
+
+    if (pool_size) *pool_size = buffer_pool_size;
+    if (pool_buffer_size) *pool_buffer_size = buffer_size;
+
+    ws_server_unlock_all_clients(data);
 
     return 0;
 }
@@ -323,12 +346,84 @@ mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_confi
     data->protocols = server_protocols;
     data->transport = transport;
 
+    // Set client capacity based on config or default
+    data->max_clients = config->max_clients > 0 ? config->max_clients : DEFAULT_MAX_WEBSOCKET_CLIENTS;
+
+    // Set segment count based on config or default
+    data->num_segments = config->segment_count > 0 ? config->segment_count : DEFAULT_SEGMENT_COUNT;
+
+    // Allocate client array
+    data->clients = (ws_client_t*)calloc(data->max_clients, sizeof(ws_client_t));
+    if (!data->clients) {
+        free(data);
+        free(transport);
+        mcp_log_error("Failed to allocate WebSocket client array for %u clients", data->max_clients);
+        return NULL;
+    }
+
+    // Calculate bitmap size and allocate bitmap
+    data->bitmap_size = (data->max_clients + 31) / 32; // Ceiling division by 32
+    data->client_bitmap = (uint32_t*)calloc(data->bitmap_size, sizeof(uint32_t));
+    if (!data->client_bitmap) {
+        free(data->clients);
+        free(data);
+        free(transport);
+        mcp_log_error("Failed to allocate WebSocket client bitmap");
+        return NULL;
+    }
+
+    // Allocate segment mutexes
+    data->segment_mutexes = (mcp_mutex_t**)malloc(data->num_segments * sizeof(mcp_mutex_t*));
+    if (!data->segment_mutexes) {
+        free(data->client_bitmap);
+        free(data->clients);
+        free(data);
+        free(transport);
+        mcp_log_error("Failed to allocate WebSocket segment mutex array");
+        return NULL;
+    }
+
+    // Initialize segment mutexes
+    for (uint32_t i = 0; i < data->num_segments; i++) {
+        data->segment_mutexes[i] = mcp_mutex_create();
+        if (!data->segment_mutexes[i]) {
+            // Clean up previously created mutexes
+            for (uint32_t j = 0; j < i; j++) {
+                mcp_mutex_destroy(data->segment_mutexes[j]);
+            }
+            free(data->segment_mutexes);
+            free(data->client_bitmap);
+            free(data->clients);
+            free(data);
+            free(transport);
+            mcp_log_error("Failed to create WebSocket segment mutex %u", i);
+            return NULL;
+        }
+    }
+
+    // Create global mutex
+    data->global_mutex = mcp_mutex_create();
+    if (!data->global_mutex) {
+        // Clean up segment mutexes
+        for (uint32_t i = 0; i < data->num_segments; i++) {
+            mcp_mutex_destroy(data->segment_mutexes[i]);
+        }
+        free(data->segment_mutexes);
+        free(data->client_bitmap);
+        free(data->clients);
+        free(data);
+        free(transport);
+        mcp_log_error("Failed to create WebSocket global mutex");
+        return NULL;
+    }
+
     // Initialize protocols
     mcp_websocket_init_protocols(server_protocols, ws_server_callback);
 
     // Initialize timestamps
     data->last_ping_time = time(NULL);
     data->last_cleanup_time = time(NULL);
+    data->start_time = time(NULL);
 
     // Set transport type and operations
     transport->type = MCP_TRANSPORT_TYPE_SERVER;
@@ -342,6 +437,9 @@ mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_confi
     transport->message_callback = NULL;
     transport->callback_user_data = NULL;
     transport->error_callback = NULL;
+
+    mcp_log_info("WebSocket server transport created with capacity for %u clients, %u mutex segments",
+                data->max_clients, data->num_segments);
 
     return transport;
 }

@@ -24,8 +24,10 @@ extern "C" {
 #define WS_MAX_PING_FAILURES 3         // Maximum number of ping failures before closing connection
 
 // Buffer pool configuration
-#define WS_BUFFER_POOL_SIZE 32         // Number of buffers in the pool
-#define WS_BUFFER_POOL_BUFFER_SIZE 8192 // Size of each buffer in the pool
+#define DEFAULT_BUFFER_POOL_SIZE 256         // Number of buffers in the pool
+#define DEFAULT_BUFFER_POOL_BUFFER_SIZE 4096 // Size of each buffer in the pool
+
+// Buffer growth factor
 #define WS_BUFFER_GROWTH_FACTOR 1.5    // Factor to grow buffer when needed
 
 // Message types

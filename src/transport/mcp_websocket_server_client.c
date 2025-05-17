@@ -26,9 +26,13 @@ void ws_server_client_cleanup(ws_client_t* client, ws_server_data_t* server_data
 
     // Free receive buffer
     if (client->receive_buffer) {
+        // Get buffer size from config or default
+        uint32_t buffer_size = server_data && server_data->config.buffer_size > 0 ?
+                              server_data->config.buffer_size : DEFAULT_BUFFER_POOL_BUFFER_SIZE;
+
         // If buffer pool exists and buffer size matches pool buffer size, return to pool
         if (server_data && server_data->buffer_pool &&
-            client->receive_buffer_len == WS_BUFFER_POOL_BUFFER_SIZE) {
+            client->receive_buffer_len == buffer_size) {
             mcp_buffer_pool_release(server_data->buffer_pool, client->receive_buffer);
             mcp_log_debug("Returned buffer to pool for client %d", client->client_id);
         } else {
@@ -53,7 +57,7 @@ void ws_server_client_cleanup(ws_client_t* client, ws_server_data_t* server_data
     // Update bitmap and statistics if server_data is provided
     if (server_data) {
         // Clear bit in bitmap
-        ws_server_clear_client_bit(server_data->client_bitmap, client->client_id);
+        ws_server_clear_client_bit(server_data->client_bitmap, client->client_id, server_data->bitmap_size);
 
         // Decrement active client count
         if (server_data->active_clients > 0) {
@@ -95,9 +99,13 @@ int ws_server_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_s
 
     char* new_buffer = NULL;
 
+    // Get buffer size from config or default
+    uint32_t buffer_size = server_data && server_data->config.buffer_size > 0 ?
+                          server_data->config.buffer_size : DEFAULT_BUFFER_POOL_BUFFER_SIZE;
+
     // Try to get buffer from pool if server_data is provided and buffer pool exists
     // Only use pool for buffers that fit within pool buffer size
-    if (server_data && server_data->buffer_pool && new_len <= WS_BUFFER_POOL_BUFFER_SIZE) {
+    if (server_data && server_data->buffer_pool && new_len <= buffer_size) {
         // Try to get a buffer from the pool
         new_buffer = (char*)mcp_buffer_pool_acquire(server_data->buffer_pool);
 
@@ -113,7 +121,7 @@ int ws_server_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_s
             // Free old buffer if it exists
             if (client->receive_buffer) {
                 // If old buffer was from pool, return it to pool
-                if (client->receive_buffer_len == WS_BUFFER_POOL_BUFFER_SIZE && server_data->buffer_pool) {
+                if (client->receive_buffer_len == buffer_size && server_data->buffer_pool) {
                     mcp_buffer_pool_release(server_data->buffer_pool, client->receive_buffer);
                 } else {
                     free(client->receive_buffer);
@@ -125,7 +133,7 @@ int ws_server_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_s
 
             // Update buffer information
             client->receive_buffer = new_buffer;
-            client->receive_buffer_len = WS_BUFFER_POOL_BUFFER_SIZE;
+            client->receive_buffer_len = buffer_size;
             return 0;
         } else if (server_data) {
             // Failed to get buffer from pool
@@ -202,12 +210,12 @@ ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* ws
     }
 
     // If not found, search through the client list using bitmap for efficiency
-    mcp_mutex_lock(data->clients_mutex);
+    ws_server_lock_all_clients(data);
 
     // Use bitmap to quickly skip inactive clients
-    const int num_words = (MAX_WEBSOCKET_CLIENTS >> 5) + 1;
+    const uint32_t num_words = data->bitmap_size;
 
-    for (int i = 0; i < num_words; i++) {
+    for (uint32_t i = 0; i < num_words; i++) {
         uint32_t word = data->client_bitmap[i];
 
         // Skip words with no active clients
@@ -237,8 +245,8 @@ ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* ws
 #endif
 
             // Calculate client index
-            int index = (i << 5) + bit_pos;
-            if (index >= MAX_WEBSOCKET_CLIENTS) {
+            uint32_t index = (i << 5) + bit_pos;
+            if (index >= data->max_clients) {
                 break;
             }
 
@@ -249,7 +257,7 @@ ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* ws
                 // Store client pointer in opaque user data for faster lookup next time
                 lws_set_opaque_user_data(wsi, client);
 
-                mcp_mutex_unlock(data->clients_mutex);
+                ws_server_unlock_all_clients(data);
                 return client;
             }
 
@@ -258,7 +266,7 @@ ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* ws
         }
     }
 
-    mcp_mutex_unlock(data->clients_mutex);
+    ws_server_unlock_all_clients(data);
     return NULL;
 }
 

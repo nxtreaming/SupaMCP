@@ -22,6 +22,12 @@ typedef struct {
     const char* cert_path;      // Path to SSL certificate (if use_ssl is true)
     const char* key_path;       // Path to SSL private key (if use_ssl is true)
     uint32_t connect_timeout_ms; // Connection timeout in milliseconds (0 = default)
+
+    // Server capacity configuration
+    uint32_t max_clients;       // Maximum number of clients (0 = use default)
+    uint32_t segment_count;     // Number of mutex segments for concurrency (0 = use default)
+    uint32_t buffer_pool_size;  // Size of buffer pool (0 = use default)
+    uint32_t buffer_size;       // Size of each buffer in pool (0 = use default)
 } mcp_websocket_config_t;
 
 /**

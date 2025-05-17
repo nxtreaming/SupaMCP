@@ -238,5 +238,15 @@ else()
     target_link_libraries(websocket_connection_pool PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# High-Capacity WebSocket Server Example
+add_executable(websocket_server_high_capacity websocket_server_high_capacity.c)
+target_link_libraries(websocket_server_high_capacity PRIVATE mcpcore)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(websocket_server_high_capacity PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(websocket_server_high_capacity PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server websocket_connection_pool DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server websocket_connection_pool websocket_server_high_capacity DESTINATION bin/examples)

@@ -62,6 +62,7 @@ mcp-use_vs_mcpm.md
 mcp_client-http-todo.md
 sse_test.md
 ws.md
+ws_*.md
 TCP_call_process.txt
 
 # Python

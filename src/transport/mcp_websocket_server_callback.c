@@ -27,15 +27,15 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Handle new client connection
             mcp_log_info("WebSocket connection established");
 
-            mcp_mutex_lock(data->clients_mutex);
+            ws_server_lock_all_clients(data);
 
             // Find empty client slot using bitmap
             int client_index = ws_server_find_free_client_slot(data);
             if (client_index == -1) {
                 data->rejected_connections++;
-                mcp_mutex_unlock(data->clients_mutex);
-                mcp_log_error("Maximum WebSocket clients reached (%d active, %d total connections, %d rejected)",
-                             data->active_clients, data->total_connections, data->rejected_connections);
+                ws_server_unlock_all_clients(data);
+                mcp_log_error("Maximum WebSocket clients reached (%u active, %u total connections, %u rejected, max: %u)",
+                             data->active_clients, data->total_connections, data->rejected_connections, data->max_clients);
                 return -1;
             }
 
@@ -45,18 +45,18 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             lws_set_opaque_user_data(wsi, client);
 
             // Update statistics
-            ws_server_set_client_bit(data->client_bitmap, client_index);
+            ws_server_set_client_bit(data->client_bitmap, client_index, data->bitmap_size);
             data->active_clients++;
             data->total_connections++;
-            
+
             if (data->active_clients > data->peak_clients) {
                 data->peak_clients = data->active_clients;
             }
 
-            mcp_log_info("Client %d connected (active: %d, peak: %d, total: %d)",
-                        client_index, data->active_clients, data->peak_clients, data->total_connections);
+            mcp_log_info("Client %d connected (active: %u, peak: %u, total: %u, max: %u)",
+                        client_index, data->active_clients, data->peak_clients, data->total_connections, data->max_clients);
 
-            mcp_mutex_unlock(data->clients_mutex);
+            ws_server_unlock_all_clients(data);
             break;
         }
 
@@ -64,9 +64,11 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Handle client disconnection
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
             if (client) {
-                mcp_log_info("Client %d disconnected", client->client_id);
+                int client_id = client->client_id;
+                mcp_log_info("Client %d disconnected", client_id);
 
-                mcp_mutex_lock(data->clients_mutex);
+                // Lock only this client's segment
+                ws_server_lock_client(data, client_id);
 
                 // Mark client as closing but preserve pending data
                 client->state = WS_CLIENT_STATE_CLOSING;
@@ -76,11 +78,11 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
                 // Clean up immediately if no pending data
                 if (client->receive_buffer_used == 0) {
-                    mcp_log_debug("No pending data for client %d, cleaning up immediately", client->client_id);
+                    mcp_log_debug("No pending data for client %d, cleaning up immediately", client_id);
                     ws_server_client_cleanup(client, data);
                 }
 
-                mcp_mutex_unlock(data->clients_mutex);
+                ws_server_unlock_client(data, client_id);
             } else {
                 mcp_log_info("Unknown client disconnected");
             }
@@ -91,14 +93,14 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Clean up all clients when protocol is destroyed
             mcp_log_info("WebSocket protocol being destroyed, cleaning up all clients");
 
-            mcp_mutex_lock(data->clients_mutex);
-            for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
+            ws_server_lock_all_clients(data);
+            for (uint32_t i = 0; i < data->max_clients; i++) {
                 ws_client_t* client = &data->clients[i];
                 if (client->state != WS_CLIENT_STATE_INACTIVE) {
                     ws_server_client_cleanup(client, data);
                 }
             }
-            mcp_mutex_unlock(data->clients_mutex);
+            ws_server_unlock_all_clients(data);
             break;
         }
 
@@ -179,10 +181,11 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             mcp_log_debug("WebSocket filter protocol connection");
 
             // Apply stricter filtering when near capacity
-            if (data->active_clients >= MAX_WEBSOCKET_CLIENTS - 5) {
-                mcp_log_warn("WebSocket server near capacity (%d/%d), applying stricter filtering",
-                           data->active_clients, MAX_WEBSOCKET_CLIENTS);
-                
+            uint32_t capacity_threshold = data->max_clients > 10 ? data->max_clients - 10 : data->max_clients / 2;
+            if (data->active_clients >= capacity_threshold) {
+                mcp_log_warn("WebSocket server near capacity (%u/%u), applying stricter filtering",
+                           data->active_clients, data->max_clients);
+
                 // Could implement additional filtering here (IP-based rate limiting, auth checks, etc.)
             }
             return 0;
@@ -193,9 +196,9 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             mcp_log_debug("WebSocket filter network connection");
 
             // Check if we're at capacity
-            if (data->active_clients >= MAX_WEBSOCKET_CLIENTS) {
-                mcp_log_warn("WebSocket server at capacity (%d/%d), rejecting connection",
-                           data->active_clients, MAX_WEBSOCKET_CLIENTS);
+            if (data->active_clients >= data->max_clients) {
+                mcp_log_warn("WebSocket server at capacity (%u/%u), rejecting connection",
+                           data->active_clients, data->max_clients);
                 return -1;
             }
             return 0;

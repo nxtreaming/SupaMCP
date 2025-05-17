@@ -1,7 +1,7 @@
 #include "internal/websocket_server_internal.h"
 
 // Check for client timeouts and send pings
-void ws_server_check_timeouts(ws_server_data_t* data) {
+static void ws_server_check_timeouts(ws_server_data_t* data) {
     if (!data) {
         return;
     }
@@ -15,9 +15,9 @@ void ws_server_check_timeouts(ws_server_data_t* data) {
 
     data->last_ping_time = now;
 
-    mcp_mutex_lock(data->clients_mutex);
+    ws_server_lock_all_clients(data);
 
-    for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
+    for (uint32_t i = 0; i < data->max_clients; i++) {
         ws_client_t* client = &data->clients[i];
 
         if (client->state == WS_CLIENT_STATE_ACTIVE && client->wsi) {
@@ -41,7 +41,7 @@ void ws_server_check_timeouts(ws_server_data_t* data) {
         }
     }
 
-    mcp_mutex_unlock(data->clients_mutex);
+    ws_server_unlock_all_clients(data);
 }
 
 // Clean up inactive clients
@@ -59,10 +59,10 @@ void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
 
     data->last_cleanup_time = now;
 
-    mcp_mutex_lock(data->clients_mutex);
+    ws_server_lock_all_clients(data);
 
     // Use bitmap to quickly skip inactive clients
-    for (int i = 0; i < (MAX_WEBSOCKET_CLIENTS / 32 + 1); i++) {
+    for (uint32_t i = 0; i < data->bitmap_size; i++) {
         uint32_t word = data->client_bitmap[i];
 
         // Skip words with no active clients
@@ -76,8 +76,8 @@ void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
                 continue; // Skip inactive slots
             }
 
-            int client_index = i * 32 + j;
-            if (client_index >= MAX_WEBSOCKET_CLIENTS) {
+            uint32_t client_index = i * 32 + j;
+            if (client_index >= data->max_clients) {
                 break; // Don't go beyond array bounds
             }
 
@@ -95,7 +95,7 @@ void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
         }
     }
 
-    mcp_mutex_unlock(data->clients_mutex);
+    ws_server_unlock_all_clients(data);
 }
 
 // Server event loop thread function with adaptive timeout
