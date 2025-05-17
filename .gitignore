@@ -66,6 +66,7 @@ ws_*.md
 TCP_call_process.txt
 
 # Python
+.env
 __pycache__/
 *.py[cod]
 *$py.class
