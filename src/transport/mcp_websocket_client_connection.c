@@ -1,6 +1,6 @@
 #include "internal/websocket_client_internal.h"
 
-// Helper function to check if client is connected
+// Check if WebSocket client is connected
 bool ws_client_is_connected(ws_client_data_t* data) {
     if (!data || !data->connection_mutex) {
         return false;
@@ -8,18 +8,12 @@ bool ws_client_is_connected(ws_client_data_t* data) {
 
     bool is_connected = false;
     mcp_mutex_lock(data->connection_mutex);
-
-    // Check connection state
     is_connected = (data->state == WS_CLIENT_STATE_CONNECTED);
-
-    // Silently detect inconsistency but don't change behavior or log
-    // This avoids excessive logging while maintaining the original behavior
-
     mcp_mutex_unlock(data->connection_mutex);
     return is_connected;
 }
 
-// Helper function to ensure client is connected, with optional timeout
+// Ensure client is connected with optional timeout
 int ws_client_ensure_connected(ws_client_data_t* data, uint32_t timeout_ms) {
     if (!data || !data->running) {
         mcp_log_error("WebSocket client ensure_connected: Invalid data or client not running");
@@ -40,10 +34,10 @@ int ws_client_ensure_connected(ws_client_data_t* data, uint32_t timeout_ms) {
         mcp_mutex_unlock(data->connection_mutex);
     }
 
-    // Wait for connection with timeout
-    mcp_log_debug("WebSocket client not connected (state=%d), waiting for connection with timeout %u ms...",
+    mcp_log_debug("WebSocket client not connected (state=%d), waiting for connection with timeout %u ms",
                  state, timeout_ms);
 
+    // Wait for connection with timeout and measure elapsed time
     time_t start_time = time(NULL);
     int wait_result = ws_client_wait_for_connection(data, timeout_ms);
     time_t end_time = time(NULL);
@@ -55,9 +49,8 @@ int ws_client_ensure_connected(ws_client_data_t* data, uint32_t timeout_ms) {
         return -1;
     }
 
-    // Check if connected after wait
+    // Verify connection after wait
     if (!ws_client_is_connected(data)) {
-        // Get current state for more detailed error
         if (data->connection_mutex) {
             mcp_mutex_lock(data->connection_mutex);
             state = data->state;
@@ -74,7 +67,7 @@ int ws_client_ensure_connected(ws_client_data_t* data, uint32_t timeout_ms) {
     return 0;
 }
 
-// Helper function to connect to the WebSocket server
+// Connect to the WebSocket server
 int ws_client_connect(ws_client_data_t* data) {
     if (!data || !data->context || !data->connection_mutex) {
         return -1;
@@ -85,13 +78,13 @@ int ws_client_connect(ws_client_data_t* data) {
     data->state = WS_CLIENT_STATE_CONNECTING;
     mcp_mutex_unlock(data->connection_mutex);
 
-    // Connect to server
+    // Prepare connection info
     struct lws_client_connect_info connect_info = {0};
     connect_info.context = data->context;
     connect_info.address = data->config.host;
     connect_info.port = data->config.port;
 
-    // Make sure path starts with a slash
+    // Ensure path starts with a slash
     char path_buffer[256] = {0};
     if (data->config.path) {
         if (data->config.path[0] != '/') {
@@ -104,41 +97,31 @@ int ws_client_connect(ws_client_data_t* data) {
         connect_info.path = "/";
     }
 
+    // Set connection parameters
     connect_info.host = data->config.host;
     connect_info.origin = data->config.origin ? data->config.origin : data->config.host;
     connect_info.protocol = data->config.protocol ? data->config.protocol : "mcp-protocol";
-    // Set additional options for better UTF-8 handling
-    // Enable permessage-deflate extension for better compression of UTF-8
     connect_info.alpn = "http/1.1";
+    connect_info.client_exts = NULL; // Use default extensions including permessage-deflate
 
-    // Set explicit UTF-8 handling flag
-    connect_info.client_exts = NULL; // Use default extensions which include permessage-deflate
-
-    // Add flags to optimize connection speed and force immediate upgrade
-    // Add flags to optimize connection speed
+    // Set SSL flags if needed
     uint32_t ssl_flags = LCCSCF_USE_SSL | LCCSCF_PIPELINE;
-
-    // Use simpler connection flags to ensure compatibility
     connect_info.ssl_connection = data->config.use_ssl ? ssl_flags : LCCSCF_PIPELINE;
 
-    // Log connection attempt with detailed info
+    connect_info.local_protocol_name = "mcp-protocol";
+    connect_info.retry_and_idle_policy = NULL; // Don't use retry policy
+    connect_info.userdata = data;
+    connect_info.ietf_version_or_minus_one = -1; // Use latest version
+
+    // Log connection attempt
     mcp_log_info("Initiating WebSocket connection to %s:%d%s with flags: 0x%x",
                 data->config.host, data->config.port,
                 connect_info.path, connect_info.ssl_connection);
 
-    connect_info.local_protocol_name = "mcp-protocol";
-    // Don't use retry policy
-    connect_info.retry_and_idle_policy = NULL;
-    connect_info.userdata = data;
-
-    // Force immediate connection
-    // Use latest version
-    connect_info.ietf_version_or_minus_one = -1;
-
+    // Attempt connection
     if (!lws_client_connect_via_info(&connect_info)) {
         mcp_log_error("Failed to connect to WebSocket server");
 
-        // Update connection state
         mcp_mutex_lock(data->connection_mutex);
         data->state = WS_CLIENT_STATE_ERROR;
         mcp_mutex_unlock(data->connection_mutex);
@@ -152,16 +135,14 @@ int ws_client_connect(ws_client_data_t* data) {
     return 0;
 }
 
-// Helper function to update activity time
+// Update client activity timestamp
 void ws_client_update_activity(ws_client_data_t* data) {
-    if (!data) {
-        return;
+    if (data) {
+        data->last_activity_time = time(NULL);
     }
-
-    data->last_activity_time = time(NULL);
 }
 
-// Helper function to handle reconnection with optimized backoff strategy
+// Handle reconnection with optimized backoff strategy
 void ws_client_handle_reconnect(ws_client_data_t* data) {
     if (!data || !data->reconnect || !data->running || !data->connection_mutex) {
         return;
@@ -175,7 +156,7 @@ void ws_client_handle_reconnect(ws_client_data_t* data) {
     // Use smaller critical section to reduce lock contention
     mcp_mutex_lock(data->connection_mutex);
 
-    // Check if we've exceeded the maximum number of reconnection attempts
+    // Check if maximum reconnection attempts exceeded
     if (data->reconnect_attempts >= WS_MAX_RECONNECT_ATTEMPTS) {
         mcp_log_error("WebSocket client exceeded maximum reconnection attempts (%d)", WS_MAX_RECONNECT_ATTEMPTS);
         data->state = WS_CLIENT_STATE_ERROR;
@@ -183,22 +164,17 @@ void ws_client_handle_reconnect(ws_client_data_t* data) {
         return;
     }
 
-    // Calculate reconnection delay within critical section
+    // Calculate reconnection delay
     time_t now = time(NULL);
 
-    // Reset reconnection delay if it's been more than a minute since last attempt
+    // Reset delay if it's been more than a minute since last attempt
     if (data->reconnect_attempts == 0 || difftime(now, data->last_reconnect_time) >= 60) {
-        // Reset reconnection delay for first attempt or after long pause
         data->reconnect_delay_ms = WS_RECONNECT_DELAY_MS;
         data->reconnect_attempts = 1;
     } else {
-        // Use a more gradual backoff with jitter to prevent reconnection storms
-        // Add some randomness (jitter) to prevent synchronized reconnection attempts
-        // from multiple clients
-        uint32_t base_delay = data->reconnect_delay_ms + (data->reconnect_delay_ms / 2); // Use 1.5x instead of 2x for more gradual backoff
-
-        // Add jitter of +/- 20%
-        uint32_t jitter = (base_delay / 5); // 20% of base delay
+        // Use gradual backoff with jitter to prevent reconnection storms
+        uint32_t base_delay = data->reconnect_delay_ms + (data->reconnect_delay_ms / 2); // 1.5x for gradual backoff
+        uint32_t jitter = (base_delay / 5); // 20% jitter
         uint32_t jitter_value = rand() % (jitter * 2 + 1); // Random value between 0 and 2*jitter
 
         data->reconnect_delay_ms = base_delay - jitter + jitter_value;

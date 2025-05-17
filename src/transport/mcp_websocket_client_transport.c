@@ -27,7 +27,7 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         return 0;
     }
 
-    // Debug log for all connection-related callback reasons to help diagnose connection issues
+    // Log connection-related events with timestamp for diagnostics
     if (reason == LWS_CALLBACK_CLIENT_ESTABLISHED ||
         reason == LWS_CALLBACK_CLIENT_CONNECTION_ERROR ||
         reason == LWS_CALLBACK_CLIENT_CLOSED ||
@@ -37,7 +37,6 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         reason == LWS_CALLBACK_CONNECTING ||
         reason == LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP) {
 
-        // Log with timestamp for better tracking of connection timing
         time_t now = time(NULL);
         struct tm* timeinfo = localtime(&now);
         char timestamp[20];
@@ -49,23 +48,20 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
     switch (reason) {
         case LWS_CALLBACK_CONNECTING: {
-            // This is called when the connection process starts
+            // Connection process starting
             time_t now = time(NULL);
             struct tm* timeinfo = localtime(&now);
             char timestamp[20];
             strftime(timestamp, sizeof(timestamp), "%H:%M:%S", timeinfo);
 
             mcp_log_info("[%s] WebSocket client starting connection process", timestamp);
-
-            // Update connection state timestamp for tracking connection duration
             data->last_activity_time = now;
 
-            // Try to set socket options to reduce connection delay
-            // Note: This is a best-effort attempt and may not work on all platforms
+            // Optimize socket settings to reduce connection delay
             if (wsi) {
                 lws_sockfd_type fd = lws_get_socket_fd(wsi);
                 if (fd != LWS_SOCK_INVALID) {
-                    // Try to set TCP_NODELAY to reduce connection latency
+                    // Set TCP_NODELAY to reduce latency
                     int val = 1;
                     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char*)&val, sizeof(val)) < 0) {
                         mcp_log_warn("Failed to set TCP_NODELAY socket option");
@@ -73,9 +69,9 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
                         mcp_log_info("Successfully set TCP_NODELAY socket option");
                     }
 
-                    // Try to set a shorter connection timeout
+                    // Set shorter connection timeout
                     #ifdef _WIN32
-                    // Windows doesn't have SO_CONNECT_TIME, use non-blocking mode instead
+                    // Use non-blocking mode on Windows
                     unsigned long mode = 1;
                     if (ioctlsocket(fd, FIONBIO, &mode) != 0) {
                         mcp_log_warn("Failed to set non-blocking mode");
@@ -83,6 +79,7 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
                         mcp_log_info("Successfully set non-blocking mode");
                     }
                     #else
+                    // Set timeout on Unix systems
                     struct timeval tv;
                     tv.tv_sec = 1;  // 1 second
                     tv.tv_usec = 0;
@@ -98,55 +95,52 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLIENT_ESTABLISHED: {
-            // Calculate connection time
+            // Connection established successfully
             time_t now = time(NULL);
             double connection_time = difftime(now, data->last_activity_time);
 
             mcp_log_info("WebSocket client connection established in %.1f seconds", connection_time);
             data->wsi = wsi;
 
-            // Signal that the connection is established
+            // Update connection state
             mcp_mutex_lock(data->connection_mutex);
             data->state = WS_CLIENT_STATE_CONNECTED;
-
-            // Reset reconnection attempts on successful connection
             data->reconnect_attempts = 0;
-
-            // Reset ping-related state
+            
+            // Reset monitoring state
             data->ping_in_progress = false;
             data->missed_pongs = 0;
             data->last_ping_time = now;
             data->last_pong_time = now;
             data->last_activity_time = now;
 
+            // Signal waiting threads
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
             break;
         }
 
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
-            // Get more detailed error information
+            // Handle connection error
             const char* error_msg = in ? (char*)in : "unknown error";
             time_t now = time(NULL);
             double elapsed = difftime(now, data->last_activity_time);
 
             mcp_log_error("WebSocket client connection error after %.1f seconds: %s",
                          elapsed, error_msg);
-
-            // Log additional connection details to help diagnose the issue
             mcp_log_info("Connection details: host=%s, port=%d, path=%s",
                         data->config.host, data->config.port,
                         data->config.path ? data->config.path : "/");
 
             data->wsi = NULL;
 
-            // Signal that the connection failed
+            // Update connection state
             mcp_mutex_lock(data->connection_mutex);
             data->state = WS_CLIENT_STATE_ERROR;
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
 
-            // Try to reconnect after a short delay
+            // Schedule reconnection if enabled
             if (data->reconnect && data->running) {
                 mcp_log_info("Will attempt to reconnect after connection error");
             }
@@ -154,35 +148,32 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLIENT_CLOSED: {
+            // Handle connection closure
             mcp_log_info("WebSocket client connection closed");
             data->wsi = NULL;
 
-            // Check if we're in synchronous response mode
+            // Handle synchronous response mode
             mcp_mutex_lock(data->response_mutex);
             bool was_in_sync_mode = data->sync_response_mode;
             int64_t pending_request_id = data->current_request_id;
 
-            // If we're in sync mode, signal that the response is ready with an error
             if (data->sync_response_mode) {
                 mcp_log_warn("WebSocket connection closed while in synchronous response mode for request ID %lld",
                            (long long)data->current_request_id);
 
-                // Set error state
                 data->response_error_code = -1;
                 data->request_timedout = true;
-
-                // Signal waiting thread to wake up
                 mcp_cond_signal(data->response_cond);
             }
             mcp_mutex_unlock(data->response_mutex);
 
-            // Signal that the connection is closed
+            // Update connection state
             mcp_mutex_lock(data->connection_mutex);
             data->state = WS_CLIENT_STATE_DISCONNECTED;
             mcp_cond_signal(data->connection_cond);
             mcp_mutex_unlock(data->connection_mutex);
 
-            // Log additional information for debugging
+            // Log additional diagnostic information
             if (was_in_sync_mode) {
                 mcp_log_debug("Connection closed while waiting for response to request ID %lld. Will attempt to reconnect.",
                              (long long)pending_request_id);

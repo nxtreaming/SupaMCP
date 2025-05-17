@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Initialize WebSocket protocols
+// Initialize WebSocket protocols array
 void mcp_websocket_init_protocols(
     struct lws_protocols* protocols,
     lws_callback_function* callback
@@ -19,7 +19,7 @@ void mcp_websocket_init_protocols(
         return;
     }
 
-    // Protocol for WebSocket connections
+    // WebSocket protocol
     protocols[0].name = "mcp-protocol";
     protocols[0].callback = callback;
     protocols[0].per_session_data_size = 0;
@@ -37,7 +37,7 @@ void mcp_websocket_init_protocols(
     protocols[1].user = NULL;
     protocols[1].tx_packet_size = 0;
 
-    // Terminator
+    // Terminator entry
     protocols[2].name = NULL;
     protocols[2].callback = NULL;
     protocols[2].per_session_data_size = 0;
@@ -47,9 +47,7 @@ void mcp_websocket_init_protocols(
     protocols[2].tx_packet_size = 0;
 }
 
-// Message queue functions removed to improve performance
-
-// Create a libwebsockets context
+// Create a libwebsockets context for client or server
 struct lws_context* mcp_websocket_create_context(
     const char* host,
     uint16_t port,
@@ -74,23 +72,16 @@ struct lws_context* mcp_websocket_create_context(
                    LWS_SERVER_OPTION_VALIDATE_UTF8 |
                    LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
 
-    // Comment out these settings as they may be causing connection issues
-    // info.connect_timeout_secs = 1;
-    // info.timeout_secs = 1;
-    // info.timeout_secs_ah_idle = 1;
-
-    // Client-specific settings to optimize connection speed
+    // Client-specific settings
     if (!is_server) {
-        // Reduce connection setup time
-        info.ka_time = 0; // Disable keep-alive probes during connection setup
+        // Disable keep-alive during connection setup
+        info.ka_time = 0;
         info.ka_interval = 0;
         info.ka_probes = 0;
 
-        // Get the connection timeout from the user configuration
-        // This is passed through the user_data pointer, which is a ws_client_data_t*
+        // Get connection timeout from client configuration
         uint32_t connect_timeout_ms = 0;
         if (user_data) {
-            // Try to extract the timeout from the client data
             ws_client_data_t* client_data = (ws_client_data_t*)user_data;
             if (client_data && client_data->config.connect_timeout_ms > 0) {
                 connect_timeout_ms = client_data->config.connect_timeout_ms;
@@ -100,20 +91,14 @@ struct lws_context* mcp_websocket_create_context(
 
         // Set connection timeout (convert from ms to seconds)
         if (connect_timeout_ms > 0) {
-            // Use custom timeout (convert to seconds, minimum 1 second)
             info.timeout_secs = (connect_timeout_ms / 1000) > 0 ? (connect_timeout_ms / 1000) : 1;
-
-            // Also set socket timeout for connection
             info.connect_timeout_secs = info.timeout_secs;
         } else {
-            // Use default timeout (5 seconds)
-            info.timeout_secs = 5;
+            info.timeout_secs = 5; // Default timeout (5 seconds)
         }
 
         mcp_log_info("WebSocket connection timeout set to %d seconds", info.timeout_secs);
-
-        // Keep the retry policy as null to avoid automatic reconnection
-        info.retry_and_idle_policy = NULL;
+        info.retry_and_idle_policy = NULL; // Disable automatic reconnection
     }
 
     // Server-specific settings
@@ -127,11 +112,9 @@ struct lws_context* mcp_websocket_create_context(
         };
         info.mounts = &mount;
 
-        // Add options to optimize server behavior
-        info.timeout_secs = 1; // Reduce timeout to 1 second (default is 5)
+        // Optimize server behavior
+        info.timeout_secs = 1; // Reduce timeout (default is 5)
         info.keepalive_timeout = 1; // Reduce keepalive timeout
-
-        // Add options to optimize server behavior
         info.options |= LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
     }
 
@@ -183,7 +166,7 @@ int mcp_websocket_combine_buffers(
     size_t offset = 0;
     for (size_t i = 0; i < buffer_count; i++) {
         if (offset + buffers[i].size > combined_size) {
-            return -1;
+            return -1; // Buffer overflow
         }
         memcpy((char*)combined_buffer + offset, buffers[i].data, buffers[i].size);
         offset += buffers[i].size;

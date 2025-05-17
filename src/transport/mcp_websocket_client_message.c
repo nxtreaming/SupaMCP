@@ -1,18 +1,15 @@
 #include "internal/websocket_client_internal.h"
 
-// Helper function to extract request/response ID from JSON data
+// Extract request/response ID from JSON data
 static int64_t websocket_extract_request_id(const char* json_data, size_t data_len) {
-    int64_t id = -1;  // Initialize to -1 to indicate "no valid ID"
+    int64_t id = -1;  // -1 indicates "no valid ID"
 
     if (data_len > 0 && json_data && json_data[0] == '{') {
-        // Try to extract the ID from the JSON
         const char* id_pos = strstr(json_data, "\"id\":");
         if (id_pos) {
-            // Skip "id": and any whitespace
+            // Skip "id": and whitespace
             id_pos += 5;
             while (*id_pos == ' ' || *id_pos == '\t') id_pos++;
-
-            // Parse the ID
             id = strtoll(id_pos, NULL, 10);
         }
     }
@@ -20,30 +17,26 @@ static int64_t websocket_extract_request_id(const char* json_data, size_t data_l
     return id;
 }
 
-// Helper function to resize receive buffer with optimized growth strategy
+// Resize receive buffer with optimized growth strategy
 static int ws_client_resize_receive_buffer(ws_client_data_t* data, size_t needed_size) {
     if (!data) {
         return -1;
     }
 
-    // Calculate new buffer size with more efficient growth strategy
-    // Use a growth factor of 1.5 instead of 2 to reduce memory waste
+    // Calculate new buffer size with 1.5x growth factor to reduce memory waste
     size_t new_len;
     if (data->receive_buffer_len == 0) {
-        // Start with default buffer size
         new_len = WS_DEFAULT_BUFFER_SIZE;
     } else {
-        // Grow by 1.5x factor with alignment to 4KB boundaries for better memory allocation
+        // Grow by 1.5x factor with 4KB alignment for better memory allocation
         new_len = data->receive_buffer_len + (data->receive_buffer_len >> 1);
-        // Round up to next 4KB boundary for better memory allocation
-        new_len = (new_len + 4095) & ~4095;
+        new_len = (new_len + 4095) & ~4095; // Round up to next 4KB boundary
     }
 
-    // Ensure the new size is at least as large as needed
+    // Ensure the new size is sufficient
     while (new_len < needed_size) {
         new_len = new_len + (new_len >> 1);
-        // Round up to next 4KB boundary
-        new_len = (new_len + 4095) & ~4095;
+        new_len = (new_len + 4095) & ~4095; // Round up to next 4KB boundary
     }
 
     // Allocate new buffer
@@ -59,13 +52,13 @@ static int ws_client_resize_receive_buffer(ws_client_data_t* data, size_t needed
     return 0;
 }
 
-// Helper function to process a complete message with optimized memory handling
+// Process a complete message with optimized memory handling
 static int ws_client_process_complete_message(ws_client_data_t* data) {
     if (!data) {
         return -1;
     }
 
-    // Ensure the buffer is null-terminated
+    // Ensure buffer is null-terminated
     if (data->receive_buffer_used >= data->receive_buffer_len) {
         if (ws_client_resize_receive_buffer(data, data->receive_buffer_used + 1) != 0) {
             return -1;
@@ -73,26 +66,23 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
     }
     data->receive_buffer[data->receive_buffer_used] = '\0';
 
-    // Process the message
     mcp_mutex_lock(data->response_mutex);
 
-    // Optimization: In sync mode, we can avoid an extra copy by transferring ownership
-    // of the receive buffer directly if we're in sync mode and no one else needs it
+    // Handle synchronous response mode
     if (data->sync_response_mode) {
-        // If the request has timed out, silently discard the response
+        // Handle timed-out requests
         if (data->request_timedout) {
-            // Extract the response ID to verify it matches our current request ID
             int64_t response_id = websocket_extract_request_id(
                 data->receive_buffer,
                 data->receive_buffer_used
             );
 
-            // Check if this response matches our timed-out request
+            // If response matches our timed-out request, discard it
             if (response_id >= 0 && response_id == data->current_request_id) {
-                mcp_log_debug("Received response for timed-out request ID %llu, discarding silently",
+                mcp_log_debug("Received response for timed-out request ID %llu, discarding",
                              (unsigned long long)response_id);
 
-                // Now we can exit sync mode
+                // Exit sync mode
                 data->sync_response_mode = false;
                 data->response_ready = false;
                 data->current_request_id = -1;
@@ -104,21 +94,19 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
             }
         }
 
-        // Clean up any existing response data
+        // Clean up existing response data
         if (data->response_data) {
             free(data->response_data);
             data->response_data = NULL;
             data->response_data_len = 0;
         }
 
-        // Copy the response data - we still need to copy because the receive buffer
-        // will be reused for future messages
+        // Copy response data (needed because receive buffer will be reused)
         data->response_data = (char*)malloc(data->receive_buffer_used + 1);
         if (!data->response_data) {
             mcp_log_error("Failed to allocate memory for WebSocket response data");
             data->response_error_code = -1;
-
-            // Signal condition variable if in sync mode
+            
             if (data->sync_response_mode) {
                 mcp_cond_signal(data->response_cond);
             }
@@ -127,7 +115,7 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
             return -1;
         }
 
-        // Copy and null-terminate the data
+        // Copy and prepare response data
         memcpy(data->response_data, data->receive_buffer, data->receive_buffer_used);
         data->response_data[data->receive_buffer_used] = '\0';
         data->response_data_len = data->receive_buffer_used;
@@ -143,17 +131,14 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
         mcp_cond_signal(data->response_cond);
     }
     else if (data->transport && data->transport->message_callback) {
-        // For async mode, we can process directly from the receive buffer
-        // without additional copying
-
-        // Reset thread-local arena for JSON parsing
+        // For async mode, process directly from receive buffer
         mcp_arena_reset_current_thread();
 
         #ifdef MCP_VERBOSE_DEBUG
         mcp_log_debug("WebSocket client received message: %s", data->receive_buffer);
         #endif
 
-        // Process message through callback directly from receive buffer
+        // Process message through callback
         int error_code = 0;
         char* response = data->transport->message_callback(
             data->transport->callback_user_data,
@@ -162,12 +147,10 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
             &error_code
         );
 
-        // Free the response if one was returned
         if (response) {
             free(response);
         }
 
-        // Reset thread-local arena after processing
         mcp_arena_reset_current_thread();
     }
 
@@ -178,27 +161,27 @@ static int ws_client_process_complete_message(ws_client_data_t* data) {
     return 0;
 }
 
-// Helper function to handle received data
+// Handle received WebSocket data
 int ws_client_handle_received_data(ws_client_data_t* data, void* in, size_t len, bool is_final) {
     if (!data || !in || len == 0) {
         return -1;
     }
 
-    // Update activity time
+    // Update activity timestamp
     ws_client_update_activity(data);
 
-    // Check if we need to resize the buffer
+    // Ensure buffer is large enough
     if (data->receive_buffer_used + len >= data->receive_buffer_len) {
         if (ws_client_resize_receive_buffer(data, data->receive_buffer_used + len + 1) != 0) {
             return -1;
         }
     }
 
-    // Copy data to buffer
+    // Append data to buffer
     memcpy(data->receive_buffer + data->receive_buffer_used, in, len);
     data->receive_buffer_used += len;
 
-    // If this is the final fragment, process the message
+    // Process complete message if this is the final fragment
     if (is_final) {
         return ws_client_process_complete_message(data);
     }

@@ -15,7 +15,7 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         return 0;
     }
 
-    // Debug log for important callback reasons only
+    // Log only non-frequent callback reasons to reduce log volume
     if (reason != LWS_CALLBACK_SERVER_WRITEABLE &&
         reason != LWS_CALLBACK_RECEIVE &&
         reason != LWS_CALLBACK_RECEIVE_PONG) {
@@ -24,15 +24,14 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
     switch (reason) {
         case LWS_CALLBACK_ESTABLISHED: {
-            // New client connection
+            // Handle new client connection
             mcp_log_info("WebSocket connection established");
 
             mcp_mutex_lock(data->clients_mutex);
 
-            // Find an empty client slot using bitmap
+            // Find empty client slot using bitmap
             int client_index = ws_server_find_free_client_slot(data);
             if (client_index == -1) {
-                // Update rejection statistics
                 data->rejected_connections++;
                 mcp_mutex_unlock(data->clients_mutex);
                 mcp_log_error("Maximum WebSocket clients reached (%d active, %d total connections, %d rejected)",
@@ -43,16 +42,13 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Initialize client data
             ws_client_t* client = &data->clients[client_index];
             ws_server_client_init(client, client_index, wsi);
-
-            // Store client pointer in user data
             lws_set_opaque_user_data(wsi, client);
 
-            // Update bitmap and statistics
+            // Update statistics
             ws_server_set_client_bit(data->client_bitmap, client_index);
             data->active_clients++;
             data->total_connections++;
-
-            // Update peak clients if needed
+            
             if (data->active_clients > data->peak_clients) {
                 data->peak_clients = data->active_clients;
             }
@@ -65,24 +61,20 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLOSED: {
-            // Client disconnected
+            // Handle client disconnection
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
             if (client) {
                 mcp_log_info("Client %d disconnected", client->client_id);
 
                 mcp_mutex_lock(data->clients_mutex);
 
-                // Mark client as closing but don't free resources yet
-                // This allows any pending messages to be processed
+                // Mark client as closing but preserve pending data
                 client->state = WS_CLIENT_STATE_CLOSING;
                 client->wsi = NULL;
                 client->last_activity = time(NULL);
-
-                // Reset ping counter
                 client->ping_sent = 0;
 
-                // If there's no pending data, clean up immediately
-                // This reduces resource usage and makes slots available faster
+                // Clean up immediately if no pending data
                 if (client->receive_buffer_used == 0) {
                     mcp_log_debug("No pending data for client %d, cleaning up immediately", client->client_id);
                     ws_server_client_cleanup(client, data);
@@ -96,24 +88,22 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_PROTOCOL_DESTROY: {
-            // Protocol is being destroyed, clean up all clients
+            // Clean up all clients when protocol is destroyed
             mcp_log_info("WebSocket protocol being destroyed, cleaning up all clients");
 
             mcp_mutex_lock(data->clients_mutex);
-
             for (int i = 0; i < MAX_WEBSOCKET_CLIENTS; i++) {
                 ws_client_t* client = &data->clients[i];
                 if (client->state != WS_CLIENT_STATE_INACTIVE) {
                     ws_server_client_cleanup(client, data);
                 }
             }
-
             mcp_mutex_unlock(data->clients_mutex);
             break;
         }
 
         case LWS_CALLBACK_RECEIVE_PONG: {
-            // Received pong from client
+            // Update activity on pong receipt
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
             if (client) {
                 mcp_log_debug("Received pong from client %d", client->client_id);
@@ -123,7 +113,7 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_RECEIVE: {
-            // Receive data
+            // Process received data
             mcp_log_debug("WebSocket data received: %zu bytes", len);
 
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
@@ -132,19 +122,16 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 return -1;
             }
 
-            // Handle the received data
             return ws_server_client_handle_received_data(data, client, wsi, in, len, lws_is_final_fragment(wsi));
         }
 
         case LWS_CALLBACK_SERVER_WRITEABLE: {
-            // Ready to send data to client
+            // Handle writable state
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
             if (!client) {
                 mcp_log_error("WebSocket client not found");
                 return -1;
             }
-
-            // Messages are sent directly in the LWS_CALLBACK_RECEIVE handler
 
             // Update activity timestamp
             ws_server_client_update_activity(client);
@@ -152,10 +139,10 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_HTTP: {
-            // HTTP request (not WebSocket)
+            // Handle plain HTTP request
             mcp_log_info("HTTP request received: %s", (char*)in);
 
-            // Return 200 OK with a simple message
+            // Send informational response
             unsigned char buffer[LWS_PRE + 128];
             unsigned char *p = &buffer[LWS_PRE];
             int head_len = sprintf((char *)p, "HTTP WebSocket server is running. Please use a WebSocket client to connect.");
@@ -174,7 +161,7 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_HTTP_WRITEABLE: {
-            // Ready to send HTTP response
+            // Send HTTP response
             unsigned char buffer[LWS_PRE + 128];
             unsigned char *p = &buffer[LWS_PRE];
             int head_len = sprintf((char *)p, "HTTP WebSocket server is running. Please use a WebSocket client to connect.");
@@ -183,21 +170,20 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 return 1;
             }
 
-            // Close the connection after sending the response
+            // Close connection after response
             return -1;
         }
 
         case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION: {
-            // This callback allows us to examine the HTTP headers and reject connections
+            // Filter incoming connections
             mcp_log_debug("WebSocket filter protocol connection");
 
-            // Check if we're at or near capacity
+            // Apply stricter filtering when near capacity
             if (data->active_clients >= MAX_WEBSOCKET_CLIENTS - 5) {
                 mcp_log_warn("WebSocket server near capacity (%d/%d), applying stricter filtering",
                            data->active_clients, MAX_WEBSOCKET_CLIENTS);
-
-                // Here we could implement additional filtering logic
-                // For example, rate limiting based on IP, authentication checks, etc.
+                
+                // Could implement additional filtering here (IP-based rate limiting, auth checks, etc.)
             }
             return 0;
         }
