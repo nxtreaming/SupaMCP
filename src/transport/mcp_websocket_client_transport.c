@@ -329,7 +329,7 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
-// Helper function to clean up resources
+// Clean up resources
 static void ws_client_cleanup_resources(ws_client_data_t* data) {
     if (!data) {
         return;

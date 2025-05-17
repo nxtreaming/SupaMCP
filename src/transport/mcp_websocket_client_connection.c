@@ -219,7 +219,7 @@ void ws_client_handle_reconnect(ws_client_data_t* data) {
     }
 }
 
-// Helper function to send a ping directly using libwebsockets API
+// Send a ping directly using libwebsockets API
 // FIXME: NO ONE use this function
 static int ws_client_send_ping(ws_client_data_t* data) {
     if (!data || !data->wsi || data->state != WS_CLIENT_STATE_CONNECTED) {
@@ -246,7 +246,7 @@ static int ws_client_send_ping(ws_client_data_t* data) {
     return 0;
 }
 
-// Function to wait for WebSocket connection to be established
+// Wait for WebSocket connection to be established
 int ws_client_wait_for_connection(ws_client_data_t* data, uint32_t timeout_ms) {
     if (!data || !data->connection_mutex || !data->connection_cond) {
         return -1;

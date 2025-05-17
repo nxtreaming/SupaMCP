@@ -189,7 +189,7 @@ int ws_client_handle_received_data(ws_client_data_t* data, void* in, size_t len,
     return 0;
 }
 
-// Helper function to send a buffer via WebSocket with optimized memory handling
+// Send a buffer via WebSocket with optimized memory handling
 int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t size) {
     if (!data || !buffer || size == 0 || !data->wsi) {
         return -1;
@@ -307,7 +307,7 @@ int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t siz
     return 0;
 }
 
-// Helper function to send a message and wait for a response with optimized waiting strategy
+// Send a message and wait for a response with optimized waiting strategy
 int ws_client_send_and_wait_response(
     ws_client_data_t* ws_data,
     const void* data,

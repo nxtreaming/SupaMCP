@@ -1,6 +1,6 @@
 #include "internal/websocket_server_internal.h"
 
-// Helper function to check for client timeouts and send pings
+// Check for client timeouts and send pings
 void ws_server_check_timeouts(ws_server_data_t* data) {
     if (!data) {
         return;
@@ -44,7 +44,7 @@ void ws_server_check_timeouts(ws_server_data_t* data) {
     mcp_mutex_unlock(data->clients_mutex);
 }
 
-// Helper function to clean up inactive clients
+// Clean up inactive clients
 void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
     if (!data) {
         return;

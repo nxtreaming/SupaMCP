@@ -1,6 +1,6 @@
 #include "internal/websocket_server_internal.h"
 
-// Helper function to initialize a client
+// Initialize a client
 int ws_server_client_init(ws_client_t* client, int client_id, struct lws* wsi) {
     if (!client) {
         return -1;
@@ -18,7 +18,7 @@ int ws_server_client_init(ws_client_t* client, int client_id, struct lws* wsi) {
     return 0;
 }
 
-// Helper function to clean up a client
+// Clean up a client
 void ws_server_client_cleanup(ws_client_t* client, ws_server_data_t* server_data) {
     if (!client) {
         return;
@@ -62,7 +62,7 @@ void ws_server_client_cleanup(ws_client_t* client, ws_server_data_t* server_data
     }
 }
 
-// Helper function to resize a client's receive buffer with optimized allocation strategy
+// Resize a client's receive buffer with optimized allocation strategy
 int ws_server_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_server_data_t* server_data) {
     if (!client) {
         return -1;
@@ -166,7 +166,7 @@ int ws_server_client_resize_buffer(ws_client_t* client, size_t needed_size, ws_s
     return 0;
 }
 
-// Helper function to update client activity timestamp
+// Update client activity timestamp
 void ws_server_client_update_activity(ws_client_t* client) {
     if (!client) {
         return;
@@ -176,7 +176,7 @@ void ws_server_client_update_activity(ws_client_t* client) {
     client->ping_sent = 0; // Reset ping counter on activity
 }
 
-// Helper function to send a ping to a client
+// Send a ping to a client
 int ws_server_client_send_ping(ws_client_t* client) {
     if (!client || !client->wsi || client->state != WS_CLIENT_STATE_ACTIVE) {
         return -1;
@@ -189,7 +189,7 @@ int ws_server_client_send_ping(ws_client_t* client) {
     return lws_callback_on_writable(client->wsi);
 }
 
-// Helper function to find a client by WebSocket instance with optimized search
+// Find a client by WebSocket instance with optimized search
 ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* wsi) {
     if (!data || !wsi) {
         return NULL;
@@ -262,7 +262,7 @@ ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* ws
     return NULL;
 }
 
-// Helper function to send a response to a client with optimized buffer handling
+// Send a response to a client with optimized buffer handling
 int ws_server_client_send_response(ws_client_t* client, struct lws* wsi, const char* response, size_t response_len) {
     if (!client || !wsi || !response || response_len == 0) {
         return -1;
@@ -295,7 +295,7 @@ int ws_server_client_send_response(ws_client_t* client, struct lws* wsi, const c
     return 0;
 }
 
-// Helper function to process a complete message
+// Process a complete message
 int ws_server_client_process_message(ws_server_data_t* data, ws_client_t* client, struct lws* wsi) {
     if (!data || !client || !wsi) {
         return -1;
@@ -345,7 +345,7 @@ int ws_server_client_process_message(ws_server_data_t* data, ws_client_t* client
     return 0;
 }
 
-// Helper function to handle received data
+// Handle received data
 int ws_server_client_handle_received_data(ws_server_data_t* data, ws_client_t* client,
     struct lws* wsi, void* in, size_t len, bool is_final) {
     if (!data || !client || !wsi || !in || len == 0) {
