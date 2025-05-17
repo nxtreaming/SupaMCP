@@ -382,6 +382,21 @@ mcp_content_item_t* mcp_content_item_acquire_pooled(
 bool mcp_content_item_release_pooled(struct mcp_object_pool_s* pool, mcp_content_item_t* item);
 
 /**
+ * @brief Safely frees memory that could have been allocated by different methods.
+ *
+ * This function checks how the memory was allocated and uses the appropriate
+ * method to free it:
+ * - If allocated by memory pool, uses mcp_pool_free
+ * - If memory pool system is initialized, assumes it was allocated by thread cache
+ *   and uses mcp_thread_cache_free
+ * - Otherwise, uses standard free
+ *
+ * @param ptr Pointer to the memory to free
+ * @param size Size of the memory block (used for thread cache free)
+ */
+void mcp_safe_free(void* ptr, size_t size);
+
+/**
  * @brief Creates a new heap-allocated mcp_message_t representing a request.
  * @deprecated This function allocates the top-level message struct, which is often
  *             less convenient than stack allocation + mcp_message_release_contents.

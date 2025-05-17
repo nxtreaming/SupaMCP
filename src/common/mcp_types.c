@@ -4,6 +4,30 @@
 #include "mcp_string_utils.h"
 #include "mcp_object_pool.h"
 #include "mcp_log.h"
+#include "mcp_memory_pool.h"
+#include "mcp_thread_cache.h"
+
+/**
+ * @brief Safely frees memory that could have been allocated by different methods.
+ */
+void mcp_safe_free(void* ptr, size_t size) {
+    if (ptr == NULL) {
+        return;
+    }
+
+    // Check if this is a pool-allocated block
+    size_t block_size = mcp_pool_get_block_size(ptr);
+    if (block_size > 0) {
+        // It's a pool-allocated block, return it to the pool
+        mcp_pool_free(ptr);
+    } else if (mcp_memory_pool_system_is_initialized()) {
+        // It might be allocated by thread cache
+        mcp_thread_cache_free(ptr, size);
+    } else {
+        // It's a malloc-allocated block, use free
+        free(ptr);
+    }
+}
 
 /**
  * @brief Helper function to duplicate a string and handle error checking.
@@ -495,7 +519,7 @@ void mcp_free_resources(mcp_resource_t** resources, size_t count) {
     for (size_t i = 0; i < count; i++) {
         mcp_resource_free(resources[i]);
     }
-    free(resources);
+    mcp_safe_free(resources, count * sizeof(mcp_resource_t*));
 }
 
 /**
@@ -510,7 +534,7 @@ void mcp_free_resource_templates(mcp_resource_template_t** templates, size_t cou
     for (size_t i = 0; i < count; i++) {
         mcp_resource_template_free(templates[i]);
     }
-    free(templates);
+    mcp_safe_free(templates, count * sizeof(mcp_resource_template_t*));
 }
 
 /**
@@ -525,7 +549,7 @@ void mcp_free_content(mcp_content_item_t** content, size_t count) {
     for (size_t i = 0; i < count; i++) {
         mcp_content_item_free(content[i]);
     }
-    free(content);
+    mcp_safe_free(content, count * sizeof(mcp_content_item_t*));
 }
 
 /**
@@ -540,7 +564,7 @@ void mcp_free_tools(mcp_tool_t** tools, size_t count) {
     for (size_t i = 0; i < count; i++) {
         mcp_tool_free(tools[i]);
     }
-    free(tools);
+    mcp_safe_free(tools, count * sizeof(mcp_tool_t*));
 }
 
 mcp_message_t* mcp_response_create(

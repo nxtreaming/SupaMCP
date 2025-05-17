@@ -2,6 +2,9 @@
 #include "mcp_auth.h"
 #include "mcp_template.h"
 #include "mcp_hashtable.h"
+#include "mcp_memory_pool.h"
+#include "mcp_thread_cache.h"
+#include "mcp_types.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -339,7 +342,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
                     for(size_t i = 0; i < content_count; ++i) {
                         if (content_items[i]) mcp_content_item_free(content_items[i]);
                     }
-                    free(content_items);
+                    mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
                     content_items = NULL;
                 }
                 mcp_json_destroy(params_json);
@@ -421,7 +424,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
             for (size_t i = 0; i < content_count; i++) {
                 if (content_items[i]) mcp_object_pool_release(server->content_item_pool, content_items[i]);
             }
-            free(content_items);
+            mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
         }
         mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
@@ -494,7 +497,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
         for (size_t i = 0; i < content_count; i++) {
             if (content_items[i]) mcp_object_pool_release(server->content_item_pool, content_items[i]);
         }
-        free(content_items); // Free the array itself
+        mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
     }
 
     if (json_build_error) {
@@ -784,7 +787,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
             for(size_t i = 0; i < content_count; ++i) {
                 if (content_items[i]) mcp_content_item_free(content_items[i]);
             }
-            free(content_items);
+            mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
             content_items = NULL;
         }
         mcp_json_destroy(params_json);
@@ -801,7 +804,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     if (!content_json) {
          if (content_items) { // Cleanup if JSON creation fails
              for (size_t i = 0; i < content_count; i++) mcp_content_item_free(content_items[i]);
-             free(content_items);
+             mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
          }
          free(handler_error_message);
          mcp_json_destroy(params_json);
@@ -843,7 +846,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
             if (content_items[i])
                 mcp_object_pool_release(server->content_item_pool, content_items[i]);
         }
-        free(content_items); // Free the array itself
+        mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
     }
     free(handler_error_message);
 
