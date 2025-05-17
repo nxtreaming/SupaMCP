@@ -362,13 +362,28 @@ int mcp_thread_create(mcp_thread_t* thread_handle, mcp_thread_func_t start_routi
 
 int mcp_thread_join(mcp_thread_t thread_handle, void** retval) {
 #ifdef _WIN32
-    // WaitForSingleObject waits for the thread to terminate.
-    // Getting the actual return value is more complex and not directly supported here.
-    if (WaitForSingleObject((HANDLE)thread_handle, INFINITE) == WAIT_FAILED) {
+    // Check if the handle is valid
+    if (thread_handle == NULL || thread_handle == INVALID_HANDLE_VALUE) {
+        mcp_log_warn("Attempted to join an invalid thread handle");
         return -1;
     }
-    // Close the handle after joining
-    CloseHandle((HANDLE)thread_handle);
+
+    // WaitForSingleObject waits for the thread to terminate.
+    // Getting the actual return value is more complex and not directly supported here.
+    DWORD wait_result = WaitForSingleObject((HANDLE)thread_handle, INFINITE);
+    if (wait_result == WAIT_FAILED) {
+        DWORD error = GetLastError();
+        mcp_log_error("WaitForSingleObject failed with error code: %lu", error);
+        return -1;
+    }
+
+    // Close the handle after joining, but check if it's valid first
+    if (!CloseHandle((HANDLE)thread_handle)) {
+        DWORD error = GetLastError();
+        mcp_log_warn("CloseHandle failed with error code: %lu", error);
+        // Continue despite the error - the thread has already been joined
+    }
+
     if (retval) *retval = NULL;
     return 0;
 #else
@@ -386,6 +401,18 @@ void mcp_thread_yield(void) {
 #else
     // Yields processor to another thread
     sched_yield();
+#endif
+}
+
+/**
+ * @brief Gets the ID of the current thread.
+ * @return The ID of the current thread as an unsigned long.
+ */
+unsigned long mcp_get_thread_id(void) {
+#ifdef _WIN32
+    return (unsigned long)GetCurrentThreadId();
+#else
+    return (unsigned long)pthread_self();
 #endif
 }
 

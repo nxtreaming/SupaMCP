@@ -2,6 +2,7 @@
 #include "internal/arena_internal.h"
 #include "mcp_log.h"
 #include "mcp_memory_pool.h"
+#include "mcp_sync.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -39,14 +40,7 @@ __declspec(thread) static mcp_thread_local_stats_t tls_stats = {0};
 __thread static mcp_thread_local_stats_t tls_stats = {0};
 #endif
 
-// Function to get current thread ID in a platform-independent way
-static unsigned long get_current_thread_id(void) {
-#ifdef _WIN32
-    return (unsigned long)GetCurrentThreadId();
-#else
-    return (unsigned long)pthread_self();
-#endif
-}
+// Use the public mcp_get_thread_id function from mcp_sync.h
 
 #ifdef _WIN32
 static DWORD arena_tls_index = TLS_OUT_OF_INDEXES;
@@ -142,7 +136,7 @@ int mcp_arena_init_current_thread(size_t initial_size) {
 
     // Update statistics and set thread ID
     if (tls_stats.thread_id == 0) {
-        tls_stats.thread_id = get_current_thread_id();
+        tls_stats.thread_id = mcp_get_thread_id();
     }
     tls_stats.arena_allocations++;
     tls_initialized = true;
@@ -328,7 +322,7 @@ bool mcp_thread_cache_init_current_thread(void) {
         tls_initialized = true;
         // Set thread ID if not already set
         if (tls_stats.thread_id == 0) {
-            tls_stats.thread_id = get_current_thread_id();
+            tls_stats.thread_id = mcp_get_thread_id();
         }
         mcp_log_debug("Thread-local object cache system initialized for thread %lu", tls_stats.thread_id);
     } else {
@@ -591,7 +585,7 @@ bool mcp_thread_local_get_stats(
 
     // Ensure thread ID is set
     if (tls_stats.thread_id == 0) {
-        tls_stats.thread_id = get_current_thread_id();
+        tls_stats.thread_id = mcp_get_thread_id();
     }
 
     // Fill in statistics if pointers are provided

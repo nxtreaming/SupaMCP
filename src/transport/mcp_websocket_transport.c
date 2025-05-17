@@ -117,6 +117,13 @@ static int ws_server_transport_stop(mcp_transport_t* transport) {
 
     ws_server_data_t* data = (ws_server_data_t*)transport->transport_data;
 
+    // Check if already stopped
+    if (!data->running) {
+        mcp_log_debug("WebSocket server transport already stopped");
+        return 0;
+    }
+
+    mcp_log_debug("Stopping WebSocket server transport(thread ID: %ld)...", mcp_get_thread_id());
     // Set running flag to false to stop event loop
     data->running = false;
 
@@ -202,7 +209,10 @@ static void ws_server_transport_destroy(mcp_transport_t* transport) {
 
     // Stop transport if running
     if (data->running) {
+        mcp_log_debug("Transport still running during destroy, stopping it now");
         ws_server_transport_stop(transport);
+    } else {
+        mcp_log_debug("Transport already stopped during destroy");
     }
 
     // Free transport data

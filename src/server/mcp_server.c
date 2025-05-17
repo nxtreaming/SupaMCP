@@ -369,11 +369,18 @@ int mcp_server_stop(mcp_server_t* server) {
         return -1;
     }
 
+    // Check if already stopped
+    if (!server->running) {
+        mcp_log_debug("Server already stopped");
+        return 0;
+    }
+
     server->running = false; // Signal threads to stop
     server->shutting_down = true; // Signal that we're in shutdown mode
 
     if (server->transport != NULL) {
         // Stop the transport first (e.g., stop accepting connections)
+        mcp_log_debug("Stopping transport in mcp_server_stop");
         mcp_transport_stop(server->transport);
     }
 
@@ -447,7 +454,12 @@ void mcp_server_destroy(mcp_server_t* server) {
     }
 
     // Ensure stop is called first (idempotent checks inside stop/destroy functions)
+    mcp_log_debug("Stopping server during destroy");
     mcp_server_stop(server);
+
+    // Note: We don't destroy the transport here because it's owned by the caller
+    // Just set it to NULL to avoid double-stop attempts
+    server->transport = NULL;
 
     // Free configuration strings
     free((void*)server->config.name);

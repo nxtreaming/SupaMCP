@@ -3,6 +3,11 @@
 #include <string.h>
 #include <signal.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 #include "mcp_server.h"
 #include "mcp_transport_factory.h"
 #include "mcp_websocket_transport.h"
@@ -18,12 +23,45 @@ static mcp_server_t* g_server = NULL;
 
 // Signal handler to gracefully shut down the server
 static void handle_signal(int sig) {
+    // Use a static flag to prevent multiple signal handlers from running
+    static volatile int shutdown_in_progress = 0;
+
+    // If shutdown is already in progress, just return
+    if (shutdown_in_progress) {
+        printf("Shutdown already in progress, ignoring additional signal\n");
+        return;
+    }
+
+    // Set the flag to indicate shutdown is in progress
+    shutdown_in_progress = 1;
+
     if (g_server) {
         printf("Received signal %d, shutting down...\n", sig);
-        //mcp_server_t* server_to_stop = g_server;
+        mcp_server_t* server_to_stop = g_server;
         g_server = NULL; // Set to NULL first so the main loop can exit
-        // Skip calling mcp_server_stop to allow faster shutdown
-        //mcp_server_stop(server_to_stop);
+        // Call mcp_server_stop to properly stop the transport and event threads
+        mcp_server_stop(server_to_stop);
+
+#ifdef _WIN32
+        // On Windows, set up a forced exit after a short delay if normal shutdown fails
+        if (sig == SIGINT || sig == SIGTERM) {
+            static HANDLE timer = NULL;
+            if (!timer) {
+                timer = CreateWaitableTimer(NULL, TRUE, NULL);
+                if (timer) {
+                    LARGE_INTEGER li;
+                    li.QuadPart = -10000000LL; // 1 second in 100-nanosecond intervals
+                    SetWaitableTimer(timer, &li, 0, NULL, NULL, FALSE);
+
+                    // Create a thread to force exit after the timer expires
+                    HANDLE thread = CreateThread(NULL, 0,
+                        (LPTHREAD_START_ROUTINE)ExitProcess,
+                        (LPVOID)1, 0, NULL);
+                    if (thread) CloseHandle(thread);
+                }
+            }
+        }
+#endif
     }
 }
 
@@ -254,8 +292,20 @@ int main(int argc, char* argv[]) {
         mcp_sleep_ms(100); // Sleep for 100 milliseconds
     }
 
+    // Add a small delay to ensure server_stop has completed
+    mcp_sleep_ms(100);
+
     // Clean up
     if (server_to_destroy) {
+        printf("Destroying server...\n");
+
+        // Destroy the transport first to avoid double-stop issues
+        if (transport) {
+            mcp_transport_destroy(transport);
+            transport = NULL;
+        }
+
+        // Now destroy the server
         mcp_server_destroy(server_to_destroy);
     }
 
@@ -266,5 +316,6 @@ int main(int argc, char* argv[]) {
     mcp_arena_destroy_current_thread();
 
     printf("Server shutdown complete\n");
+    fflush(stdout); // Ensure message is displayed before exit
     return 0;
 }

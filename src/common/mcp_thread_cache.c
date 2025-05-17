@@ -4,6 +4,7 @@
 #include "mcp_memory_constants.h"
 #include "mcp_log.h"
 #include "mcp_list.h"
+#include "mcp_sync.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -95,15 +96,6 @@ typedef MCP_CACHE_ALIGNED struct {
     double growth_threshold;                  // Hit ratio threshold for growing cache
     double shrink_threshold;                  // Hit ratio threshold for shrinking cache
 } thread_cache_state_t;
-
-// Function to get current thread ID in a platform-independent way
-static unsigned long get_current_thread_id(void) {
-#ifdef _WIN32
-    return (unsigned long)GetCurrentThreadId();
-#else
-    return (unsigned long)pthread_self();
-#endif
-}
 
 /**
  * @brief Helper function to get a memory block from the LRU list
@@ -321,7 +313,7 @@ bool mcp_thread_cache_init(void) {
     memset(&tls_cache_state, 0, sizeof(tls_cache_state));
 
     // Set thread ID (this was zeroed by the memset)
-    tls_thread_id = get_current_thread_id();
+    tls_thread_id = mcp_get_thread_id();
 
     // Initialize LRU clock
     tls_lru_clock = 1;  // Start at 1, 0 means unused
@@ -391,7 +383,7 @@ bool mcp_thread_cache_init_with_config(const mcp_thread_cache_config_t* config) 
     memset(&tls_cache_state, 0, sizeof(tls_cache_state));
 
     // Set thread ID (this was zeroed by the memset)
-    tls_thread_id = get_current_thread_id();
+    tls_thread_id = mcp_get_thread_id();
 
     // Initialize LRU clock
     tls_lru_clock = 1;  // Start at 1, 0 means unused
@@ -462,7 +454,7 @@ void mcp_thread_cache_cleanup(void) {
 
     // Get thread ID for logging (in case it wasn't set)
     if (tls_thread_id == 0) {
-        tls_thread_id = get_current_thread_id();
+        tls_thread_id = mcp_get_thread_id();
     }
 
     // Flush all caches
@@ -945,7 +937,7 @@ bool mcp_thread_cache_get_stats(mcp_thread_cache_stats_t* stats) {
 
     // Get thread ID if not already set
     if (tls_thread_id == 0) {
-        tls_thread_id = get_current_thread_id();
+        tls_thread_id = mcp_get_thread_id();
     }
 
     // Thread identification
@@ -1221,7 +1213,7 @@ void mcp_thread_cache_flush(void) {
 
     // Get thread ID for logging (in case it wasn't set)
     if (tls_thread_id == 0) {
-        tls_thread_id = get_current_thread_id();
+        tls_thread_id = mcp_get_thread_id();
     }
 
     // Flush all caches using the helper function

@@ -129,6 +129,12 @@ int mcp_thread_join(mcp_thread_t thread_handle, void** retval);
  */
 void mcp_thread_yield(void);
 
+/**
+ * @brief Gets the ID of the current thread.
+ * @return The ID of the current thread as an unsigned long.
+ */
+unsigned long mcp_get_thread_id(void);
+
 /** @brief Opaque spinlock type. */
 typedef struct mcp_spinlock_s mcp_spinlock_t;
 
