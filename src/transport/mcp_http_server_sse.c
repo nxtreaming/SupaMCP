@@ -1,8 +1,4 @@
 #ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
-
 #include "win_socket_compat.h"
 #endif
 
@@ -12,25 +8,22 @@
 #include <stdio.h>
 #include <time.h>
 
-// SSE event fields
-#define SSE_FIELD_EVENT "event: "
-#define SSE_FIELD_ID "id: "
-#define SSE_FIELD_DATA "data: "
-#define SSE_FIELD_HEARTBEAT ": heartbeat\n\n"
+// SSE event field constants
+#define SSE_FIELD_EVENT "event: "     /**< SSE event field prefix */
+#define SSE_FIELD_ID "id: "           /**< SSE ID field prefix */
+#define SSE_FIELD_DATA "data: "       /**< SSE data field prefix */
+#define SSE_FIELD_HEARTBEAT ": heartbeat\n\n"  /**< SSE heartbeat comment */
 
-// Buffer sizes
-#define SSE_ID_BUFFER_SIZE 32
-
-// Forward declarations
-static void free_stored_event(sse_event_t* event);
-static bool allocate_event_fields(int index, http_transport_data_t* data,
-                                 const char* event_id, const char* event_type,
-                                 const char* event_data);
+// Buffer size constants
+#define SSE_ID_BUFFER_SIZE 32         /**< Maximum size for event ID strings */
 
 /**
  * @brief Free all memory associated with a stored SSE event
  *
- * @param event The event to free
+ * This function safely frees all dynamically allocated memory in an SSE event
+ * structure and resets its fields to prevent use-after-free issues.
+ *
+ * @param event Pointer to the event structure to free
  */
 static void free_stored_event(sse_event_t* event) {
     if (event == NULL) {
@@ -52,33 +45,43 @@ static void free_stored_event(sse_event_t* event) {
         event->data = NULL;
     }
 
-    // Reset timestamp
+    // Reset timestamp to prevent potential issues with event expiration logic
     event->timestamp = 0;
 }
 
 /**
  * @brief Allocate and store event fields in the circular buffer
  *
+ * This function allocates memory for and stores an SSE event in the circular buffer.
+ * It handles all necessary memory management and error conditions.
+ *
  * @param index Index in the circular buffer
  * @param data Transport data
  * @param event_id Event ID string
  * @param event_type Event type (can be NULL)
  * @param event_data Event data
- * @return bool true if successful, false on memory allocation failure
+ * @return bool true if successful, false on parameter or memory allocation failure
  */
 static bool allocate_event_fields(int index, http_transport_data_t* data,
                                  const char* event_id, const char* event_type,
                                  const char* event_data) {
     if (data == NULL || event_id == NULL || event_data == NULL ||
         index < 0 || index >= MAX_SSE_STORED_EVENTS) {
+        mcp_log_error("Invalid parameters for allocate_event_fields");
         return false;
     }
+
+    // Initialize all fields to NULL to simplify cleanup on failure
+    data->stored_events[index].id = NULL;
+    data->stored_events[index].event_type = NULL;
+    data->stored_events[index].data = NULL;
+    data->stored_events[index].timestamp = 0;
 
     // Store the event ID
     data->stored_events[index].id = mcp_strdup(event_id);
     if (data->stored_events[index].id == NULL) {
         mcp_log_error("Failed to allocate memory for event ID");
-        return false;
+        goto cleanup_error;
     }
 
     // Store the event type (if provided)
@@ -86,45 +89,39 @@ static bool allocate_event_fields(int index, http_transport_data_t* data,
         data->stored_events[index].event_type = mcp_strdup(event_type);
         if (data->stored_events[index].event_type == NULL) {
             mcp_log_error("Failed to allocate memory for event type");
-            free(data->stored_events[index].id);
-            data->stored_events[index].id = NULL;
-            return false;
+            goto cleanup_error;
         }
-    } else {
-        data->stored_events[index].event_type = NULL;
     }
 
     // Store the event data
     data->stored_events[index].data = mcp_strdup(event_data);
     if (data->stored_events[index].data == NULL) {
         mcp_log_error("Failed to allocate memory for event data");
-        free(data->stored_events[index].id);
-        data->stored_events[index].id = NULL;
-        if (data->stored_events[index].event_type != NULL) {
-            free(data->stored_events[index].event_type);
-            data->stored_events[index].event_type = NULL;
-        }
-        return false;
+        goto cleanup_error;
     }
 
     // Store the timestamp
     data->stored_events[index].timestamp = time(NULL);
-
     return true;
+
+cleanup_error:
+    // Free any allocated memory on failure
+    free_stored_event(&data->stored_events[index]);
+    return false;
 }
 
 /**
  * @brief Store an SSE event for replay on reconnection (using circular buffer)
  *
  * This function stores an event in a circular buffer for replay to clients that
- * reconnect with a Last-Event-ID.
+ * reconnect with a Last-Event-ID. It manages the circular buffer, handling
+ * overflow by replacing the oldest event when the buffer is full.
  *
- * @param data Transport data
- * @param event Event type (can be NULL)
- * @param event_data Event data
+ * @param data Transport data containing the event circular buffer
+ * @param event Event type (can be NULL for default events)
+ * @param event_data Event data payload (must not be NULL)
  */
 void store_sse_event(http_transport_data_t* data, const char* event, const char* event_data) {
-    // Validate input parameters
     if (data == NULL || event_data == NULL) {
         mcp_log_error("Invalid parameters for store_sse_event");
         return;
@@ -133,32 +130,36 @@ void store_sse_event(http_transport_data_t* data, const char* event, const char*
     // Lock the event mutex to safely modify the circular buffer
     mcp_mutex_lock(data->event_mutex);
 
-    // Get the current event ID
+    // Generate sequential event ID
     int event_id = data->next_event_id++;
 
     // Format the event ID as a string
     char id_str[SSE_ID_BUFFER_SIZE];
     int id_len = snprintf(id_str, sizeof(id_str), "%d", event_id);
     if (id_len < 0 || id_len >= (int)sizeof(id_str)) {
-        mcp_log_error("Event ID buffer overflow");
+        mcp_log_error("Event ID buffer overflow: ID %d exceeds buffer size", event_id);
         mcp_mutex_unlock(data->event_mutex);
         return;
     }
 
-    // If the buffer is full, free the oldest event's memory
+    // Handle circular buffer management
     if (data->stored_event_count == MAX_SSE_STORED_EVENTS) {
+        // Buffer is full - replace oldest event
+        mcp_log_debug("Circular buffer full (%d events), replacing oldest event at position %d", 
+                     MAX_SSE_STORED_EVENTS, data->event_head);
+        
         // Free the oldest event's memory (at head position)
         free_stored_event(&data->stored_events[data->event_head]);
 
         // Move head forward (oldest event position)
         data->event_head = (data->event_head + 1) % MAX_SSE_STORED_EVENTS;
-
+        
         // Count stays the same as we're replacing an event
-        mcp_log_debug("Circular buffer full, replacing oldest event at position %d", data->event_head);
     } else {
-        // Buffer is not full, increment count
+        // Buffer has space - increment count
         data->stored_event_count++;
-        mcp_log_debug("Adding event to circular buffer, count: %d", data->stored_event_count);
+        mcp_log_debug("Adding event to circular buffer, new count: %d/%d", 
+                     data->stored_event_count, MAX_SSE_STORED_EVENTS);
     }
 
     // Add the new event at the tail position
@@ -175,7 +176,7 @@ void store_sse_event(http_transport_data_t* data, const char* event, const char*
     data->event_tail = (data->event_tail + 1) % MAX_SSE_STORED_EVENTS;
 
     mcp_log_debug("Stored SSE event: id=%s, type=%s, data_length=%zu",
-                 id_str, event ? event : "NULL", strlen(event_data));
+                 id_str, event ? event : "(default)", strlen(event_data));
 
     mcp_mutex_unlock(data->event_mutex);
 }
@@ -184,40 +185,43 @@ void store_sse_event(http_transport_data_t* data, const char* event, const char*
  * @brief Send a heartbeat to all SSE clients
  *
  * This function sends a heartbeat comment to all connected SSE clients
- * to keep the connections alive.
+ * to keep the connections alive. Heartbeats are sent at the configured interval
+ * and help prevent connection timeouts, especially with proxies and firewalls.
  *
- * @param data Transport data
+ * @param data Transport data containing SSE client information
  */
 void send_sse_heartbeat(http_transport_data_t* data) {
-    // Validate input parameters
     if (data == NULL) {
         mcp_log_error("Invalid parameters for send_sse_heartbeat");
         return;
     }
 
-    // Check if heartbeats are enabled
+    // Check if heartbeats are enabled in configuration
     if (!data->send_heartbeats) {
         return;
     }
 
-    // Check if it's time for a heartbeat
+    // Check if it's time for a heartbeat based on configured interval
     time_t now = time(NULL);
     int heartbeat_interval_sec = data->heartbeat_interval_ms / 1000;
+    
+    // Ensure minimum interval of 1 second
     if (heartbeat_interval_sec <= 0) {
-        heartbeat_interval_sec = 1; // Minimum 1 second interval
+        heartbeat_interval_sec = 1;
     }
 
+    // Skip if not enough time has passed since last heartbeat
     if (now - data->last_heartbeat < heartbeat_interval_sec) {
-        return; // Not time for a heartbeat yet
+        return;
     }
 
-    // Update last heartbeat time
+    // Update last heartbeat timestamp
     data->last_heartbeat = now;
 
     // Lock the SSE mutex to safely access the client list
     mcp_mutex_lock(data->sse_mutex);
 
-    // Check if there are any connected clients
+    // Skip if no clients are connected
     if (data->sse_client_count <= 0) {
         mcp_log_debug("No SSE clients connected, skipping heartbeat");
         mcp_mutex_unlock(data->sse_mutex);
@@ -226,7 +230,7 @@ void send_sse_heartbeat(http_transport_data_t* data) {
 
     mcp_log_debug("Sending heartbeat to %d SSE clients", data->sse_client_count);
 
-    // Send heartbeat to all clients
+    // Send heartbeat to all connected clients
     int success_count = 0;
     for (int i = 0; i < data->sse_client_count; i++) {
         struct lws* wsi = data->sse_clients[i];
@@ -234,14 +238,17 @@ void send_sse_heartbeat(http_transport_data_t* data) {
             continue;
         }
 
-        // Send a comment as a heartbeat (will not trigger an event in the client)
+        // Send a comment as a heartbeat (using SSE comment format)
+        // This will not trigger an event in the client but keeps the connection alive
         int result = lws_write_http(wsi, SSE_FIELD_HEARTBEAT, strlen(SSE_FIELD_HEARTBEAT));
+        
         if (result < 0) {
             mcp_log_warn("Failed to send heartbeat to SSE client %d", i);
         } else {
             success_count++;
 
             // Request a callback when the socket is writable again
+            // This ensures libwebsockets will flush the data properly
             lws_callback_on_writable(wsi);
         }
     }
@@ -255,40 +262,45 @@ void send_sse_heartbeat(http_transport_data_t* data) {
 /**
  * @brief Check if a client session matches the requested session ID
  *
- * @param session Session data
- * @param session_id Requested session ID
- * @return bool true if the session matches, false otherwise
+ * This function determines if an SSE client session matches a specified session ID.
+ * It supports both exact and case-insensitive matching, and handles NULL values
+ * appropriately.
+ *
+ * @param session Session data (can be NULL)
+ * @param session_id Requested session ID (can be NULL for broadcast)
+ * @return bool true if the session matches or if session_id is NULL (broadcast), false otherwise
  */
 static bool session_matches_id(http_session_data_t* session, const char* session_id) {
+    // If no specific session ID requested, this is a broadcast - match all clients
     if (session_id == NULL) {
-        return true; // No specific session ID requested, match all
+        return true;
     }
 
-    // If session is NULL, no match
+    // If client has no session data, it can't match a specific session ID
     if (session == NULL) {
-        mcp_log_debug("Client has no session data but requested session_id: %s", session_id);
+        mcp_log_debug("Client has no session data but filter requires session_id: %s", session_id);
         return false;
     }
 
-    // If session_id is NULL, no match
+    // If client session has no ID, it can't match a specific session ID
     if (session->session_id == NULL) {
-        mcp_log_debug("Client session_id is NULL but requested session_id: %s", session_id);
+        mcp_log_debug("Client session has NULL session_id but filter requires: %s", session_id);
         return false;
     }
 
-    // Try exact match first
+    // First try exact match (faster)
     if (strcmp(session->session_id, session_id) == 0) {
         return true;
     }
 
-    // Try case-insensitive match
+    // Then try case-insensitive match (for robustness)
     if (strcasecmp(session->session_id, session_id) == 0) {
-        mcp_log_debug("Session IDs match with case-insensitive comparison");
+        mcp_log_debug("Session IDs match with case-insensitive comparison: %s", session_id);
         return true;
     }
 
-    // No match
-    mcp_log_debug("Session ID mismatch - requested: %s, client: %s",
+    // Log mismatch for debugging purposes
+    mcp_log_debug("Session ID mismatch - requested: %s, client has: %s",
                  session_id, session->session_id);
     return false;
 }
@@ -296,107 +308,166 @@ static bool session_matches_id(http_session_data_t* session, const char* session
 /**
  * @brief Check if a client session matches the event filter
  *
- * @param session Session data
- * @param event Event type
- * @return bool true if the session matches the filter, false otherwise
+ * This function determines if an event should be sent to a client based on
+ * the client's event filter settings. Clients can subscribe to specific event
+ * types or receive all events.
+ *
+ * @param session Session data (can be NULL)
+ * @param event Event type (can be NULL for default events)
+ * @return bool true if the event should be sent to this client, false otherwise
  */
 static bool session_matches_filter(http_session_data_t* session, const char* event) {
-    // If no session or no filter, match all
+    // If client has no session data or no event filter, send all events
     if (session == NULL || session->event_filter == NULL) {
         return true;
     }
 
-    // If no event specified, match all
+    // If this is a default event (no type specified), send to all clients
     if (event == NULL) {
         return true;
     }
 
-    // Check if the event matches the filter
+    // Check if the event type matches the client's filter
     if (strcmp(session->event_filter, event) != 0) {
-        mcp_log_debug("Event filter mismatch - filter: %s, event: %s",
+        // For detailed logging in debug mode
+        mcp_log_debug("Event type mismatch - client filter: %s, event type: %s",
                      session->event_filter, event);
         return false;
     }
 
+    // Event type matches client's filter
     return true;
 }
 
 /**
  * @brief Send an SSE event to a client
  *
- * @param wsi WebSocket instance
- * @param event Event type (can be NULL)
- * @param data Event data
+ * This function sends a properly formatted Server-Sent Event (SSE) to a client.
+ * It follows the SSE protocol format, writing the event in chunks to avoid any
+ * heap allocations. The function handles both named events and default events.
+ *
+ * SSE Format:
+ * - Named event: "event: [event_type]\nid: [id]\ndata: [data]\n\n"
+ * - Default event: "id: [id]\ndata: [data]\n\n"
+ *
+ * @param wsi WebSocket instance representing the client connection
+ * @param event Event type (can be NULL for default events)
+ * @param data Event data payload
  * @param id_str Event ID string
  * @return bool true if the event was sent successfully, false otherwise
  */
 static bool send_sse_event_to_client(struct lws* wsi, const char* event,
-                                    const char* data, const char* id_str) {
+                                     const char* data, const char* id_str) {
     if (wsi == NULL || data == NULL || id_str == NULL) {
+        mcp_log_error("Invalid parameters for send_sse_event_to_client");
         return false;
     }
 
     int result = 0;
-
+    
+    // Different format based on whether an event type is specified
     if (event != NULL) {
+        // Named event format
         // Write in multiple pieces to avoid any heap allocation
-        // 1. Write "event: "
+        
+        // Step 1: Write event field ("event: [event_type]\n")
         result = lws_write_http(wsi, SSE_FIELD_EVENT, strlen(SSE_FIELD_EVENT));
-        if (result < 0) return false;
-
-        // 2. Write the event name
+        if (result < 0) {
+            mcp_log_error("Failed to write event field prefix");
+            return false;
+        }
+        
         result = lws_write_http(wsi, event, strlen(event));
-        if (result < 0) return false;
-
-        // 3. Write "\nid: "
+        if (result < 0) {
+            mcp_log_error("Failed to write event type");
+            return false;
+        }
+        
         result = lws_write_http(wsi, "\n", 1);
-        if (result < 0) return false;
+        if (result < 0) {
+            mcp_log_error("Failed to write newline after event type");
+            return false;
+        }
 
+        // Step 2: Write ID field ("id: [id]\n")
         result = lws_write_http(wsi, SSE_FIELD_ID, strlen(SSE_FIELD_ID));
-        if (result < 0) return false;
-
-        // 4. Write the event ID
+        if (result < 0) {
+            mcp_log_error("Failed to write id field prefix");
+            return false;
+        }
+        
         result = lws_write_http(wsi, id_str, strlen(id_str));
-        if (result < 0) return false;
-
-        // 5. Write "\ndata: "
+        if (result < 0) {
+            mcp_log_error("Failed to write event ID");
+            return false;
+        }
+        
         result = lws_write_http(wsi, "\n", 1);
-        if (result < 0) return false;
+        if (result < 0) {
+            mcp_log_error("Failed to write newline after event ID");
+            return false;
+        }
 
+        // Step 3: Write data field ("data: [data]\n\n")
         result = lws_write_http(wsi, SSE_FIELD_DATA, strlen(SSE_FIELD_DATA));
-        if (result < 0) return false;
-
-        // 6. Write the data
+        if (result < 0) {
+            mcp_log_error("Failed to write data field prefix");
+            return false;
+        }
+        
         result = lws_write_http(wsi, data, strlen(data));
-        if (result < 0) return false;
-
-        // 7. Write final "\n\n"
+        if (result < 0) {
+            mcp_log_error("Failed to write event data");
+            return false;
+        }
+        
+        // End with double newline to complete the event
         result = lws_write_http(wsi, "\n\n", 2);
-        if (result < 0) return false;
+        if (result < 0) {
+            mcp_log_error("Failed to write final newlines");
+            return false;
+        }
     } else {
-        // No event specified, simpler format
-        // 1. Write "id: "
+        // Default event format (no event type)
+        
+        // Step 1: Write ID field ("id: [id]\n")
         result = lws_write_http(wsi, SSE_FIELD_ID, strlen(SSE_FIELD_ID));
-        if (result < 0) return false;
-
-        // 2. Write the event ID
+        if (result < 0) {
+            mcp_log_error("Failed to write id field prefix");
+            return false;
+        }
+        
         result = lws_write_http(wsi, id_str, strlen(id_str));
-        if (result < 0) return false;
-
-        // 3. Write "\ndata: "
+        if (result < 0) {
+            mcp_log_error("Failed to write event ID");
+            return false;
+        }
+        
         result = lws_write_http(wsi, "\n", 1);
-        if (result < 0) return false;
+        if (result < 0) {
+            mcp_log_error("Failed to write newline after event ID");
+            return false;
+        }
 
+        // Step 2: Write data field ("data: [data]\n\n")
         result = lws_write_http(wsi, SSE_FIELD_DATA, strlen(SSE_FIELD_DATA));
-        if (result < 0) return false;
-
-        // 4. Write the data
+        if (result < 0) {
+            mcp_log_error("Failed to write data field prefix");
+            return false;
+        }
+        
         result = lws_write_http(wsi, data, strlen(data));
-        if (result < 0) return false;
-
-        // 5. Write final "\n\n"
+        if (result < 0) {
+            mcp_log_error("Failed to write event data");
+            return false;
+        }
+        
+        // End with double newline to complete the event
         result = lws_write_http(wsi, "\n\n", 2);
-        if (result < 0) return false;
+        if (result < 0) {
+            mcp_log_error("Failed to write final newlines");
+            return false;
+        }
     }
 
     // Request a callback when the socket is writable again
@@ -410,17 +481,17 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
  * @brief Send SSE event to a specific session or all connected clients
  *
  * This function sends an SSE event to one or more connected clients,
- * optionally filtering by session ID.
+ * optionally filtering by session ID. It handles storing the event for
+ * replay on reconnection, client filtering, and delivery to matching clients.
  *
  * @param transport Transport instance
- * @param event Event type (can be NULL)
- * @param data Event data
- * @param session_id Session ID to filter by (can be NULL for broadcast)
+ * @param event Event type (can be NULL for default events)
+ * @param data Event data payload (must not be NULL)
+ * @param session_id Session ID to filter by (can be NULL for broadcast to all clients)
  * @return int 0 on success, -1 on failure
  */
 int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
-                               const char* data, const char* session_id) {
-    // Validate input parameters
+                                const char* data, const char* session_id) {
     if (transport == NULL || transport->transport_data == NULL || data == NULL) {
         mcp_log_error("Invalid parameters for mcp_http_transport_send_sse");
         return -1;
@@ -428,76 +499,84 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
 
     http_transport_data_t* transport_data = (http_transport_data_t*)transport->transport_data;
 
-    // Store the event for replay on reconnection
+    // Store the event for replay on reconnection (for clients that join later)
     store_sse_event(transport_data, event, data);
 
-    // Get the current event ID
-    int event_id = transport_data->next_event_id - 1; // The ID was already incremented in store_sse_event
+    // Get the current event ID (already incremented in store_sse_event)
+    int event_id = transport_data->next_event_id - 1;
+    
+    // Format the event ID as a string for SSE protocol
     char id_str[SSE_ID_BUFFER_SIZE];
     int id_len = snprintf(id_str, sizeof(id_str), "%d", event_id);
     if (id_len < 0 || id_len >= (int)sizeof(id_str)) {
-        mcp_log_error("Event ID buffer overflow");
+        mcp_log_error("Event ID buffer overflow: ID %d exceeds buffer size", event_id);
         return -1;
     }
 
-    // Log the event details
-    mcp_log_debug("Sending SSE event: id=%s, type=%s, data_length=%zu, session_id=%s",
-                 id_str, event ? event : "NULL", strlen(data),
-                 session_id ? session_id : "NULL");
+    // Log the event details for debugging
+    mcp_log_debug("Sending SSE event: id=%s, type=%s, data_length=%zu, target=%s",
+                 id_str, event ? event : "(default)", strlen(data),
+                 session_id ? session_id : "broadcast");
 
     // Lock the SSE mutex to safely access the client list
     mcp_mutex_lock(transport_data->sse_mutex);
 
-    // Check if there are any connected clients
+    // Early return if no clients are connected
     if (transport_data->sse_client_count <= 0) {
-        mcp_log_warn("No SSE clients connected, event will not be delivered");
+        mcp_log_warn("No SSE clients connected, event will be stored but not delivered");
         mcp_mutex_unlock(transport_data->sse_mutex);
-        return 0;
+        return 0; // Not an error condition, just no clients to deliver to
     }
 
-    // Send to matching SSE clients
+    // Track delivery statistics
     int matched_clients = 0;
     int success_count = 0;
 
+    // Iterate through all connected clients
     for (int i = 0; i < transport_data->sse_client_count; i++) {
         struct lws* wsi = transport_data->sse_clients[i];
         if (wsi == NULL) {
-            continue;
+            continue; // Skip invalid client entries
         }
 
         // Get session data to check for event filter and session ID
         http_session_data_t* session = (http_session_data_t*)lws_wsi_user(wsi);
 
-        // Skip this client if it doesn't match the filter
+        // Apply filtering logic
+        // 1. Check if client is subscribed to this event type
         if (!session_matches_filter(session, event)) {
             continue;
         }
 
-        // Skip this client if it doesn't match the session ID
+        // 2. Check if client matches the requested session ID
         if (!session_matches_id(session, session_id)) {
             continue;
         }
 
-        // If we get here, the client matches all criteria
+        // Client matches all criteria - count it
         matched_clients++;
 
         // Send the event to this client
         if (send_sse_event_to_client(wsi, event, data, id_str)) {
+            // Success - update counters and client state
             success_count++;
 
-            // Update the client's last event ID
+            // Update the client's last event ID for reconnection support
             if (session != NULL) {
                 session->last_event_id = event_id;
             }
         } else {
             mcp_log_error("Failed to send SSE event to client %d", i);
+            // Continue with other clients even if this one failed
         }
     }
 
+    // Release the mutex as soon as possible
     mcp_mutex_unlock(transport_data->sse_mutex);
 
-    // Log the results
+    // Log appropriate summary based on delivery mode and results
     if (session_id != NULL) {
+        // Targeted delivery to specific session
         if (matched_clients > 0) {
             mcp_log_info("Successfully sent SSE event to %d/%d client(s) with session_id: %s",
                         success_count, matched_clients, session_id);
@@ -505,9 +584,10 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
             mcp_log_warn("No SSE clients matched the requested session_id: %s", session_id);
         }
     } else {
+        // Broadcast delivery
         mcp_log_info("Successfully sent SSE event to %d/%d client(s) (broadcast)",
                     success_count, matched_clients);
     }
 
-    return 0;
+    return 0; // Success
 }
