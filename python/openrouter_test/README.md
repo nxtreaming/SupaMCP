@@ -45,6 +45,16 @@ python test_mcp_echo.py "Hello, MCP Server!"
 - `--quiet` or `-q`: Minimize output, only show essential information (while still showing full LLM responses)
 - `--simulate` or `-s`: Simulate tool calls without using a real MCP server
 - `--mcp-url`: Specify a custom MCP server URL (default: `http://127.0.0.1:8080/call_tool`)
+- `--read-file` or `-r`: Read a saved response file instead of making a new request
+- `--latest-file` or `-l`: Read the most recently created response file
+- `--max-lines`: Maximum number of lines to read from the saved response file
+- `--http-client`: Test the HTTP client tool instead of the echo tool
+- `--http-url`: URL to request when testing the HTTP client tool
+- `--http-method`: HTTP method to use (GET, POST, etc.) (default: "GET")
+- `--http-headers`: HTTP headers in JSON format
+- `--http-body`: HTTP request body
+- `--http-content-type`: Content type for HTTP request body
+- `--http-timeout`: HTTP request timeout in seconds (default: 30)
 
 Examples:
 
@@ -69,6 +79,21 @@ python test_mcp_echo.py --mcp-url "http://example.com:8080/call_tool"
 
 # Combine multiple options
 python test_mcp_echo.py "Hello world" --model "openai/gpt-4-turbo" -q --mcp-url "http://192.168.1.100:8080/call_tool"
+
+# Test the HTTP client tool with a GET request
+python test_mcp_echo.py --http-client --http-url "https://www.example.com"
+
+# Test the HTTP client tool with a POST request and custom headers
+python test_mcp_echo.py --http-client --http-url "https://api.example.com/data" --http-method "POST" --http-headers '{"Authorization": "Bearer token123", "Content-Type": "application/json"}' --http-body '{"key": "value"}'
+
+# Read a saved response file
+python test_mcp_echo.py --read-file "http_response_20250518_163800.html"
+
+# Read the most recently created response file
+python test_mcp_echo.py --latest-file
+
+# Read only the first 100 lines of a response file
+python test_mcp_echo.py --read-file "http_response_20250518_163800.html" --max-lines 100
 ```
 
 ## How It Works
@@ -140,11 +165,64 @@ You can also use the `--quiet` option to minimize output:
 python advanced_test.py "Please echo 'Hello, world!'" -q
 ```
 
+## Reading Response Files
+
+The script now supports reading saved response files. This is useful for examining large HTTP responses that were saved to files.
+
+To read a saved response file:
+
+```bash
+python test_mcp_echo.py --read-file "http_response_20250518_163800.html"
+```
+
+You can also read the most recently created response file:
+
+```bash
+python test_mcp_echo.py --latest-file
+```
+
+To limit the number of lines displayed:
+
+```bash
+python test_mcp_echo.py --read-file "http_response_20250518_163800.html" --max-lines 100
+```
+
+## Testing the HTTP Client Tool
+
+The script now supports testing the HTTP client tool directly, without going through the OpenRouter LLM API. This is useful for testing your MCP server's HTTP client implementation.
+
+To test the HTTP client tool:
+
+```bash
+python test_mcp_echo.py --http-client --http-url "https://www.example.com"
+```
+
+The script will send a JSON-RPC request to your MCP server, calling the HTTP client tool with the specified URL. The response will be displayed in the console.
+
+You can customize the HTTP request with the following options:
+
+- `--http-method`: HTTP method to use (GET, POST, PUT, DELETE, etc.)
+- `--http-headers`: HTTP headers in JSON format
+- `--http-body`: Request body
+- `--http-content-type`: Content type for request body
+- `--http-timeout`: Request timeout in seconds
+
+Example of a POST request with custom headers and body:
+
+```bash
+python test_mcp_echo.py --http-client --http-url "https://api.example.com/data" \
+  --http-method "POST" \
+  --http-headers '{"Authorization": "Bearer token123"}' \
+  --http-body '{"key": "value"}' \
+  --http-content-type "application/json"
+```
+
 ## Troubleshooting
 
 - **API Key Error**: Make sure your OpenRouter API key is correctly set in the `.env` file
 - **Connection Error**: Ensure your MCP server is running and accessible at the URL specified in the `.env` file
 - **Tool Not Found**: Verify that your MCP server has an echo tool registered
+- **HTTP Client Error**: If testing the HTTP client tool fails, check that your MCP server has the HTTP client tool registered and properly configured
 
 ## Available OpenRouter Models
 

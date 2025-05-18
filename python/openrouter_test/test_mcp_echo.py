@@ -11,6 +11,7 @@ import json
 import time
 import argparse
 import requests
+import sys
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -27,6 +28,200 @@ MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8080/call_tool")
 
 # We'll initialize the OpenAI client in the test function to ensure it uses the current MCP_SERVER_URL
 client = None
+
+def test_http_client(url, method="GET", headers=None, body=None, content_type=None, timeout=30, quiet=False, check_saved_file=True):
+    """
+    Test the HTTP client tool on the MCP server.
+
+    Args:
+        url: The URL to request
+        method: HTTP method (GET, POST, etc.)
+        headers: Additional HTTP headers
+        body: Request body
+        content_type: Content type for request body
+        timeout: Request timeout in seconds
+        quiet: Whether to suppress most output
+        check_saved_file: Whether to check for saved response files in case of server error
+
+    Returns:
+        The response from the MCP server, or None if an error occurred
+    """
+    if not quiet:
+        print(f"\n--- Direct HTTP Client Tool Test ---")
+        print(f"Testing HTTP client tool with URL: {url}")
+    else:
+        print(f"Testing HTTP client with URL: {url}")
+
+    # Prepare the JSON-RPC request
+    arguments = {
+        "url": url,
+        "method": method
+    }
+
+    if headers:
+        arguments["headers"] = headers
+    if body:
+        arguments["body"] = body
+    if content_type:
+        arguments["content_type"] = content_type
+    if timeout:
+        arguments["timeout"] = timeout
+
+    jsonrpc_request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "call_tool",
+        "params": {
+            "name": "http_client",
+            "arguments": arguments
+        }
+    }
+
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        # Send the request
+        if not quiet:
+            print(f"Sending request to MCP server at {MCP_SERVER_URL}...")
+
+        response = requests.post(MCP_SERVER_URL, json=jsonrpc_request, headers=headers, timeout=timeout)
+
+        # Print response status
+        if not quiet:
+            print(f"Status Code: {response.status_code}")
+
+        # If successful, process the response
+        if response.status_code == 200 and response.text.strip():
+            if not quiet:
+                print(f"Success!")
+
+            try:
+                result = response.json()
+
+                if not quiet:
+                    print(f"\n--- MCP Server Response ---")
+                    print(json.dumps(result, indent=2))
+
+                # Check if response contains a saved file path
+                if "result" in result and "content" in result["result"]:
+                    saved_file_path = None
+
+                    # First check if any content item has a saved file path
+                    for item in result["result"]["content"]:
+                        if isinstance(item, dict):
+                            # Check metadata for saved_to_file
+                            if "metadata" in item and isinstance(item["metadata"], dict) and "saved_to_file" in item["metadata"]:
+                                saved_file_path = item["metadata"]["saved_to_file"]
+                                print(f"\nLarge response saved to file: {saved_file_path}")
+                                print(f"You can view the complete response with: python test_mcp_echo.py --read-file {saved_file_path}")
+
+                    # Process text content
+                    for item in result["result"]["content"]:
+                        if isinstance(item, dict) and "text" in item:
+                            http_result = item["text"]
+
+                            # Check if text contains file path information
+                            if "FULL RESPONSE" in http_result and "SAVED TO FILE" in http_result and not quiet:
+                                print("\nResponse contains file path information:")
+                                # Extract the first line with file information
+                                for line in http_result.split("\n"):
+                                    if "SAVED TO FILE" in line:
+                                        print(f"  {line}")
+                                        break
+
+                            if not quiet:
+                                # If response is very large, print a preview
+                                if len(http_result) > 1000:
+                                    print(f"HTTP Response (preview of {len(http_result)} bytes):")
+                                    print(f"{http_result[:500]}...")
+                                    print("...")
+                                    print(f"...{http_result[-500:]}")
+                                else:
+                                    print(f"HTTP Response: {http_result}")
+                            else:
+                                if saved_file_path:
+                                    print(f"Received: '{http_result[:50]}...' (full response in file)")
+                                else:
+                                    print(f"Received {len(http_result)} bytes")
+
+                return result
+            except json.JSONDecodeError as e:
+                if not quiet:
+                    print(f"Error parsing JSON response: {e}")
+                    print(f"Raw response content: {repr(response.text)}")
+                else:
+                    print("Error: Invalid response from server")
+        else:
+            if not quiet:
+                print(f"Error: MCP server returned status code {response.status_code}")
+                print(f"Response content: {response.text}")
+            else:
+                print(f"Error: Server returned status {response.status_code}")
+    except Exception as e:
+        if not quiet:
+            print(f"Error calling MCP server: {e}")
+        else:
+            print(f"Error: {str(e)}")
+
+        # Check if a response file was saved despite the error
+        if check_saved_file:
+            import glob
+            import time
+
+            # Get current date in format YYYYMMDD
+            current_date = time.strftime("%Y%m%d")
+
+            # Look for recently created response files
+            response_files = glob.glob(f"http_response_{current_date}_*.html")
+            if response_files:
+                # Sort by modification time (newest first)
+                response_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                newest_file = response_files[0]
+
+                # Check if file was created in the last minute
+                file_mtime = os.path.getmtime(newest_file)
+                if time.time() - file_mtime < 60:  # Within the last minute
+                    print(f"\nFound a recently saved response file: {newest_file}")
+                    print(f"The server may have crashed after saving the response.")
+                    print(f"You can view this file with: python test_mcp_echo.py --read-file {newest_file}")
+
+                    # Return a simple result with the file path
+                    return {
+                        "saved_file": newest_file,
+                        "error": str(e),
+                        "note": "Server crashed after saving response"
+                    }
+
+    return None
+
+def read_saved_response_file(file_path, max_lines=None):
+    """
+    Read a saved response file and return its contents.
+
+    Args:
+        file_path: Path to the saved response file
+        max_lines: Maximum number of lines to read (None for all)
+
+    Returns:
+        The contents of the file, or an error message if the file cannot be read
+    """
+    try:
+        if not os.path.exists(file_path):
+            return f"Error: File not found: {file_path}"
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            if max_lines is None:
+                return f.read()
+            else:
+                lines = []
+                for i, line in enumerate(f):
+                    if i >= max_lines:
+                        lines.append("...\n[Output truncated]")
+                        break
+                    lines.append(line)
+                return ''.join(lines)
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
 
 def initialize_client():
     """Initialize the OpenAI client with the current MCP_SERVER_URL"""
@@ -97,6 +292,25 @@ def test_direct_mcp_server(url, message="Test message"):
                 try:
                     result = response.json()
                     print(f"Parsed JSON: {json.dumps(result, indent=2)}")
+
+                    # Check if response contains a saved file path
+                    if "result" in result and "content" in result["result"]:
+                        for item in result["result"]["content"]:
+                            if isinstance(item, dict):
+                                if "metadata" in item and isinstance(item["metadata"], dict) and "saved_to_file" in item["metadata"]:
+                                    file_path = item["metadata"]["saved_to_file"]
+                                    print(f"\nLarge response saved to file: {file_path}")
+                                    print(f"You can view the complete response in this file.")
+
+                                # Check if text contains file path information
+                                if "text" in item and isinstance(item["text"], str) and "FULL RESPONSE" in item["text"] and "SAVED TO FILE" in item["text"]:
+                                    print("\nResponse contains file path information:")
+                                    # Extract the first line with file information
+                                    for line in item["text"].split("\n"):
+                                        if "SAVED TO FILE" in line:
+                                            print(f"  {line}")
+                                            break
+
                     return test_url  # Return the successful URL
                 except json.JSONDecodeError:
                     print("Response is not valid JSON")
@@ -282,13 +496,49 @@ After receiving the response from the external MCP server, explain what happened
 
                                         # Extract the content from the result
                                         if "result" in result and "content" in result["result"]:
+                                            saved_file_path = None
+
+                                            # First check if any content item has a saved file path
                                             for item in result["result"]["content"]:
-                                                if "text" in item:
+                                                if isinstance(item, dict):
+                                                    # Check metadata for saved_to_file
+                                                    if "metadata" in item and isinstance(item["metadata"], dict) and "saved_to_file" in item["metadata"]:
+                                                        saved_file_path = item["metadata"]["saved_to_file"]
+                                                        if not quiet:
+                                                            print(f"\nLarge response saved to file: {saved_file_path}")
+                                                            print(f"You can view the complete response in this file.")
+                                                        else:
+                                                            print(f"Response saved to: {saved_file_path}")
+
+                                            # Process text content
+                                            for item in result["result"]["content"]:
+                                                if isinstance(item, dict) and "text" in item:
                                                     tool_result = item["text"]
+
+                                                    # Check if text contains file path information
+                                                    if "FULL RESPONSE" in tool_result and "SAVED TO FILE" in tool_result and not quiet:
+                                                        print("\nResponse contains file path information:")
+                                                        # Extract the first line with file information
+                                                        for line in tool_result.split("\n"):
+                                                            if "SAVED TO FILE" in line:
+                                                                print(f"  {line}")
+                                                                break
+
                                                     if not quiet:
-                                                        print(f"Echo Result: {tool_result}")
+                                                        # If response is very large, print a preview
+                                                        if len(tool_result) > 1000:
+                                                            print(f"Echo Result (preview of {len(tool_result)} bytes):")
+                                                            print(f"{tool_result[:500]}...")
+                                                            print("...")
+                                                            print(f"...{tool_result[-500:]}")
+                                                        else:
+                                                            print(f"Echo Result: {tool_result}")
                                                     else:
-                                                        print(f"Received: '{tool_result}'")
+                                                        if saved_file_path:
+                                                            print(f"Received: '{tool_result[:50]}...' (full response in file)")
+                                                        else:
+                                                            print(f"Received: '{tool_result}'")
+
                                                     tool_call_results.append({
                                                         "tool_call_id": tool_call.id,
                                                         "role": "tool",
@@ -401,12 +651,116 @@ def main():
                         help="Simulate tool calls without using a real MCP server")
     parser.add_argument("--mcp-url",
                         help=f"MCP server URL (default: {MCP_SERVER_URL})")
+    parser.add_argument("--read-file", "-r",
+                        help="Read a saved response file instead of making a new request")
+    parser.add_argument("--latest-file", "-l", action="store_true",
+                        help="Read the most recently created response file")
+    parser.add_argument("--max-lines", type=int, default=None,
+                        help="Maximum number of lines to read from the saved response file")
+    parser.add_argument("--http-client", action="store_true",
+                        help="Test the HTTP client tool instead of the echo tool")
+    parser.add_argument("--http-url",
+                        help="URL to request when testing the HTTP client tool")
+    parser.add_argument("--http-method", default="GET",
+                        help="HTTP method to use (GET, POST, etc.)")
+    parser.add_argument("--http-headers",
+                        help="HTTP headers in JSON format")
+    parser.add_argument("--http-body",
+                        help="HTTP request body")
+    parser.add_argument("--http-content-type",
+                        help="Content type for HTTP request body")
+    parser.add_argument("--http-timeout", type=int, default=30,
+                        help="HTTP request timeout in seconds")
 
     args = parser.parse_args()
 
     # Verbose and quiet are mutually exclusive
     if args.verbose and args.quiet:
         print("Error: --verbose and --quiet cannot be used together")
+        return
+
+    # Check if we should read a saved response file
+    if args.read_file or args.latest_file:
+        file_path = args.read_file
+
+        # If --latest-file is specified, find the most recent response file
+        if args.latest_file:
+            import glob
+            import time
+
+            # Look for all response files
+            response_files = glob.glob("http_response_*.html")
+            if not response_files:
+                print("Error: No response files found")
+                return
+
+            # Sort by modification time (newest first)
+            response_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+            file_path = response_files[0]
+            print(f"Found latest response file: {file_path}")
+
+        print(f"Reading saved response file: {file_path}")
+        file_content = read_saved_response_file(file_path, args.max_lines)
+        print("\n--- File Content ---")
+        print(file_content)
+        return
+
+    # Check if we should test the HTTP client tool
+    if args.http_client:
+        if not args.http_url:
+            print("Error: --http-url is required when using --http-client")
+            return
+
+        # Parse HTTP headers if provided
+        headers = None
+        if args.http_headers:
+            try:
+                headers = json.loads(args.http_headers)
+            except json.JSONDecodeError:
+                print("Error: --http-headers must be valid JSON")
+                return
+
+        # Run the HTTP client test
+        import time
+        start_time = time.time()
+        result = test_http_client(
+            url=args.http_url,
+            method=args.http_method,
+            headers=headers,
+            body=args.http_body,
+            content_type=args.http_content_type,
+            timeout=args.http_timeout,
+            quiet=args.quiet
+        )
+        elapsed_time = time.time() - start_time
+
+        # Check if we got a result with a saved file path
+        if result and isinstance(result, dict) and "saved_file" in result:
+            saved_file = result["saved_file"]
+            print(f"\nAutomatically displaying content of saved file: {saved_file}")
+
+            # Ask user if they want to view the file
+            view_file = input("Do you want to view the file content? (y/n): ").strip().lower()
+            if view_file == 'y' or view_file == 'yes':
+                # Determine how many lines to show
+                max_lines = args.max_lines
+                if max_lines is None:
+                    try:
+                        max_lines_input = input("How many lines to display? (Enter for all): ").strip()
+                        if max_lines_input:
+                            max_lines = int(max_lines_input)
+                    except ValueError:
+                        print("Invalid input, showing all lines")
+
+                # Read and display the file
+                file_content = read_saved_response_file(saved_file, max_lines)
+                print("\n--- File Content ---")
+                print(file_content)
+
+        if not args.quiet:
+            print(f"\nHTTP client test completed in {elapsed_time:.2f} seconds")
+        else:
+            print(f"Done in {elapsed_time:.2f}s")
         return
 
     # Override MCP server URL if specified
@@ -420,8 +774,20 @@ def main():
 
     # Run the test
     start_time = time.time()
-    test_echo_tool(args.message, args.model, args.verbose, not args.simulate, args.quiet)
+    response = test_echo_tool(args.message, args.model, args.verbose, not args.simulate, args.quiet)
     elapsed_time = time.time() - start_time
+
+    # Check if the response contains information about a saved file
+    if response and hasattr(response, 'choices') and response.choices:
+        content = response.choices[0].message.content
+        if "saved to file" in content.lower():
+            print("\nThe response mentions a saved file. You can view it using:")
+            # Try to extract the file path
+            import re
+            file_match = re.search(r'saved to file:?\s*([^\s\n]+)', content, re.IGNORECASE)
+            if file_match:
+                file_path = file_match.group(1)
+                print(f"  python test_mcp_echo.py --read-file {file_path}")
 
     if not args.quiet:
         print(f"\nTest completed in {elapsed_time:.2f} seconds")
