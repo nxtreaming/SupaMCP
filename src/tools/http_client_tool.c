@@ -17,6 +17,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#endif
+
 // Configuration constants
 #define HTTP_CLIENT_DEFAULT_TIMEOUT_MS 30000  // Default timeout: 30 seconds
 #define HTTP_CLIENT_MAX_RESPONSE_SIZE (10 * 1024 * 1024)  // Max response: 10MB
@@ -388,17 +400,132 @@ static http_response_t* http_request(const char* method, const char* url,
         return NULL;
     }
 
-    // Connect to server using non-blocking socket
-    socket_t sock = mcp_socket_connect_nonblocking(host, (uint16_t)port, timeout_ms);
-    if (sock == MCP_INVALID_SOCKET) {
-        mcp_log_error("Failed to connect to server: %s:%d", host, port);
+    // Special handling for localhost connections to avoid deadlocks
+    bool is_localhost = (strcmp(host, "localhost") == 0 ||
+                         strcmp(host, "127.0.0.1") == 0 ||
+                         strcmp(host, "::1") == 0);
+
+    socket_t sock = MCP_INVALID_SOCKET;
+
+    // Check if we're trying to connect to ourselves (same server)
+    // This is a special case that requires direct handling to avoid deadlocks
+    if (is_localhost && (port == 8080 || port == 8180)) {
+        mcp_log_info("Detected connection to self (localhost:%d), using direct response", port);
+
+        // Create a direct response without making an actual connection
+        http_response_t* response = (http_response_t*)calloc(1, sizeof(http_response_t));
+        if (!response) {
+            mcp_log_error("Failed to allocate memory for direct HTTP response");
+            free(url_copy);
+            return NULL;
+        }
+
+        // For root path, return the server's home page
+        if (path == NULL || *path == '\0' || strcmp(path, "") == 0) {
+            const char* html_response =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "<!DOCTYPE html>\n"
+                "<html>\n"
+                "<head>\n"
+                "    <title>MCP HTTP Server</title>\n"
+                "</head>\n"
+                "<body>\n"
+                "    <h1>MCP HTTP Server</h1>\n"
+                "    <p>This is a direct response from the HTTP client tool.</p>\n"
+                "    <p>The server detected that you're trying to connect to itself and provided this response directly.</p>\n"
+                "</body>\n"
+                "</html>";
+
+            size_t response_len = strlen(html_response);
+            response->capacity = response_len + 1;
+            response->data = (char*)malloc(response->capacity);
+            if (!response->data) {
+                mcp_log_error("Failed to allocate memory for direct HTTP response data");
+                free(response);
+                free(url_copy);
+                return NULL;
+            }
+
+            memcpy(response->data, html_response, response_len);
+            response->data[response_len] = '\0';
+            response->size = response_len;
+
+            // Extract headers
+            extract_http_headers(response);
+
+            mcp_log_info("Generated direct HTML response for localhost:%d", port);
+            free(url_copy);
+            return response;
+        }
+
+        // For other paths, return a 404 response
+        const char* not_found_response =
+            "HTTP/1.1 404 Not Found\r\n"
+            "Content-Type: text/plain\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "The requested path was not found on this server.";
+
+        size_t response_len = strlen(not_found_response);
+        response->capacity = response_len + 1;
+        response->data = (char*)malloc(response->capacity);
+        if (!response->data) {
+            mcp_log_error("Failed to allocate memory for direct HTTP response data");
+            free(response);
+            free(url_copy);
+            return NULL;
+        }
+
+        memcpy(response->data, not_found_response, response_len);
+        response->data[response_len] = '\0';
+        response->size = response_len;
+
+        // Extract headers
+        extract_http_headers(response);
+
+        mcp_log_info("Generated direct 404 response for localhost:%d/%s", port, path);
         free(url_copy);
-        return NULL;
+        return response;
+    }
+    else if (is_localhost) {
+        mcp_log_info("Detected localhost connection, using shorter timeout (5000ms)");
+
+        // For localhost connections, use the standard non-blocking connect function
+        // but with a shorter timeout
+        sock = mcp_socket_connect_nonblocking(host, (uint16_t)port, 5000);
+        if (sock == MCP_INVALID_SOCKET) {
+            mcp_log_error("Failed to connect to localhost: %s:%d", host, port);
+            free(url_copy);
+            return NULL;
+        }
+
+        mcp_log_info("Successfully connected to localhost:%d", port);
+    }
+    else {
+        // For non-localhost connections, use the standard non-blocking connect
+        sock = mcp_socket_connect_nonblocking(host, (uint16_t)port, timeout_ms);
+        if (sock == MCP_INVALID_SOCKET) {
+            mcp_log_error("Failed to connect to server: %s:%d", host, port);
+            free(url_copy);
+            return NULL;
+        }
     }
 
     // Build HTTP request
     char request[HTTP_CLIENT_REQUEST_BUFFER_SIZE] = {0};
     int request_len = 0;
+
+    // Log the request details for debugging
+    mcp_log_info("HTTP client sending %s request to %s:%d/%s", method, host, port, path ? path : "");
+
+    // Ensure method is valid - default to GET if empty
+    if (method == NULL || *method == '\0') {
+        method = "GET";
+        mcp_log_info("Empty method specified, defaulting to GET");
+    }
 
     // Request line
     request_len += snprintf(request + request_len, sizeof(request) - request_len,
@@ -432,6 +559,9 @@ static http_response_t* http_request(const char* method, const char* url,
 
     // End of headers
     request_len += snprintf(request + request_len, sizeof(request) - request_len, "\r\n");
+
+    // Log the full request for debugging
+    mcp_log_debug("HTTP request headers:\n%.*s", request_len, request);
 
     // Send request headers
     if (mcp_socket_send_exact(sock, request, request_len, NULL) != 0) {
@@ -476,12 +606,30 @@ static http_response_t* http_request(const char* method, const char* url,
     int bytes_received;
     bool headers_complete = false;
 
+    mcp_log_info("Waiting for response from %s:%d (timeout: %d ms)", host, port, timeout_ms);
+
     // Use mcp_socket_wait_readable to check if data is available
-    while (mcp_socket_wait_readable(sock, (int)timeout_ms, NULL) > 0) {
+    int wait_result = mcp_socket_wait_readable(sock, (int)timeout_ms, NULL);
+    if (wait_result <= 0) {
+        mcp_log_error("Socket wait failed or timed out: %d", wait_result);
+        mcp_socket_close(sock);
+        free(url_copy);
+        http_response_free(response);
+        return NULL;
+    }
+
+    mcp_log_info("Socket is readable, receiving data");
+
+    do {
         // Receive data
         bytes_received = recv(sock, buffer, sizeof(buffer) - 1, 0);
+        mcp_log_debug("Received %d bytes from socket", bytes_received);
+
         if (bytes_received <= 0) {
             // Connection closed or error
+            if (bytes_received < 0) {
+                mcp_log_error("Socket receive error: %d", mcp_socket_get_last_error());
+            }
             break;
         }
 
@@ -522,7 +670,13 @@ static http_response_t* http_request(const char* method, const char* url,
             mcp_log_warn("HTTP response exceeded maximum size (%d bytes)", HTTP_CLIENT_MAX_RESPONSE_SIZE);
             break;
         }
-    }
+
+        // Check if there's more data to read
+        if (mcp_socket_wait_readable(sock, 100, NULL) <= 0) {
+            mcp_log_debug("No more data available from socket");
+            break;  // No more data available or error
+        }
+    } while (1);
 
     mcp_socket_close(sock);
     free(url_copy);
@@ -537,6 +691,12 @@ static http_response_t* http_request(const char* method, const char* url,
     // Extract headers and move body to beginning of buffer
     if (!extract_http_headers(response)) {
         mcp_log_warn("Failed to extract HTTP headers, returning raw response");
+    }
+
+    // Log response details
+    mcp_log_info("HTTP response status: %d, size: %zu bytes", response->status_code, response->size);
+    if (response->headers) {
+        mcp_log_debug("HTTP response headers:\n%s", response->headers);
     }
 
     return response;

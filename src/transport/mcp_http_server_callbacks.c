@@ -10,6 +10,9 @@
 #endif
 
 #include "internal/http_transport_internal.h"
+#include "mcp_json.h"
+#include "mcp_log.h"
+#include "mcp_string_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -29,12 +32,13 @@
 #define HTTP_CONTENT_TYPE_JSON "application/json"
 #define HTTP_CONTENT_TYPE_TEXT "text/plain"
 #define HTTP_CONTENT_TYPE_HTML "text/html"
+#define HTTP_CONTENT_TYPE_SSE "text/event-stream"
 
 // Buffer sizes
 #define HTTP_HEADER_BUFFER_SIZE 1024
 #define HTTP_PATH_BUFFER_SIZE 512
 #define HTTP_METHOD_BUFFER_SIZE 16
-#define HTTP_QUERY_BUFFER_SIZE 256
+#define HTTP_QUERY_BUFFER_SIZE 1024
 #define HTTP_ERROR_BUFFER_SIZE 512
 
 // Forward declarations of static functions
@@ -52,7 +56,69 @@ static int handle_closed_http(struct lws* wsi, http_transport_data_t* data, http
 static int send_http_response(struct lws* wsi, int status_code, const char* content_type, const char* body, size_t body_len);
 static int send_http_error_response(struct lws* wsi, int status_code, const char* error_message);
 static int send_http_json_response(struct lws* wsi, int status_code, const char* json_body);
+
 static char* extract_session_id_from_query(const char* query);
+static char* url_decode(const char* src);
+static char* extract_query_param(const char* query, const char* param_name);
+static char* build_jsonrpc_request_from_query(const char* query);
+static const char* get_jsonrpc_error_message(int error_code);
+static int create_jsonrpc_error_response(int error_code, const char* error_message, const char* id, char* buffer, size_t buffer_size);
+
+/**
+ * @brief Helper function to set a string property in a JSON object
+ *
+ * @param json The JSON object
+ * @param name The property name
+ * @param value The string value
+ * @return int 0 on success, non-zero on failure
+ */
+static int mcp_json_object_set_string(mcp_json_t* json, const char* name, const char* value) {
+    if (json == NULL || name == NULL || value == NULL) {
+        return -1;
+    }
+
+    // Create a new JSON string value
+    mcp_json_t* str_value = mcp_json_string_create(value);
+    if (str_value == NULL) {
+        return -1;
+    }
+
+    // Set the property in the object
+    int result = mcp_json_object_set_property(json, name, str_value);
+
+    // Note: We don't need to destroy str_value here because mcp_json_object_set_property
+    // takes ownership of it and will destroy it when the object is destroyed
+
+    return result;
+}
+
+/**
+ * @brief Helper function to set a number property in a JSON object
+ *
+ * @param json The JSON object
+ * @param name The property name
+ * @param value The number value
+ * @return int 0 on success, non-zero on failure
+ */
+static int mcp_json_object_set_number(mcp_json_t* json, const char* name, double value) {
+    if (json == NULL || name == NULL) {
+        return -1;
+    }
+
+    // Create a new JSON number value
+    mcp_json_t* num_value = mcp_json_number_create(value);
+    if (num_value == NULL) {
+        return -1;
+    }
+
+    // Set the property in the object
+    int result = mcp_json_object_set_property(json, name, num_value);
+
+    // Note: We don't need to destroy num_value here because mcp_json_object_set_property
+    // takes ownership of it and will destroy it when the object is destroyed
+
+    return result;
+}
 
 /**
  * @brief Main HTTP callback function for libwebsockets
@@ -385,6 +451,256 @@ static int send_http_json_response(struct lws* wsi, int status_code, const char*
 }
 
 /**
+ * @brief URL decode a string
+ *
+ * This function decodes URL-encoded strings, handling %xx escapes and + as space.
+ *
+ * @param src The URL-encoded string to decode
+ * @return char* The decoded string (caller must free) or NULL on failure
+ */
+static char* url_decode(const char* src) {
+    if (src == NULL) {
+        return NULL;
+    }
+
+    // Allocate memory for the decoded string (will be at most as long as the source)
+    size_t src_len = strlen(src);
+    char* decoded = (char*)malloc(src_len + 1);
+    if (decoded == NULL) {
+        mcp_log_error("Failed to allocate memory for URL decoding");
+        return NULL;
+    }
+
+    // Decode the string
+    const char* src_ptr = src;
+    char* dst_ptr = decoded;
+
+    while (*src_ptr) {
+        if (*src_ptr == '%' && src_ptr[1] && src_ptr[2]) {
+            // Handle %xx escape
+            char hex[3] = {src_ptr[1], src_ptr[2], 0};
+            *dst_ptr = (char)strtol(hex, NULL, 16);
+            src_ptr += 3;
+        } else if (*src_ptr == '+') {
+            // Handle + as space
+            *dst_ptr = ' ';
+            src_ptr++;
+        } else {
+            // Copy character as-is
+            *dst_ptr = *src_ptr;
+            src_ptr++;
+        }
+        dst_ptr++;
+    }
+
+    // Null-terminate the decoded string
+    *dst_ptr = '\0';
+
+    return decoded;
+}
+
+/**
+ * @brief Extract a parameter value from a query string
+ *
+ * This function extracts the value of a parameter from a query string.
+ *
+ * @param query The query string to parse
+ * @param param_name The name of the parameter to extract
+ * @return char* The parameter value (caller must free) or NULL if not found
+ */
+static char* extract_query_param(const char* query, const char* param_name) {
+    if (query == NULL || param_name == NULL || *query == '\0' || *param_name == '\0') {
+        return NULL;
+    }
+
+    // Build the parameter prefix (param_name=)
+    size_t prefix_len = strlen(param_name);
+    char* prefix = (char*)malloc(prefix_len + 2); // +2 for '=' and '\0'
+    if (prefix == NULL) {
+        mcp_log_error("Failed to allocate memory for parameter prefix");
+        return NULL;
+    }
+
+    sprintf(prefix, "%s=", param_name);
+
+    // Find the parameter in the query string
+    const char* param_start = strstr(query, prefix);
+    free(prefix); // Free the prefix buffer
+
+    if (param_start == NULL) {
+        return NULL; // Parameter not found
+    }
+
+    // Skip the parameter name and '='
+    param_start += prefix_len + 1;
+
+    // Find the end of the parameter value
+    const char* param_end = strchr(param_start, '&');
+
+    // Extract the parameter value
+    if (param_end != NULL) {
+        // Parameter is not the last one in the query string
+        size_t value_len = param_end - param_start;
+        char* value = (char*)malloc(value_len + 1);
+        if (value == NULL) {
+            mcp_log_error("Failed to allocate memory for parameter value");
+            return NULL;
+        }
+
+        strncpy(value, param_start, value_len);
+        value[value_len] = '\0';
+        return value;
+    } else {
+        // Parameter is the last one in the query string
+        return mcp_strdup(param_start);
+    }
+}
+
+/**
+ * @brief Build a JSON-RPC request from query parameters
+ *
+ * This function builds a JSON-RPC request from query parameters for tool calls.
+ * It extracts the tool name and parameters from the query string and formats them
+ * into a JSON-RPC request.
+ *
+ * Expected query parameters:
+ * - name: The name of the tool to call
+ * - param_<name>: Tool parameters (e.g., param_text=hello for the "text" parameter)
+ *
+ * @param query The query string to parse
+ * @return char* The JSON-RPC request (caller must free) or NULL on failure
+ */
+static char* build_jsonrpc_request_from_query(const char* query) {
+    if (query == NULL || *query == '\0') {
+        mcp_log_error("Empty query string");
+        return NULL;
+    }
+
+    // Extract the tool name
+    char* tool_name = extract_query_param(query, "name");
+    if (tool_name == NULL) {
+        mcp_log_error("Missing 'name' parameter in query string");
+        return NULL;
+    }
+
+    // URL decode the tool name
+    char* decoded_tool_name = url_decode(tool_name);
+    free(tool_name);
+
+    if (decoded_tool_name == NULL) {
+        mcp_log_error("Failed to decode tool name");
+        return NULL;
+    }
+
+    // Create a JSON object for the tool arguments
+    mcp_json_t* args_obj = mcp_json_object_create();
+    if (args_obj == NULL) {
+        mcp_log_error("Failed to create JSON object for tool arguments");
+        free(decoded_tool_name);
+        return NULL;
+    }
+
+    // Parse the query string to extract parameters
+    const char* param_prefix = "param_";
+    size_t param_prefix_len = strlen(param_prefix);
+
+    // Make a copy of the query string for tokenization
+    char* query_copy = mcp_strdup(query);
+    if (query_copy == NULL) {
+        mcp_log_error("Failed to duplicate query string");
+        mcp_json_destroy(args_obj);
+        free(decoded_tool_name);
+        return NULL;
+    }
+
+    // Split the query string by '&'
+    char* token = strtok(query_copy, "&");
+    while (token != NULL) {
+        // Check if this is a parameter token
+        if (strncmp(token, param_prefix, param_prefix_len) == 0) {
+            // Extract parameter name and value
+            char* equals = strchr(token, '=');
+            if (equals != NULL) {
+                // Extract parameter name (after "param_" prefix)
+                size_t name_len = equals - (token + param_prefix_len);
+                char* param_name = (char*)malloc(name_len + 1);
+                if (param_name != NULL) {
+                    strncpy(param_name, token + param_prefix_len, name_len);
+                    param_name[name_len] = '\0';
+
+                    // Extract parameter value
+                    char* param_value = mcp_strdup(equals + 1);
+                    if (param_value != NULL) {
+                        // URL decode the parameter value
+                        char* decoded_value = url_decode(param_value);
+                        free(param_value);
+
+                        if (decoded_value != NULL) {
+                            // Add the parameter to the arguments object
+                            mcp_json_object_set_string(args_obj, param_name, decoded_value);
+                            free(decoded_value);
+                        }
+                    }
+
+                    free(param_name);
+                }
+            }
+        }
+
+        // Get the next token
+        token = strtok(NULL, "&");
+    }
+
+    free(query_copy);
+
+    // Create the JSON-RPC request
+    mcp_json_t* request_obj = mcp_json_object_create();
+    if (request_obj == NULL) {
+        mcp_log_error("Failed to create JSON object for request");
+        mcp_json_destroy(args_obj);
+        free(decoded_tool_name);
+        return NULL;
+    }
+
+    // Add the JSON-RPC version
+    mcp_json_object_set_string(request_obj, "jsonrpc", "2.0");
+
+    // Add the request ID (use 1 as a default)
+    mcp_json_object_set_number(request_obj, "id", 1);
+
+    // Add the method
+    mcp_json_object_set_string(request_obj, "method", "call_tool");
+
+    // Create the params object
+    mcp_json_t* params_obj = mcp_json_object_create();
+    if (params_obj == NULL) {
+        mcp_log_error("Failed to create JSON object for params");
+        mcp_json_destroy(request_obj);
+        mcp_json_destroy(args_obj);
+        free(decoded_tool_name);
+        return NULL;
+    }
+
+    // Add the tool name to the params
+    mcp_json_object_set_string(params_obj, "name", decoded_tool_name);
+
+    // Add the arguments to the params
+    mcp_json_object_set_property(params_obj, "arguments", args_obj);
+
+    // Add the params to the request
+    mcp_json_object_set_property(request_obj, "params", params_obj);
+
+    // Convert the request object to a string
+    char* request_json = mcp_json_stringify(request_obj);
+
+    // Clean up
+    mcp_json_destroy(request_obj); // This will also destroy params_obj and args_obj
+    free(decoded_tool_name);
+
+    return request_json;
+}
+
+/**
  * @brief Extract session ID from query string
  *
  * @param query Query string
@@ -544,13 +860,15 @@ static int handle_http_root_request(struct lws* wsi) {
         "    </div>\n"
         "    \n"
         "    <div class=\"endpoint\">\n"
-        "        <h2>Tool Call Example:</h2>\n"
-        "        <h3>Using curl:</h3>\n"
+        "        <h2>Tool Call Examples:</h2>\n"
+        "        <h3>Using POST with curl:</h3>\n"
         "        <pre>curl -X POST http://127.0.0.1:8180/call_tool \\\n"
         "     -H \"Content-Type: application/json\" \\\n"
         "     -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"call_tool\",\"params\":{\"name\":\"echo\",\"arguments\":{\"text\":\"Hello, MCP Server!\"}}}'\n"
         "</pre>\n"
-        "        <h3>Using JavaScript:</h3>\n"
+        "        <h3>Using GET with curl:</h3>\n"
+        "        <pre>curl \"http://127.0.0.1:8180/call_tool?name=echo&param_text=Hello%2C%20MCP%20Server%21\"</pre>\n"
+        "        <h3>Using JavaScript (POST):</h3>\n"
         "        <pre>fetch('/call_tool', {\n"
         "    method: 'POST',\n"
         "    headers: {\n"
@@ -570,6 +888,10 @@ static int handle_http_root_request(struct lws* wsi) {
         "})\n"
         ".then(response => response.json())\n"
         ".then(data => console.log(data));</pre>\n"
+        "        <h3>Using JavaScript (GET):</h3>\n"
+        "        <pre>fetch('/call_tool?name=echo&param_text=Hello%2C%20MCP%20Server%21')\n"
+        "    .then(response => response.json())\n"
+        "    .then(data => console.log(data));</pre>\n"
         "    </div>\n"
         "    \n"
         "    <div class=\"endpoint\">\n"
@@ -641,10 +963,94 @@ static int handle_http_call_tool_request(struct lws* wsi, http_transport_data_t*
         mcp_log_info("Waiting for POST body");
         return 0;
     }
-    // Handle other methods (GET, etc.)
+    // Handle GET request
+    else if (method[0] != '\0' && strcmp(method, "GET") == 0) {
+        mcp_log_info("Processing GET request for tool call");
+
+        // Get query string
+        char query[HTTP_QUERY_BUFFER_SIZE] = {0};
+        int query_len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
+
+        if (query_len <= 0 || query_len >= (int)sizeof(query)) {
+            mcp_log_error("Missing or invalid query parameters for GET tool call");
+            return send_http_error_response(wsi, HTTP_STATUS_BAD_REQUEST, "Missing or invalid query parameters");
+        }
+
+        // Copy query string
+        if (lws_hdr_copy(wsi, query, sizeof(query), WSI_TOKEN_HTTP_URI_ARGS) < 0) {
+            mcp_log_error("Failed to copy query string");
+            return send_http_error_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, "Failed to process query parameters");
+        }
+
+        mcp_log_debug("Tool call query string: '%s'", query);
+
+        // Build JSON-RPC request from query parameters
+        char* request_json = build_jsonrpc_request_from_query(query);
+        if (!request_json) {
+            mcp_log_error("Failed to build JSON-RPC request from query parameters");
+            return send_http_error_response(wsi, HTTP_STATUS_BAD_REQUEST, "Invalid tool call parameters");
+        }
+
+        // Process the request using the message callback
+        if (data->message_callback != NULL) {
+            int error_code = 0;
+            char* response = data->message_callback(data->callback_user_data,
+                                                  request_json,
+                                                  strlen(request_json),
+                                                  &error_code);
+
+            // Free the request JSON
+            free(request_json);
+
+            // Handle successful response
+            if (response != NULL) {
+                mcp_log_debug("Message callback returned response: %zu bytes", strlen(response));
+
+                // Send the response
+                int result = send_http_json_response(wsi, HTTP_STATUS_OK, response);
+
+                // Free the response
+                free(response);
+
+                return result;
+            }
+            // Handle error response
+            else {
+                mcp_log_error("Message callback returned error: %d", error_code);
+
+                // Get error message for the error code
+                const char* error_message = get_jsonrpc_error_message(error_code);
+
+                // Create JSON-RPC error response
+                char error_buf[HTTP_ERROR_BUFFER_SIZE];
+                int len = create_jsonrpc_error_response(error_code, error_message, NULL,
+                                                      error_buf, sizeof(error_buf));
+
+                if (len < 0) {
+                    mcp_log_error("Failed to create JSON-RPC error response");
+                    return -1;
+                }
+
+                // Send error response
+                int status_code = (error_code == -32602 || error_code == -32600) ?
+                                 HTTP_STATUS_BAD_REQUEST : HTTP_STATUS_INTERNAL_SERVER_ERROR;
+
+                return send_http_response(wsi, status_code, HTTP_CONTENT_TYPE_JSON,
+                                         error_buf, len);
+            }
+        }
+        // No message callback registered
+        else {
+            mcp_log_error("No message callback registered");
+            free(request_json);
+            return send_http_error_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                                           "No message handler registered");
+        }
+    }
+    // Handle other methods
     else {
-        // For non-POST/OPTIONS requests, return a simple JSON response
-        const char* json_response = "{\"error\":\"Method not allowed. Use POST for tool calls or OPTIONS for preflight.\"}";
+        // For non-POST/GET/OPTIONS requests, return a simple JSON response
+        const char* json_response = "{\"error\":\"Method not allowed. Use GET or POST for tool calls or OPTIONS for preflight.\"}";
 
         // Prepare response headers
         unsigned char buffer[LWS_PRE + 1024];
@@ -1193,13 +1599,6 @@ static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* d
         return send_http_error_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR,
                                        "No message handler registered");
     }
-
-    // Free request buffer
-    free(session->request_buffer);
-    session->request_buffer = NULL;
-    session->request_len = 0;
-
-    return 0;
 }
 
 /**
