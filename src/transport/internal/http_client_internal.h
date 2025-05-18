@@ -4,6 +4,7 @@
 #include "mcp_transport.h"
 #include "mcp_socket_utils.h"
 #include "mcp_sync.h"
+#include "http_client_ssl.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -28,6 +29,7 @@ typedef struct http_client_transport_data {
     // SSE event handling
     char* last_event_id;         // Last event ID received
     socket_t sse_socket;         // Socket for SSE connection
+    http_client_ssl_ctx_t* ssl_ctx; // SSL context for secure connections
 
     // Message callback
     mcp_transport_message_callback_t message_callback;

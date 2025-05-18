@@ -17,6 +17,7 @@
 #include "internal/http_client_sse.h"
 #include "internal/http_client_internal.h"
 #include "internal/transport_internal.h"
+#include "internal/http_client_ssl.h"
 
 /* MCP library headers */
 #include "mcp_log.h"
@@ -179,7 +180,7 @@ socket_t connect_to_sse_endpoint(http_client_transport_data_t* data) {
     int url_len = snprintf(url, sizeof(url), "%s://%s:%d/events",
                           data->use_ssl ? "https" : "http",
                           data->host, data->port);
-    
+
     if (url_len < 0 || url_len >= (int)sizeof(url)) {
         mcp_log_error("URL buffer overflow for SSE connection");
         return MCP_INVALID_SOCKET;
@@ -217,10 +218,32 @@ socket_t connect_to_sse_endpoint(http_client_transport_data_t* data) {
         return MCP_INVALID_SOCKET;
     }
 
-    // TODO: Implement SSL support if needed
+    // Initialize and connect SSL if needed
     if (data->use_ssl) {
-        mcp_log_warn("SSL support not implemented yet for SSE connection");
-        // For now, continue without SSL
+        mcp_log_info("Initializing SSL for SSE connection");
+
+        // Initialize SSL context
+        http_client_ssl_ctx_t* ssl_ctx = http_client_ssl_init();
+        if (ssl_ctx == NULL) {
+            mcp_log_error("Failed to initialize SSL context for SSE connection");
+            mcp_socket_close(sock);
+            return MCP_INVALID_SOCKET;
+        }
+
+        // Establish SSL connection
+        if (http_client_ssl_connect(ssl_ctx, sock, data->host) != 0) {
+            mcp_log_error("Failed to establish SSL connection for SSE");
+            http_client_ssl_cleanup(ssl_ctx);
+            mcp_socket_close(sock);
+            return MCP_INVALID_SOCKET;
+        }
+
+        // Store SSL context in transport data
+        mcp_mutex_lock(data->mutex);
+        data->ssl_ctx = ssl_ctx;
+        mcp_mutex_unlock(data->mutex);
+
+        mcp_log_info("SSL connection established for SSE");
     }
 
     // Prepare HTTP request with basic headers
@@ -280,10 +303,22 @@ socket_t connect_to_sse_endpoint(http_client_transport_data_t* data) {
     request_len += end_len;
 
     // Send HTTP request
-    int sent_len = send(sock, request, request_len, 0);
+    int sent_len;
+    if (data->use_ssl) {
+        sent_len = http_client_ssl_write(data->ssl_ctx, request, request_len);
+    } else {
+        sent_len = send(sock, request, request_len, 0);
+    }
+
     if (sent_len != request_len) {
         mcp_log_error("Failed to send HTTP request for SSE connection: sent %d of %d bytes (error: %d)",
                      sent_len, request_len, mcp_socket_get_last_error());
+
+        if (data->use_ssl) {
+            http_client_ssl_cleanup(data->ssl_ctx);
+            data->ssl_ctx = NULL;
+        }
+
         mcp_socket_close(sock);
         return MCP_INVALID_SOCKET;
     }
@@ -313,7 +348,7 @@ void process_sse_event(http_client_transport_data_t* data, const sse_event_t* ev
     // Get event type (default to "message" if not specified)
     const char* event_type = event->event ? event->event : "message";
     const char* event_id = event->id ? event->id : "(none)";
-    
+
     // Log basic event information
     mcp_log_debug("Processing SSE event: type=%s, id=%s, timestamp=%ld",
                  event_type, event_id, (long)event->timestamp);
@@ -339,7 +374,7 @@ void process_sse_event(http_client_transport_data_t* data, const sse_event_t* ev
     // Process event data if provided
     if (event->data != NULL) {
         size_t data_length = strlen(event->data);
-        
+
         // Log detailed event information
         mcp_log_debug("Received SSE event data: type=%s, id=%s, data_length=%zu",
                      event_type, event_id, data_length);
@@ -563,13 +598,17 @@ void* http_client_event_thread_func(void* arg) {
         // Event reading loop - continue while running flag is set and connection is active
         while (data->running) {
             // Receive data from the socket
-            bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
-            
+            if (data->use_ssl) {
+                bytes_read = http_client_ssl_read(data->ssl_ctx, buffer, sizeof(buffer) - 1);
+            } else {
+                bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
+            }
+
             // Check for connection errors or closure
             if (bytes_read <= 0) {
                 break; // Exit the reading loop
             }
-            
+
             // Null-terminate the received data for string operations
             buffer[bytes_read] = '\0';
 
@@ -605,10 +644,19 @@ void* http_client_event_thread_func(void* arg) {
             mcp_log_info("SSE connection closed by server");
         }
 
-        // Clean up socket (thread-safe)
+        // Clean up socket and SSL (thread-safe)
         mcp_mutex_lock(data->mutex);
+
+        // Clean up SSL if used
+        if (data->use_ssl && data->ssl_ctx != NULL) {
+            http_client_ssl_cleanup(data->ssl_ctx);
+            data->ssl_ctx = NULL;
+        }
+
+        // Close socket
         mcp_socket_close(sock);
         data->sse_socket = MCP_INVALID_SOCKET;
+
         mcp_mutex_unlock(data->mutex);
 
         // Clean up event parsing state

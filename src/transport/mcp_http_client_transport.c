@@ -108,6 +108,12 @@ static void cleanup_transport_data(http_client_transport_data_t* data) {
     safe_free_string(&data->api_key);
     safe_free_string(&data->last_response);
 
+    // Clean up SSL context if it exists
+    if (data->ssl_ctx != NULL) {
+        http_client_ssl_cleanup(data->ssl_ctx);
+        data->ssl_ctx = NULL;
+    }
+
     if (data->mutex != NULL) {
         mcp_mutex_destroy(data->mutex);
         data->mutex = NULL;
@@ -145,6 +151,9 @@ mcp_transport_t* mcp_transport_http_client_create_with_config(const mcp_http_cli
 
     // Initialize socket to invalid
     data->sse_socket = MCP_INVALID_SOCKET;
+
+    // Initialize SSL context to NULL
+    data->ssl_ctx = NULL;
 
     // Initialize response handling
     data->last_response = NULL;
@@ -348,13 +357,23 @@ static int http_client_transport_stop(mcp_transport_t* transport) {
     // Set running flag to false to signal threads to stop
     data->running = false;
 
-    // Close the SSE socket to unblock the event thread
+    // Close the SSE socket and clean up SSL to unblock the event thread
     mcp_mutex_lock(data->mutex);
+
+    // Clean up SSL if used
+    if (data->ssl_ctx != NULL) {
+        mcp_log_debug("Cleaning up SSL context");
+        http_client_ssl_cleanup(data->ssl_ctx);
+        data->ssl_ctx = NULL;
+    }
+
+    // Close socket
     if (data->sse_socket != MCP_INVALID_SOCKET) {
         mcp_log_debug("Closing SSE socket to unblock event thread");
         mcp_socket_close(data->sse_socket);
         data->sse_socket = MCP_INVALID_SOCKET;
     }
+
     mcp_mutex_unlock(data->mutex);
 
     // Wait for event thread to finish
