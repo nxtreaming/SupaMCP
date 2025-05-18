@@ -36,7 +36,7 @@
      -d '{"jsonrpc":"2.0","id":1,"method":"call_tool","params":{"name":"echo","arguments":{"text":"Hello, MCP Server!"}}}'
 </pre>
 			<h3>Using GET with curl:</h3>
-			<pre>curl \"http://127.0.0.1:8180/call_tool?name=echo&param_text=Hello%2C%20MCP%20Server%21\"</pre>
+			<pre>curl "http://127.0.0.1:8180/call_tool?name=echo&amp;param_text=Hello%2C%20MCP%20Server%21"</pre>
 			<h3>Using JavaScript (POST):</h3>
             <pre>fetch('/call_tool', {
     method: 'POST',
@@ -58,7 +58,7 @@
 .then(response => response.json())
 .then(data => console.log(data));</pre>
         <h3>Using JavaScript (GET):</h3>
-        <pre>fetch('/call_tool?name=echo&param_text=Hello%2C%20MCP%20Server%21')
+        <pre>fetch('/call_tool?name=echo&amp;param_text=Hello%2C%20MCP%20Server%21')
     .then(response => response.json())
 	.then(data => console.log(data));</pre>
         </div>
