@@ -152,9 +152,9 @@ int lws_root_handler(struct lws* wsi, enum lws_callback_reasons reason,
         mcp_log_debug("Root handler: Wrote %d bytes", bytes_written);
 
         // Complete HTTP transaction
-        if (lws_http_transaction_completed(wsi)) {
-            mcp_log_error("Root handler: Failed to complete HTTP transaction");
-            return -1;
+        int should_close = lws_http_transaction_completed(wsi);
+        if (should_close) {
+            mcp_log_debug("HTTP handler: Transaction completed, connection will close");
         }
 
         return 0;

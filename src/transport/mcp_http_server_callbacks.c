@@ -331,9 +331,9 @@ static int send_http_response(struct lws* wsi, int status_code, const char* cont
     }
 
     // Complete HTTP transaction
-    if (lws_http_transaction_completed(wsi)) {
-        mcp_log_error("Failed to complete HTTP transaction");
-        return -1;
+    int should_close = lws_http_transaction_completed(wsi);
+    if (should_close) {
+        mcp_log_debug("HTTP handler: Transaction completed, connection will close");
     }
 
     return 0;
@@ -1156,10 +1156,11 @@ static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* d
             free(response);
 
             // Complete HTTP transaction
-            if (lws_http_transaction_completed(wsi)) {
-                mcp_log_error("Failed to complete HTTP transaction");
-                return -1;
+            int should_close = lws_http_transaction_completed(wsi);
+            if (should_close) {
+                mcp_log_debug("HTTP handler: Transaction completed, connection will close");
             }
+            return 0;
         }
         // Handle error response
         else {
