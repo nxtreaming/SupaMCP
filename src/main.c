@@ -319,7 +319,7 @@ static mcp_error_code_t server_tool_handler(
                 if (session_id) {
                     mcp_log_info("Sending SSE event: echo - %s to session: %s", event_data, session_id);
                 } else {
-                    mcp_log_info("Sending SSE event: echo - %s (broadcast)", event_data);
+                    mcp_log_info("Sending SSE event: echo - %s (broadcast to clients without session_id)", event_data);
                 }
 
                 // Add more detailed logging
@@ -414,7 +414,7 @@ static mcp_error_code_t server_tool_handler(
                     if (session_id) {
                         mcp_log_info("Sending SSE event: reverse - %s to session: %s", event_data, session_id);
                     } else {
-                        mcp_log_info("Sending SSE event: reverse - %s (broadcast)", event_data);
+                        mcp_log_info("Sending SSE event: reverse - %s (broadcast to clients without session_id)", event_data);
                     }
 
                     // Add more detailed logging

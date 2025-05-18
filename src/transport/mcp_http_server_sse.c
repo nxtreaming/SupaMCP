@@ -145,20 +145,20 @@ void store_sse_event(http_transport_data_t* data, const char* event, const char*
     // Handle circular buffer management
     if (data->stored_event_count == MAX_SSE_STORED_EVENTS) {
         // Buffer is full - replace oldest event
-        mcp_log_debug("Circular buffer full (%d events), replacing oldest event at position %d", 
+        mcp_log_debug("Circular buffer full (%d events), replacing oldest event at position %d",
                      MAX_SSE_STORED_EVENTS, data->event_head);
-        
+
         // Free the oldest event's memory (at head position)
         free_stored_event(&data->stored_events[data->event_head]);
 
         // Move head forward (oldest event position)
         data->event_head = (data->event_head + 1) % MAX_SSE_STORED_EVENTS;
-        
+
         // Count stays the same as we're replacing an event
     } else {
         // Buffer has space - increment count
         data->stored_event_count++;
-        mcp_log_debug("Adding event to circular buffer, new count: %d/%d", 
+        mcp_log_debug("Adding event to circular buffer, new count: %d/%d",
                      data->stored_event_count, MAX_SSE_STORED_EVENTS);
     }
 
@@ -204,7 +204,7 @@ void send_sse_heartbeat(http_transport_data_t* data) {
     // Check if it's time for a heartbeat based on configured interval
     time_t now = time(NULL);
     int heartbeat_interval_sec = data->heartbeat_interval_ms / 1000;
-    
+
     // Ensure minimum interval of 1 second
     if (heartbeat_interval_sec <= 0) {
         heartbeat_interval_sec = 1;
@@ -241,7 +241,7 @@ void send_sse_heartbeat(http_transport_data_t* data) {
         // Send a comment as a heartbeat (using SSE comment format)
         // This will not trigger an event in the client but keeps the connection alive
         int result = lws_write_http(wsi, SSE_FIELD_HEARTBEAT, strlen(SSE_FIELD_HEARTBEAT));
-        
+
         if (result < 0) {
             mcp_log_warn("Failed to send heartbeat to SSE client %d", i);
         } else {
@@ -266,14 +266,27 @@ void send_sse_heartbeat(http_transport_data_t* data) {
  * It supports both exact and case-insensitive matching, and handles NULL values
  * appropriately.
  *
+ * If no session_id is specified (broadcast), only clients without a session_id will
+ * receive the message. Clients with a session_id will only receive messages specifically
+ * targeted to their session_id.
+ *
  * @param session Session data (can be NULL)
  * @param session_id Requested session ID (can be NULL for broadcast)
- * @return bool true if the session matches or if session_id is NULL (broadcast), false otherwise
+ * @return bool true if the session matches the criteria, false otherwise
  */
 static bool session_matches_id(http_session_data_t* session, const char* session_id) {
-    // If no specific session ID requested, this is a broadcast - match all clients
+    // If no specific session ID requested, this is a broadcast
+    // Only match clients WITHOUT a session ID
     if (session_id == NULL) {
-        return true;
+        // If client has no session data or no session ID, it should receive broadcasts
+        if (session == NULL || session->session_id == NULL) {
+            return true;
+        }
+
+        // Client has a session ID, so it should NOT receive broadcasts
+        mcp_log_debug("Client has session_id (%s) and will not receive broadcast messages",
+                     session->session_id);
+        return false;
     }
 
     // If client has no session data, it can't match a specific session ID
@@ -364,25 +377,25 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
     }
 
     int result = 0;
-    
+
     // Different format based on whether an event type is specified
     if (event != NULL) {
         // Named event format
         // Write in multiple pieces to avoid any heap allocation
-        
+
         // Step 1: Write event field ("event: [event_type]\n")
         result = lws_write_http(wsi, SSE_FIELD_EVENT, strlen(SSE_FIELD_EVENT));
         if (result < 0) {
             mcp_log_error("Failed to write event field prefix");
             return false;
         }
-        
+
         result = lws_write_http(wsi, event, strlen(event));
         if (result < 0) {
             mcp_log_error("Failed to write event type");
             return false;
         }
-        
+
         result = lws_write_http(wsi, "\n", 1);
         if (result < 0) {
             mcp_log_error("Failed to write newline after event type");
@@ -395,13 +408,13 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
             mcp_log_error("Failed to write id field prefix");
             return false;
         }
-        
+
         result = lws_write_http(wsi, id_str, strlen(id_str));
         if (result < 0) {
             mcp_log_error("Failed to write event ID");
             return false;
         }
-        
+
         result = lws_write_http(wsi, "\n", 1);
         if (result < 0) {
             mcp_log_error("Failed to write newline after event ID");
@@ -414,13 +427,13 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
             mcp_log_error("Failed to write data field prefix");
             return false;
         }
-        
+
         result = lws_write_http(wsi, data, strlen(data));
         if (result < 0) {
             mcp_log_error("Failed to write event data");
             return false;
         }
-        
+
         // End with double newline to complete the event
         result = lws_write_http(wsi, "\n\n", 2);
         if (result < 0) {
@@ -429,20 +442,20 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
         }
     } else {
         // Default event format (no event type)
-        
+
         // Step 1: Write ID field ("id: [id]\n")
         result = lws_write_http(wsi, SSE_FIELD_ID, strlen(SSE_FIELD_ID));
         if (result < 0) {
             mcp_log_error("Failed to write id field prefix");
             return false;
         }
-        
+
         result = lws_write_http(wsi, id_str, strlen(id_str));
         if (result < 0) {
             mcp_log_error("Failed to write event ID");
             return false;
         }
-        
+
         result = lws_write_http(wsi, "\n", 1);
         if (result < 0) {
             mcp_log_error("Failed to write newline after event ID");
@@ -455,13 +468,13 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
             mcp_log_error("Failed to write data field prefix");
             return false;
         }
-        
+
         result = lws_write_http(wsi, data, strlen(data));
         if (result < 0) {
             mcp_log_error("Failed to write event data");
             return false;
         }
-        
+
         // End with double newline to complete the event
         result = lws_write_http(wsi, "\n\n", 2);
         if (result < 0) {
@@ -504,7 +517,7 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
 
     // Get the current event ID (already incremented in store_sse_event)
     int event_id = transport_data->next_event_id - 1;
-    
+
     // Format the event ID as a string for SSE protocol
     char id_str[SSE_ID_BUFFER_SIZE];
     int id_len = snprintf(id_str, sizeof(id_str), "%d", event_id);
@@ -584,8 +597,8 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
             mcp_log_warn("No SSE clients matched the requested session_id: %s", session_id);
         }
     } else {
-        // Broadcast delivery
-        mcp_log_info("Successfully sent SSE event to %d/%d client(s) (broadcast)",
+        // Broadcast delivery (only to clients without session_id)
+        mcp_log_info("Successfully sent SSE event to %d/%d client(s) (broadcast to clients without session_id)",
                     success_count, matched_clients);
     }
 

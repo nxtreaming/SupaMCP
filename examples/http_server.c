@@ -196,7 +196,7 @@ static mcp_error_code_t http_tool_handler(
                 if (session_id) {
                     mcp_log_info("Sending SSE event: echo - %s to session: %s", event_data, session_id);
                 } else {
-                    mcp_log_info("Sending SSE event: echo - %s (broadcast)", event_data);
+                    mcp_log_info("Sending SSE event: echo - %s (broadcast to clients without session_id)", event_data);
                 }
 
                 int ret = mcp_http_transport_send_sse(g_transport, "echo", event_data, session_id);
@@ -293,7 +293,7 @@ static mcp_error_code_t http_tool_handler(
                     if (session_id) {
                         mcp_log_info("Sending SSE event: reverse - %s to session: %s", event_data, session_id);
                     } else {
-                        mcp_log_info("Sending SSE event: reverse - %s (broadcast)", event_data);
+                        mcp_log_info("Sending SSE event: reverse - %s (broadcast to clients without session_id)", event_data);
                     }
 
                     int ret = mcp_http_transport_send_sse(g_transport, "reverse", event_data, session_id);
@@ -1262,7 +1262,7 @@ int main(int argc, char** argv) {
         .cors_allow_headers = server_config.http_config.cors_allow_headers,
         .cors_max_age = server_config.http_config.cors_max_age
     };
-    
+
     g_transport = mcp_transport_http_create(&http_config);
     if (!g_transport) {
         http_server_handle_error(HTTP_SERVER_ERROR_TRANSPORT_CREATION, "Failed to create HTTP transport", &server_config);
