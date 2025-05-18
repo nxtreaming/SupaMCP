@@ -1069,19 +1069,10 @@ mcp_error_code_t http_client_tool_handler(
         snprintf(full_mime_type, sizeof(full_mime_type), "%s", mime_type);
     }
 
-    // Always save response to file for large responses
+    // Never save response to file, always display full response
     bool saved_to_file = false;
-    char auto_filename[256] = {0};
 
-    // If save_to_file is not provided and response is large, create an automatic filename
-    if (!save_to_file && response->size > 4096) {
-        // Create a timestamp-based filename
-        time_t now = time(NULL);
-        struct tm* tm_info = localtime(&now);
-        strftime(auto_filename, sizeof(auto_filename), "http_response_%Y%m%d_%H%M%S.html", tm_info);
-        save_to_file = auto_filename;
-    }
-
+    // Only save to file if explicitly requested by the user
     if (save_to_file) {
         saved_to_file = save_response_to_file(save_to_file, response->data, response->size);
         if (saved_to_file) {
@@ -1096,59 +1087,6 @@ mcp_error_code_t http_client_tool_handler(
             // Recreate the metadata content item
             free_content_items(&(*content)[0], 1);
             (*content)[0] = create_content_item(MCP_CONTENT_TYPE_JSON, "application/json", metadata_json, strlen(metadata_json));
-
-            // Create a preview of the response with file information
-            // We'll show the first 1000 characters and the last 1000 characters
-            const size_t preview_size = 1000;
-            const size_t total_size = response->size;
-
-            // Calculate the size needed for the preview
-            size_t note_size = 0;
-            if (total_size <= preview_size * 2) {
-                // If the response is small enough, show it all
-                note_size = total_size + 256;
-            } else {
-                // Otherwise, show first and last parts with a separator
-                note_size = preview_size * 2 + 256;
-            }
-
-            char* note = (char*)malloc(note_size);
-            if (note) {
-                // Add file information
-                int header_len = snprintf(note, 256,
-                    "*** FULL RESPONSE (%zu bytes) SAVED TO FILE: %s ***\n\n",
-                    total_size, save_to_file);
-
-                if (total_size <= preview_size * 2) {
-                    // Copy the entire response
-                    memcpy(note + header_len, response->data, total_size);
-                    note[header_len + total_size] = '\0';
-                } else {
-                    // Copy the first part
-                    memcpy(note + header_len, response->data, preview_size);
-
-                    // Add separator
-                    const char* separator = "\n\n[...CONTENT TRUNCATED FOR DISPLAY...]\n\n";
-#ifdef _WIN32
-                    strcpy_s(note + header_len + preview_size, note_size - header_len - preview_size, separator);
-#else
-                    strcpy(note + header_len + preview_size, separator);
-#endif
-
-                    // Copy the last part
-                    memcpy(note + header_len + preview_size + strlen(separator),
-                           (char*)response->data + total_size - preview_size,
-                           preview_size);
-
-                    // Null terminate
-                    note[header_len + preview_size + strlen(separator) + preview_size] = '\0';
-                }
-
-                // Create content item with the note
-                (*content)[1] = create_content_item(MCP_CONTENT_TYPE_TEXT, full_mime_type, note, strlen(note));
-                free(note);
-                return 0; // Return early since we've created the content items
-            }
         }
     }
 
