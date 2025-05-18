@@ -571,7 +571,7 @@ int main(int argc, char** argv) {
         tv.tv_usec = 0;
 
         // Wait for activity on the socket
-        int activity = select(server_sock + 1, &read_fds, NULL, NULL, &tv);
+        int activity = select((int)server_sock + 1, &read_fds, NULL, NULL, &tv);
 
         if (activity < 0) {
             if (running) {

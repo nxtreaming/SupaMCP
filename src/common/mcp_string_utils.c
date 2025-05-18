@@ -47,8 +47,8 @@ char* mcp_strdup(const char* str) {
         return NULL;
 
 #if defined(_MSC_VER)
-    // Use the built-in function on Windows
-    return _strdup(str);
+    // Use the built-in function on Windows but cast to remove const
+    return _strdup((char*)str);
 #else
     size_t len = strlen(str);
     // Allocate memory for the new string (+1 for null terminator)

@@ -55,6 +55,7 @@ DartConfiguration.tcl
 # OS specific files
 .DS_Store
 Thumbs.db
+http_c.md
 mcp_http.md
 mcp-use.md
 mcpm-sh.md

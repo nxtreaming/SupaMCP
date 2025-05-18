@@ -34,7 +34,23 @@
 // Extended HTTP server configuration
 typedef struct http_server_config_t {
     // Basic HTTP configuration (passed to mcp_http_transport)
-    mcp_http_config_t http_config;
+    // We use a modified version with non-const members for easier memory management
+    struct {
+        char* host;         /**< Host to bind to (e.g., "0.0.0.0" for all interfaces) */
+        uint16_t port;            /**< Port to listen on */
+        bool use_ssl;             /**< Whether to use HTTPS */
+        char* cert_path;    /**< Path to SSL certificate file (for HTTPS) */
+        char* key_path;     /**< Path to SSL private key file (for HTTPS) */
+        char* doc_root;     /**< Document root for serving static files (optional) */
+        uint32_t timeout_ms;      /**< Connection timeout in milliseconds (0 to disable) */
+
+        // CORS settings
+        bool enable_cors;                /**< Whether to enable CORS */
+        char* cors_allow_origin;   /**< Allowed origins for CORS (e.g., "*" for all) */
+        char* cors_allow_methods;  /**< Allowed methods for CORS (e.g., "GET, POST, OPTIONS") */
+        char* cors_allow_headers;  /**< Allowed headers for CORS */
+        int cors_max_age;                /**< Max age for CORS preflight requests in seconds */
+    } http_config;
 
     // Logging configuration
     int log_level;
@@ -1231,7 +1247,23 @@ int main(int argc, char** argv) {
     g_doc_root = mcp_strdup(server_config.http_config.doc_root);
 
     // Create HTTP transport
-    g_transport = mcp_transport_http_create(&server_config.http_config);
+    // Create a temporary mcp_http_config_t structure with proper const qualifiers
+    mcp_http_config_t http_config = {
+        .host = server_config.http_config.host,
+        .port = server_config.http_config.port,
+        .use_ssl = server_config.http_config.use_ssl,
+        .cert_path = server_config.http_config.cert_path,
+        .key_path = server_config.http_config.key_path,
+        .doc_root = server_config.http_config.doc_root,
+        .timeout_ms = server_config.http_config.timeout_ms,
+        .enable_cors = server_config.http_config.enable_cors,
+        .cors_allow_origin = server_config.http_config.cors_allow_origin,
+        .cors_allow_methods = server_config.http_config.cors_allow_methods,
+        .cors_allow_headers = server_config.http_config.cors_allow_headers,
+        .cors_max_age = server_config.http_config.cors_max_age
+    };
+    
+    g_transport = mcp_transport_http_create(&http_config);
     if (!g_transport) {
         http_server_handle_error(HTTP_SERVER_ERROR_TRANSPORT_CREATION, "Failed to create HTTP transport", &server_config);
         return 1;

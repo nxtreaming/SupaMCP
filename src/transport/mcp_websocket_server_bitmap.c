@@ -76,7 +76,7 @@ int ws_server_find_free_client_slot(ws_server_data_t* data) {
 
 // Mutex helper functions for client access
 mcp_mutex_t* ws_server_get_client_mutex(ws_server_data_t* data, int client_index) {
-    if (!data || !data->segment_mutexes || client_index < 0 || client_index >= data->max_clients) {
+    if (!data || !data->segment_mutexes || client_index < 0 || client_index >= (int)data->max_clients) {
         return data->global_mutex; // Fallback to global mutex
     }
 

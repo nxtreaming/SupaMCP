@@ -842,7 +842,7 @@ void test_handle_list_resources_restricted(void) {
     // Check if any of the resources is the allowed one
     bool found_allowed_resource = false;
     for (size_t i = 0; i < resource_count; i++) {
-        mcp_json_t* res_obj = mcp_json_array_get_item(resources_node, i);
+        mcp_json_t* res_obj = mcp_json_array_get_item(resources_node, (int)i);
         TEST_ASSERT_NOT_NULL(res_obj);
 
         const char* uri = NULL;

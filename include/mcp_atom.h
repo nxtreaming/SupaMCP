@@ -33,13 +33,13 @@ extern "C" {
 
 // Additional atomic operations for performance metrics
 #define MCP_ATOMIC_TYPE(type) volatile type
-#define MCP_ATOMIC_INC(var) InterlockedIncrement64(&(var))
-#define MCP_ATOMIC_DEC(var) InterlockedDecrement64(&(var))
-#define MCP_ATOMIC_ADD(var, val) InterlockedAdd64(&(var), (val))
+#define MCP_ATOMIC_INC(var) InterlockedIncrement64((LONG64*)&(var))
+#define MCP_ATOMIC_DEC(var) InterlockedDecrement64((LONG64*)&(var))
+#define MCP_ATOMIC_ADD(var, val) InterlockedAdd64((LONG64*)&(var), (LONG64)(val))
 #define MCP_ATOMIC_LOAD(var) (var)
-#define MCP_ATOMIC_STORE(var, val) InterlockedExchange64(&(var), (val))
+#define MCP_ATOMIC_STORE(var, val) InterlockedExchange64((LONG64*)&(var), (LONG64)(val))
 #define MCP_ATOMIC_COMPARE_EXCHANGE(var, expected, desired) \
-    (InterlockedCompareExchange64(&(var), (desired), (expected)) == (expected))
+    (InterlockedCompareExchange64((LONG64*)&(var), (LONG64)(desired), (LONG64)(expected)) == (LONG64)(expected))
 #else
 #include <stdatomic.h>
 // For non-Windows platforms, we'll use GCC atomic builtins
