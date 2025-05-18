@@ -40,6 +40,8 @@
     #ifndef socklen_t
         typedef int socklen_t;
     #endif
+
+	#define strcasecmp _stricmp
 #endif
 
 #endif // MCP_WIN_SOCKET_COMPAT_H

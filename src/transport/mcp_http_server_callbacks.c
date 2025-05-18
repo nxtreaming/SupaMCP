@@ -3,10 +3,7 @@
 #       define _CRT_SECURE_NO_WARNINGS
 #   endif
 
-#include <win_socket_compat.h>
-
-// On Windows, strcasecmp is _stricmp
-#define strcasecmp _stricmp
+#include "win_socket_compat.h"
 #endif
 
 #include "internal/http_transport_internal.h"
