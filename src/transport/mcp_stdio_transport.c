@@ -29,7 +29,7 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <termios.h>  // For terminal I/O functions
+#include <termios.h>
 #endif
 
 #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Maximum message size (1MB)
@@ -122,14 +122,6 @@ static const char* get_error_string(int err) {
 static int read_length_prefixed_message(char** data_out, size_t* size_out,
                                        void* (*alloc_func)(size_t),
                                        void (*free_func)(void*)) {
-    // Use malloc/free as default if none provided
-    if (alloc_func == NULL) {
-        alloc_func = malloc;
-    }
-    if (free_func == NULL) {
-        free_func = free;
-    }
-
     // Initialize output parameters
     *data_out = NULL;
     if (size_out != NULL) {
@@ -416,7 +408,6 @@ static int wait_for_stdin_data(uint32_t timeout_ms) {
 static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
     (void)transport;   // Unused in this function
 
-    // Validate parameters
     if (data_out == NULL || size_out == NULL) {
         return -1;
     }
@@ -455,11 +446,6 @@ static void* stdio_read_thread_func(void* arg) {
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)arg;
     mcp_transport_t* transport = data->transport_handle;
     char* message_buf = NULL;
-
-    // Get the stored memory allocation and deallocation functions
-    void* (*alloc_func)(size_t) = data->alloc_func ? data->alloc_func : malloc;
-    void (*free_func)(void*) = data->free_func ? data->free_func : free;
-
     mcp_log_debug("Read thread started (using length prefix framing).");
 
     // Loop reading messages as long as the transport is running
@@ -471,7 +457,7 @@ static void* stdio_read_thread_func(void* arg) {
         mcp_mutex_unlock(data->running_mutex);
         // Read a length-prefixed message using the helper function
         size_t message_length = 0;
-        if (read_length_prefixed_message(&message_buf, &message_length, alloc_func, free_func) != 0) {
+        if (read_length_prefixed_message(&message_buf, &message_length, data->alloc_func, data->free_func) != 0) {
             // Error or EOF occurred
             // Set running flag to false in a thread-safe manner
             mcp_mutex_lock(data->running_mutex);
@@ -526,13 +512,13 @@ static void* stdio_read_thread_func(void* arg) {
         }
 
         // 7. Free the message buffer for the next read
-        free_func(message_buf);
+        data->free_func(message_buf);
         message_buf = NULL;
     } // End while(data->running)
 
     // Final safety check - ensure message_buf is freed if we somehow exit the loop with it allocated
     if (message_buf != NULL) {
-        free_func(message_buf);
+        data->free_func(message_buf);
         message_buf = NULL;
     }
 
@@ -561,7 +547,6 @@ static int stdio_transport_start(
     (void)user_data;
     (void)error_callback;
 
-    // Validate parameters
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_error("Invalid transport handle in start function.");
         return -1;
@@ -654,7 +639,6 @@ static int stdio_transport_stop(mcp_transport_t* transport) {
 static int stdio_transport_send(mcp_transport_t* transport, const void* payload_data, size_t payload_size) {
     (void)transport; // Unused in this function
 
-    // Validate parameters
     if (payload_data == NULL || payload_size == 0) {
         mcp_log_error("Invalid payload in send function.");
         return -1;
@@ -707,7 +691,6 @@ static int stdio_transport_send(mcp_transport_t* transport, const void* payload_
 static int stdio_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
     (void)transport; // Unused in this function
 
-    // Validate parameters
     if (buffers == NULL || buffer_count == 0) {
         mcp_log_error("Invalid buffers in sendv function.");
         return -1;
@@ -776,54 +759,45 @@ static int stdio_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t*
  * @param transport The transport handle.
  */
 static void stdio_transport_destroy(mcp_transport_t* transport) {
-    if (transport == NULL) {
+    if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_debug("Attempted to destroy NULL transport.");
         return;
     }
+    mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
 
-    // Default deallocation function in case transport_data is NULL
-    void (*free_func)(void*) = free;
+    // Ensure transport is stopped first
+    bool is_running = false;
 
-    if (transport->transport_data != NULL) {
-        mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
-
-        // Get the stored deallocation function
-        free_func = data->free_func ? data->free_func : free;
-
-        // Ensure transport is stopped first
-        bool is_running = false;
-
-        // Lock the mutex to safely check the running flag
-        if (data->running_mutex != NULL) {
-            mcp_mutex_lock(data->running_mutex);
-            is_running = data->running;
-            mcp_mutex_unlock(data->running_mutex);
-        } else {
-            // If mutex is NULL (shouldn't happen), use the flag directly
-            is_running = data->running;
-        }
-
-        if (is_running) {
-            mcp_log_debug("Stopping transport during destroy.");
-            if (stdio_transport_stop(transport) != 0) {
-                mcp_log_warn("Failed to cleanly stop transport during destroy, continuing with cleanup anyway");
-                // We continue with cleanup despite the error, as we need to free resources
-            }
-        }
-
-        // Destroy the mutex
-        if (data->running_mutex != NULL) {
-            mcp_mutex_destroy(data->running_mutex);
-            data->running_mutex = NULL;
-        }
-
-        // Free the specific stdio data using the stored deallocation function
-        free_func(transport->transport_data);
-        transport->transport_data = NULL;
+    // Lock the mutex to safely check the running flag
+    if (data->running_mutex != NULL) {
+        mcp_mutex_lock(data->running_mutex);
+        is_running = data->running;
+        mcp_mutex_unlock(data->running_mutex);
+    } else {
+        // If mutex is NULL (shouldn't happen), use the flag directly
+        is_running = data->running;
     }
 
+    if (is_running) {
+        mcp_log_debug("Stopping transport during destroy.");
+        if (stdio_transport_stop(transport) != 0) {
+            mcp_log_warn("Failed to cleanly stop transport during destroy, continuing with cleanup anyway");
+            // We continue with cleanup despite the error, as we need to free resources
+        }
+    }
+
+    // Destroy the mutex
+    if (data->running_mutex != NULL) {
+        mcp_mutex_destroy(data->running_mutex);
+        data->running_mutex = NULL;
+    }
+
+    // Free the specific stdio data using the stored deallocation function
+    data->free_func(transport->transport_data);
+    transport->transport_data = NULL;
+
     // Free the main transport struct using the stored deallocation function
-    free_func(transport);
+    data->free_func(transport);
 
     mcp_log_debug("Transport destroyed.");
 }
