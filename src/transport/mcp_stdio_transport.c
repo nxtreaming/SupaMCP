@@ -30,7 +30,6 @@
 #include <sys/types.h>
 #endif
 
-#define MAX_LINE_LENGTH 4096          // Max length for a single line read from stdin
 #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Maximum message size (1MB)
 #define STDIO_BUFFER_SIZE (64 * 1024)      // 64KB buffer for stdin/stdout
 
@@ -61,6 +60,30 @@ static int stdio_transport_stop(mcp_transport_t* transport);
 static void stdio_transport_destroy(mcp_transport_t* transport);
 // Background thread function for reading from stdin.
 static void* stdio_read_thread_func(void* arg);
+
+/**
+ * @internal
+ * @brief Helper function to get a string representation of an error code.
+ *
+ * This function handles platform-specific error code formatting and provides
+ * a consistent way to get error messages across the codebase.
+ *
+ * @param err The error code to convert to a string.
+ * @return A string representation of the error code.
+ */
+static const char* get_error_string(int err) {
+    static char err_buf[128];
+
+#ifdef _WIN32
+    strerror_s(err_buf, sizeof(err_buf), err);
+#else
+    if (strerror_r(err, err_buf, sizeof(err_buf)) != 0) {
+        snprintf(err_buf, sizeof(err_buf), "Unknown error (code: %d)", err);
+    }
+#endif
+
+    return err_buf;
+}
 
 /**
  * @internal
@@ -111,7 +134,7 @@ static int read_length_prefixed_message(char** data_out, size_t* size_out,
         if (feof(stdin)) {
             mcp_log_info("EOF reached on stdin while reading length prefix.");
         } else {
-            mcp_log_error("Error reading length prefix from stdin: %s", strerror(errno));
+            mcp_log_error("Error reading length prefix from stdin: %s", get_error_string(errno));
         }
         return -1;
     }
@@ -140,7 +163,7 @@ static int read_length_prefixed_message(char** data_out, size_t* size_out,
             mcp_log_info("EOF reached on stdin while reading message body. "
                         "Expected %u bytes, got %zu", message_length_host, bytes_read);
         } else {
-            mcp_log_error("Error reading message body from stdin: %s", strerror(errno));
+            mcp_log_error("Error reading message body from stdin: %s", get_error_string(errno));
         }
 
         // Free the allocated buffer on error
@@ -179,12 +202,12 @@ static int stdio_init_streams(void) {
     // to ensure data integrity and prevent newline conversion issues on Windows
 #ifdef _WIN32
     if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
-        mcp_log_error("Failed to set stdin to binary mode: %s", strerror(errno));
+        mcp_log_error("Failed to set stdin to binary mode: %s", get_error_string(errno));
         return -1;
     }
 
     if (_setmode(_fileno(stdout), _O_BINARY) == -1) {
-        mcp_log_error("Failed to set stdout to binary mode: %s", strerror(errno));
+        mcp_log_error("Failed to set stdout to binary mode: %s", get_error_string(errno));
         return -1;
     }
 
@@ -193,12 +216,12 @@ static int stdio_init_streams(void) {
 
     // Set optimal buffering for stdin and stdout
     if (setvbuf(stdin, stdin_buffer, _IOFBF, STDIO_BUFFER_SIZE) != 0) {
-        mcp_log_error("Failed to set stdin buffer: %s", strerror(errno));
+        mcp_log_error("Failed to set stdin buffer: %s", get_error_string(errno));
         return -1;
     }
 
     if (setvbuf(stdout, stdout_buffer, _IOFBF, STDIO_BUFFER_SIZE) != 0) {
-        mcp_log_error("Failed to set stdout buffer: %s", strerror(errno));
+        mcp_log_error("Failed to set stdout buffer: %s", get_error_string(errno));
         return -1;
     }
 
@@ -320,7 +343,7 @@ static int wait_for_stdin_data(uint32_t timeout_ms) {
 
     if (select_result == -1) {
         // Error occurred
-        mcp_log_error("Error in select() while waiting for stdin data: %s", strerror(errno));
+        mcp_log_error("Error in select() while waiting for stdin data: %s", get_error_string(errno));
         return -1;
     } else if (select_result == 0) {
         // Timeout occurred
@@ -590,20 +613,20 @@ static int stdio_transport_send(mcp_transport_t* transport, const void* payload_
     uint32_t net_len = htonl((uint32_t)payload_size);
     if (fwrite(&net_len, 1, sizeof(net_len), stdout) != sizeof(net_len)) {
         mcp_log_error("Failed to write length prefix to stdout: %s",
-                     strerror(errno));
+                     get_error_string(errno));
         return -1;
     }
 
     // 2. Send the actual payload data
     if (fwrite(payload_data, 1, payload_size, stdout) != payload_size) {
         mcp_log_error("Failed to write payload data to stdout: %s",
-                     strerror(errno));
+                     get_error_string(errno));
         return -1;
     }
 
     // 3. Ensure the output is flushed immediately
     if (fflush(stdout) != 0) {
-        mcp_log_error("Failed to flush stdout: %s", strerror(errno));
+        mcp_log_error("Failed to flush stdout: %s", get_error_string(errno));
         return -1;
     }
 
