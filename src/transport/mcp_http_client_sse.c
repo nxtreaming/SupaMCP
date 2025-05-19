@@ -70,7 +70,7 @@
 #define SSE_SLEEP_INTERVAL_MS   100   /**< Sleep interval for checking running flag (ms) */
 #define SSE_RECONNECT_INTERVALS (SSE_RECONNECT_DELAY_MS / SSE_SLEEP_INTERVAL_MS)
 #define SSE_HEARTBEAT_INTERVAL_MS 30000 /**< Interval for checking connection health (ms) */
-#define SSE_MAX_IDLE_TIME_MS 60000 /**< Maximum time without receiving data before reconnecting (ms) */
+#define SSE_MAX_IDLE_TIME_MS 300000 /**< Maximum time without receiving data before reconnecting (ms) (5 minutes) */
 
  /**
   * @brief Helper function to safely free a string pointer and set it to NULL.
@@ -733,7 +733,13 @@ void* http_client_event_thread_func(void* arg) {
         data->sse_socket = sock;
         mcp_mutex_unlock(data->mutex);
 
-        mcp_log_info("Connected to SSE endpoint, waiting for events");
+        // Reset reconnect counter on successful connection
+        static int successful_connections = 0;
+        successful_connections++;
+
+        // Log with connection count for better diagnostics
+        mcp_log_info("Connected to SSE endpoint (connection #%d), waiting for events",
+                   successful_connections);
 
         // Initialize buffer and event parsing state
         char buffer[SSE_BUFFER_SIZE];
@@ -744,6 +750,7 @@ void* http_client_event_thread_func(void* arg) {
 
         // Initialize heartbeat tracking
         time_t last_activity_time = time(NULL);
+        int timeout_counter = 0;  // Counter for timeout events to reduce logging
 
         // Event reading loop - continue while running flag is set and connection is active
         while (data->running) {
@@ -762,16 +769,24 @@ void* http_client_event_thread_func(void* arg) {
 
             // Check if we need to reconnect due to inactivity
             time_t current_time = time(NULL);
-            if (difftime(current_time, last_activity_time) * 1000 > SSE_MAX_IDLE_TIME_MS) {
-                mcp_log_warn("SSE connection idle for too long (%d ms), reconnecting",
-                           (int)(difftime(current_time, last_activity_time) * 1000));
+            double idle_time_ms = difftime(current_time, last_activity_time) * 1000;
+            if (idle_time_ms > SSE_MAX_IDLE_TIME_MS) {
+                mcp_log_warn("SSE connection idle for %d seconds (threshold: %d seconds), reconnecting",
+                           (int)(idle_time_ms / 1000), SSE_MAX_IDLE_TIME_MS / 1000);
                 break; // Exit the reading loop to reconnect
             }
 
             // If select timed out, continue to next iteration (will check idle time again)
             if (select_result == 0) {
-                mcp_log_debug("No data received from SSE endpoint in %d ms, connection still active",
-                             SSE_HEARTBEAT_INTERVAL_MS);
+                // Increment timeout counter
+                timeout_counter++;
+
+                // Only log at most once per hour to reduce noise
+                // Log at 1 hour mark (120 timeouts with 30 second interval)
+                if (timeout_counter == 120) {
+                    mcp_log_info("SSE connection healthy but idle for 1 hour");
+                    timeout_counter = 1;  // Reset counter but not to 0 to maintain sequence
+                }
                 continue;
             }
 
@@ -793,8 +808,9 @@ void* http_client_event_thread_func(void* arg) {
                 break; // Exit the reading loop
             }
 
-            // Update last activity time
+            // Update last activity time and reset timeout counter
             last_activity_time = time(NULL);
+            timeout_counter = 0;  // Reset counter when data is received
 
             // Null-terminate the received data for string operations
             buffer[bytes_read] = '\0';
@@ -851,7 +867,13 @@ void* http_client_event_thread_func(void* arg) {
 
         // If we're still running, retry connection after delay
         if (data->running) {
-            mcp_log_info("SSE connection closed, retrying in %d ms", SSE_RECONNECT_DELAY_MS);
+            static int reconnect_attempts = 0;
+            reconnect_attempts++;
+
+            // Log with reconnect attempt count for better diagnostics
+            mcp_log_info("SSE connection closed (attempt #%d), retrying in %d ms",
+                       reconnect_attempts, SSE_RECONNECT_DELAY_MS);
+
             wait_with_running_check(data, SSE_RECONNECT_DELAY_MS);
         }
     }
