@@ -29,6 +29,7 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <termios.h>  // For terminal I/O functions
 #endif
 
 #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Maximum message size (1MB)
@@ -196,7 +197,7 @@ static int read_length_prefixed_message(char** data_out, size_t* size_out,
  * @brief Initializes stdin and stdout for binary mode and optimal buffering.
  *
  * This function:
- * 1. Sets stdin and stdout to binary mode on Windows to prevent newline translation
+ * 1. Sets stdin and stdout to binary mode to prevent newline translation
  * 2. Optimizes buffering for stdin and stdout using setvbuf with static buffers
  *
  * @return 0 on success, -1 on error.
@@ -207,10 +208,11 @@ static int stdio_init_streams(void) {
     static char stdin_buffer[STDIO_BUFFER_SIZE];
     static char stdout_buffer[STDIO_BUFFER_SIZE];
 
-    // Set binary mode for stdin and stdout on Windows
+    // Set binary mode for stdin and stdout
     // This is necessary for JSON-RPC transmission using length-prefixed framing
-    // to ensure data integrity and prevent newline conversion issues on Windows
+    // to ensure data integrity and prevent newline conversion issues
 #ifdef _WIN32
+    // Windows implementation using _setmode
     if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
         mcp_log_error("Failed to set stdin to binary mode: %s", get_error_string(errno));
         return -1;
@@ -222,6 +224,52 @@ static int stdio_init_streams(void) {
     }
 
     mcp_log_debug("Set stdin and stdout to binary mode for reliable JSON-RPC transmission");
+#else
+    // Non-Windows platforms
+    // Some Unix-like systems support setting binary mode via freopen
+    // Others don't need it as they don't distinguish between text and binary mode
+
+    // Check if we're in a terminal or pipe
+    bool stdin_is_tty = isatty(fileno(stdin));
+    bool stdout_is_tty = isatty(fileno(stdout));
+
+    // Log the I/O mode for debugging
+    mcp_log_debug("I/O mode: stdin %s, stdout %s",
+                 stdin_is_tty ? "is a terminal" : "is a pipe/file",
+                 stdout_is_tty ? "is a terminal" : "is a pipe/file");
+
+    // On some platforms, we can use freopen with "rb" and "wb" modes
+    // to ensure binary mode, but this is not universally supported and
+    // can be dangerous as it reopens the streams
+
+    // Instead, we'll check for common platform-specific issues
+
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+    // BSD-derived systems (including macOS) may need special handling
+    // for binary I/O, especially for terminals
+    if (stdin_is_tty || stdout_is_tty) {
+        mcp_log_debug("BSD-derived system detected with terminal I/O; "
+                     "binary mode may not be fully supported");
+    }
+#endif
+
+#if defined(__linux__) || defined(__unix__)
+    // Most modern Unix/Linux systems don't distinguish between text and binary mode,
+    // but we should still check for potential issues
+
+    // Check if LANG or LC_CTYPE environment variables might affect I/O encoding
+    const char* lang = getenv("LANG");
+    const char* lc_ctype = getenv("LC_CTYPE");
+
+    if ((lang && strstr(lang, "UTF-8")) || (lc_ctype && strstr(lc_ctype, "UTF-8"))) {
+        mcp_log_debug("UTF-8 locale detected (%s%s%s%s); "
+                     "ensure JSON-RPC clients use consistent encoding",
+                     lang ? "LANG=" : "", lang ? lang : "",
+                     lc_ctype ? ", LC_CTYPE=" : "", lc_ctype ? lc_ctype : "");
+    }
+#endif
+
+    mcp_log_debug("Non-Windows platform: assuming binary I/O mode");
 #endif
 
     // Set optimal buffering for stdin and stdout
