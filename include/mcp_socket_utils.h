@@ -78,7 +78,7 @@ int mcp_socket_close(socket_t sock);
  * @brief Gets the last socket error code for the calling thread.
  * @return The platform-specific error code (e.g., WSAGetLastError() or errno).
  */
-int mcp_socket_get_last_error(void);
+int mcp_socket_get_lasterror(void);
 
 /**
  * @brief Sets a socket to non-blocking mode.

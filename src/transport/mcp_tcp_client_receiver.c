@@ -99,7 +99,7 @@ static int send_ping_message(mcp_tcp_client_transport_data_t* data) {
     int send_status = mcp_socket_send_vectors(data->sock, iov, 2, NULL);
 
     if (send_status != 0) {
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
         mcp_log_error("Failed to send ping message (status: %d, error: %d)",
                      send_status, error_code);
         return -1;
@@ -210,7 +210,7 @@ void* tcp_client_receive_thread_func(void* arg) {
         // Check select result
         if (select_result == -1) {
             // Select error
-            int last_error = mcp_socket_get_last_error();
+            int last_error = mcp_socket_get_lasterror();
 
             // Check for interrupted system call (not a real error)
             if (last_error == EINTR) {
@@ -250,7 +250,7 @@ void* tcp_client_receive_thread_func(void* arg) {
         // Handle receive errors
         if (frame_result != 0) {
             // Get the error code
-            int last_error = mcp_socket_get_last_error();
+            int last_error = mcp_socket_get_lasterror();
 
             // Check if we're still running (not stopped externally)
             if (data->running) {

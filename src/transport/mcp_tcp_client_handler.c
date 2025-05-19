@@ -116,7 +116,7 @@ void* tcp_client_handler_thread_func(void* arg) {
             // Error or stop signal
             // Avoid logging error if we are stopping anyway
             if (!client_conn->should_stop) {
-                int last_error = mcp_socket_get_last_error();
+                int last_error = mcp_socket_get_lasterror();
                 mcp_log_error("mcp_socket_wait_readable failed for socket %d: Error %d", (int)client_conn->socket, last_error);
             } else {
                 mcp_log_debug("mcp_socket_wait_readable aborted by stop signal for socket %d.", (int)client_conn->socket);
@@ -149,7 +149,7 @@ void* tcp_client_handler_thread_func(void* arg) {
         if (frame_result != 0) {
             // Avoid logging error if we are stopping anyway
             if (!client_conn->should_stop) {
-                int last_error = mcp_socket_get_last_error();
+                int last_error = mcp_socket_get_lasterror();
                 mcp_log_error("mcp_framing_recv_message failed for socket %d. Result: %d, Last Error: %d",
                               (int)client_conn->socket, frame_result, last_error);
             } else {
@@ -272,7 +272,7 @@ void* tcp_client_handler_thread_func(void* arg) {
                 // Check for send errors
                 if (send_result != 0) {
                     if (!client_conn->should_stop) {
-                        int last_error = mcp_socket_get_last_error();
+                        int last_error = mcp_socket_get_lasterror();
                         mcp_log_error("Send failed on socket %d. Result: %d, Error: %d",
                                      (int)client_conn->socket, send_result, last_error);
                     } else {

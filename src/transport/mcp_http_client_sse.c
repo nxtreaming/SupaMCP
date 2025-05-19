@@ -188,7 +188,7 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
     // Create socket
     socket_t sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == MCP_INVALID_SOCKET) {
-        mcp_log_error("Failed to create socket for connection: %d", mcp_socket_get_last_error());
+        mcp_log_error("Failed to create socket for connection: %d", mcp_socket_get_lasterror());
         return MCP_INVALID_SOCKET;
     }
 
@@ -197,14 +197,14 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
 #ifdef _WIN32
         u_long mode = 1;  // Non-blocking mode
         if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
-            mcp_log_error("Failed to set socket to non-blocking mode: %d", mcp_socket_get_last_error());
+            mcp_log_error("Failed to set socket to non-blocking mode: %d", mcp_socket_get_lasterror());
             mcp_socket_close(sock);
             return MCP_INVALID_SOCKET;
         }
 #else
         int flags = fcntl(sock, F_GETFL, 0);
         if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
-            mcp_log_error("Failed to set socket to non-blocking mode: %d", mcp_socket_get_last_error());
+            mcp_log_error("Failed to set socket to non-blocking mode: %d", mcp_socket_get_lasterror());
             mcp_socket_close(sock);
             return MCP_INVALID_SOCKET;
         }
@@ -215,7 +215,7 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
     struct hostent* server = gethostbyname(host);
     if (server == NULL) {
         mcp_log_error("Failed to resolve host: %s (error: %d)",
-                     host, mcp_socket_get_last_error());
+                     host, mcp_socket_get_lasterror());
         mcp_socket_close(sock);
         return MCP_INVALID_SOCKET;
     }
@@ -232,9 +232,9 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
 
     // If using timeout and connect is in progress
     if (timeout_ms > 0 && (connect_result == MCP_SOCKET_ERROR) &&
-        (mcp_socket_get_last_error() == WSAEWOULDBLOCK ||
-         mcp_socket_get_last_error() == WSAEINPROGRESS ||
-         mcp_socket_get_last_error() == EINPROGRESS)) {
+        (mcp_socket_get_lasterror() == WSAEWOULDBLOCK ||
+         mcp_socket_get_lasterror() == WSAEINPROGRESS ||
+         mcp_socket_get_lasterror() == EINPROGRESS)) {
 
         // Use select to wait for connection with timeout
         fd_set write_fds;
@@ -269,14 +269,14 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
 #ifdef _WIN32
         u_long mode = 0;  // Blocking mode
         if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
-            mcp_log_error("Failed to set socket back to blocking mode: %d", mcp_socket_get_last_error());
+            mcp_log_error("Failed to set socket back to blocking mode: %d", mcp_socket_get_lasterror());
             mcp_socket_close(sock);
             return MCP_INVALID_SOCKET;
         }
 #else
         int flags = fcntl(sock, F_GETFL, 0);
         if (flags < 0 || fcntl(sock, F_SETFL, flags & ~O_NONBLOCK) < 0) {
-            mcp_log_error("Failed to set socket back to blocking mode: %d", mcp_socket_get_last_error());
+            mcp_log_error("Failed to set socket back to blocking mode: %d", mcp_socket_get_lasterror());
             mcp_socket_close(sock);
             return MCP_INVALID_SOCKET;
         }
@@ -285,7 +285,7 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
     else if (connect_result == MCP_SOCKET_ERROR) {
         // Connection failed immediately
         mcp_log_error("Failed to connect to server: %s:%d (error: %d)",
-                     host, port, mcp_socket_get_last_error());
+                     host, port, mcp_socket_get_lasterror());
         mcp_socket_close(sock);
         return MCP_INVALID_SOCKET;
     }
@@ -401,7 +401,7 @@ static int build_and_send_sse_request(http_client_transport_data_t* data, socket
 
     if (sent_len != request_len) {
         mcp_log_error("Failed to send HTTP request for SSE connection: sent %d of %d bytes (error: %d)",
-                     sent_len, request_len, mcp_socket_get_last_error());
+                     sent_len, request_len, mcp_socket_get_lasterror());
         return -1;
     }
 
@@ -792,7 +792,7 @@ void* http_client_event_thread_func(void* arg) {
 
             // If select failed, break the loop
             if (select_result < 0) {
-                mcp_log_error("Select failed while waiting for SSE data: %d", mcp_socket_get_last_error());
+                mcp_log_error("Select failed while waiting for SSE data: %d", mcp_socket_get_lasterror());
                 break;
             }
 
@@ -842,7 +842,7 @@ void* http_client_event_thread_func(void* arg) {
 
         // Log reason for loop exit
         if (bytes_read < 0 && data->running) {
-            mcp_log_error("Error reading from SSE endpoint: %d", mcp_socket_get_last_error());
+            mcp_log_error("Error reading from SSE endpoint: %d", mcp_socket_get_lasterror());
         } else if (bytes_read == 0 && data->running) {
             mcp_log_info("SSE connection closed by server");
         }

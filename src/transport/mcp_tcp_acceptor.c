@@ -68,7 +68,7 @@ void* tcp_accept_thread_func(void* arg) {
         }
 
         if (select_result == MCP_SOCKET_ERROR) {
-            int error = mcp_socket_get_last_error();
+            int error = mcp_socket_get_lasterror();
             // WSAEINTR is not defined on Windows, but we check for other common errors
             if (error == WSAENOTSOCK) {
                 // Socket was closed, likely due to shutdown

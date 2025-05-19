@@ -56,7 +56,7 @@ static inline void socket_utils_free(void* ptr) {
  *
  * @param function_name Name of the function where error occurred
  * @param sock Socket descriptor
- * @param error_code Error code from mcp_socket_get_last_error()
+ * @param error_code Error code from mcp_socket_get_lasterror()
  * @param is_debug Whether to log as debug (true) or error (false)
  */
 static inline void log_socket_error(const char* function_name, socket_t sock, int error_code, bool is_debug) {
@@ -137,7 +137,7 @@ int mcp_socket_close(socket_t sock) {
 #endif
 }
 
-int mcp_socket_get_last_error(void) {
+int mcp_socket_get_lasterror(void) {
 #ifdef _WIN32
     return WSAGetLastError();
 #else
@@ -159,7 +159,7 @@ int mcp_socket_set_non_blocking_ex(socket_t sock, u_long* original_mode) {
     if (original_mode != NULL) {
         u_long mode = 0;
         if (ioctlsocket(sock, FIONREAD, &mode) != 0) {
-            mcp_log_error("ioctlsocket(FIONREAD) failed: %d", mcp_socket_get_last_error());
+            mcp_log_error("ioctlsocket(FIONREAD) failed: %d", mcp_socket_get_lasterror());
             return -1;
         }
         *original_mode = mode;
@@ -168,7 +168,7 @@ int mcp_socket_set_non_blocking_ex(socket_t sock, u_long* original_mode) {
     // Set non-blocking mode
     u_long mode = 1; // 1 to enable non-blocking
     if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
-        mcp_log_error("ioctlsocket(FIONBIO) failed: %d", mcp_socket_get_last_error());
+        mcp_log_error("ioctlsocket(FIONBIO) failed: %d", mcp_socket_get_lasterror());
         return -1;
     }
     return 0;
@@ -208,7 +208,7 @@ int mcp_socket_restore_blocking(socket_t sock,
     u_long mode = 0; // 0 to disable non-blocking
     (void)original_mode; // Suppress unused parameter warning if not used
     if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
-        mcp_log_error("ioctlsocket(FIONBIO) restore failed: %d", mcp_socket_get_last_error());
+        mcp_log_error("ioctlsocket(FIONBIO) restore failed: %d", mcp_socket_get_lasterror());
         return -1;
     }
 #else
@@ -234,7 +234,7 @@ int mcp_socket_set_nodelay(socket_t sock) {
     int flag = 1;
     int result = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char*)&flag, sizeof(flag));
     if (result == MCP_SOCKET_ERROR) {
-        mcp_log_error("setsockopt(TCP_NODELAY) failed: %d", mcp_socket_get_last_error());
+        mcp_log_error("setsockopt(TCP_NODELAY) failed: %d", mcp_socket_get_lasterror());
         return -1;
     }
     mcp_log_debug("TCP_NODELAY enabled on socket %d", (int)sock);
@@ -255,7 +255,7 @@ int mcp_socket_set_reuseaddr(socket_t sock) {
     int flag = 1;
     int result = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&flag, sizeof(flag));
     if (result == MCP_SOCKET_ERROR) {
-        mcp_log_error("setsockopt(SO_REUSEADDR) failed: %d", mcp_socket_get_last_error());
+        mcp_log_error("setsockopt(SO_REUSEADDR) failed: %d", mcp_socket_get_lasterror());
         return -1;
     }
     mcp_log_debug("SO_REUSEADDR enabled on socket %d", (int)sock);
@@ -275,7 +275,7 @@ int mcp_socket_set_keepalive(socket_t sock) {
     int flag = 1;
     int result = setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (const char*)&flag, sizeof(flag));
     if (result == MCP_SOCKET_ERROR) {
-        mcp_log_error("setsockopt(SO_KEEPALIVE) failed: %d", mcp_socket_get_last_error());
+        mcp_log_error("setsockopt(SO_KEEPALIVE) failed: %d", mcp_socket_get_lasterror());
         return -1;
     }
     mcp_log_debug("SO_KEEPALIVE enabled on socket %d", (int)sock);
@@ -299,7 +299,7 @@ int mcp_socket_set_buffer_size(socket_t sock, int send_size, int recv_size) {
     if (send_size > 0) {
         result = setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (const char*)&send_size, sizeof(send_size));
         if (result == MCP_SOCKET_ERROR) {
-            mcp_log_error("setsockopt(SO_SNDBUF) failed: %d", mcp_socket_get_last_error());
+            mcp_log_error("setsockopt(SO_SNDBUF) failed: %d", mcp_socket_get_lasterror());
             return -1;
         }
     }
@@ -307,7 +307,7 @@ int mcp_socket_set_buffer_size(socket_t sock, int send_size, int recv_size) {
     if (recv_size > 0) {
         result = setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char*)&recv_size, sizeof(recv_size));
         if (result == MCP_SOCKET_ERROR) {
-            mcp_log_error("setsockopt(SO_RCVBUF) failed: %d", mcp_socket_get_last_error());
+            mcp_log_error("setsockopt(SO_RCVBUF) failed: %d", mcp_socket_get_lasterror());
             return -1;
         }
     }
@@ -419,14 +419,14 @@ int mcp_socket_set_timeout(socket_t sock, uint32_t timeout_ms) {
     // Set receive timeout
     result = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
     if (result == MCP_SOCKET_ERROR) {
-        mcp_log_error("setsockopt(SO_RCVTIMEO) failed: %d", mcp_socket_get_last_error());
+        mcp_log_error("setsockopt(SO_RCVTIMEO) failed: %d", mcp_socket_get_lasterror());
         return -1;
     }
 
     // Set send timeout
     result = setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
     if (result == MCP_SOCKET_ERROR) {
-        mcp_log_error("setsockopt(SO_SNDTIMEO) failed: %d", mcp_socket_get_last_error());
+        mcp_log_error("setsockopt(SO_SNDTIMEO) failed: %d", mcp_socket_get_lasterror());
         return -1;
     }
 #else
@@ -494,7 +494,7 @@ socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms
     for (p = servinfo; p != NULL; p = p->ai_next) {
         // Create the socket
         if ((sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == MCP_INVALID_SOCKET) {
-            log_socket_error("socket() failed", sock, mcp_socket_get_last_error(), false);
+            log_socket_error("socket() failed", sock, mcp_socket_get_lasterror(), false);
             continue;
         }
 
@@ -504,7 +504,7 @@ socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms
 
             // Fall back to blocking connect
             if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == MCP_SOCKET_ERROR) {
-                log_socket_error("connect() failed", sock, mcp_socket_get_last_error(), false);
+                log_socket_error("connect() failed", sock, mcp_socket_get_lasterror(), false);
                 mcp_socket_close(sock);
                 sock = MCP_INVALID_SOCKET;
                 continue;
@@ -514,7 +514,7 @@ socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms
             int result = connect(sock, p->ai_addr, (int)p->ai_addrlen);
 
             if (result == MCP_SOCKET_ERROR) {
-                int error_code = mcp_socket_get_last_error();
+                int error_code = mcp_socket_get_lasterror();
 
                 // Check if the error is as expected for non-blocking connect
 #ifdef _WIN32
@@ -558,7 +558,7 @@ socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms
                     continue;
                 } else if (result == MCP_SOCKET_ERROR) {
                     // Select error
-                    log_socket_error("select() failed during connect", sock, mcp_socket_get_last_error(), false);
+                    log_socket_error("select() failed during connect", sock, mcp_socket_get_lasterror(), false);
                     mcp_socket_close(sock);
                     sock = MCP_INVALID_SOCKET;
                     continue;
@@ -578,7 +578,7 @@ socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms
                             continue;
                         }
                     } else {
-                        log_socket_error("getsockopt(SO_ERROR) failed", sock, mcp_socket_get_last_error(), false);
+                        log_socket_error("getsockopt(SO_ERROR) failed", sock, mcp_socket_get_lasterror(), false);
                         mcp_socket_close(sock);
                         sock = MCP_INVALID_SOCKET;
                         continue;
@@ -597,7 +597,7 @@ socket_t mcp_socket_connect(const char* host, uint16_t port, uint32_t timeout_ms
 #ifdef _WIN32
             u_long mode = 0; // 0 to disable non-blocking
             if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
-                log_socket_error("ioctlsocket(FIONBIO) failed", sock, mcp_socket_get_last_error(), false);
+                log_socket_error("ioctlsocket(FIONBIO) failed", sock, mcp_socket_get_lasterror(), false);
                 mcp_socket_close(sock);
                 sock = MCP_INVALID_SOCKET;
                 continue;
@@ -662,7 +662,7 @@ int mcp_socket_send_exact(socket_t sock, const char* buf, size_t len, volatile b
 #endif
 
         if (bytes_sent == MCP_SOCKET_ERROR) {
-            int error_code = mcp_socket_get_last_error();
+            int error_code = mcp_socket_get_lasterror();
 
             // Special case: error code 0 during shutdown is normal
             if (error_code == 0) {
@@ -731,7 +731,7 @@ int mcp_socket_recv_exact(socket_t sock, char* buf, size_t len, volatile bool* s
 #endif
 
         if (bytes_read == MCP_SOCKET_ERROR) {
-            int error_code = mcp_socket_get_last_error();
+            int error_code = mcp_socket_get_lasterror();
 
             // Special case: error code 0 during shutdown is normal
             if (error_code == 0) {
@@ -829,7 +829,7 @@ int mcp_socket_send_vectors(socket_t sock, mcp_iovec_t* iov, int iovcnt, volatil
         result = WSASend(sock, temp_iov, (DWORD)current_iovcnt, &bytes_sent_this_call, flags, NULL, NULL);
 
         if (result == MCP_SOCKET_ERROR) {
-            int error_code = mcp_socket_get_last_error();
+            int error_code = mcp_socket_get_lasterror();
 
             // Handle common errors
             if (error_code == 0 ||
@@ -1102,7 +1102,7 @@ int mcp_socket_wait_readable(socket_t sock, int timeout_ms, volatile bool* stop_
         }
 
         if (result == MCP_SOCKET_ERROR) {
-            int error_code = mcp_socket_get_last_error();
+            int error_code = mcp_socket_get_lasterror();
             if (error_code == WSAEINTR) {
                 // Interrupted, loop again
                 continue;
@@ -1290,7 +1290,7 @@ socket_t mcp_socket_create_listener(const char* host, uint16_t port, int backlog
     for (p = servinfo; p != NULL; p = p->ai_next) {
         // Create socket
         if ((listen_sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == MCP_INVALID_SOCKET) {
-            log_socket_error("Listener socket() failed", MCP_INVALID_SOCKET, mcp_socket_get_last_error(), false);
+            log_socket_error("Listener socket() failed", MCP_INVALID_SOCKET, mcp_socket_get_lasterror(), false);
             continue;
         }
 
@@ -1305,7 +1305,7 @@ socket_t mcp_socket_create_listener(const char* host, uint16_t port, int backlog
 
         // Bind socket to address
         if (bind(listen_sock, p->ai_addr, (int)p->ai_addrlen) == MCP_SOCKET_ERROR) {
-            log_socket_error("Listener bind() failed", listen_sock, mcp_socket_get_last_error(), false);
+            log_socket_error("Listener bind() failed", listen_sock, mcp_socket_get_lasterror(), false);
             mcp_socket_close(listen_sock);
             listen_sock = MCP_INVALID_SOCKET;
             continue;
@@ -1329,7 +1329,7 @@ socket_t mcp_socket_create_listener(const char* host, uint16_t port, int backlog
 
     // Start listening
     if (listen(listen_sock, backlog) == MCP_SOCKET_ERROR) {
-        log_socket_error("Listener listen() failed", listen_sock, mcp_socket_get_last_error(), false);
+        log_socket_error("Listener listen() failed", listen_sock, mcp_socket_get_lasterror(), false);
         mcp_socket_close(listen_sock);
         return MCP_INVALID_SOCKET;
     }
@@ -1369,7 +1369,7 @@ socket_t mcp_socket_accept(socket_t listen_sock, struct sockaddr* client_addr, s
         mcp_log_debug("Accepted new connection on socket %d", (int)client_sock);
     } else {
         // Handle accept error
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
 
 #ifdef _WIN32
         // Common non-fatal errors on Windows
@@ -1430,7 +1430,7 @@ socket_t mcp_socket_connect_nonblocking(const char* host, uint16_t port, uint32_
     for (p = servinfo; p != NULL; p = p->ai_next) {
         // Create the socket
         if ((sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == MCP_INVALID_SOCKET) {
-            mcp_log_debug("socket() failed: %d", mcp_socket_get_last_error());
+            mcp_log_debug("socket() failed: %d", mcp_socket_get_lasterror());
             continue;
         }
 
@@ -1452,7 +1452,7 @@ socket_t mcp_socket_connect_nonblocking(const char* host, uint16_t port, uint32_
         }
 
         if (result == MCP_SOCKET_ERROR) {
-            int error_code = mcp_socket_get_last_error();
+            int error_code = mcp_socket_get_lasterror();
 
             // Check if the error is as expected for non-blocking connect
 #ifdef _WIN32
@@ -1496,7 +1496,7 @@ socket_t mcp_socket_connect_nonblocking(const char* host, uint16_t port, uint32_
                 continue;
             } else if (result < 0) {
                 // Select error
-                mcp_log_error("select() failed during connect: %d", mcp_socket_get_last_error());
+                mcp_log_error("select() failed during connect: %d", mcp_socket_get_lasterror());
                 mcp_socket_close(sock);
                 sock = MCP_INVALID_SOCKET;
                 continue;
@@ -1508,7 +1508,7 @@ socket_t mcp_socket_connect_nonblocking(const char* host, uint16_t port, uint32_
                 socklen_t len = sizeof(error);
 
                 if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &len) < 0) {
-                    mcp_log_error("getsockopt(SO_ERROR) failed: %d", mcp_socket_get_last_error());
+                    mcp_log_error("getsockopt(SO_ERROR) failed: %d", mcp_socket_get_lasterror());
                     mcp_socket_close(sock);
                     sock = MCP_INVALID_SOCKET;
                     continue;
@@ -1534,7 +1534,7 @@ socket_t mcp_socket_connect_nonblocking(const char* host, uint16_t port, uint32_
             int error = 0;
             socklen_t len = sizeof(error);
             if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &len) < 0 || error != 0) {
-                mcp_log_debug("Connection failed after select: %d", error ? error : mcp_socket_get_last_error());
+                mcp_log_debug("Connection failed after select: %d", error ? error : mcp_socket_get_lasterror());
                 mcp_socket_close(sock);
                 sock = MCP_INVALID_SOCKET;
                 continue;

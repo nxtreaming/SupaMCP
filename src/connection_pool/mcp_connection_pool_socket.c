@@ -103,7 +103,7 @@ static bool wait_for_connection(socket_handle_t sock, int timeout_ms) {
         mcp_log_warn("Connection timed out after %d ms", timeout_ms);
         return false;
     } else if (result < 0) {
-        mcp_log_error("select() failed: %d", mcp_socket_get_last_error());
+        mcp_log_error("select() failed: %d", mcp_socket_get_lasterror());
         return false;
     }
 
@@ -123,7 +123,7 @@ static bool wait_for_connection(socket_handle_t sock, int timeout_ms) {
     int error = 0;
     socklen_t len = sizeof(error);
     if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &len) < 0) {
-        mcp_log_error("getsockopt(SO_ERROR) failed: %d", mcp_socket_get_last_error());
+        mcp_log_error("getsockopt(SO_ERROR) failed: %d", mcp_socket_get_lasterror());
         return false;
     }
 
@@ -184,7 +184,7 @@ socket_handle_t create_new_connection(const char* host, int port, int connect_ti
 
         // Create socket
         if ((sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == INVALID_SOCKET_HANDLE) {
-            mcp_log_warn("socket() failed: %d", mcp_socket_get_last_error());
+            mcp_log_warn("socket() failed: %d", mcp_socket_get_lasterror());
             continue;
         }
 

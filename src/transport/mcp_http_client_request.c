@@ -179,7 +179,7 @@ static socket_t setup_socket(uint32_t timeout_ms) {
     // Create socket
     socket_t sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == MCP_INVALID_SOCKET) {
-        mcp_log_error("Failed to create socket: %d", mcp_socket_get_last_error());
+        mcp_log_error("Failed to create socket: %d", mcp_socket_get_lasterror());
         return MCP_INVALID_SOCKET;
     }
 
@@ -189,11 +189,11 @@ static socket_t setup_socket(uint32_t timeout_ms) {
     tv.tv_usec = (timeout_ms % 1000) * 1000;
 
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv)) < 0) {
-        mcp_log_error("Failed to set socket receive timeout: %d", mcp_socket_get_last_error());
+        mcp_log_error("Failed to set socket receive timeout: %d", mcp_socket_get_lasterror());
     }
 
     if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv)) < 0) {
-        mcp_log_error("Failed to set socket send timeout: %d", mcp_socket_get_last_error());
+        mcp_log_error("Failed to set socket send timeout: %d", mcp_socket_get_lasterror());
     }
 
     return sock;
@@ -215,7 +215,7 @@ static bool connect_to_server(socket_t sock, const char* host, int port) {
     // Resolve host
     struct hostent* server = gethostbyname(host);
     if (server == NULL) {
-        mcp_log_error("Failed to resolve host: %s (error: %d)", host, mcp_socket_get_last_error());
+        mcp_log_error("Failed to resolve host: %s (error: %d)", host, mcp_socket_get_lasterror());
         return false;
     }
 
@@ -228,7 +228,7 @@ static bool connect_to_server(socket_t sock, const char* host, int port) {
 
     if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == MCP_SOCKET_ERROR) {
         mcp_log_error("Failed to connect to server: %s:%d (error: %d)",
-                     host, port, mcp_socket_get_last_error());
+                     host, port, mcp_socket_get_lasterror());
         return false;
     }
 
@@ -314,7 +314,7 @@ static int wait_for_socket(socket_t sock, uint32_t timeout_ms) {
     int result = select((int)sock + 1, &readfds, NULL, NULL, &tv);
 
     if (result == -1) {
-        mcp_log_error("Select failed with error: %d", mcp_socket_get_last_error());
+        mcp_log_error("Select failed with error: %d", mcp_socket_get_lasterror());
     }
 
     return result;
@@ -471,7 +471,7 @@ static bool read_http_headers(socket_t sock, uint32_t timeout_ms,
         // Socket is readable, receive data
         bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
         if (bytes_read <= 0) {
-            mcp_log_error("recv returned %d, error: %d", bytes_read, mcp_socket_get_last_error());
+            mcp_log_error("recv returned %d, error: %d", bytes_read, mcp_socket_get_lasterror());
             return false;
         }
         buffer[bytes_read] = '\0';
@@ -588,7 +588,7 @@ static bool read_http_body_with_length(socket_t sock, uint32_t timeout_ms,
         if (bytes_read <= 0) {
             // End of data or error
             if (bytes_read < 0) {
-                mcp_log_error("recv failed during body read with error: %d", mcp_socket_get_last_error());
+                mcp_log_error("recv failed during body read with error: %d", mcp_socket_get_lasterror());
                 return false;
             } else {
                 mcp_log_debug("Connection closed by server after reading %zu/%d bytes",
@@ -675,7 +675,7 @@ static bool read_http_body_unknown_length(socket_t sock, uint32_t timeout_ms,
         if (bytes_read <= 0) {
             // End of data or error
             if (bytes_read < 0) {
-                mcp_log_error("recv failed during body read with error: %d", mcp_socket_get_last_error());
+                mcp_log_error("recv failed during body read with error: %d", mcp_socket_get_lasterror());
                 return false;
             } else {
                 mcp_log_debug("Connection closed by server after reading %zu bytes", *response_size);

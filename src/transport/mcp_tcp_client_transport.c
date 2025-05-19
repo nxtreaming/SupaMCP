@@ -222,7 +222,7 @@ static int handle_send_error(mcp_transport_t* transport, const char* error_msg) 
     }
 
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
-    int error_code = mcp_socket_get_last_error();
+    int error_code = mcp_socket_get_lasterror();
 
     // Log the error with the socket error code
     mcp_log_error("%s (error code: %d)", error_msg, error_code);
@@ -506,7 +506,7 @@ static int tcp_client_transport_receive(mcp_transport_t* transport, char** data_
 
     // Handle receive errors
     if (frame_result != 0) {
-        int last_error = mcp_socket_get_last_error();
+        int last_error = mcp_socket_get_lasterror();
 
         // Check if this is a timeout
         if (last_error == EAGAIN || last_error == EWOULDBLOCK || last_error == ETIMEDOUT) {

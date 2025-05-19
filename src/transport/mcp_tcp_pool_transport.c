@@ -264,7 +264,7 @@ static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data_
     socket_handle_t sock = mcp_connection_pool_get(data->connection_pool, data->request_timeout_ms);
 
     if (sock == INVALID_SOCKET_HANDLE) {
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
         mcp_log_error("Failed to get connection from pool (error: %d)", error_code);
 
         // Call error callback if set
@@ -281,7 +281,7 @@ static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data_
 
     // Check send result
     if (result != 0) {
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
         mcp_log_error("Failed to send data (result: %d, error: %d)", result, error_code);
 
         // Release connection back to pool as invalid
@@ -336,7 +336,7 @@ static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data_
         return 0;
     } else {
         // Handle receive error
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
         mcp_log_error("Failed to receive response (result: %d, error: %d)", result, error_code);
 
         // Free response buffer if allocated
@@ -410,7 +410,7 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
     socket_handle_t sock = mcp_connection_pool_get(data->connection_pool, data->request_timeout_ms);
 
     if (sock == INVALID_SOCKET_HANDLE) {
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
         mcp_log_error("Failed to get connection from pool (error: %d)", error_code);
 
         // Call error callback if set
@@ -452,7 +452,7 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
 
     // Check send result
     if (result != 0) {
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
         mcp_log_error("Failed to send vectored data (result: %d, error: %d)", result, error_code);
 
         // Release connection back to pool as invalid
@@ -507,7 +507,7 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
         return 0;
     } else {
         // Handle receive error
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
         mcp_log_error("Failed to receive response after vectored send (result: %d, error: %d)",
                      result, error_code);
 

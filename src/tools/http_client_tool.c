@@ -1515,7 +1515,7 @@ static http_response_t* http_request(const char* method, const char* url,
         } else {
             bytes_received = recv(sock, buffer, sizeof(buffer) - 1, 0);
             if (bytes_received < 0) {
-                mcp_log_error("Socket receive error: %d", mcp_socket_get_last_error());
+                mcp_log_error("Socket receive error: %d", mcp_socket_get_lasterror());
                 break;
             }
         }

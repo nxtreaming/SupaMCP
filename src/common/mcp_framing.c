@@ -154,7 +154,7 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     // 1. Read the 4-byte length prefix
     int read_result = mcp_socket_recv_exact(sock, length_buf, 4, stop_flag);
     if (read_result != 0) {
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
         handle_socket_error(error_code, stop_flag, read_result, "reading length prefix", NULL);
         return -1; // Error, connection closed, or aborted
     }
@@ -192,7 +192,7 @@ int mcp_framing_recv_message(socket_t sock, char** message_data_out, uint32_t* m
     // 5. Read the Message Body
     read_result = mcp_socket_recv_exact(sock, message_buf, message_length_host, stop_flag);
     if (read_result != 0) {
-        int error_code = mcp_socket_get_last_error();
+        int error_code = mcp_socket_get_lasterror();
 
         // Format additional info about message length
         char additional_info[64];
