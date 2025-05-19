@@ -10,6 +10,7 @@
 #include "mcp_sync.h"
 #include "mcp_memory_pool.h"
 #include "mcp_thread_cache.h"
+#include "mcp_cache_aligned.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +37,9 @@
 /**
  * @internal
  * @brief Internal data specific to the stdio transport implementation.
+ *
+ * This structure is aligned to cache line boundaries to improve performance
+ * by reducing false sharing in multi-threaded environments.
  */
 typedef struct {
     bool running;                       /**< Flag indicating if the transport (read thread) is active. */
@@ -44,7 +48,11 @@ typedef struct {
     void* (*alloc_func)(size_t);        /**< Function pointer for memory allocation. */
     void (*free_func)(void*);           /**< Function pointer for memory deallocation. */
     mcp_mutex_t* running_mutex;         /**< Mutex to protect access to the running flag. */
-} mcp_stdio_transport_data_t;
+
+    // Padding to ensure the structure fills a complete cache line
+    // This helps prevent false sharing in multi-threaded environments
+    MCP_CACHE_PADDING(1);
+} MCP_CACHE_ALIGNED mcp_stdio_transport_data_t;
 
 // Initialize stdio streams for binary mode and optimal buffering
 static int stdio_init_streams(void);
@@ -687,7 +695,7 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
         transport->transport_data = NULL;
     }
 
-    // Free the main transport struct using the same deallocation function
+    // Free the main transport struct using the stored deallocation function
     free_func(transport);
 
     mcp_log_debug("Transport destroyed.");
@@ -724,7 +732,9 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     // Zero-initialize the transport structure
     memset(transport, 0, sizeof(mcp_transport_t));
 
-    // Allocate the stdio-specific data struct using selected allocation function
+    // Allocate the stdio-specific data struct
+    // The structure is already declared with MCP_CACHE_ALIGNED attribute
+    // which ensures proper alignment when allocated
     mcp_stdio_transport_data_t* stdio_data = (mcp_stdio_transport_data_t*)alloc_func(sizeof(mcp_stdio_transport_data_t));
     if (stdio_data == NULL) {
         mcp_log_error("Failed to allocate transport data structure.");
