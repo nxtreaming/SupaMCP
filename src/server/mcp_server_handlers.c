@@ -11,21 +11,25 @@
 
 // Macros for common operations
 #define HANDLER_BEGIN(name) \
-    PROFILE_START(name); \
-    if (server == NULL || request == NULL || auth_context == NULL || error_code == NULL) { \
-        if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS; \
-        PROFILE_END(name); \
-        return NULL; \
-    } \
-    *error_code = MCP_ERROR_NONE;
+    do { \
+        PROFILE_START(name); \
+        if (server == NULL || request == NULL || auth_context == NULL || error_code == NULL) { \
+            if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS; \
+            PROFILE_END(name); \
+            return NULL; \
+        } \
+        *error_code = MCP_ERROR_NONE; \
+    } while(0)
 
 #define CHECK_CAPABILITY(name, capability, error_msg) \
-    if (!server->capabilities.capability) { \
-        *error_code = MCP_ERROR_METHOD_NOT_FOUND; \
-        char* response = create_error_response(request->id, *error_code, error_msg); \
-        PROFILE_END(name); \
-        return response; \
-    }
+    do { \
+        if (!server->capabilities.capability) { \
+            *error_code = MCP_ERROR_METHOD_NOT_FOUND; \
+            char* response = create_error_response(request->id, *error_code, error_msg); \
+            PROFILE_END(name); \
+            return response; \
+        } \
+    } while(0)
 
 #define CHECK_PARAMS(name) \
     if (request->params == NULL) { \
@@ -43,14 +47,21 @@
     }
 
 #define RETURN_ERROR(name, code, msg) \
-    *error_code = code; \
-    char* response = create_error_response(request->id, *error_code, msg); \
-    PROFILE_END(name); \
-    return response;
+    do { \
+        *error_code = code; \
+        char* response = create_error_response(request->id, *error_code, msg); \
+        PROFILE_END(name); \
+        return response; \
+    } while(0)
 
 #define CLEANUP_JSON_AND_RETURN_ERROR(name, json_obj, code, msg) \
-    mcp_json_destroy(json_obj); \
-    RETURN_ERROR(name, code, msg);
+    do { \
+        mcp_json_destroy(json_obj); \
+        *error_code = code; \
+        char* response = create_error_response(request->id, *error_code, msg); \
+        PROFILE_END(name); \
+        return response; \
+    } while(0)
 
 // Helper functions for common operations
 static char* create_and_return_success_response(const char* profile_name, uint64_t request_id, char* result_str) {
