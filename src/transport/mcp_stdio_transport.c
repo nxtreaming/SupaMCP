@@ -44,6 +44,7 @@ typedef struct {
     mcp_thread_t read_thread;           /**< Handle for the background stdin reading thread (cross-platform). */
     void* (*alloc_func)(size_t);        /**< Function pointer for memory allocation. */
     void (*free_func)(void*);           /**< Function pointer for memory deallocation. */
+    mcp_mutex_t* running_mutex;         /**< Mutex to protect access to the running flag. */
 } mcp_stdio_transport_data_t;
 
 // Initialize stdio streams for binary mode and optimal buffering
@@ -381,12 +382,23 @@ static void* stdio_read_thread_func(void* arg) {
     mcp_log_debug("Read thread started (using length prefix framing).");
 
     // Loop reading messages as long as the transport is running
-    while (data->running) {
+    bool is_running = true;
+    while (is_running) {
+        // Check the running flag in a thread-safe manner
+        mcp_mutex_lock(data->running_mutex);
+        is_running = data->running;
+        mcp_mutex_unlock(data->running_mutex);
         // Read a length-prefixed message using the helper function
         size_t message_length = 0;
         if (read_length_prefixed_message(&message_buf, &message_length, alloc_func, free_func) != 0) {
             // Error or EOF occurred
-            data->running = false; // Stop reading on EOF or error
+            // Set running flag to false in a thread-safe manner
+            mcp_mutex_lock(data->running_mutex);
+            data->running = false;
+            mcp_mutex_unlock(data->running_mutex);
+
+            // Exit the loop
+            is_running = false;
             break;
         }
 
@@ -476,14 +488,21 @@ static int stdio_transport_start(
 
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
 
+    // Lock the mutex to safely check and update the running flag
+    mcp_mutex_lock(data->running_mutex);
+
     // Check if already running
     if (data->running) {
+        mcp_mutex_unlock(data->running_mutex);
         mcp_log_debug("Transport already running, ignoring start request.");
         return 0;
     }
 
     // Set running flag before creating thread
     data->running = true;
+
+    // Unlock the mutex
+    mcp_mutex_unlock(data->running_mutex);
 
     // Create the read thread using cross-platform thread API
     int thread_result = mcp_thread_create(&data->read_thread, stdio_read_thread_func, data);
@@ -512,14 +531,21 @@ static int stdio_transport_stop(mcp_transport_t* transport) {
 
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
 
+    // Lock the mutex to safely check and update the running flag
+    mcp_mutex_lock(data->running_mutex);
+
     // Check if already stopped
     if (!data->running) {
+        mcp_mutex_unlock(data->running_mutex);
         mcp_log_debug("Transport already stopped, ignoring stop request.");
         return 0;
     }
 
     // Set running flag to false to signal thread to exit
     data->running = false;
+
+    // Unlock the mutex
+    mcp_mutex_unlock(data->running_mutex);
 
     // Wait for thread to exit using cross-platform thread API
     int join_result = mcp_thread_join(data->read_thread, NULL);
@@ -607,12 +633,30 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
         free_func = data->free_func ? data->free_func : free;
 
         // Ensure transport is stopped first
-        if (data->running) {
+        bool is_running = false;
+
+        // Lock the mutex to safely check the running flag
+        if (data->running_mutex != NULL) {
+            mcp_mutex_lock(data->running_mutex);
+            is_running = data->running;
+            mcp_mutex_unlock(data->running_mutex);
+        } else {
+            // If mutex is NULL (shouldn't happen), use the flag directly
+            is_running = data->running;
+        }
+
+        if (is_running) {
             mcp_log_debug("Stopping transport during destroy.");
             if (stdio_transport_stop(transport) != 0) {
                 mcp_log_warn("Failed to cleanly stop transport during destroy, continuing with cleanup anyway");
                 // We continue with cleanup despite the error, as we need to free resources
             }
+        }
+
+        // Destroy the mutex
+        if (data->running_mutex != NULL) {
+            mcp_mutex_destroy(data->running_mutex);
+            data->running_mutex = NULL;
         }
 
         // Free the specific stdio data using the stored deallocation function
@@ -671,6 +715,15 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     stdio_data->transport_handle = transport; // Link back
     stdio_data->alloc_func = alloc_func;      // Store allocation function
     stdio_data->free_func = free_func;        // Store deallocation function
+
+    // Create mutex for thread safety
+    stdio_data->running_mutex = mcp_mutex_create();
+    if (stdio_data->running_mutex == NULL) {
+        mcp_log_error("Failed to create mutex for transport.");
+        free_func(stdio_data);
+        free_func(transport);
+        return NULL;
+    }
 
     // Set transport type and protocol
     transport->type = MCP_TRANSPORT_TYPE_CLIENT;
