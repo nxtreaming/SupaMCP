@@ -15,19 +15,18 @@ typedef struct {
     bool error_occurred;
 } list_context_t;
 
-// Structure to hold a template
 typedef struct {
     mcp_resource_template_t* tmpl;
 } template_holder_t;
 
 // Callback to add resource info to JSON array
 static void list_resource_callback(const void* key, void* value, void* user_data) {
-    (void)key; // Key (URI) is not needed directly in the output object
+    (void)key;
     list_context_t* ctx = (list_context_t*)user_data;
     if (ctx->error_occurred) return;
 
     mcp_resource_t* resource = (mcp_resource_t*)value;
-    mcp_json_t* res_obj = mcp_json_object_create(); // Uses arena
+    mcp_json_t* res_obj = mcp_json_object_create();
 
     if (!res_obj ||
         (resource->uri && mcp_json_object_set_property(res_obj, "uri", mcp_json_string_create(resource->uri)) != 0) ||
@@ -36,7 +35,7 @@ static void list_resource_callback(const void* key, void* value, void* user_data
         (resource->description && mcp_json_object_set_property(res_obj, "description", mcp_json_string_create(resource->description)) != 0) ||
         mcp_json_array_add_item(ctx->json_array, res_obj) != 0)
     {
-        mcp_json_destroy(res_obj); // Cleanup partially created object
+        mcp_json_destroy(res_obj);
         ctx->error_occurred = true;
     }
 }
@@ -48,7 +47,7 @@ static void list_resource_callback(const void* key, void* value, void* user_data
 char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request,
     const mcp_auth_context_t* auth_context, int* error_code) {
     PROFILE_START("handle_list_resources");
-    (void)arena; // Arena not used for this handler
+    (void)arena;
 
     if (server == NULL || request == NULL || auth_context == NULL || error_code == NULL) {
         if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -64,9 +63,6 @@ char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, co
         return response;
     }
 
-    // Permission Check (Optional for list)
-    // if (!mcp_auth_check_general_permission(auth_context, "list_resources")) { ... }
-
     mcp_json_t* resources_json = mcp_json_array_create();
     if (!resources_json) {
         *error_code = MCP_ERROR_INTERNAL_ERROR;
@@ -76,9 +72,7 @@ char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, co
     }
 
     list_context_t context = { .json_array = resources_json, .error_occurred = false };
-
-    // Iterate through the resources hash table
-    if (server->resources_table) { // Check if table exists
+    if (server->resources_table) {
         mcp_hashtable_foreach(server->resources_table, list_resource_callback, &context);
     }
 
@@ -116,12 +110,12 @@ char* handle_list_resources_request(mcp_server_t* server, mcp_arena_t* arena, co
 
 // Callback to add template info to JSON array
 static void list_template_callback(const void* key, void* value, void* user_data) {
-    (void)key; // Key (URI template) is not needed directly in the output object
+    (void)key;
     list_context_t* ctx = (list_context_t*)user_data;
     if (ctx->error_occurred) return;
 
     mcp_resource_template_t* tmpl = (mcp_resource_template_t*)value;
-    mcp_json_t* tmpl_obj = mcp_json_object_create(); // Uses arena
+    mcp_json_t* tmpl_obj = mcp_json_object_create();
 
     if (!tmpl_obj ||
         (tmpl->uri_template && mcp_json_object_set_property(tmpl_obj, "uriTemplate", mcp_json_string_create(tmpl->uri_template)) != 0) ||
@@ -130,7 +124,7 @@ static void list_template_callback(const void* key, void* value, void* user_data
         (tmpl->description && mcp_json_object_set_property(tmpl_obj, "description", mcp_json_string_create(tmpl->description)) != 0) ||
         mcp_json_array_add_item(ctx->json_array, tmpl_obj) != 0)
     {
-        mcp_json_destroy(tmpl_obj); // Cleanup partially created object
+        mcp_json_destroy(tmpl_obj);
         ctx->error_occurred = true;
     }
 }
@@ -158,9 +152,6 @@ char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* 
         return response;
     }
 
-    // Permission Check (Optional for list)
-    // if (!mcp_auth_check_general_permission(auth_context, "list_resource_templates")) { ... }
-
     mcp_json_t* templates_json = mcp_json_array_create();
     if (!templates_json) {
         *error_code = MCP_ERROR_INTERNAL_ERROR;
@@ -170,9 +161,7 @@ char* handle_list_resource_templates_request(mcp_server_t* server, mcp_arena_t* 
     }
 
     list_context_t context = { .json_array = templates_json, .error_occurred = false };
-
-    // Iterate through the resource templates hash table
-    if (server->resource_templates_table) { // Check if table exists
+    if (server->resource_templates_table) {
         mcp_hashtable_foreach(server->resource_templates_table, list_template_callback, &context);
     }
 
@@ -254,7 +243,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
         return response;
     }
 
-    // --- Permission Check ---
     if (!mcp_auth_check_resource_access(auth_context, uri)) {
         mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_FORBIDDEN;
@@ -262,7 +250,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
         PROFILE_END("handle_read_resource");
         return response;
     }
-    // --- End Permission Check ---
 
     mcp_content_item_t** content_items = NULL;
     size_t content_count = 0;
@@ -270,7 +257,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 
     // 1. Check cache first
     if (server->resource_cache != NULL) {
-        // Pass the content item pool to mcp_cache_get
         PROFILE_START("cache_lookup");
         if (mcp_cache_get(server->resource_cache, uri, server->content_item_pool, &content_items, &content_count) == 0) {
             if (mcp_log_get_level() <= MCP_LOG_LEVEL_DEBUG) {
@@ -295,12 +281,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 
             PROFILE_START("template_handler_callback");
             handler_status = mcp_server_handle_template_resource(
-                server,
-                uri,
-                &content_items,
-                &content_count,
-                &handler_error_message
-            );
+                server, uri, &content_items, &content_count, &handler_error_message);
             PROFILE_END("template_handler_callback");
 
             // If the template handler found a match and processed the request successfully,
@@ -308,7 +289,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
             if (handler_status != MCP_ERROR_RESOURCE_NOT_FOUND) {
                 fetched_from_handler = true;
                 if (handler_status != MCP_ERROR_NONE) {
-                    // Template handler found a match but encountered an error
                     *error_code = handler_status;
                     char* response = create_error_response(request->id, *error_code,
                         handler_error_message ? handler_error_message : "Error processing template resource");
@@ -320,30 +300,23 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
             }
         }
 
-        // If template routing didn't find a match or we don't have template routes,
-        // fall back to the default resource handler
+        // If template routing didn't find a match, fall back to the default resource handler
         if (content_items == NULL && server->resource_handler != NULL) {
             char* handler_error_message = NULL;
             mcp_error_code_t handler_status = MCP_ERROR_NONE;
 
             PROFILE_START("resource_handler_callback");
             handler_status = server->resource_handler(
-                server,
-                uri,
-                server->resource_handler_user_data,
-                &content_items,
-                &content_count,
-                &handler_error_message
-            );
+                server, uri, server->resource_handler_user_data,
+                &content_items, &content_count, &handler_error_message);
             PROFILE_END("resource_handler_callback");
 
             if (handler_status != MCP_ERROR_NONE) {
-                if (content_items) { // Cleanup potentially partial results from handler
+                if (content_items) {
                     for(size_t i = 0; i < content_count; ++i) {
                         if (content_items[i]) mcp_content_item_free(content_items[i]);
                     }
                     mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
-                    content_items = NULL;
                 }
                 mcp_json_destroy(params_json);
                 *error_code = handler_status;
@@ -363,23 +336,17 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
                  return response;
             }
             fetched_from_handler = true;
-        } else {
+        } else if (content_items == NULL) {
             // Check if resource exists in static list (hashtable)
             void* resource_ptr = NULL;
             if (!server->resources_table || mcp_hashtable_get(server->resources_table, uri, &resource_ptr) != 0) {
-                // For now, we'll skip server-side template handling
-                // The client-side template handling is implemented and working
-
-                // Not found in static list or templates
                 mcp_json_destroy(params_json);
-                *error_code = MCP_ERROR_RESOURCE_NOT_FOUND; // More specific error
+                *error_code = MCP_ERROR_RESOURCE_NOT_FOUND;
                 char* response = create_error_response(request->id, *error_code, "Resource not found and no handler configured");
                 PROFILE_END("handle_read_resource");
                 return response;
             }
-            // Resource found in static list, but no handler to generate content.
-            // This case might indicate an error or simply that the resource has no dynamic content.
-            // For now, return an error indicating no handler.
+            // Resource found in static list, but no handler to generate content
             mcp_json_destroy(params_json);
             *error_code = MCP_ERROR_INTERNAL_ERROR;
             char* response = create_error_response(request->id, *error_code, "Resource found but no handler configured to read content");
@@ -387,23 +354,17 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
             return response;
         }
     }
+
     // 3. If fetched from handler, put it in the cache
     if (fetched_from_handler && server->resource_cache != NULL) {
-        // Pass the content item pool to mcp_cache_put
         PROFILE_START("cache_store");
-
         // Calculate appropriate TTL based on content type
         int ttl_seconds = 0; // Default: no expiration
 
-        // If we have content items, check their type to determine appropriate TTL
         if (content_count > 0 && content_items[0]) {
             // For text content, use shorter TTL (5 minutes)
             // For binary content, use longer TTL (1 hour)
-            if (content_items[0]->type == MCP_CONTENT_TYPE_TEXT) {
-                ttl_seconds = 300; // 5 minutes
-            } else {
-                ttl_seconds = 3600; // 1 hour
-            }
+            ttl_seconds = (content_items[0]->type == MCP_CONTENT_TYPE_TEXT) ? 300 : 3600;
         }
 
         if (mcp_cache_put(server->resource_cache, uri, server->content_item_pool, content_items, content_count, ttl_seconds) != 0) {
@@ -416,11 +377,9 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 
     // 4. Create response JSON structure
     PROFILE_START("json_build");
-
-    // Pre-allocate the JSON array with the expected size
     mcp_json_t* contents_json = mcp_json_array_create_with_capacity(content_count);
     if (!contents_json) {
-        if (content_items) { // Cleanup if JSON creation fails
+        if (content_items) {
             for (size_t i = 0; i < content_count; i++) {
                 if (content_items[i]) mcp_object_pool_release(server->content_item_pool, content_items[i]);
             }
@@ -435,24 +394,21 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     }
 
     bool json_build_error = false;
-
     // Reuse URI JSON string for all items
     mcp_json_t* uri_json_str = mcp_json_string_create(uri);
     if (!uri_json_str) {
         json_build_error = true;
     } else {
-        // Process all content items
         for (size_t i = 0; i < content_count && !json_build_error; i++) {
             mcp_content_item_t* item = content_items[i];
             if (!item) continue;
 
-            mcp_json_t* item_obj = mcp_json_object_create_with_capacity(3); // Pre-allocate for uri, mimeType, text
+            mcp_json_t* item_obj = mcp_json_object_create_with_capacity(3);
             if (!item_obj) {
                 json_build_error = true;
                 break;
             }
 
-            // Add URI (reuse the same JSON string for all items)
             if (mcp_json_object_set_property(item_obj, "uri", uri_json_str) != 0) {
                 mcp_json_destroy(item_obj);
                 json_build_error = true;
@@ -464,7 +420,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
                 mcp_json_increment_ref_count(uri_json_str);
             }
 
-            // Add mime type if present
             if (item->mime_type &&
                 mcp_json_object_set_property(item_obj, "mimeType", mcp_json_string_create(item->mime_type)) != 0) {
                 mcp_json_destroy(item_obj);
@@ -472,7 +427,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
                 break;
             }
 
-            // Add text content if present and of text type
             if (item->type == MCP_CONTENT_TYPE_TEXT && item->data &&
                 mcp_json_object_set_property(item_obj, "text", mcp_json_string_create((const char*)item->data)) != 0) {
                 mcp_json_destroy(item_obj);
@@ -480,19 +434,16 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
                 break;
             }
 
-            // Add item to array
             if (mcp_json_array_add_item(contents_json, item_obj) != 0) {
                 mcp_json_destroy(item_obj);
                 json_build_error = true;
                 break;
             }
         }
-
-        // Clean up the URI JSON string (array items have their own references)
         mcp_json_destroy(uri_json_str);
     }
 
-    // Release original content items back to pool after copying to JSON
+    // Release original content items back to pool
     if (content_items) {
         for (size_t i = 0; i < content_count; i++) {
             if (content_items[i]) mcp_object_pool_release(server->content_item_pool, content_items[i]);
@@ -510,8 +461,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
         return response;
     }
 
-    // Create result object with pre-allocated capacity
-    mcp_json_t* result_obj = mcp_json_object_create_with_capacity(1); // Just need space for "contents"
+    mcp_json_t* result_obj = mcp_json_object_create_with_capacity(1);
     if (!result_obj || mcp_json_object_set_property(result_obj, "contents", contents_json) != 0) {
         mcp_json_destroy(contents_json);
         mcp_json_destroy(result_obj);
@@ -523,8 +473,7 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
         return response;
     }
 
-    // Stringify with a reasonable initial buffer size based on content count
-    size_t estimated_size = content_count * 256 + 64; // Base size + estimated content size
+    size_t estimated_size = content_count * 256 + 64;
     char* result_str = mcp_json_stringify_with_capacity(result_obj, estimated_size);
     mcp_json_destroy(result_obj);
 
@@ -538,7 +487,6 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
     }
 
     PROFILE_END("json_build");
-
     mcp_json_destroy(params_json);
     char* response = create_success_response(request->id, result_str);
     PROFILE_END("handle_read_resource");
@@ -547,16 +495,16 @@ char* handle_read_resource_request(mcp_server_t* server, mcp_arena_t* arena, con
 
 // Callback to add tool info to JSON array
 static void list_tool_callback(const void* key, void* value, void* user_data) {
-    (void)key; // Key (tool name) is part of the value object
+    (void)key;
     list_context_t* ctx = (list_context_t*)user_data;
     if (ctx->error_occurred) return;
 
     mcp_tool_t* tool = (mcp_tool_t*)value;
-    mcp_json_t* tool_obj = mcp_json_object_create(); // Uses arena
+    mcp_json_t* tool_obj = mcp_json_object_create();
     mcp_json_t* schema_obj = NULL;
     mcp_json_t* props_obj = NULL;
     mcp_json_t* req_arr = NULL;
-    bool json_build_error = false; // Local flag for this callback instance
+    bool json_build_error = false;
 
     if (!tool_obj || mcp_json_object_set_property(tool_obj, "name", mcp_json_string_create(tool->name)) != 0 ||
         (tool->description && mcp_json_object_set_property(tool_obj, "description", mcp_json_string_create(tool->description)) != 0))
@@ -614,13 +562,13 @@ static void list_tool_callback(const void* key, void* value, void* user_data) {
     if (mcp_json_array_add_item(ctx->json_array, tool_obj) != 0) {
         json_build_error = true; goto tool_callback_cleanup;
     }
-    return; // Success for this item
+    return;
 
 tool_callback_cleanup:
     mcp_json_destroy(req_arr);
-    mcp_json_destroy(schema_obj); // props_obj is part of schema_obj
+    mcp_json_destroy(schema_obj);
     mcp_json_destroy(tool_obj);
-    ctx->error_occurred = true; // Signal error occurred
+    ctx->error_occurred = true;
 }
 
 /**
@@ -646,9 +594,6 @@ char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const 
          return response;
     }
 
-    // Permission Check (Optional for list)
-    // if (!mcp_auth_check_general_permission(auth_context, "list_tools")) { ... }
-
     mcp_json_t* tools_json = mcp_json_array_create();
     if (!tools_json) {
         *error_code = MCP_ERROR_INTERNAL_ERROR;
@@ -658,9 +603,7 @@ char* handle_list_tools_request(mcp_server_t* server, mcp_arena_t* arena, const 
     }
 
     list_context_t context = { .json_array = tools_json, .error_occurred = false };
-
-    // Iterate through the tools hash table
-    if (server->tools_table) { // Check if table exists
+    if (server->tools_table) {
         mcp_hashtable_foreach(server->tools_table, list_tool_callback, &context);
     }
 
@@ -717,7 +660,7 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
         return response;
     }
 
-     if (request->params == NULL) {
+    if (request->params == NULL) {
         *error_code = MCP_ERROR_INVALID_PARAMS;
         char* response = create_error_response(request->id, *error_code, "Missing parameters");
         PROFILE_END("handle_call_tool");
@@ -742,22 +685,15 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
         return response;
     }
 
-    // --- Permission Check ---
     if (!mcp_auth_check_tool_access(auth_context, name)) {
         mcp_json_destroy(params_json);
-        *error_code = MCP_ERROR_FORBIDDEN; // Use a specific permission error
+        *error_code = MCP_ERROR_FORBIDDEN;
         char* response = create_error_response(request->id, *error_code, "Access denied to tool");
         PROFILE_END("handle_call_tool");
         return response;
     }
-    // --- End Permission Check ---
 
     mcp_json_t* args_json = mcp_json_object_get_property(params_json, "arguments");
-    // Arguments can be any JSON type. Pass the parsed mcp_json_t* directly.
-    // args_json will be NULL if "arguments" is not present or not an object/array/etc.
-    // The handler should check for NULL if arguments are expected.
-
-    // Call the tool handler
     mcp_content_item_t** content_items = NULL;
     size_t content_count = 0;
     bool is_error = false;
@@ -767,15 +703,8 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     if (server->tool_handler != NULL) {
         PROFILE_START("tool_handler_callback");
         handler_status = server->tool_handler(
-            server,
-            name,
-            args_json,
-            server->tool_handler_user_data,
-            &content_items,
-            &content_count,
-            &is_error,
-            &handler_error_message
-        );
+            server, name, args_json, server->tool_handler_user_data,
+            &content_items, &content_count, &is_error, &handler_error_message);
         PROFILE_END("tool_handler_callback");
     } else {
         handler_status = MCP_ERROR_INTERNAL_ERROR;
@@ -783,12 +712,11 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
     }
 
     if (handler_status != MCP_ERROR_NONE) {
-        if (content_items) { // Cleanup potentially partial results from handler
+        if (content_items) {
             for(size_t i = 0; i < content_count; ++i) {
                 if (content_items[i]) mcp_content_item_free(content_items[i]);
             }
             mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
-            content_items = NULL;
         }
         mcp_json_destroy(params_json);
         *error_code = handler_status;
@@ -799,10 +727,9 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
         return response;
     }
 
-    // Handler returned success, build response
     mcp_json_t* content_json = mcp_json_array_create();
     if (!content_json) {
-         if (content_items) { // Cleanup if JSON creation fails
+         if (content_items) {
              for (size_t i = 0; i < content_count; i++) mcp_content_item_free(content_items[i]);
              mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
          }
@@ -823,8 +750,8 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
             switch(item->type) {
             case MCP_CONTENT_TYPE_TEXT: type_str = "text"; break;
             case MCP_CONTENT_TYPE_JSON: type_str = "json"; break;
-                case MCP_CONTENT_TYPE_BINARY: type_str = "binary"; break;
-                default: type_str = "unknown"; break;
+            case MCP_CONTENT_TYPE_BINARY: type_str = "binary"; break;
+            default: type_str = "unknown"; break;
             }
 
             if (!item_obj ||
@@ -840,17 +767,15 @@ char* handle_call_tool_request(mcp_server_t* server, mcp_arena_t* arena, const m
         }
     }
 
-    // Release handler-allocated content items back to pool after copying to JSON
     if (content_items) {
         for (size_t i = 0; i < content_count; i++) {
-            if (content_items[i])
-                mcp_object_pool_release(server->content_item_pool, content_items[i]);
+            if (content_items[i]) mcp_object_pool_release(server->content_item_pool, content_items[i]);
         }
         mcp_safe_free(content_items, content_count * sizeof(mcp_content_item_t*));
     }
     free(handler_error_message);
 
-     if (json_build_error) {
+    if (json_build_error) {
         mcp_json_destroy(content_json);
         mcp_json_destroy(params_json);
         *error_code = MCP_ERROR_INTERNAL_ERROR;
