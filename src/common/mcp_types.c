@@ -8,6 +8,28 @@
 #include "mcp_thread_cache.h"
 
 /**
+ * @brief Convert an MCP error code to a human-readable string
+ */
+const char* mcp_get_error_message(mcp_error_code_t error_code) {
+    switch (error_code) {
+        case MCP_ERROR_NONE:                  return "No error";
+        case MCP_ERROR_PARSE_ERROR:           return "Parse error";
+        case MCP_ERROR_INVALID_REQUEST:       return "Invalid request";
+        case MCP_ERROR_METHOD_NOT_FOUND:      return "Method not found";
+        case MCP_ERROR_INVALID_PARAMS:        return "Invalid parameters";
+        case MCP_ERROR_INTERNAL_ERROR:        return "Internal error";
+        case MCP_ERROR_TRANSPORT_ERROR:       return "Transport error";
+        case MCP_ERROR_RESOURCE_NOT_FOUND:    return "Resource not found";
+        case MCP_ERROR_TOOL_NOT_FOUND:        return "Tool not found";
+        case MCP_ERROR_UNAUTHORIZED:          return "Unauthorized";
+        case MCP_ERROR_FORBIDDEN:             return "Forbidden";
+        case MCP_ERROR_SERVER_SHUTTING_DOWN:  return "Server shutting down";
+        case MCP_ERROR_TOO_MANY_REQUESTS:     return "Too many requests";
+        default:                              return "Unknown error";
+    }
+}
+
+/**
  * @brief Safely frees memory that could have been allocated by different methods.
  */
 void mcp_safe_free(void* ptr, size_t size) {

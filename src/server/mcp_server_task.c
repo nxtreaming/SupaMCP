@@ -1,3 +1,11 @@
+/**
+ * @file mcp_server_task.c
+ * @brief Implementation of server task processing for MCP server.
+ * 
+ * This file contains the implementation of message processing tasks and transport
+ * callbacks used by the MCP server.
+ */
+
 #include "internal/server_internal.h"
 #include <string.h>
 #include <stdio.h>
@@ -5,109 +13,139 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+#include <stdatomic.h>
 #endif
 
-// Structure to hold data for a message processing task
+/**
+ * @brief Data structure for message processing tasks
+ * 
+ * This structure holds all necessary data for processing an incoming message
+ * asynchronously in a worker thread.
+ */
 typedef struct message_task_data_t {
-    mcp_server_t* server;
-    mcp_transport_t* transport; // Transport to send response on
-    void* message_data;         // Copied message data (owned by this struct)
-    size_t message_size;
+    mcp_server_t* server;           ///< Reference to the server instance
+    mcp_transport_t* transport;      ///< Transport layer for sending responses
+    void* message_data;              ///< Copied message data (owned by this struct)
+    size_t message_size;             ///< Size of the message data in bytes
 } message_task_data_t;
 
-// Worker function executed by the thread pool
+/**
+ * @brief Worker function for processing messages in a thread pool
+ * 
+ * This function is executed by worker threads to process incoming messages.
+ * It handles message validation, processing, and cleanup.
+ * 
+ * @param arg Pointer to message_task_data_t containing message and context
+ */
 void process_message_task(void* arg) {
-    PROFILE_START("process_message_task"); // Profile task execution
+    PROFILE_START("process_message_task");
+    
     message_task_data_t* task_data = (message_task_data_t*)arg;
     if (!task_data || !task_data->server || !task_data->transport || !task_data->message_data) {
-        mcp_log_error("Error: Invalid task data in process_message_task.");
-        // Attempt cleanup even with invalid data
-        if (task_data) free(task_data->message_data);
-        free(task_data);
-        PROFILE_END("process_message_task"); // End profile on error
+        mcp_log_error("Invalid task data in process_message_task");
+        if (task_data) {
+            free(task_data->message_data);
+            free(task_data);
+        }
+        PROFILE_END("process_message_task");
         return;
     }
 
     mcp_server_t* server = task_data->server;
     void* data = task_data->message_data;
     size_t size = task_data->message_size;
-    size_t max_size = server->config.max_message_size > 0 ? server->config.max_message_size : DEFAULT_MAX_MESSAGE_SIZE;
+    size_t max_size = server->config.max_message_size > 0 
+        ? server->config.max_message_size 
+        : DEFAULT_MAX_MESSAGE_SIZE;
 
-    // --- Input Validation: Check message size ---
+    // Input validation: Check message size
     if (size > max_size) {
-        mcp_log_error("Error: Received message size (%zu) exceeds limit (%zu).", size, max_size);
-        // We cannot generate a JSON-RPC error here as we haven't parsed the ID yet.
-        // The connection will likely be closed by the transport layer after this task finishes.
-        free(task_data->message_data); // Free copied data
+        mcp_log_error("Message size (%zu) exceeds maximum allowed size (%zu)", 
+                     size, max_size);
+        free(task_data->message_data);
         free(task_data);
-        PROFILE_END("process_message_task"); // End profile on error
+        PROFILE_END("process_message_task");
         return;
     }
-    // --- End Input Validation ---
 
-    int error_code = 0;
+    int error_code = MCP_ERROR_NONE;
 
-    // Verify if message has null terminator
+    // Verify message has proper null termination for string safety
     bool has_terminator = (size > 0 && ((const char*)data)[size-1] == '\0');
     if (!has_terminator) {
-        mcp_log_warn("Task data missing terminator, this may cause JSON parsing errors");
+        mcp_log_warn("Message data missing null terminator, JSON parsing may fail");
     }
 
-    // Call handle_message from mcp_server_dispatch.c (declared in internal header)
-    mcp_log_debug("Calling handle_message with data: '%.*s'", (int)size, (const char*)data);
+        // Process the message using the server's message handler
+    mcp_log_debug("Processing message (size: %zu): %.*s", 
+                 size, 
+                 (int)(size > 100 ? 100 : size),  // Preview first 100 chars
+                 (const char*)data);
+    
     char* response_json = NULL;
 
-    // Use try-catch to catch any exceptions on Windows
+    // Use structured exception handling on Windows for additional safety
 #ifdef _WIN32
     __try {
 #endif
         response_json = handle_message(server, data, size, &error_code);
-        mcp_log_debug("handle_message returned: error_code=%d, response=%s",
-                     error_code,
-                     response_json ? "non-NULL" : "NULL");
+        mcp_log_debug("Message processing completed with status: %s (code: %d)",
+                     error_code == MCP_ERROR_NONE ? "success" : "error",
+                     error_code);
 #ifdef _WIN32
     } __except(EXCEPTION_EXECUTE_HANDLER) {
-        mcp_log_error("EXCEPTION in handle_message: %d", GetExceptionCode());
+        mcp_log_error("Unhandled exception occurred during message processing");
         error_code = MCP_ERROR_INTERNAL_ERROR;
         response_json = NULL;
     }
 #endif
 
-    // Log and free the response
+    // Handle the response from message processing
     if (response_json != NULL) {
-        // Free the response - actual response should be returned by transport_message_callback
+        // Response will be sent asynchronously by the transport layer
         free(response_json);
     } else if (error_code != MCP_ERROR_NONE) {
-        // Log processing error
-        mcp_log_error("Error processing message (code: %d), no response generated.", error_code);
+        mcp_log_error("Message processing failed (code: %d): %s", 
+                     error_code, 
+                     mcp_get_error_message((mcp_error_code_t)error_code));
     }
 
-    // Clean up task data
-    free(task_data->message_data);
-    free(task_data);
+    // Clean up resources
+    if (task_data) {
+        if (task_data->message_data) {
+            free(task_data->message_data);
+        }
+        free(task_data);
+    }
+    
     PROFILE_END("process_message_task");
 }
 
 /**
- * @internal
- * @brief Callback function passed to the transport layer.
- *
- * This function is invoked by the transport when a complete message is received.
- * It directly processes the message and returns a response string.
- *
- * @param user_data Pointer to the mcp_server_t instance.
- * @param data Pointer to the received raw message data.
- * @param size Size of the received data.
- * @param[out] error_code Pointer to store potential errors during callback processing itself (not application errors).
- * @return A dynamically allocated string (malloc'd) containing the response to send, or NULL if no response should be sent.
+ * @brief Callback for processing incoming transport messages
+ * 
+ * This function is the main entry point for processing incoming messages
+ * from the transport layer. It handles message validation, rate limiting,
+ * and dispatches the message for processing.
+ * 
+ * @param user_data Pointer to the mcp_server_t instance
+ * @param data Pointer to the received message data
+ * @param size Size of the received data
+ * @param[out] error_code Output parameter for error reporting
+ * @return char* Response to send back, or NULL if no response should be sent
  */
 char* transport_message_callback(void* user_data, const void* data, size_t size, int* error_code) {
     PROFILE_START("transport_message_callback");
-    mcp_server_t* server = (mcp_server_t*)user_data;
-    if (server == NULL || data == NULL || size == 0 || error_code == NULL) {
+    
+    // Validate input parameters
+    if (!user_data || !data || size == 0 || !error_code) {
         if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
-        return NULL; // Cannot process
+        return NULL;
     }
+    
+    mcp_server_t* server = (mcp_server_t*)user_data;
     *error_code = MCP_ERROR_NONE;
 
     // Check if server is shutting down

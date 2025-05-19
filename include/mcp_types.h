@@ -47,6 +47,14 @@ typedef enum {
 } mcp_error_code_t;
 
 /**
+ * @brief Convert an MCP error code to a human-readable string
+ * 
+ * @param error_code The error code to convert
+ * @return const char* String representation of the error code
+ */
+const char* mcp_get_error_message(mcp_error_code_t error_code);
+
+/**
  * @brief Identifies the type of an MCP message (Request, Response, or Notification).
  */
 typedef enum {
