@@ -60,6 +60,89 @@ static void* stdio_read_thread_func(void* arg);
 
 /**
  * @internal
+ * @brief Helper function to read a length-prefixed message from stdin.
+ *
+ * @param[out] data_out Pointer to receive the allocated buffer containing the message.
+ * @param[out] size_out Pointer to receive the length of the message.
+ * @param alloc_func Function to use for memory allocation (if NULL, malloc is used).
+ * @param free_func Function to use for memory deallocation on error (if NULL, free is used).
+ * @return 0 on success, -1 on error or EOF.
+ */
+static int read_length_prefixed_message(char** data_out, size_t* size_out,
+                                       void* (*alloc_func)(size_t),
+                                       void (*free_func)(void*)) {
+    // Use malloc/free as default if none provided
+    if (alloc_func == NULL) {
+        alloc_func = malloc;
+    }
+    if (free_func == NULL) {
+        free_func = free;
+    }
+
+    // Initialize output parameters
+    *data_out = NULL;
+    if (size_out != NULL) {
+        *size_out = 0;
+    }
+
+    // 1. Read the 4-byte length prefix
+    char length_buf[4];
+    uint32_t message_length_net, message_length_host;
+
+    if (fread(length_buf, 1, sizeof(length_buf), stdin) != sizeof(length_buf)) {
+        // Handle EOF or error
+        if (feof(stdin)) {
+            mcp_log_info("EOF reached on stdin while reading length prefix.");
+        } else {
+            mcp_log_error("Error reading length prefix from stdin: %s", strerror(errno));
+        }
+        return -1;
+    }
+
+    // 2. Decode length (Network to Host byte order)
+    memcpy(&message_length_net, length_buf, 4);
+    message_length_host = ntohl(message_length_net);
+
+    // 3. Sanity check length
+    if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
+        mcp_log_error("Invalid message length received: %u", message_length_host);
+        return -1;
+    }
+
+    // 4. Allocate buffer for message body (+1 for null terminator)
+    *data_out = (char*)alloc_func(message_length_host + 1);
+    if (*data_out == NULL) {
+        mcp_log_error("Failed to allocate buffer for message size %u", message_length_host);
+        return -1;
+    }
+
+    // 5. Read the message body
+    size_t bytes_read = fread(*data_out, 1, message_length_host, stdin);
+    if (bytes_read != message_length_host) {
+        if (feof(stdin)) {
+            mcp_log_info("EOF reached on stdin while reading message body. "
+                        "Expected %u bytes, got %zu", message_length_host, bytes_read);
+        } else {
+            mcp_log_error("Error reading message body from stdin: %s", strerror(errno));
+        }
+
+        // Free the allocated buffer on error
+        free_func(*data_out);
+        *data_out = NULL;
+        return -1;
+    }
+
+    // 6. Null-terminate the message (for string operations)
+    (*data_out)[message_length_host] = '\0';
+    if (size_out != NULL) {
+        *size_out = message_length_host;
+    }
+
+    return 0;
+}
+
+/**
+ * @internal
  * @brief Initializes stdin and stdout for binary mode and optimal buffering.
  *
  * This function:
@@ -126,64 +209,8 @@ static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, 
         return -1;
     }
 
-    // Initialize output parameters
-    *data_out = NULL;
-    *size_out = 0;
-
-    // 1. Read the 4-byte length prefix
-    char length_buf[4];
-    uint32_t message_length_net, message_length_host;
-
-    if (fread(length_buf, 1, sizeof(length_buf), stdin) != sizeof(length_buf)) {
-        // Handle EOF or error
-        if (feof(stdin)) {
-            mcp_log_info("EOF reached on stdin while reading length prefix.");
-            return -1;
-        } else {
-            mcp_log_error("Error reading length prefix from stdin: %s", strerror(errno));
-            return -1;
-        }
-    }
-
-    // 2. Decode length (Network to Host byte order)
-    memcpy(&message_length_net, length_buf, 4);
-    message_length_host = ntohl(message_length_net);
-
-    // 3. Sanity check length
-    if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
-        mcp_log_error("Invalid message length received: %u", message_length_host);
-        return -1;
-    }
-
-    // 4. Allocate buffer for message body (+1 for null terminator)
-    // Note: We always use malloc here because the caller expects to free with free()
-    *data_out = (char*)malloc(message_length_host + 1);
-    if (*data_out == NULL) {
-        mcp_log_error("Failed to allocate buffer for message size %u", message_length_host);
-        return -1;
-    }
-
-    // 5. Read the message body
-    size_t bytes_read = fread(*data_out, 1, message_length_host, stdin);
-    if (bytes_read != message_length_host) {
-        if (feof(stdin)) {
-            mcp_log_info("EOF reached on stdin while reading message body. "
-                        "Expected %u bytes, got %zu", message_length_host, bytes_read);
-        } else {
-            mcp_log_error("Error reading message body from stdin: %s", strerror(errno));
-        }
-
-        // Free the allocated buffer
-        free(*data_out);
-        *data_out = NULL;
-        return -1;
-    }
-
-    // 6. Null-terminate the message (for string operations)
-    (*data_out)[message_length_host] = '\0';
-    *size_out = message_length_host;
-
-    return 0;
+    // Note: We always use malloc/free here because the caller expects to free with free()
+    return read_length_prefixed_message(data_out, size_out, malloc, free);
 }
 
 /**
@@ -211,58 +238,15 @@ static void* stdio_read_thread_func(void* arg) {
 
     // Loop reading messages as long as the transport is running
     while (data->running) {
-        // 1. Read the 4-byte length prefix
-        if (fread(length_buf, 1, sizeof(length_buf), stdin) != sizeof(length_buf)) {
-            if (feof(stdin)) {
-                mcp_log_info("EOF reached on stdin while reading length.");
-            } else {
-                mcp_log_error("Error reading length prefix from stdin: %s", strerror(errno));
-            }
+        // Read a length-prefixed message using the helper function
+        size_t message_length = 0;
+        if (read_length_prefixed_message(&message_buf, &message_length, alloc_func, free_func) != 0) {
+            // Error or EOF occurred
             data->running = false; // Stop reading on EOF or error
             break;
         }
 
-        // 2. Decode length (Network to Host byte order)
-        memcpy(&message_length_net, length_buf, 4);
-        message_length_host = ntohl(message_length_net);
-
-        // 3. Sanity check length
-        if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
-            mcp_log_error("Invalid message length received: %u", message_length_host);
-            data->running = false; // Treat as fatal error
-            break;
-        }
-
-        // 4. Allocate buffer for message body (+1 for null terminator)
-        // Use the selected allocation function
-        message_buf = (char*)alloc_func(message_length_host + 1);
-        if (message_buf == NULL) {
-            mcp_log_error("Failed to allocate buffer for message size %u",
-                         message_length_host);
-            data->running = false; // Treat as fatal error
-            break;
-        }
-
-        // 5. Read the message body
-        size_t bytes_read = fread(message_buf, 1, message_length_host, stdin);
-        if (bytes_read != message_length_host) {
-            if (feof(stdin)) {
-                mcp_log_info("EOF reached on stdin while reading body. "
-                            "Expected %u bytes, got %zu", message_length_host, bytes_read);
-            } else {
-                mcp_log_error("Error reading message body from stdin: %s",
-                             strerror(errno));
-            }
-
-            // Free using the selected deallocation function
-            free_func(message_buf);
-            message_buf = NULL;
-            data->running = false; // Stop reading on EOF or error
-            break;
-        }
-
-        // 6. Null-terminate and process the message via callback
-        message_buf[message_length_host] = '\0';
+        // Process the message via callback
 
         if (transport->message_callback != NULL) {
             int callback_error_code = 0;
