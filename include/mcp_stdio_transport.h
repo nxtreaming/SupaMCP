@@ -10,9 +10,12 @@ extern "C" {
 /**
  * @brief Creates a transport layer instance that uses standard input/output.
  *
- * This transport reads messages line by line from stdin and sends messages
- * line by line to stdout. It's suitable for simple inter-process communication
- * where the other process also uses stdio.
+ * This transport reads messages with length prefixes from stdin and sends messages
+ * with length prefixes to stdout. It's suitable for inter-process communication
+ * where the other process also uses length-prefixed framing.
+ *
+ * Note: The receive function of this transport always uses malloc() to allocate
+ * the returned buffer, which must be freed by the caller using free().
  *
  * @return A pointer to the created transport instance, or NULL on failure.
  *         The caller is responsible for destroying the transport using

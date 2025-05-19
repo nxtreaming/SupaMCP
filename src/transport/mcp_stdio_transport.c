@@ -194,8 +194,13 @@ static int stdio_init_streams(void) {
  * @brief Synchronously reads a message from stdin using length-prefixed framing.
  * Used when the stdio transport is employed in a simple synchronous client role.
  * Blocks until a complete message is read or an error/EOF occurs.
+ *
+ * IMPORTANT: This function ALWAYS uses malloc() to allocate the returned buffer,
+ * regardless of what memory allocator is used elsewhere in the transport.
+ * This is by design, as the caller is expected to free the buffer using free().
+ *
  * @param transport The transport handle (unused).
- * @param[out] data_out Pointer to receive the malloc'd buffer containing the message. Caller must free.
+ * @param[out] data_out Pointer to receive the malloc'd buffer containing the message. Caller must free with free().
  * @param[out] size_out Pointer to receive the length of the message.
  * @param timeout_ms Timeout parameter (ignored by this implementation).
  * @return 0 on success, -1 on error or EOF.
