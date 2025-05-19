@@ -12,10 +12,32 @@
 #define SSE_FIELD_EVENT "event: "     /**< SSE event field prefix */
 #define SSE_FIELD_ID "id: "           /**< SSE ID field prefix */
 #define SSE_FIELD_DATA "data: "       /**< SSE data field prefix */
-#define SSE_FIELD_HEARTBEAT ": heartbeat\n\n"  /**< SSE heartbeat comment */
 
 // Buffer size constants
 #define SSE_ID_BUFFER_SIZE 32         /**< Maximum size for event ID strings */
+
+/**
+ * @brief Validate that a string contains only valid characters for SSE text
+ *
+ * This function checks if a string contains only valid characters for SSE text.
+ * It rejects control characters (except for newline, carriage return, and tab)
+ * which could cause security or parsing issues.
+ *
+ * @param str The string to validate
+ * @return bool true if the string is valid, false otherwise
+ */
+static bool is_valid_sse_text(const char* str) {
+    if (!str) return false;
+
+    for (const char* p = str; *p; p++) {
+        // Reject control characters except newline, carriage return, and tab
+        if ((unsigned char)*p < 0x20 && *p != '\n' && *p != '\r' && *p != '\t') {
+            mcp_log_warn("Invalid control character (0x%02x) found in SSE text", (unsigned char)*p);
+            return false;
+        }
+    }
+    return true;
+}
 
 /**
  * @brief Free all memory associated with a stored SSE event
@@ -127,6 +149,18 @@ void store_sse_event(http_transport_data_t* data, const char* event, const char*
         return;
     }
 
+    // Validate event data
+    if (!is_valid_sse_text(event_data)) {
+        mcp_log_error("Invalid characters in SSE event data");
+        return;
+    }
+
+    // Validate event type if provided
+    if (event != NULL && !is_valid_sse_text(event)) {
+        mcp_log_error("Invalid characters in SSE event type");
+        return;
+    }
+
     // Lock the event mutex to safely modify the circular buffer
     mcp_mutex_lock(data->event_mutex);
 
@@ -215,8 +249,10 @@ void send_sse_heartbeat(http_transport_data_t* data) {
         return;
     }
 
-    // Update last heartbeat timestamp
+    // Update heartbeat tracking information
     data->last_heartbeat = now;
+    data->last_heartbeat_time = now;
+    data->heartbeat_counter++;
 
     // Lock the SSE mutex to safely access the client list
     mcp_mutex_lock(data->sse_mutex);
@@ -228,7 +264,10 @@ void send_sse_heartbeat(http_transport_data_t* data) {
         return;
     }
 
-    mcp_log_debug("Sending heartbeat to %d SSE clients", data->sse_client_count);
+    mcp_log_debug("Sending heartbeat #%llu to %d SSE clients (last heartbeat: %lld seconds ago)",
+                 (unsigned long long)data->heartbeat_counter + 1,
+                 data->sse_client_count,
+                 (long long)(now - data->last_heartbeat_time));
 
     // Send heartbeat to all connected clients
     int success_count = 0;
@@ -238,9 +277,21 @@ void send_sse_heartbeat(http_transport_data_t* data) {
             continue;
         }
 
+        // Construct heartbeat message with counter
+        char heartbeat_msg[64];
+        int msg_len = snprintf(heartbeat_msg, sizeof(heartbeat_msg),
+                              ": heartbeat %llu\n\n",
+                              (unsigned long long)data->heartbeat_counter);
+
+        // Validate the constructed message (should always be valid, but check anyway)
+        if (msg_len < 0 || msg_len >= (int)sizeof(heartbeat_msg) || !is_valid_sse_text(heartbeat_msg)) {
+            mcp_log_error("Failed to construct valid heartbeat message");
+            continue;
+        }
+
         // Send a comment as a heartbeat (using SSE comment format)
         // This will not trigger an event in the client but keeps the connection alive
-        int result = lws_write_http(wsi, SSE_FIELD_HEARTBEAT, strlen(SSE_FIELD_HEARTBEAT));
+        int result = lws_write_http(wsi, heartbeat_msg, msg_len);
 
         if (result < 0) {
             mcp_log_warn("Failed to send heartbeat to SSE client %d", i);
@@ -253,7 +304,8 @@ void send_sse_heartbeat(http_transport_data_t* data) {
         }
     }
 
-    mcp_log_debug("Heartbeat sent successfully to %d/%d SSE clients",
+    mcp_log_debug("Heartbeat #%llu sent successfully to %d/%d SSE clients",
+                 (unsigned long long)data->heartbeat_counter,
                  success_count, data->sse_client_count);
 
     mcp_mutex_unlock(data->sse_mutex);
@@ -283,6 +335,12 @@ static bool session_matches_id(http_session_data_t* session, const char* session
             return true;
         }
 
+        // Validate client session ID
+        if (!is_valid_sse_text(session->session_id)) {
+            mcp_log_warn("Client has invalid characters in session ID");
+            return false;
+        }
+
         // Client has a session ID, so it should NOT receive broadcasts
         mcp_log_debug("Client has session_id (%s) and will not receive broadcast messages",
                      session->session_id);
@@ -298,6 +356,12 @@ static bool session_matches_id(http_session_data_t* session, const char* session
     // If client session has no ID, it can't match a specific session ID
     if (session->session_id == NULL) {
         mcp_log_debug("Client session has NULL session_id but filter requires: %s", session_id);
+        return false;
+    }
+
+    // Validate client session ID
+    if (!is_valid_sse_text(session->session_id)) {
+        mcp_log_warn("Client has invalid characters in session ID");
         return false;
     }
 
@@ -335,6 +399,12 @@ static bool session_matches_filter(http_session_data_t* session, const char* eve
         return true;
     }
 
+    // Validate client event filter
+    if (!is_valid_sse_text(session->event_filter)) {
+        mcp_log_warn("Client has invalid characters in event filter");
+        return false;
+    }
+
     // If this is a default event (no type specified), send to all clients
     if (event == NULL) {
         return true;
@@ -350,6 +420,36 @@ static bool session_matches_filter(http_session_data_t* session, const char* eve
 
     // Event type matches client's filter
     return true;
+}
+
+/**
+ * @brief Write an SSE field with proper error handling
+ *
+ * @param wsi WebSocket instance
+ * @param field Field name (e.g., "event: ", "id: ")
+ * @param value Field value (can be NULL)
+ * @return bool true if all writes succeeded, false otherwise
+ */
+static bool write_sse_field(struct lws* wsi, const char* field, const char* value) {
+    if (!wsi || !field) {
+        return false;
+    }
+
+    // Validate field value if provided
+    if (value && !is_valid_sse_text(value)) {
+        mcp_log_error("Invalid characters in SSE field value");
+        return false;
+    }
+
+    if (lws_write_http(wsi, field, strlen(field)) < 0) {
+        return false;
+    }
+
+    if (value && lws_write_http(wsi, value, strlen(value)) < 0) {
+        return false;
+    }
+
+    return lws_write_http(wsi, "\n", 1) >= 0;
 }
 
 /**
@@ -376,6 +476,18 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
         return false;
     }
 
+    // Validate event data and ID (these should already be validated, but double-check)
+    if (!is_valid_sse_text(data) || !is_valid_sse_text(id_str)) {
+        mcp_log_error("Invalid characters in SSE event data or ID");
+        return false;
+    }
+
+    // Validate event type if provided
+    if (event != NULL && !is_valid_sse_text(event)) {
+        mcp_log_error("Invalid characters in SSE event type");
+        return false;
+    }
+
     int result = 0;
 
     // Different format based on whether an event type is specified
@@ -384,58 +496,28 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
         // Write in multiple pieces to avoid any heap allocation
 
         // Step 1: Write event field ("event: [event_type]\n")
-        result = lws_write_http(wsi, SSE_FIELD_EVENT, strlen(SSE_FIELD_EVENT));
-        if (result < 0) {
-            mcp_log_error("Failed to write event field prefix");
-            return false;
-        }
-
-        result = lws_write_http(wsi, event, strlen(event));
-        if (result < 0) {
-            mcp_log_error("Failed to write event type");
-            return false;
-        }
-
-        result = lws_write_http(wsi, "\n", 1);
-        if (result < 0) {
-            mcp_log_error("Failed to write newline after event type");
+        result = write_sse_field(wsi, SSE_FIELD_EVENT, event);
+        if (!result) {
+            mcp_log_error("Failed to write event field");
             return false;
         }
 
         // Step 2: Write ID field ("id: [id]\n")
-        result = lws_write_http(wsi, SSE_FIELD_ID, strlen(SSE_FIELD_ID));
-        if (result < 0) {
-            mcp_log_error("Failed to write id field prefix");
-            return false;
-        }
-
-        result = lws_write_http(wsi, id_str, strlen(id_str));
-        if (result < 0) {
-            mcp_log_error("Failed to write event ID");
-            return false;
-        }
-
-        result = lws_write_http(wsi, "\n", 1);
-        if (result < 0) {
-            mcp_log_error("Failed to write newline after event ID");
+        result = write_sse_field(wsi, SSE_FIELD_ID, id_str);
+        if (!result) {
+            mcp_log_error("Failed to write id field");
             return false;
         }
 
         // Step 3: Write data field ("data: [data]\n\n")
-        result = lws_write_http(wsi, SSE_FIELD_DATA, strlen(SSE_FIELD_DATA));
-        if (result < 0) {
-            mcp_log_error("Failed to write data field prefix");
-            return false;
-        }
-
-        result = lws_write_http(wsi, data, strlen(data));
-        if (result < 0) {
-            mcp_log_error("Failed to write event data");
+        result = write_sse_field(wsi, SSE_FIELD_DATA, data);
+        if (!result) {
+            mcp_log_error("Failed to write data field");
             return false;
         }
 
         // End with double newline to complete the event
-        result = lws_write_http(wsi, "\n\n", 2);
+        result = lws_write_http(wsi, "\n", 1);
         if (result < 0) {
             mcp_log_error("Failed to write final newlines");
             return false;
@@ -444,39 +526,21 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
         // Default event format (no event type)
 
         // Step 1: Write ID field ("id: [id]\n")
-        result = lws_write_http(wsi, SSE_FIELD_ID, strlen(SSE_FIELD_ID));
-        if (result < 0) {
-            mcp_log_error("Failed to write id field prefix");
-            return false;
-        }
-
-        result = lws_write_http(wsi, id_str, strlen(id_str));
-        if (result < 0) {
-            mcp_log_error("Failed to write event ID");
-            return false;
-        }
-
-        result = lws_write_http(wsi, "\n", 1);
-        if (result < 0) {
-            mcp_log_error("Failed to write newline after event ID");
+        result = write_sse_field(wsi, SSE_FIELD_ID, id_str);
+        if (!result) {
+            mcp_log_error("Failed to write id field");
             return false;
         }
 
         // Step 2: Write data field ("data: [data]\n\n")
-        result = lws_write_http(wsi, SSE_FIELD_DATA, strlen(SSE_FIELD_DATA));
-        if (result < 0) {
-            mcp_log_error("Failed to write data field prefix");
-            return false;
-        }
-
-        result = lws_write_http(wsi, data, strlen(data));
-        if (result < 0) {
-            mcp_log_error("Failed to write event data");
+        result = write_sse_field(wsi, SSE_FIELD_DATA, data);
+        if (!result) {
+            mcp_log_error("Failed to write data field");
             return false;
         }
 
         // End with double newline to complete the event
-        result = lws_write_http(wsi, "\n\n", 2);
+        result = lws_write_http(wsi, "\n", 1);
         if (result < 0) {
             mcp_log_error("Failed to write final newlines");
             return false;
@@ -507,6 +571,24 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
                                 const char* data, const char* session_id) {
     if (transport == NULL || transport->transport_data == NULL || data == NULL) {
         mcp_log_error("Invalid parameters for mcp_http_transport_send_sse");
+        return -1;
+    }
+
+    // Validate event data
+    if (!is_valid_sse_text(data)) {
+        mcp_log_error("Invalid characters in SSE event data");
+        return -1;
+    }
+
+    // Validate event type if provided
+    if (event != NULL && !is_valid_sse_text(event)) {
+        mcp_log_error("Invalid characters in SSE event type");
+        return -1;
+    }
+
+    // Validate session ID if provided
+    if (session_id != NULL && !is_valid_sse_text(session_id)) {
+        mcp_log_error("Invalid characters in SSE session ID");
         return -1;
     }
 

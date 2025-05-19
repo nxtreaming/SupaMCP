@@ -60,6 +60,8 @@ typedef struct {
     bool send_heartbeats;
     int heartbeat_interval_ms;
     time_t last_heartbeat;
+    time_t last_heartbeat_time;  // Timestamp of the last heartbeat for monitoring
+    uint64_t heartbeat_counter;  // Monotonically increasing counter for tracking
 
     // CORS settings
     bool enable_cors;

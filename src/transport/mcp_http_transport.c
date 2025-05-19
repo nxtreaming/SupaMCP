@@ -413,6 +413,8 @@ mcp_transport_t* mcp_transport_http_create(const mcp_http_config_t* config) {
     data->send_heartbeats = true;
     data->heartbeat_interval_ms = HTTP_DEFAULT_HEARTBEAT_INTERVAL_MS;
     data->last_heartbeat = time(NULL);
+    data->last_heartbeat_time = time(NULL);
+    data->heartbeat_counter = 0;
 
     // Set transport type to server
     transport->type = MCP_TRANSPORT_TYPE_SERVER;
