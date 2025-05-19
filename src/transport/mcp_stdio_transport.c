@@ -7,6 +7,9 @@
 #include "mcp_stdio_transport.h"
 #include "internal/transport_internal.h"
 #include "mcp_log.h"
+#include "mcp_sync.h"
+#include "mcp_memory_pool.h"
+#include "mcp_thread_cache.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +22,6 @@
 #include <windows.h>
 #else
 #include <arpa/inet.h>
-#include <pthread.h>
 #include <unistd.h>
 #endif
 
@@ -33,11 +35,7 @@
 typedef struct {
     bool running;                       /**< Flag indicating if the transport (read thread) is active. */
     mcp_transport_t* transport_handle;  /**< Pointer back to the generic transport handle containing callbacks. */
-#ifdef _WIN32
-    HANDLE read_thread;
-#else
-    pthread_t read_thread;              /**< Handle for the background stdin reading thread. */
-#endif
+    mcp_thread_t read_thread;           /**< Handle for the background stdin reading thread (cross-platform). */
 } mcp_stdio_transport_data_t;
 
 // Implementation of the send function for stdio transport.
@@ -51,11 +49,7 @@ static int stdio_transport_stop(mcp_transport_t* transport);
 // Implementation of the destroy function for stdio transport.
 static void stdio_transport_destroy(mcp_transport_t* transport);
 // Background thread function for reading from stdin.
-#ifdef _WIN32
-static DWORD WINAPI stdio_read_thread_func(LPVOID arg);
-#else
 static void* stdio_read_thread_func(void* arg);
-#endif
 
 /**
  * @internal
@@ -110,6 +104,7 @@ static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, 
     *size_out = strlen(line_buffer);
 
     // Allocate memory for the result (caller must free)
+    // Note: We always use malloc here because the caller expects to free with free()
     *data_out = (char*)malloc(*size_out + 1);
     if (*data_out == NULL) {
         mcp_log_error("Failed to allocate memory for received message.");
@@ -131,13 +126,9 @@ static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, 
  * and any response is sent back via stdout.
  *
  * @param arg Pointer to the mcp_stdio_transport_data_t structure.
- * @return 0 on Windows, NULL on POSIX.
+ * @return NULL when thread exits.
  */
-#ifdef _WIN32
-static DWORD WINAPI stdio_read_thread_func(LPVOID arg) {
-#else
 static void* stdio_read_thread_func(void* arg) {
-#endif
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)arg;
     mcp_transport_t* transport = data->transport_handle;
     char length_buf[4];
@@ -171,7 +162,13 @@ static void* stdio_read_thread_func(void* arg) {
         }
 
         // 4. Allocate buffer for message body (+1 for null terminator)
-        message_buf = (char*)malloc(message_length_host + 1);
+        // Use memory pool if available
+        if (mcp_memory_pool_system_is_initialized()) {
+            message_buf = (char*)mcp_pool_alloc(message_length_host + 1);
+        } else {
+            message_buf = (char*)malloc(message_length_host + 1);
+        }
+
         if (message_buf == NULL) {
             mcp_log_error("Failed to allocate buffer for message size %u",
                          message_length_host);
@@ -189,7 +186,13 @@ static void* stdio_read_thread_func(void* arg) {
                 mcp_log_error("Error reading message body from stdin: %s",
                              strerror(errno));
             }
-            free(message_buf);
+
+            // Free using the same method as allocation
+            if (mcp_memory_pool_system_is_initialized()) {
+                mcp_pool_free(message_buf);
+            } else {
+                free(message_buf);
+            }
             message_buf = NULL;
             data->running = false; // Stop reading on EOF or error
             break;
@@ -216,7 +219,8 @@ static void* stdio_read_thread_func(void* arg) {
                     mcp_log_error("Failed to send response via stdout.");
                     // We continue processing despite send errors
                 }
-                free(response_str); // Free the malloc'd response string
+                // Free the response string (always use free since callback uses malloc)
+                free(response_str);
             }
             else if (callback_error_code != 0) {
                 // Callback indicated an error but returned no response
@@ -227,17 +231,16 @@ static void* stdio_read_thread_func(void* arg) {
         }
 
         // 7. Free the message buffer for the next read
-        free(message_buf);
+        if (mcp_memory_pool_system_is_initialized()) {
+            mcp_pool_free(message_buf);
+        } else {
+            free(message_buf);
+        }
         message_buf = NULL;
     } // End while(data->running)
 
     mcp_log_info("Read thread exiting.");
-
-#ifdef _WIN32
-    return 0;
-#else
     return NULL;
-#endif
 }
 
 /**
@@ -278,24 +281,13 @@ static int stdio_transport_start(
     // Set running flag before creating thread
     data->running = true;
 
-    // Create the read thread
-#ifdef _WIN32
-    data->read_thread = CreateThread(NULL, 0, stdio_read_thread_func, data, 0, NULL);
-    if (data->read_thread == NULL) {
-        DWORD error = GetLastError();
-        mcp_log_error("Failed to create read thread. Error code: %lu", error);
-        data->running = false;
-        return -1;
-    }
-#else
-    int thread_result = pthread_create(&data->read_thread, NULL, stdio_read_thread_func, data);
+    // Create the read thread using cross-platform thread API
+    int thread_result = mcp_thread_create(&data->read_thread, stdio_read_thread_func, data);
     if (thread_result != 0) {
-        mcp_log_error("Failed to create read thread: %s (errno: %d)",
-                     strerror(thread_result), thread_result);
+        mcp_log_error("Failed to create read thread: error code %d", thread_result);
         data->running = false;
         return -1;
     }
-#endif
 
     mcp_log_info("Read thread started successfully.");
     return 0;
@@ -325,30 +317,10 @@ static int stdio_transport_stop(mcp_transport_t* transport) {
     // Set running flag to false to signal thread to exit
     data->running = false;
 
-    // Wait for thread to exit
-#ifdef _WIN32
-    if (data->read_thread != NULL) {
-        // Wait with a reasonable timeout (5 seconds)
-        DWORD wait_result = WaitForSingleObject(data->read_thread, 5000);
-        if (wait_result == WAIT_TIMEOUT) {
-            mcp_log_warn("Read thread did not exit within timeout period.");
-            // We could use TerminateThread here, but it's dangerous
-        }
-        else if (wait_result != WAIT_OBJECT_0) {
-            DWORD error = GetLastError();
-            mcp_log_error("Error waiting for thread to exit: %lu", error);
-        }
-
-        // Close the thread handle
-        CloseHandle(data->read_thread);
-        data->read_thread = NULL;
+    // Wait for thread to exit using cross-platform thread API
+    if (mcp_thread_join(data->read_thread, NULL) != 0) {
+        mcp_log_error("Error joining read thread");
     }
-#else
-    // For POSIX, we join the thread to wait for it to exit
-    if (pthread_join(data->read_thread, NULL) != 0) {
-        mcp_log_error("Error joining read thread: %s", strerror(errno));
-    }
-#endif
 
     mcp_log_info("Read thread stopped.");
     return 0;
@@ -426,13 +398,21 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
             stdio_transport_stop(transport);
         }
 
-        // Free the specific stdio data
-        free(transport->transport_data);
+        // Free the specific stdio data using the appropriate method
+        if (mcp_memory_pool_system_is_initialized()) {
+            mcp_pool_free(transport->transport_data);
+        } else {
+            free(transport->transport_data);
+        }
         transport->transport_data = NULL;
     }
 
-    // Free the main transport struct
-    free(transport);
+    // Free the main transport struct using the appropriate method
+    if (mcp_memory_pool_system_is_initialized()) {
+        mcp_pool_free(transport);
+    } else {
+        free(transport);
+    }
 
     mcp_log_debug("Transport destroyed.");
 }
@@ -449,8 +429,14 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
  *         mcp_transport_destroy().
  */
 mcp_transport_t* mcp_transport_stdio_create(void) {
-    // Allocate the generic transport struct
-    mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
+    // Allocate the generic transport struct using memory pool if available
+    mcp_transport_t* transport = NULL;
+    if (mcp_memory_pool_system_is_initialized()) {
+        transport = (mcp_transport_t*)mcp_pool_alloc(sizeof(mcp_transport_t));
+    } else {
+        transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
+    }
+
     if (transport == NULL) {
         mcp_log_error("Failed to allocate transport structure.");
         return NULL;
@@ -460,10 +446,20 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     memset(transport, 0, sizeof(mcp_transport_t));
 
     // Allocate the stdio-specific data struct
-    mcp_stdio_transport_data_t* stdio_data = (mcp_stdio_transport_data_t*)malloc(sizeof(mcp_stdio_transport_data_t));
+    mcp_stdio_transport_data_t* stdio_data = NULL;
+    if (mcp_memory_pool_system_is_initialized()) {
+        stdio_data = (mcp_stdio_transport_data_t*)mcp_pool_alloc(sizeof(mcp_stdio_transport_data_t));
+    } else {
+        stdio_data = (mcp_stdio_transport_data_t*)malloc(sizeof(mcp_stdio_transport_data_t));
+    }
+
     if (stdio_data == NULL) {
         mcp_log_error("Failed to allocate transport data structure.");
-        free(transport);
+        if (mcp_memory_pool_system_is_initialized()) {
+            mcp_pool_free(transport);
+        } else {
+            free(transport);
+        }
         return NULL;
     }
 
