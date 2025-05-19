@@ -226,8 +226,6 @@ static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, 
 static void* stdio_read_thread_func(void* arg) {
     mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)arg;
     mcp_transport_t* transport = data->transport_handle;
-    char length_buf[4];
-    uint32_t message_length_net, message_length_host;
     char* message_buf = NULL;
 
     // Get the stored memory allocation and deallocation functions
@@ -258,7 +256,7 @@ static void* stdio_read_thread_func(void* arg) {
                 response_str = transport->message_callback(
                     transport->callback_user_data, // Pass user data
                     message_buf,                   // Pass message content
-                    message_length_host,           // Pass message length
+                    message_length,                // Pass message length
                     &callback_error_code
                 );
 
