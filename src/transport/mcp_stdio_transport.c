@@ -25,6 +25,9 @@
 #else
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #endif
 
 #define MAX_LINE_LENGTH 4096          // Max length for a single line read from stdin
@@ -61,6 +64,19 @@ static void* stdio_read_thread_func(void* arg);
 /**
  * @internal
  * @brief Helper function to read a length-prefixed message from stdin.
+ *
+ * @param[out] data_out Pointer to receive the allocated buffer containing the message.
+ * @param[out] size_out Pointer to receive the length of the message.
+ * @param alloc_func Function to use for memory allocation (if NULL, malloc is used).
+ * @param free_func Function to use for memory deallocation on error (if NULL, free is used).
+ * @return 0 on success, -1 on error or EOF.
+ */
+/**
+ * @internal
+ * @brief Reads a length-prefixed message from stdin.
+ *
+ * This function assumes that data is already available to read (i.e., wait_for_stdin_data
+ * has been called and returned success). It does not implement its own timeout.
  *
  * @param[out] data_out Pointer to receive the allocated buffer containing the message.
  * @param[out] size_out Pointer to receive the length of the message.
@@ -193,7 +209,7 @@ static int stdio_init_streams(void) {
  * @internal
  * @brief Synchronously reads a message from stdin using length-prefixed framing.
  * Used when the stdio transport is employed in a simple synchronous client role.
- * Blocks until a complete message is read or an error/EOF occurs.
+ * Waits for data with the specified timeout, then reads a complete message if data is available.
  *
  * IMPORTANT: This function ALWAYS uses malloc() to allocate the returned buffer,
  * regardless of what memory allocator is used elsewhere in the transport.
@@ -202,18 +218,143 @@ static int stdio_init_streams(void) {
  * @param transport The transport handle (unused).
  * @param[out] data_out Pointer to receive the malloc'd buffer containing the message. Caller must free with free().
  * @param[out] size_out Pointer to receive the length of the message.
- * @param timeout_ms Timeout parameter (ignored by this implementation).
- * @return 0 on success, -1 on error or EOF.
+ * @param timeout_ms Timeout in milliseconds. 0 means no wait, UINT32_MAX means wait indefinitely.
+ * @return 0 on success, -1 on error or EOF, -2 on timeout.
  */
+/**
+ * @internal
+ * @brief Checks if stdin has data available to read within the specified timeout.
+ *
+ * @param timeout_ms Timeout in milliseconds. 0 means no wait, UINT32_MAX means wait indefinitely.
+ * @return 1 if data is available, 0 if timeout occurred, -1 on error.
+ */
+static int wait_for_stdin_data(uint32_t timeout_ms) {
+    // If timeout is UINT32_MAX, we wait indefinitely
+    if (timeout_ms == UINT32_MAX) {
+        return 1; // Just proceed with blocking read
+    }
+
+#ifdef _WIN32
+    // Windows implementation
+    HANDLE h_stdin = GetStdHandle(STD_INPUT_HANDLE);
+    if (h_stdin == INVALID_HANDLE_VALUE) {
+        mcp_log_error("Failed to get stdin handle: error code %lu", GetLastError());
+        return -1;
+    }
+
+    // Check if stdin is a console or a pipe/file
+    DWORD file_type = GetFileType(h_stdin);
+    if (file_type == FILE_TYPE_CHAR) {
+        // Console input - use console-specific functions
+        DWORD console_mode;
+        if (!GetConsoleMode(h_stdin, &console_mode)) {
+            mcp_log_error("Failed to get console mode: error code %lu", GetLastError());
+            return -1;
+        }
+
+        // Save original mode
+        DWORD original_mode = console_mode;
+
+        // Enable required flags for input
+        console_mode |= ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT;
+        if (!SetConsoleMode(h_stdin, console_mode)) {
+            mcp_log_error("Failed to set console mode: error code %lu", GetLastError());
+            return -1;
+        }
+
+        // Wait for input
+        INPUT_RECORD input_record;
+        DWORD num_events;
+        DWORD wait_result = WaitForSingleObject(h_stdin, timeout_ms);
+
+        // Restore original mode
+        SetConsoleMode(h_stdin, original_mode);
+
+        if (wait_result == WAIT_TIMEOUT) {
+            return 0; // Timeout
+        } else if (wait_result != WAIT_OBJECT_0) {
+            mcp_log_error("Error waiting for console input: error code %lu", GetLastError());
+            return -1;
+        }
+
+        // Check if there's actual data (not just console events)
+        if (!PeekConsoleInput(h_stdin, &input_record, 1, &num_events) || num_events == 0) {
+            return 0; // No data available
+        }
+
+        // Only consider key events as actual data
+        if (input_record.EventType == KEY_EVENT && input_record.Event.KeyEvent.bKeyDown) {
+            return 1; // Data available
+        }
+
+        // Discard other events and check again
+        ReadConsoleInput(h_stdin, &input_record, 1, &num_events);
+        return 0; // No actual data
+    } else {
+        // Pipe or file - use WaitForSingleObject
+        DWORD wait_result = WaitForSingleObject(h_stdin, timeout_ms);
+        if (wait_result == WAIT_TIMEOUT) {
+            return 0; // Timeout
+        } else if (wait_result != WAIT_OBJECT_0) {
+            mcp_log_error("Error waiting for stdin data: error code %lu", GetLastError());
+            return -1;
+        }
+        return 1; // Data available
+    }
+#else
+    // POSIX implementation
+    fd_set readfds;
+    struct timeval tv;
+
+    // Set up the file descriptor set
+    FD_ZERO(&readfds);
+    FD_SET(STDIN_FILENO, &readfds);
+
+    // Set up the timeout
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    // Wait for data or timeout
+    int select_result = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
+
+    if (select_result == -1) {
+        // Error occurred
+        mcp_log_error("Error in select() while waiting for stdin data: %s", strerror(errno));
+        return -1;
+    } else if (select_result == 0) {
+        // Timeout occurred
+        return 0;
+    }
+
+    // Data is available
+    return 1;
+#endif
+}
+
 static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
     (void)transport;   // Unused in this function
-    (void)timeout_ms;  // Timeout is ignored, fread is blocking
 
     // Validate parameters
     if (data_out == NULL || size_out == NULL) {
         return -1;
     }
 
+    // Initialize output parameters
+    *data_out = NULL;
+    *size_out = 0;
+
+    // Check if data is available within timeout
+    int wait_result = wait_for_stdin_data(timeout_ms);
+    if (wait_result <= 0) {
+        // Either error or timeout
+        if (wait_result == 0) {
+            mcp_log_debug("Timeout occurred while waiting for stdin data");
+            return -2; // Special return code for timeout
+        }
+        return -1; // Error
+    }
+
+    // Data is available, proceed with reading
     // Note: We always use malloc/free here because the caller expects to free with free()
     return read_length_prefixed_message(data_out, size_out, malloc, free);
 }
@@ -381,11 +522,15 @@ static int stdio_transport_stop(mcp_transport_t* transport) {
     data->running = false;
 
     // Wait for thread to exit using cross-platform thread API
-    if (mcp_thread_join(data->read_thread, NULL) != 0) {
-        mcp_log_error("Error joining read thread");
+    int join_result = mcp_thread_join(data->read_thread, NULL);
+    if (join_result != 0) {
+        mcp_log_error("Error joining read thread: error code %d", join_result);
+        // We still consider the thread stopped since we've set running=false,
+        // but we return an error code to inform the caller about the join failure
+        return -1;
     }
 
-    mcp_log_info("Read thread stopped.");
+    mcp_log_info("Read thread stopped successfully.");
     return 0;
 }
 
@@ -464,7 +609,10 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
         // Ensure transport is stopped first
         if (data->running) {
             mcp_log_debug("Stopping transport during destroy.");
-            stdio_transport_stop(transport);
+            if (stdio_transport_stop(transport) != 0) {
+                mcp_log_warn("Failed to cleanly stop transport during destroy, continuing with cleanup anyway");
+                // We continue with cleanup despite the error, as we need to free resources
+            }
         }
 
         // Free the specific stdio data using the stored deallocation function
