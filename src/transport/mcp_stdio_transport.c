@@ -108,18 +108,18 @@ static int stdio_init_streams(void) {
 
 /**
  * @internal
- * @brief Synchronously reads a single line (message) from stdin.
+ * @brief Synchronously reads a message from stdin using length-prefixed framing.
  * Used when the stdio transport is employed in a simple synchronous client role.
- * Blocks until a newline is encountered or an error/EOF occurs.
+ * Blocks until a complete message is read or an error/EOF occurs.
  * @param transport The transport handle (unused).
- * @param[out] data_out Pointer to receive the malloc'd buffer containing the line read (excluding newline). Caller must free.
- * @param[out] size_out Pointer to receive the length of the line read.
+ * @param[out] data_out Pointer to receive the malloc'd buffer containing the message. Caller must free.
+ * @param[out] size_out Pointer to receive the length of the message.
  * @param timeout_ms Timeout parameter (ignored by this implementation).
  * @return 0 on success, -1 on error or EOF.
  */
 static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
     (void)transport;   // Unused in this function
-    (void)timeout_ms;  // Timeout is ignored, fgets is blocking
+    (void)timeout_ms;  // Timeout is ignored, fread is blocking
 
     // Validate parameters
     if (data_out == NULL || size_out == NULL) {
@@ -130,45 +130,58 @@ static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, 
     *data_out = NULL;
     *size_out = 0;
 
-    // Stack buffer for reading the line
-    char line_buffer[MAX_LINE_LENGTH];
+    // 1. Read the 4-byte length prefix
+    char length_buf[4];
+    uint32_t message_length_net, message_length_host;
 
-    // Blocking read using fgets
-    if (fgets(line_buffer, sizeof(line_buffer), stdin) == NULL) {
+    if (fread(length_buf, 1, sizeof(length_buf), stdin) != sizeof(length_buf)) {
         // Handle EOF or error
         if (feof(stdin)) {
-            mcp_log_info("EOF reached on stdin during receive.");
+            mcp_log_info("EOF reached on stdin while reading length prefix.");
             return -1;
         } else {
-            // Format error message
-            char err_buf[128];
-#ifdef _WIN32
-            strerror_s(err_buf, sizeof(err_buf), errno);
-#else
-            if (strerror_r(errno, err_buf, sizeof(err_buf)) != 0) {
-                snprintf(err_buf, sizeof(err_buf), "Unknown error");
-            }
-#endif
-            mcp_log_error("Failed to read from stdin: %s (errno: %d)", err_buf, errno);
+            mcp_log_error("Error reading length prefix from stdin: %s", strerror(errno));
             return -1;
         }
     }
 
-    // Remove trailing newline characters
-    line_buffer[strcspn(line_buffer, "\r\n")] = 0;
-    *size_out = strlen(line_buffer);
+    // 2. Decode length (Network to Host byte order)
+    memcpy(&message_length_net, length_buf, 4);
+    message_length_host = ntohl(message_length_net);
 
-    // Allocate memory for the result (caller must free)
-    // Note: We always use malloc here because the caller expects to free with free()
-    *data_out = (char*)malloc(*size_out + 1);
-    if (*data_out == NULL) {
-        mcp_log_error("Failed to allocate memory for received message.");
-        *size_out = 0;
+    // 3. Sanity check length
+    if (message_length_host == 0 || message_length_host > MAX_MCP_MESSAGE_SIZE) {
+        mcp_log_error("Invalid message length received: %u", message_length_host);
         return -1;
     }
 
-    // Copy data including null terminator
-    memcpy(*data_out, line_buffer, *size_out + 1);
+    // 4. Allocate buffer for message body (+1 for null terminator)
+    // Note: We always use malloc here because the caller expects to free with free()
+    *data_out = (char*)malloc(message_length_host + 1);
+    if (*data_out == NULL) {
+        mcp_log_error("Failed to allocate buffer for message size %u", message_length_host);
+        return -1;
+    }
+
+    // 5. Read the message body
+    size_t bytes_read = fread(*data_out, 1, message_length_host, stdin);
+    if (bytes_read != message_length_host) {
+        if (feof(stdin)) {
+            mcp_log_info("EOF reached on stdin while reading message body. "
+                        "Expected %u bytes, got %zu", message_length_host, bytes_read);
+        } else {
+            mcp_log_error("Error reading message body from stdin: %s", strerror(errno));
+        }
+
+        // Free the allocated buffer
+        free(*data_out);
+        *data_out = NULL;
+        return -1;
+    }
+
+    // 6. Null-terminate the message (for string operations)
+    (*data_out)[message_length_host] = '\0';
+    *size_out = message_length_host;
 
     return 0;
 }
