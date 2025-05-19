@@ -20,6 +20,8 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
+#include <io.h>
+#include <fcntl.h>
 #else
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -27,6 +29,7 @@
 
 #define MAX_LINE_LENGTH 4096          // Max length for a single line read from stdin
 #define MAX_MCP_MESSAGE_SIZE (1024 * 1024) // Maximum message size (1MB)
+#define STDIO_BUFFER_SIZE (64 * 1024)      // 64KB buffer for stdin/stdout
 
 /**
  * @internal
@@ -40,6 +43,8 @@ typedef struct {
     void (*free_func)(void*);           /**< Function pointer for memory deallocation. */
 } mcp_stdio_transport_data_t;
 
+// Initialize stdio streams for binary mode and optimal buffering
+static int stdio_init_streams(void);
 // Implementation of the send function for stdio transport.
 static int stdio_transport_send(mcp_transport_t* transport, const void* data_to_send, size_t size);
 // Implementation of the synchronous receive function for stdio transport.
@@ -52,6 +57,54 @@ static int stdio_transport_stop(mcp_transport_t* transport);
 static void stdio_transport_destroy(mcp_transport_t* transport);
 // Background thread function for reading from stdin.
 static void* stdio_read_thread_func(void* arg);
+
+/**
+ * @internal
+ * @brief Initializes stdin and stdout for binary mode and optimal buffering.
+ *
+ * This function:
+ * 1. Sets stdin and stdout to binary mode on Windows to prevent newline translation
+ * 2. Optimizes buffering for stdin and stdout using setvbuf with static buffers
+ *
+ * @return 0 on success, -1 on error.
+ */
+static int stdio_init_streams(void) {
+    // Use static buffers to avoid memory leaks
+    // These buffers will exist for the lifetime of the program
+    static char stdin_buffer[STDIO_BUFFER_SIZE];
+    static char stdout_buffer[STDIO_BUFFER_SIZE];
+
+    // Set binary mode for stdin and stdout on Windows
+    // This is necessary for JSON-RPC transmission using length-prefixed framing
+    // to ensure data integrity and prevent newline conversion issues on Windows
+#ifdef _WIN32
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
+        mcp_log_error("Failed to set stdin to binary mode: %s", strerror(errno));
+        return -1;
+    }
+
+    if (_setmode(_fileno(stdout), _O_BINARY) == -1) {
+        mcp_log_error("Failed to set stdout to binary mode: %s", strerror(errno));
+        return -1;
+    }
+
+    mcp_log_debug("Set stdin and stdout to binary mode for reliable JSON-RPC transmission");
+#endif
+
+    // Set optimal buffering for stdin and stdout
+    if (setvbuf(stdin, stdin_buffer, _IOFBF, STDIO_BUFFER_SIZE) != 0) {
+        mcp_log_error("Failed to set stdin buffer: %s", strerror(errno));
+        return -1;
+    }
+
+    if (setvbuf(stdout, stdout_buffer, _IOFBF, STDIO_BUFFER_SIZE) != 0) {
+        mcp_log_error("Failed to set stdout buffer: %s", strerror(errno));
+        return -1;
+    }
+
+    mcp_log_debug("Optimized stdin and stdout buffering (buffer size: %d KB)", STDIO_BUFFER_SIZE / 1024);
+    return 0;
+}
 
 /**
  * @internal
@@ -485,6 +538,12 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
 
     // Set transport data
     transport->transport_data = stdio_data;
+
+    // Initialize stdin and stdout for binary mode and optimal buffering
+    if (stdio_init_streams() != 0) {
+        mcp_log_warn("Failed to initialize stdio streams optimally, continuing with default settings");
+        // We continue despite initialization failure, as the transport can still work with default settings
+    }
 
     mcp_log_debug("Transport created successfully.");
     return transport;
