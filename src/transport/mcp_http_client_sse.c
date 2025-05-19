@@ -42,6 +42,16 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <errno.h>
+
+/* Define Windows socket error codes for non-Windows platforms */
+#ifndef WSAEWOULDBLOCK
+#define WSAEWOULDBLOCK EWOULDBLOCK
+#endif
+#ifndef WSAEINPROGRESS
+#define WSAEINPROGRESS EINPROGRESS
+#endif
 #endif
 
 /* ===== Constants and Configuration ===== */
@@ -59,6 +69,8 @@
 #define SSE_RECONNECT_DELAY_MS  5000  /**< Delay between reconnection attempts (ms) */
 #define SSE_SLEEP_INTERVAL_MS   100   /**< Sleep interval for checking running flag (ms) */
 #define SSE_RECONNECT_INTERVALS (SSE_RECONNECT_DELAY_MS / SSE_SLEEP_INTERVAL_MS)
+#define SSE_HEARTBEAT_INTERVAL_MS 30000 /**< Interval for checking connection health (ms) */
+#define SSE_MAX_IDLE_TIME_MS 60000 /**< Maximum time without receiving data before reconnecting (ms) */
 
  /**
   * @brief Helper function to safely free a string pointer and set it to NULL.
@@ -160,6 +172,243 @@ void sse_event_free(sse_event_t* event) {
 }
 
 /**
+ * @brief Creates a TCP socket and connects to the specified server with timeout.
+ *
+ * @param host Hostname to connect to
+ * @param port Port to connect to
+ * @param timeout_ms Connection timeout in milliseconds (0 for no timeout)
+ * @return socket_t Connected socket or MCP_INVALID_SOCKET on failure
+ */
+static socket_t create_and_connect_socket(const char* host, uint16_t port, uint32_t timeout_ms) {
+    if (host == NULL) {
+        mcp_log_error("Invalid host parameter for socket connection");
+        return MCP_INVALID_SOCKET;
+    }
+
+    // Create socket
+    socket_t sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == MCP_INVALID_SOCKET) {
+        mcp_log_error("Failed to create socket for connection: %d", mcp_socket_get_last_error());
+        return MCP_INVALID_SOCKET;
+    }
+
+    // Set socket to non-blocking mode if timeout is specified
+    if (timeout_ms > 0) {
+#ifdef _WIN32
+        u_long mode = 1;  // Non-blocking mode
+        if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
+            mcp_log_error("Failed to set socket to non-blocking mode: %d", mcp_socket_get_last_error());
+            mcp_socket_close(sock);
+            return MCP_INVALID_SOCKET;
+        }
+#else
+        int flags = fcntl(sock, F_GETFL, 0);
+        if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+            mcp_log_error("Failed to set socket to non-blocking mode: %d", mcp_socket_get_last_error());
+            mcp_socket_close(sock);
+            return MCP_INVALID_SOCKET;
+        }
+#endif
+    }
+
+    // Resolve host
+    struct hostent* server = gethostbyname(host);
+    if (server == NULL) {
+        mcp_log_error("Failed to resolve host: %s (error: %d)",
+                     host, mcp_socket_get_last_error());
+        mcp_socket_close(sock);
+        return MCP_INVALID_SOCKET;
+    }
+
+    // Prepare server address
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons((u_short)port);
+    memcpy(&server_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+
+    // Connect to server (with timeout if specified)
+    int connect_result = connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
+
+    // If using timeout and connect is in progress
+    if (timeout_ms > 0 && (connect_result == MCP_SOCKET_ERROR) &&
+        (mcp_socket_get_last_error() == WSAEWOULDBLOCK ||
+         mcp_socket_get_last_error() == WSAEINPROGRESS ||
+         mcp_socket_get_last_error() == EINPROGRESS)) {
+
+        // Use select to wait for connection with timeout
+        fd_set write_fds;
+        FD_ZERO(&write_fds);
+        FD_SET(sock, &write_fds);
+
+        struct timeval tv;
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+        // Wait for connection to complete or timeout
+        int select_result = select((int)sock + 1, NULL, &write_fds, NULL, &tv);
+
+        if (select_result <= 0) {
+            // Timeout or error
+            mcp_log_error("Connection to %s:%d timed out after %u ms",
+                         host, port, timeout_ms);
+            mcp_socket_close(sock);
+            return MCP_INVALID_SOCKET;
+        }
+
+        // Check if connection was successful
+        int error = 0;
+        socklen_t error_len = sizeof(error);
+        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&error, &error_len) != 0 || error != 0) {
+            mcp_log_error("Connection to %s:%d failed: %d", host, port, error);
+            mcp_socket_close(sock);
+            return MCP_INVALID_SOCKET;
+        }
+
+        // Set socket back to blocking mode
+#ifdef _WIN32
+        u_long mode = 0;  // Blocking mode
+        if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
+            mcp_log_error("Failed to set socket back to blocking mode: %d", mcp_socket_get_last_error());
+            mcp_socket_close(sock);
+            return MCP_INVALID_SOCKET;
+        }
+#else
+        int flags = fcntl(sock, F_GETFL, 0);
+        if (flags < 0 || fcntl(sock, F_SETFL, flags & ~O_NONBLOCK) < 0) {
+            mcp_log_error("Failed to set socket back to blocking mode: %d", mcp_socket_get_last_error());
+            mcp_socket_close(sock);
+            return MCP_INVALID_SOCKET;
+        }
+#endif
+    }
+    else if (connect_result == MCP_SOCKET_ERROR) {
+        // Connection failed immediately
+        mcp_log_error("Failed to connect to server: %s:%d (error: %d)",
+                     host, port, mcp_socket_get_last_error());
+        mcp_socket_close(sock);
+        return MCP_INVALID_SOCKET;
+    }
+
+    mcp_log_debug("Successfully connected to %s:%d", host, port);
+    return sock;
+}
+
+/**
+ * @brief Sets up SSL for the connection if SSL is enabled.
+ *
+ * @param data Transport data containing connection information
+ * @param sock Socket to use for SSL connection
+ * @return int 0 on success, -1 on failure
+ */
+static int setup_ssl_connection(http_client_transport_data_t* data, socket_t sock) {
+    if (!data->use_ssl) {
+        return 0; // SSL not required
+    }
+
+    mcp_log_info("Initializing SSL for SSE connection");
+
+    // Initialize SSL context
+    http_client_ssl_ctx_t* ssl_ctx = http_client_ssl_init();
+    if (ssl_ctx == NULL) {
+        mcp_log_error("Failed to initialize SSL context for SSE connection");
+        return -1;
+    }
+
+    // Establish SSL connection
+    if (http_client_ssl_connect(ssl_ctx, sock, data->host) != 0) {
+        mcp_log_error("Failed to establish SSL connection for SSE");
+        http_client_ssl_cleanup(ssl_ctx);
+        return -1;
+    }
+
+    // Store SSL context in transport data
+    mcp_mutex_lock(data->mutex);
+    data->ssl_ctx = ssl_ctx;
+    mcp_mutex_unlock(data->mutex);
+
+    mcp_log_info("SSL connection established for SSE");
+    return 0;
+}
+
+/**
+ * @brief Builds and sends the HTTP request for SSE connection.
+ *
+ * @param data Transport data containing connection information
+ * @param sock Socket to send the request on
+ * @return int 0 on success, -1 on failure
+ */
+static int build_and_send_sse_request(http_client_transport_data_t* data, socket_t sock) {
+    // Prepare HTTP request with basic headers
+    char request[SSE_REQUEST_MAX_LENGTH];
+    int request_len = snprintf(request, sizeof(request),
+                              "GET /events HTTP/1.1\r\n"
+                              "Host: %s:%d\r\n"
+                              "Accept: text/event-stream\r\n"
+                              "Cache-Control: no-cache\r\n",
+                              data->host, data->port);
+
+    if (request_len < 0 || request_len >= (int)sizeof(request)) {
+        mcp_log_error("HTTP request buffer overflow for SSE connection");
+        return -1;
+    }
+
+    // Add Last-Event-ID header if available (for reconnection)
+    if (data->last_event_id != NULL) {
+        int id_len = snprintf(request + request_len, sizeof(request) - request_len,
+                             "Last-Event-ID: %s\r\n", data->last_event_id);
+
+        if (id_len < 0 || (request_len + id_len) >= (int)sizeof(request)) {
+            mcp_log_error("HTTP request buffer overflow when adding Last-Event-ID");
+            return -1;
+        }
+
+        request_len += id_len;
+        mcp_log_debug("Added Last-Event-ID header: %s", data->last_event_id);
+    }
+
+    // Add Authorization header if API key is provided
+    if (data->api_key != NULL) {
+        int auth_len = snprintf(request + request_len, sizeof(request) - request_len,
+                               "Authorization: Bearer %s\r\n", data->api_key);
+
+        if (auth_len < 0 || (request_len + auth_len) >= (int)sizeof(request)) {
+            mcp_log_error("HTTP request buffer overflow when adding Authorization");
+            return -1;
+        }
+
+        request_len += auth_len;
+        mcp_log_debug("Added Authorization header");
+    }
+
+    // End headers with an empty line
+    int end_len = snprintf(request + request_len, sizeof(request) - request_len, "\r\n");
+
+    if (end_len < 0 || (request_len + end_len) >= (int)sizeof(request)) {
+        mcp_log_error("HTTP request buffer overflow when adding end of headers");
+        return -1;
+    }
+
+    request_len += end_len;
+
+    // Send HTTP request
+    int sent_len;
+    if (data->use_ssl) {
+        sent_len = http_client_ssl_write(data->ssl_ctx, request, request_len);
+    } else {
+        sent_len = send(sock, request, request_len, 0);
+    }
+
+    if (sent_len != request_len) {
+        mcp_log_error("Failed to send HTTP request for SSE connection: sent %d of %d bytes (error: %d)",
+                     sent_len, request_len, mcp_socket_get_last_error());
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
  * @brief Connects to an SSE endpoint.
  *
  * This function establishes a connection to the specified SSE endpoint,
@@ -188,137 +437,26 @@ socket_t connect_to_sse_endpoint(http_client_transport_data_t* data) {
 
     mcp_log_info("Connecting to SSE endpoint: %s", url);
 
-    // Create socket
-    socket_t sock = socket(AF_INET, SOCK_STREAM, 0);
+    // Create socket and connect to server with timeout
+    socket_t sock = create_and_connect_socket(data->host, data->port, data->timeout_ms);
     if (sock == MCP_INVALID_SOCKET) {
-        mcp_log_error("Failed to create socket for SSE connection: %d", mcp_socket_get_last_error());
         return MCP_INVALID_SOCKET;
     }
 
-    // Resolve host
-    struct hostent* server = gethostbyname(data->host);
-    if (server == NULL) {
-        mcp_log_error("Failed to resolve host: %s (error: %d)",
-                     data->host, mcp_socket_get_last_error());
-        mcp_socket_close(sock);
-        return MCP_INVALID_SOCKET;
-    }
-
-    // Connect to server
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons((u_short)data->port);
-    memcpy(&server_addr.sin_addr.s_addr, server->h_addr, server->h_length);
-
-    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == MCP_SOCKET_ERROR) {
-        mcp_log_error("Failed to connect to server: %s:%d (error: %d)",
-                     data->host, data->port, mcp_socket_get_last_error());
-        mcp_socket_close(sock);
-        return MCP_INVALID_SOCKET;
-    }
-
-    // Initialize and connect SSL if needed
+    // Setup SSL if needed
     if (data->use_ssl) {
-        mcp_log_info("Initializing SSL for SSE connection");
-
-        // Initialize SSL context
-        http_client_ssl_ctx_t* ssl_ctx = http_client_ssl_init();
-        if (ssl_ctx == NULL) {
-            mcp_log_error("Failed to initialize SSL context for SSE connection");
+        if (setup_ssl_connection(data, sock) != 0) {
             mcp_socket_close(sock);
             return MCP_INVALID_SOCKET;
         }
-
-        // Establish SSL connection
-        if (http_client_ssl_connect(ssl_ctx, sock, data->host) != 0) {
-            mcp_log_error("Failed to establish SSL connection for SSE");
-            http_client_ssl_cleanup(ssl_ctx);
-            mcp_socket_close(sock);
-            return MCP_INVALID_SOCKET;
-        }
-
-        // Store SSL context in transport data
-        mcp_mutex_lock(data->mutex);
-        data->ssl_ctx = ssl_ctx;
-        mcp_mutex_unlock(data->mutex);
-
-        mcp_log_info("SSL connection established for SSE");
     }
 
-    // Prepare HTTP request with basic headers
-    char request[SSE_REQUEST_MAX_LENGTH];
-    int request_len = snprintf(request, sizeof(request),
-                              "GET /events HTTP/1.1\r\n"
-                              "Host: %s:%d\r\n"
-                              "Accept: text/event-stream\r\n"
-                              "Cache-Control: no-cache\r\n",
-                              data->host, data->port);
-
-    if (request_len < 0 || request_len >= (int)sizeof(request)) {
-        mcp_log_error("HTTP request buffer overflow for SSE connection");
-        mcp_socket_close(sock);
-        return MCP_INVALID_SOCKET;
-    }
-
-    // Add Last-Event-ID header if available (for reconnection)
-    if (data->last_event_id != NULL) {
-        int id_len = snprintf(request + request_len, sizeof(request) - request_len,
-                             "Last-Event-ID: %s\r\n", data->last_event_id);
-
-        if (id_len < 0 || (request_len + id_len) >= (int)sizeof(request)) {
-            mcp_log_error("HTTP request buffer overflow when adding Last-Event-ID");
-            mcp_socket_close(sock);
-            return MCP_INVALID_SOCKET;
-        }
-
-        request_len += id_len;
-        mcp_log_debug("Added Last-Event-ID header: %s", data->last_event_id);
-    }
-
-    // Add Authorization header if API key is provided
-    if (data->api_key != NULL) {
-        int auth_len = snprintf(request + request_len, sizeof(request) - request_len,
-                               "Authorization: Bearer %s\r\n", data->api_key);
-
-        if (auth_len < 0 || (request_len + auth_len) >= (int)sizeof(request)) {
-            mcp_log_error("HTTP request buffer overflow when adding Authorization");
-            mcp_socket_close(sock);
-            return MCP_INVALID_SOCKET;
-        }
-
-        request_len += auth_len;
-        mcp_log_debug("Added Authorization header");
-    }
-
-    // End headers with an empty line
-    int end_len = snprintf(request + request_len, sizeof(request) - request_len, "\r\n");
-
-    if (end_len < 0 || (request_len + end_len) >= (int)sizeof(request)) {
-        mcp_log_error("HTTP request buffer overflow when adding end of headers");
-        mcp_socket_close(sock);
-        return MCP_INVALID_SOCKET;
-    }
-
-    request_len += end_len;
-
-    // Send HTTP request
-    int sent_len;
-    if (data->use_ssl) {
-        sent_len = http_client_ssl_write(data->ssl_ctx, request, request_len);
-    } else {
-        sent_len = send(sock, request, request_len, 0);
-    }
-
-    if (sent_len != request_len) {
-        mcp_log_error("Failed to send HTTP request for SSE connection: sent %d of %d bytes (error: %d)",
-                     sent_len, request_len, mcp_socket_get_last_error());
-
-        if (data->use_ssl) {
+    // Build and send HTTP request for SSE
+    if (build_and_send_sse_request(data, sock) != 0) {
+        if (data->use_ssl && data->ssl_ctx != NULL) {
             http_client_ssl_cleanup(data->ssl_ctx);
             data->ssl_ctx = NULL;
         }
-
         mcp_socket_close(sock);
         return MCP_INVALID_SOCKET;
     }
@@ -355,18 +493,20 @@ void process_sse_event(http_client_transport_data_t* data, const sse_event_t* ev
 
     // Update last event ID if provided (thread-safe)
     if (event->id != NULL) {
+        char* new_event_id = mcp_strdup(event->id);
+        if (new_event_id == NULL && event->id[0] != '\0') {
+            mcp_log_error("Failed to allocate memory for last event ID");
+            return; // Exit function on memory allocation failure
+        }
+
         mcp_mutex_lock(data->mutex);  // Lock to safely update last_event_id
 
         // Free previous event ID if exists
         safe_free_string(&data->last_event_id);
 
         // Store new event ID
-        data->last_event_id = mcp_strdup(event->id);
-        if (data->last_event_id == NULL && event->id[0] != '\0') {
-            mcp_log_error("Failed to allocate memory for last event ID");
-        } else {
-            mcp_log_debug("Updated last event ID: %s", data->last_event_id);
-        }
+        data->last_event_id = new_event_id;
+        mcp_log_debug("Updated last event ID: %s", data->last_event_id);
 
         mcp_mutex_unlock(data->mutex);
     }
@@ -374,6 +514,12 @@ void process_sse_event(http_client_transport_data_t* data, const sse_event_t* ev
     // Process event data if provided
     if (event->data != NULL) {
         size_t data_length = strlen(event->data);
+
+        // Check if data is too large (arbitrary limit to prevent processing extremely large events)
+        if (data_length > 1024 * 1024) { // 1MB limit
+            mcp_log_warn("SSE event data too large (%zu bytes), truncating to 1MB", data_length);
+            data_length = 1024 * 1024; // Limit to 1MB
+        }
 
         // Log detailed event information
         mcp_log_debug("Received SSE event data: type=%s, id=%s, data_length=%zu",
@@ -410,7 +556,8 @@ void process_sse_event(http_client_transport_data_t* data, const sse_event_t* ev
             mcp_log_warn("No message callback registered for SSE events");
         }
     } else {
-        mcp_log_debug("Received SSE event with no data payload");
+        mcp_log_warn("Received SSE event with no data payload (type=%s, id=%s)",
+                    event_type, event_id);
     }
 }
 
@@ -595,8 +742,45 @@ void* http_client_event_thread_func(void* arg) {
         char* event_data = NULL;
         int bytes_read = 0;
 
+        // Initialize heartbeat tracking
+        time_t last_activity_time = time(NULL);
+
         // Event reading loop - continue while running flag is set and connection is active
         while (data->running) {
+            // Set up select for timeout on receive
+            fd_set read_fds;
+            FD_ZERO(&read_fds);
+            FD_SET(sock, &read_fds);
+
+            // Set timeout for select
+            struct timeval tv;
+            tv.tv_sec = SSE_HEARTBEAT_INTERVAL_MS / 1000;
+            tv.tv_usec = (SSE_HEARTBEAT_INTERVAL_MS % 1000) * 1000;
+
+            // Wait for data or timeout
+            int select_result = select((int)sock + 1, &read_fds, NULL, NULL, &tv);
+
+            // Check if we need to reconnect due to inactivity
+            time_t current_time = time(NULL);
+            if (difftime(current_time, last_activity_time) * 1000 > SSE_MAX_IDLE_TIME_MS) {
+                mcp_log_warn("SSE connection idle for too long (%d ms), reconnecting",
+                           (int)(difftime(current_time, last_activity_time) * 1000));
+                break; // Exit the reading loop to reconnect
+            }
+
+            // If select timed out, continue to next iteration (will check idle time again)
+            if (select_result == 0) {
+                mcp_log_debug("No data received from SSE endpoint in %d ms, connection still active",
+                             SSE_HEARTBEAT_INTERVAL_MS);
+                continue;
+            }
+
+            // If select failed, break the loop
+            if (select_result < 0) {
+                mcp_log_error("Select failed while waiting for SSE data: %d", mcp_socket_get_last_error());
+                break;
+            }
+
             // Receive data from the socket
             if (data->use_ssl) {
                 bytes_read = http_client_ssl_read(data->ssl_ctx, buffer, sizeof(buffer) - 1);
@@ -608,6 +792,9 @@ void* http_client_event_thread_func(void* arg) {
             if (bytes_read <= 0) {
                 break; // Exit the reading loop
             }
+
+            // Update last activity time
+            last_activity_time = time(NULL);
 
             // Null-terminate the received data for string operations
             buffer[bytes_read] = '\0';
