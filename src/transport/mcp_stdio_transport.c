@@ -36,6 +36,8 @@ typedef struct {
     bool running;                       /**< Flag indicating if the transport (read thread) is active. */
     mcp_transport_t* transport_handle;  /**< Pointer back to the generic transport handle containing callbacks. */
     mcp_thread_t read_thread;           /**< Handle for the background stdin reading thread (cross-platform). */
+    void* (*alloc_func)(size_t);        /**< Function pointer for memory allocation. */
+    void (*free_func)(void*);           /**< Function pointer for memory deallocation. */
 } mcp_stdio_transport_data_t;
 
 // Implementation of the send function for stdio transport.
@@ -135,6 +137,10 @@ static void* stdio_read_thread_func(void* arg) {
     uint32_t message_length_net, message_length_host;
     char* message_buf = NULL;
 
+    // Get the stored memory allocation and deallocation functions
+    void* (*alloc_func)(size_t) = data->alloc_func ? data->alloc_func : malloc;
+    void (*free_func)(void*) = data->free_func ? data->free_func : free;
+
     mcp_log_debug("Read thread started (using length prefix framing).");
 
     // Loop reading messages as long as the transport is running
@@ -162,13 +168,8 @@ static void* stdio_read_thread_func(void* arg) {
         }
 
         // 4. Allocate buffer for message body (+1 for null terminator)
-        // Use memory pool if available
-        if (mcp_memory_pool_system_is_initialized()) {
-            message_buf = (char*)mcp_pool_alloc(message_length_host + 1);
-        } else {
-            message_buf = (char*)malloc(message_length_host + 1);
-        }
-
+        // Use the selected allocation function
+        message_buf = (char*)alloc_func(message_length_host + 1);
         if (message_buf == NULL) {
             mcp_log_error("Failed to allocate buffer for message size %u",
                          message_length_host);
@@ -187,12 +188,8 @@ static void* stdio_read_thread_func(void* arg) {
                              strerror(errno));
             }
 
-            // Free using the same method as allocation
-            if (mcp_memory_pool_system_is_initialized()) {
-                mcp_pool_free(message_buf);
-            } else {
-                free(message_buf);
-            }
+            // Free using the selected deallocation function
+            free_func(message_buf);
             message_buf = NULL;
             data->running = false; // Stop reading on EOF or error
             break;
@@ -203,41 +200,54 @@ static void* stdio_read_thread_func(void* arg) {
 
         if (transport->message_callback != NULL) {
             int callback_error_code = 0;
+            char* response_str = NULL;
 
-            // Invoke the message callback with the message data
-            char* response_str = transport->message_callback(
-                transport->callback_user_data, // Pass user data
-                message_buf,                   // Pass message content
-                message_length_host,           // Pass message length
-                &callback_error_code
-            );
+            // Use a try-catch style with goto for error handling
+            do {
+                // Invoke the message callback with the message data
+                response_str = transport->message_callback(
+                    transport->callback_user_data, // Pass user data
+                    message_buf,                   // Pass message content
+                    message_length_host,           // Pass message length
+                    &callback_error_code
+                );
 
-            // Handle the response
-            if (response_str != NULL) {
-                // Send the response back via stdout (send function handles framing)
-                if (stdio_transport_send(transport, response_str, strlen(response_str)) != 0) {
-                    mcp_log_error("Failed to send response via stdout.");
-                    // We continue processing despite send errors
+                // Handle the response
+                if (response_str != NULL) {
+                    // Send the response back via stdout (send function handles framing)
+                    if (stdio_transport_send(transport, response_str, strlen(response_str)) != 0) {
+                        mcp_log_error("Failed to send response via stdout.");
+                        // We continue processing despite send errors
+                    }
+                    // Free the response string (always use free since callback uses malloc)
+                    free(response_str);
+                    response_str = NULL;
                 }
-                // Free the response string (always use free since callback uses malloc)
+                else if (callback_error_code != 0) {
+                    // Callback indicated an error but returned no response
+                    mcp_log_warn("Message callback indicated error (%d) "
+                                "but returned no response string.", callback_error_code);
+                }
+                // If response_str is NULL and no error, it was a notification or response not needed.
+            } while (0); // This is just a scope for the error handling
+
+            // Ensure response_str is freed in case of any error path
+            if (response_str != NULL) {
                 free(response_str);
+                response_str = NULL;
             }
-            else if (callback_error_code != 0) {
-                // Callback indicated an error but returned no response
-                mcp_log_warn("Message callback indicated error (%d) "
-                            "but returned no response string.", callback_error_code);
-            }
-            // If response_str is NULL and no error, it was a notification or response not needed.
         }
 
         // 7. Free the message buffer for the next read
-        if (mcp_memory_pool_system_is_initialized()) {
-            mcp_pool_free(message_buf);
-        } else {
-            free(message_buf);
-        }
+        free_func(message_buf);
         message_buf = NULL;
     } // End while(data->running)
+
+    // Final safety check - ensure message_buf is freed if we somehow exit the loop with it allocated
+    if (message_buf != NULL) {
+        free_func(message_buf);
+        message_buf = NULL;
+    }
 
     mcp_log_info("Read thread exiting.");
     return NULL;
@@ -389,8 +399,14 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
         return;
     }
 
+    // Default deallocation function in case transport_data is NULL
+    void (*free_func)(void*) = free;
+
     if (transport->transport_data != NULL) {
         mcp_stdio_transport_data_t* data = (mcp_stdio_transport_data_t*)transport->transport_data;
+
+        // Get the stored deallocation function
+        free_func = data->free_func ? data->free_func : free;
 
         // Ensure transport is stopped first
         if (data->running) {
@@ -398,21 +414,13 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
             stdio_transport_stop(transport);
         }
 
-        // Free the specific stdio data using the appropriate method
-        if (mcp_memory_pool_system_is_initialized()) {
-            mcp_pool_free(transport->transport_data);
-        } else {
-            free(transport->transport_data);
-        }
+        // Free the specific stdio data using the stored deallocation function
+        free_func(transport->transport_data);
         transport->transport_data = NULL;
     }
 
-    // Free the main transport struct using the appropriate method
-    if (mcp_memory_pool_system_is_initialized()) {
-        mcp_pool_free(transport);
-    } else {
-        free(transport);
-    }
+    // Free the main transport struct using the same deallocation function
+    free_func(transport);
 
     mcp_log_debug("Transport destroyed.");
 }
@@ -429,14 +437,17 @@ static void stdio_transport_destroy(mcp_transport_t* transport) {
  *         mcp_transport_destroy().
  */
 mcp_transport_t* mcp_transport_stdio_create(void) {
-    // Allocate the generic transport struct using memory pool if available
-    mcp_transport_t* transport = NULL;
+    // Determine which memory allocation functions to use
+    void* (*alloc_func)(size_t) = malloc;
+    void (*free_func)(void*) = free;
+
     if (mcp_memory_pool_system_is_initialized()) {
-        transport = (mcp_transport_t*)mcp_pool_alloc(sizeof(mcp_transport_t));
-    } else {
-        transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
+        alloc_func = mcp_pool_alloc;
+        free_func = mcp_pool_free;
     }
 
+    // Allocate the generic transport struct using selected allocation function
+    mcp_transport_t* transport = (mcp_transport_t*)alloc_func(sizeof(mcp_transport_t));
     if (transport == NULL) {
         mcp_log_error("Failed to allocate transport structure.");
         return NULL;
@@ -445,21 +456,11 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     // Zero-initialize the transport structure
     memset(transport, 0, sizeof(mcp_transport_t));
 
-    // Allocate the stdio-specific data struct
-    mcp_stdio_transport_data_t* stdio_data = NULL;
-    if (mcp_memory_pool_system_is_initialized()) {
-        stdio_data = (mcp_stdio_transport_data_t*)mcp_pool_alloc(sizeof(mcp_stdio_transport_data_t));
-    } else {
-        stdio_data = (mcp_stdio_transport_data_t*)malloc(sizeof(mcp_stdio_transport_data_t));
-    }
-
+    // Allocate the stdio-specific data struct using selected allocation function
+    mcp_stdio_transport_data_t* stdio_data = (mcp_stdio_transport_data_t*)alloc_func(sizeof(mcp_stdio_transport_data_t));
     if (stdio_data == NULL) {
         mcp_log_error("Failed to allocate transport data structure.");
-        if (mcp_memory_pool_system_is_initialized()) {
-            mcp_pool_free(transport);
-        } else {
-            free(transport);
-        }
+        free_func(transport);
         return NULL;
     }
 
@@ -467,6 +468,8 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     memset(stdio_data, 0, sizeof(mcp_stdio_transport_data_t));
     stdio_data->running = false;
     stdio_data->transport_handle = transport; // Link back
+    stdio_data->alloc_func = alloc_func;      // Store allocation function
+    stdio_data->free_func = free_func;        // Store deallocation function
 
     // Set transport type and protocol
     transport->type = MCP_TRANSPORT_TYPE_CLIENT;
