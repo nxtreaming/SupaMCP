@@ -58,6 +58,8 @@ typedef struct {
 static int stdio_init_streams(void);
 // Implementation of the send function for stdio transport.
 static int stdio_transport_send(mcp_transport_t* transport, const void* data_to_send, size_t size);
+// Implementation of the vectored send function for stdio transport.
+static int stdio_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
 // Implementation of the synchronous receive function for stdio transport.
 static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms);
 // Implementation of the start function for stdio transport.
@@ -643,6 +645,83 @@ static int stdio_transport_send(mcp_transport_t* transport, const void* payload_
 
 /**
  * @internal
+ * @brief Sends data from multiple buffers via the stdio transport (writes to stdout).
+ * Uses length-prefixed framing and flushes stdout after writing.
+ *
+ * This function implements vectored I/O for the stdio transport, allowing
+ * more efficient sending of multiple data buffers without intermediate copying.
+ *
+ * @param transport The transport handle (unused).
+ * @param buffers Array of mcp_buffer_t structures containing data to send.
+ * @param buffer_count Number of buffers in the array.
+ * @return 0 on success, -1 on error (e.g., write error, flush error).
+ */
+static int stdio_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
+    (void)transport; // Unused in this function
+
+    // Validate parameters
+    if (buffers == NULL || buffer_count == 0) {
+        mcp_log_error("Invalid buffers in sendv function.");
+        return -1;
+    }
+
+    // Calculate total payload size and validate buffers
+    size_t total_size = 0;
+    for (size_t i = 0; i < buffer_count; i++) {
+        // Skip empty buffers
+        if (buffers[i].data == NULL || buffers[i].size == 0) {
+            continue;
+        }
+
+        total_size += buffers[i].size;
+    }
+
+    // Check if we have any data to send
+    if (total_size == 0) {
+        mcp_log_debug("No data to send in sendv function.");
+        return 0; // Success, but nothing to do
+    }
+
+    // Sanity check total payload size
+    if (total_size > MAX_MCP_MESSAGE_SIZE) {
+        mcp_log_error("Total payload size %zu exceeds maximum allowed size (%d).",
+                     total_size, MAX_MCP_MESSAGE_SIZE);
+        return -1;
+    }
+
+    // 1. Send 4-byte length prefix (network byte order)
+    uint32_t net_len = htonl((uint32_t)total_size);
+    if (fwrite(&net_len, 1, sizeof(net_len), stdout) != sizeof(net_len)) {
+        mcp_log_error("Failed to write length prefix to stdout: %s",
+                     get_error_string(errno));
+        return -1;
+    }
+
+    // 2. Send each buffer's data
+    for (size_t i = 0; i < buffer_count; i++) {
+        // Skip empty buffers
+        if (buffers[i].data == NULL || buffers[i].size == 0) {
+            continue;
+        }
+
+        if (fwrite(buffers[i].data, 1, buffers[i].size, stdout) != buffers[i].size) {
+            mcp_log_error("Failed to write buffer %zu to stdout: %s",
+                         i, get_error_string(errno));
+            return -1;
+        }
+    }
+
+    // 3. Ensure the output is flushed immediately
+    if (fflush(stdout) != 0) {
+        mcp_log_error("Failed to flush stdout: %s", get_error_string(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @internal
  * @brief Destroys the stdio transport specific data.
  * Ensures the transport is stopped and frees the internal data structure.
  *
@@ -767,7 +846,7 @@ mcp_transport_t* mcp_transport_stdio_create(void) {
     transport->client.stop = stdio_transport_stop;
     transport->client.destroy = stdio_transport_destroy;
     transport->client.send = stdio_transport_send;
-    transport->client.sendv = NULL; // No vectored send implementation for stdio
+    transport->client.sendv = stdio_transport_sendv;
     transport->client.receive = stdio_transport_receive;
 
     // Set transport data
