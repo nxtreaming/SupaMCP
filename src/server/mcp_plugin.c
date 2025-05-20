@@ -16,7 +16,7 @@
 /**
  * @brief Name of the function that plugins must export to provide their descriptor
  */
-#define MCP_PLUGIN_DESCRIPTOR_FUNC_NAME "mcp_plugin_get_descriptor"
+#define MCP_PLUGIN_DESCRIPTOR_FUNC "mcp_plugin_get_descriptor"
 
 /**
  * @brief Function pointer type for the plugin descriptor function
@@ -143,14 +143,11 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
 
     // Get the descriptor function pointer
     mcp_plugin_get_descriptor_func_t get_descriptor_func =
-        (mcp_plugin_get_descriptor_func_t)GetProcAddress(
-            plugin->library_handle,
-            MCP_PLUGIN_DESCRIPTOR_FUNC_NAME
-        );
+        (mcp_plugin_get_descriptor_func_t)GetProcAddress(plugin->library_handle, MCP_PLUGIN_DESCRIPTOR_FUNC);
 
     if (!get_descriptor_func) {
         mcp_log_error("Failed to find symbol '%s' in plugin '%s'. Error %lu",
-                MCP_PLUGIN_DESCRIPTOR_FUNC_NAME, path, GetLastError());
+                MCP_PLUGIN_DESCRIPTOR_FUNC, path, GetLastError());
 
         unload_and_free_plugin(plugin);
         return NULL;
@@ -174,12 +171,12 @@ mcp_plugin_t* mcp_plugin_load(const char* path, void* server_context) {
     // Note: Casting function pointer from void* is technically undefined behavior in C standard,
     // but required by dlsym and generally works on POSIX systems.
     mcp_plugin_get_descriptor_func_t get_descriptor_func = NULL;
-    *(void**)(&get_descriptor_func) = dlsym(plugin->library_handle, MCP_PLUGIN_DESCRIPTOR_FUNC_NAME);
+    *(void**)(&get_descriptor_func) = dlsym(plugin->library_handle, MCP_PLUGIN_DESCRIPTOR_FUNC);
 
     const char* dlsym_error = dlerror();
     if (dlsym_error != NULL || !get_descriptor_func) {
         mcp_log_error("Failed to find symbol '%s' in plugin '%s'. Error: %s",
-                MCP_PLUGIN_DESCRIPTOR_FUNC_NAME, path,
+                MCP_PLUGIN_DESCRIPTOR_FUNC, path,
                 dlsym_error ? dlsym_error : "Symbol not found");
 
         unload_and_free_plugin(plugin);
