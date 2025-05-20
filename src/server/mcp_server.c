@@ -24,6 +24,159 @@
 #define CONTENT_ITEM_POOL_INITIAL_CAPACITY 128
 
 /**
+ * @brief Default hash table initial capacity
+ */
+#define DEFAULT_HASHTABLE_INITIAL_CAPACITY 16
+
+/**
+ * @brief Default hash table load factor
+ */
+#define DEFAULT_HASHTABLE_LOAD_FACTOR 0.75f
+
+/**
+ * @brief Creates a hash table with string keys and specified value free function
+ *
+ * @param value_free_func Function to free values stored in the hash table
+ * @return Pointer to the created hash table, or NULL on failure
+ */
+static mcp_hashtable_t* create_string_hashtable(mcp_value_free_func_t value_free_func) {
+    return mcp_hashtable_create(
+        DEFAULT_HASHTABLE_INITIAL_CAPACITY,
+        DEFAULT_HASHTABLE_LOAD_FACTOR,
+        mcp_hashtable_string_hash,
+        mcp_hashtable_string_compare,
+        mcp_hashtable_string_dup,
+        mcp_hashtable_string_free,
+        value_free_func
+    );
+}
+
+/**
+ * @brief Safely destroys a hash table and sets the pointer to NULL
+ *
+ * @param table_ptr Pointer to the hash table pointer
+ */
+static void safe_destroy_hashtable(mcp_hashtable_t** table_ptr) {
+    if (table_ptr && *table_ptr) {
+        mcp_hashtable_destroy(*table_ptr);
+        *table_ptr = NULL;
+    }
+}
+
+/**
+ * @brief Safely destroys a resource and sets the pointer to NULL
+ *
+ * @param resource_ptr Pointer to the resource pointer
+ * @param destroy_func Function to destroy the resource
+ */
+static void safe_destroy_resource(void** resource_ptr, void (*destroy_func)(void*)) {
+    if (resource_ptr && *resource_ptr && destroy_func) {
+        destroy_func(*resource_ptr);
+        *resource_ptr = NULL;
+    }
+}
+
+/**
+ * @brief Adds an item to a hash table with error handling
+ *
+ * @param table The hash table
+ * @param key The key for the item
+ * @param value The value to add
+ * @param error_msg Error message to log on failure
+ * @param cleanup_func Function to clean up the value on failure
+ * @return 0 on success, -1 on failure
+ */
+static int add_to_hashtable(
+    mcp_hashtable_t* table,
+    const char* key,
+    void* value,
+    const char* error_msg,
+    void (*cleanup_func)(void*)
+) {
+    if (!table || !key || !value) {
+        if (cleanup_func && value) {
+            cleanup_func(value);
+        }
+        return -1;
+    }
+
+    int result = mcp_hashtable_put(table, key, value);
+    if (result != 0) {
+        if (error_msg) {
+            mcp_log_error("%s: %s", error_msg, key);
+        }
+        if (cleanup_func) {
+            cleanup_func(value);
+        }
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Cleans up all resources associated with a server
+ *
+ * @param server The server to clean up
+ */
+static void cleanup_server_resources(mcp_server_t* server) {
+    if (!server) return;
+
+    // Clean up object pool
+    safe_destroy_resource((void**)&server->content_item_pool, (void(*)(void*))mcp_object_pool_destroy);
+
+    // Clean up hash tables
+    safe_destroy_hashtable(&server->tools_table);
+    safe_destroy_hashtable(&server->template_routes_table);
+    safe_destroy_resource((void**)&server->template_security, (void(*)(void*))mcp_template_security_destroy);
+    safe_destroy_hashtable(&server->resource_templates_table);
+    safe_destroy_hashtable(&server->resources_table);
+
+    // Clean up gateway pool
+    safe_destroy_resource((void**)&server->pool_manager, (void(*)(void*))gateway_pool_manager_destroy);
+
+    // Clean up rate limiters
+    safe_destroy_resource((void**)&server->advanced_rate_limiter, (void(*)(void*))mcp_advanced_rate_limiter_destroy);
+    safe_destroy_resource((void**)&server->rate_limiter, (void(*)(void*))mcp_rate_limiter_destroy);
+
+    // Clean up resource cache
+    safe_destroy_resource((void**)&server->resource_cache, (void(*)(void*))mcp_cache_destroy);
+
+    // Clean up thread pool
+    safe_destroy_resource((void**)&server->thread_pool, (void(*)(void*))mcp_thread_pool_destroy);
+
+    // Clean up synchronization primitives
+    safe_destroy_resource((void**)&server->shutdown_mutex, (void(*)(void*))mcp_mutex_destroy);
+    safe_destroy_resource((void**)&server->shutdown_cond, (void(*)(void*))mcp_cond_destroy);
+
+    // Clean up configuration strings
+    free((void*)server->config.name);
+    free((void*)server->config.version);
+    free((void*)server->config.description);
+    free((void*)server->config.api_key);
+
+    // Clean up prewarm URIs
+    if (server->config.prewarm_resource_uris) {
+        for (size_t i = 0; i < server->config.prewarm_count; ++i) {
+            free(server->config.prewarm_resource_uris[i]);
+        }
+        free(server->config.prewarm_resource_uris);
+    }
+
+    // Reset config pointers/counts
+    server->config.prewarm_resource_uris = NULL;
+    server->config.prewarm_count = 0;
+
+    // Free gateway backend list
+    mcp_free_backend_list(server->backends, server->backend_count);
+    server->backends = NULL;
+    server->backend_count = 0;
+
+    // Clean up the global template cache
+    mcp_template_cache_cleanup();
+}
+
+/**
  * @brief Creates an MCP server instance.
  *
  * @param config Pointer to the server configuration
@@ -252,69 +405,29 @@ mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_ser
     }
 
     // --- Create Hash Tables ---
-    // Common hash table parameters
-    const size_t initial_capacity = 16;
-    const float load_factor = 0.75f;
-
     // Resources Table (Key: URI string, Value: mcp_resource_t*)
-    server->resources_table = mcp_hashtable_create(
-        initial_capacity,
-        load_factor,
-        mcp_hashtable_string_hash,
-        mcp_hashtable_string_compare,
-        mcp_hashtable_string_dup,
-        mcp_hashtable_string_free,
-        (mcp_value_free_func_t)mcp_resource_free
-    );
-
+    server->resources_table = create_string_hashtable((mcp_value_free_func_t)mcp_resource_free);
     if (server->resources_table == NULL) {
         mcp_log_error("Failed to create resources hash table");
         goto create_error_cleanup;
     }
 
     // Resource Templates Table (Key: URI Template string, Value: mcp_resource_template_t*)
-    server->resource_templates_table = mcp_hashtable_create(
-        initial_capacity,
-        load_factor,
-        mcp_hashtable_string_hash,
-        mcp_hashtable_string_compare,
-        mcp_hashtable_string_dup,
-        mcp_hashtable_string_free,
-        (mcp_value_free_func_t)mcp_resource_template_free
-    );
-
+    server->resource_templates_table = create_string_hashtable((mcp_value_free_func_t)mcp_resource_template_free);
     if (server->resource_templates_table == NULL) {
         mcp_log_error("Failed to create resource templates hash table");
         goto create_error_cleanup;
     }
 
     // Tools Table (Key: Tool Name string, Value: mcp_tool_t*)
-    server->tools_table = mcp_hashtable_create(
-        initial_capacity,
-        load_factor,
-        mcp_hashtable_string_hash,
-        mcp_hashtable_string_compare,
-        mcp_hashtable_string_dup,
-        mcp_hashtable_string_free,
-        (mcp_value_free_func_t)mcp_tool_free
-    );
-
+    server->tools_table = create_string_hashtable((mcp_value_free_func_t)mcp_tool_free);
     if (server->tools_table == NULL) {
         mcp_log_error("Failed to create tools hash table");
         goto create_error_cleanup;
     }
 
     // Template Routes Table (Key: URI Template string, Value: template_route_t*)
-    server->template_routes_table = mcp_hashtable_create(
-        initial_capacity,
-        load_factor,
-        mcp_hashtable_string_hash,
-        mcp_hashtable_string_compare,
-        mcp_hashtable_string_dup,
-        mcp_hashtable_string_free,
-        (mcp_value_free_func_t)mcp_server_free_template_routes
-    );
-
+    server->template_routes_table = create_string_hashtable((mcp_value_free_func_t)mcp_server_free_template_routes);
     if (server->template_routes_table == NULL) {
         mcp_log_error("Failed to create template routes hash table");
         goto create_error_cleanup;
@@ -347,73 +460,7 @@ mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_ser
 create_error_cleanup:
     // Centralized cleanup for error cases
     if (server) {
-        // Clean up object pool
-        if (server->content_item_pool) {
-            mcp_object_pool_destroy(server->content_item_pool);
-        }
-
-        // Clean up hash tables
-        if (server->tools_table) {
-            mcp_hashtable_destroy(server->tools_table);
-        }
-        if (server->template_routes_table) {
-            mcp_hashtable_destroy(server->template_routes_table);
-        }
-        if (server->template_security) {
-            mcp_template_security_destroy(server->template_security);
-        }
-        if (server->resource_templates_table) {
-            mcp_hashtable_destroy(server->resource_templates_table);
-        }
-        if (server->resources_table) {
-            mcp_hashtable_destroy(server->resources_table);
-        }
-
-        // Clean up gateway pool
-        if (server->pool_manager) {
-            gateway_pool_manager_destroy(server->pool_manager);
-        }
-
-        // Clean up rate limiters
-        if (server->advanced_rate_limiter) {
-            mcp_advanced_rate_limiter_destroy(server->advanced_rate_limiter);
-        }
-        if (server->rate_limiter) {
-            mcp_rate_limiter_destroy(server->rate_limiter);
-        }
-
-        // Clean up resource cache
-        if (server->resource_cache) {
-            mcp_cache_destroy(server->resource_cache);
-        }
-
-        // Clean up thread pool
-        if (server->thread_pool) {
-            mcp_thread_pool_destroy(server->thread_pool);
-        }
-
-        // Clean up synchronization primitives
-        if (server->shutdown_mutex) {
-            mcp_mutex_destroy(server->shutdown_mutex);
-        }
-        if (server->shutdown_cond) {
-            mcp_cond_destroy(server->shutdown_cond);
-        }
-
-        // Clean up configuration strings
-        free((void*)server->config.name);
-        free((void*)server->config.version);
-        free((void*)server->config.description);
-        free((void*)server->config.api_key);
-
-        // Clean up prewarm URIs
-        if (server->config.prewarm_resource_uris) {
-            for (size_t i = 0; i < server->config.prewarm_count; ++i) {
-                free(server->config.prewarm_resource_uris[i]);
-            }
-            free(server->config.prewarm_resource_uris);
-        }
-
+        cleanup_server_resources(server);
         free(server);
     }
 
@@ -625,103 +672,8 @@ void mcp_server_destroy(mcp_server_t* server) {
     // Note: We don't destroy the transport here because it's owned by the caller
     server->transport = NULL;
 
-    // --- Free Configuration Resources ---
-    // Free configuration strings
-    free((void*)server->config.name);
-    free((void*)server->config.version);
-    free((void*)server->config.description);
-    free((void*)server->config.api_key);
-
-    // Free prewarm URIs
-    if (server->config.prewarm_resource_uris) {
-        for (size_t i = 0; i < server->config.prewarm_count; ++i) {
-            free(server->config.prewarm_resource_uris[i]);
-        }
-        free(server->config.prewarm_resource_uris);
-    }
-
-    // Reset config pointers/counts
-    server->config.prewarm_resource_uris = NULL;
-    server->config.prewarm_count = 0;
-
-    // Free gateway backend list
-    mcp_free_backend_list(server->backends, server->backend_count);
-    server->backends = NULL;
-    server->backend_count = 0;
-
-    // --- Destroy Hash Tables ---
-    // Each destroy call will free keys and values using the appropriate free functions
-    if (server->resources_table) {
-        mcp_hashtable_destroy(server->resources_table);
-        server->resources_table = NULL;
-    }
-
-    if (server->resource_templates_table) {
-        mcp_hashtable_destroy(server->resource_templates_table);
-        server->resource_templates_table = NULL;
-    }
-
-    if (server->tools_table) {
-        mcp_hashtable_destroy(server->tools_table);
-        server->tools_table = NULL;
-    }
-
-    if (server->template_routes_table) {
-        mcp_hashtable_destroy(server->template_routes_table);
-        server->template_routes_table = NULL;
-    }
-
-    // --- Clean up Template Resources ---
-    if (server->template_security) {
-        mcp_template_security_destroy(server->template_security);
-        server->template_security = NULL;
-    }
-
-    // Clean up the global template cache
-    mcp_template_cache_cleanup();
-
-    // --- Destroy Other Components ---
-    if (server->pool_manager) {
-        gateway_pool_manager_destroy(server->pool_manager);
-        server->pool_manager = NULL;
-    }
-
-    if (server->advanced_rate_limiter) {
-        mcp_advanced_rate_limiter_destroy(server->advanced_rate_limiter);
-        server->advanced_rate_limiter = NULL;
-    }
-
-    if (server->rate_limiter) {
-        mcp_rate_limiter_destroy(server->rate_limiter);
-        server->rate_limiter = NULL;
-    }
-
-    if (server->resource_cache) {
-        mcp_cache_destroy(server->resource_cache);
-        server->resource_cache = NULL;
-    }
-
-    if (server->thread_pool) {
-        // Should be destroyed by stop, but check just in case
-        mcp_thread_pool_destroy(server->thread_pool);
-        server->thread_pool = NULL;
-    }
-
-    if (server->content_item_pool) {
-        mcp_object_pool_destroy(server->content_item_pool);
-        server->content_item_pool = NULL;
-    }
-
-    // --- Clean up Synchronization Resources ---
-    if (server->shutdown_mutex) {
-        mcp_mutex_destroy(server->shutdown_mutex);
-        server->shutdown_mutex = NULL;
-    }
-
-    if (server->shutdown_cond) {
-        mcp_cond_destroy(server->shutdown_cond);
-        server->shutdown_cond = NULL;
-    }
+    // Clean up all server resources
+    cleanup_server_resources(server);
 
     // Note: We don't clean up the thread cache and memory pool system here
     // because they might be used by other servers or clients
@@ -764,13 +716,7 @@ int mcp_server_register_template_handler(mcp_server_t* server, const char* templ
 
     // Create the template routes table if it doesn't exist
     if (server->template_routes_table == NULL) {
-        server->template_routes_table = mcp_hashtable_create(
-            16,
-            0.75f,
-            mcp_hashtable_string_hash,
-            mcp_hashtable_string_compare,
-            mcp_hashtable_string_dup,
-            mcp_hashtable_string_free,
+        server->template_routes_table = create_string_hashtable(
             (mcp_value_free_func_t)mcp_server_free_template_routes
         );
 
@@ -828,16 +774,14 @@ int mcp_server_add_resource(mcp_server_t* server, const mcp_resource_t* resource
         return -1;
     }
 
-    // Add the copy to the hash table (key is resource URI)
-    // mcp_hashtable_put handles replacing existing entry if URI matches
-    int result = mcp_hashtable_put(server->resources_table, resource_copy->uri, resource_copy);
-    if (result != 0) {
-        mcp_log_error("Failed to add resource '%s' to hash table", resource_copy->uri);
-        mcp_resource_free(resource_copy); // Free the copy if put failed
-        return -1;
-    }
-
-    return 0; // Success
+    // Add the copy to the hash table
+    return add_to_hashtable(
+        server->resources_table,
+        resource_copy->uri,
+        resource_copy,
+        "Failed to add resource to hash table",
+        (void(*)(void*))mcp_resource_free
+    );
 }
 
 /**
@@ -867,20 +811,14 @@ int mcp_server_add_resource_template(mcp_server_t* server, const mcp_resource_te
         return -1;
     }
 
-    // Add the copy to the hash table (key is URI template)
-    int result = mcp_hashtable_put(
+    // Add the copy to the hash table
+    return add_to_hashtable(
         server->resource_templates_table,
         template_copy->uri_template,
-        template_copy
+        template_copy,
+        "Failed to add resource template to hash table",
+        (void(*)(void*))mcp_resource_template_free
     );
-
-    if (result != 0) {
-        mcp_log_error("Failed to add resource template '%s' to hash table", template_copy->uri_template);
-        mcp_resource_template_free(template_copy); // Free the copy if put failed
-        return -1;
-    }
-
-    return 0;
 }
 
 /**
@@ -917,15 +855,14 @@ int mcp_server_add_tool(mcp_server_t* server, const mcp_tool_t* tool) {
         }
     }
 
-    // Add the copy to the hash table (key is tool name)
-    int result = mcp_hashtable_put(server->tools_table, tool_copy->name, tool_copy);
-    if (result != 0) {
-        mcp_log_error("Failed to add tool '%s' to hash table", tool_copy->name);
-        mcp_tool_free(tool_copy);
-        return -1;
-    }
-
-    return 0; // Success
+    // Add the copy to the hash table
+    return add_to_hashtable(
+        server->tools_table,
+        tool_copy->name,
+        tool_copy,
+        "Failed to add tool to hash table",
+        (void(*)(void*))mcp_tool_free
+    );
 }
 
 /**
