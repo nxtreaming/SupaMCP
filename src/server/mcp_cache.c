@@ -306,72 +306,126 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     int result = -1; // Default to not found/expired
     PROFILE_START("mcp_cache_get");
 
-    // Acquire write lock - exclusive access needed as we may update LRU list
-    mcp_rwlock_write_lock(cache->rwlock);
+    // Local variables to store entry information outside the lock
+    mcp_content_item_t** content_copy_ptrs = NULL;
+    size_t entry_content_count = 0;
+    bool is_expired = false;
+    mcp_cache_entry_t* entry = NULL;
+    time_t now = time(NULL);
+
+    // First acquire read lock to check if entry exists and is valid
+    mcp_rwlock_read_lock(cache->rwlock);
 
     // Try to get the entry from the hash table
-    mcp_cache_entry_t* entry = NULL;
     if (mcp_hashtable_get(cache->table, uri, (void**)&entry) == 0 && entry != NULL) {
-        time_t now = time(NULL);
-
         // Check expiration (0 means never expires)
         if (entry->expiry_time == 0 || now < entry->expiry_time) {
-            // Cache hit and valid! Create copies for the caller.
-            // Allocate array of POINTERS for the caller
-            mcp_content_item_t** content_copy_ptrs = (mcp_content_item_t**)malloc(entry->content_count * sizeof(mcp_content_item_t*));
-            if (content_copy_ptrs) {
-                size_t copied_count = 0;
-                bool copy_error = false;
-
-                for (size_t i = 0; i < entry->content_count; ++i) {
-                    // Acquire a pooled item and copy data into it
-                    content_copy_ptrs[i] = mcp_content_item_acquire_pooled(
-                        pool,
-                        entry->content[i]->type,
-                        entry->content[i]->mime_type,
-                        entry->content[i]->data,
-                        entry->content[i]->data_size
-                    );
-                    if (!content_copy_ptrs[i]) {
-                        copy_error = true;
-                        break; // Exit loop on acquisition/copy failure
-                    }
-                    copied_count++;
-                }
-
-                if (!copy_error) {
-                    // Return the array of pointers to pooled items
-                    *content = content_copy_ptrs;
-                    *content_count = entry->content_count;
-                    // Update last accessed time
-                    entry->last_accessed = now;
-
-                    // Update LRU position (move to front of list)
-                    update_lru_position(cache, entry);
-
-                    result = 0;
-                } else {
-                    // Release partially acquired/copied items back to pool on error
-                    for (size_t i = 0; i < copied_count; ++i) {
-                        if (content_copy_ptrs[i]) {
-                            cleanup_content_item(cache, content_copy_ptrs[i]);
-                        }
-                    }
-                    free(content_copy_ptrs);
-                    // result remains -1 (error)
-                }
-            }
-            // else: allocation failure for copy array, result remains -1
+            // Cache hit and valid! Store information for later use
+            entry_content_count = entry->content_count;
         } else {
-            // Expired entry - remove it from the hash table and LRU list
+            // Entry is expired
+            is_expired = true;
+        }
+    }
+
+    // Release read lock
+    mcp_rwlock_read_unlock(cache->rwlock);
+
+    // If entry not found or expired, handle accordingly
+    if (!entry) {
+        // Entry not found
+        PROFILE_END("mcp_cache_get");
+        return -1;
+    }
+
+    if (is_expired) {
+        // Entry is expired, acquire write lock to remove it
+        mcp_rwlock_write_lock(cache->rwlock);
+
+        // Double-check that the entry is still in the cache and still expired
+        if (mcp_hashtable_get(cache->table, uri, (void**)&entry) == 0 && entry != NULL) {
+            if (entry->expiry_time != 0 && now >= entry->expiry_time) {
+                // Remove from LRU list first
+                if (entry->lru_node) {
+                    mcp_list_remove(cache->lru_list, entry->lru_node, NULL);
+                }
+                mcp_hashtable_remove(cache->table, uri);
+            }
+        }
+
+        mcp_rwlock_write_unlock(cache->rwlock);
+        PROFILE_END("mcp_cache_get");
+        return -1;
+    }
+
+    // Entry is valid, allocate memory for content copies
+    content_copy_ptrs = (mcp_content_item_t**)malloc(entry_content_count * sizeof(mcp_content_item_t*));
+    if (!content_copy_ptrs) {
+        // Memory allocation failed
+        PROFILE_END("mcp_cache_get");
+        return -1;
+    }
+
+    // Acquire write lock to copy content and update LRU position
+    mcp_rwlock_write_lock(cache->rwlock);
+
+    // Double-check that the entry is still in the cache and still valid
+    if (mcp_hashtable_get(cache->table, uri, (void**)&entry) == 0 && entry != NULL) {
+        // Check expiration again (0 means never expires)
+        if (entry->expiry_time == 0 || now < entry->expiry_time) {
+            size_t copied_count = 0;
+            bool copy_error = false;
+
+            // Copy content items
+            for (size_t i = 0; i < entry->content_count; ++i) {
+                // Acquire a pooled item and copy data into it
+                content_copy_ptrs[i] = mcp_content_item_acquire_pooled(
+                    pool,
+                    entry->content[i]->type,
+                    entry->content[i]->mime_type,
+                    entry->content[i]->data,
+                    entry->content[i]->data_size
+                );
+                if (!content_copy_ptrs[i]) {
+                    copy_error = true;
+                    break; // Exit loop on acquisition/copy failure
+                }
+                copied_count++;
+            }
+
+            if (!copy_error) {
+                // Return the array of pointers to pooled items
+                *content = content_copy_ptrs;
+                *content_count = entry->content_count;
+                // Update last accessed time
+                entry->last_accessed = now;
+
+                // Update LRU position (move to front of list)
+                update_lru_position(cache, entry);
+
+                result = 0;
+            } else {
+                // Release partially acquired/copied items back to pool on error
+                for (size_t i = 0; i < copied_count; ++i) {
+                    if (content_copy_ptrs[i]) {
+                        cleanup_content_item(cache, content_copy_ptrs[i]);
+                    }
+                }
+                free(content_copy_ptrs);
+                // result remains -1 (error)
+            }
+        } else {
+            // Entry expired between our checks, remove it
             if (entry->lru_node) {
                 mcp_list_remove(cache->lru_list, entry->lru_node, NULL);
             }
             mcp_hashtable_remove(cache->table, uri);
-            // result remains -1 (expired)
+            free(content_copy_ptrs);
         }
+    } else {
+        // Entry was removed between our checks
+        free(content_copy_ptrs);
     }
-    // else: entry not found, result remains -1
 
     // Release write lock
     mcp_rwlock_write_unlock(cache->rwlock);
@@ -393,34 +447,9 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
 
     PROFILE_START("mcp_cache_put");
 
-    // Acquire write lock - exclusive access for writing
-    mcp_rwlock_write_lock(cache->rwlock);
-
-    // Check if the key already exists
-    mcp_cache_entry_t* existing_entry = NULL;
-    bool key_exists = mcp_hashtable_get(cache->table, uri, (void**)&existing_entry) == 0 && existing_entry != NULL;
-
-    // --- LRU Eviction Logic ---
-    if (!key_exists && mcp_hashtable_size(cache->table) >= cache->capacity) {
-        mcp_log_warn("Cache full (capacity: %zu). Evicting LRU entry to insert '%s'.", cache->capacity, uri);
-        if (!evict_lru_entry(cache)) {
-            mcp_log_error("Cache full but failed to evict LRU entry.");
-            mcp_rwlock_write_unlock(cache->rwlock);
-            PROFILE_END("mcp_cache_put");
-            return -1;
-        }
-    }
-    // --- End LRU Eviction Logic ---
-
-    // If the key exists, we need to remove the old entry from the LRU list
-    if (key_exists && existing_entry && existing_entry->lru_node) {
-        mcp_list_remove(cache->lru_list, existing_entry->lru_node, NULL);
-    }
-
-    // Create a new cache entry
+    // First, prepare the entry and content outside the lock
     mcp_cache_entry_t* entry = create_cache_entry(uri, ttl_seconds, cache);
     if (!entry) {
-        mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
         return -1;
     }
@@ -430,7 +459,6 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     if (!entry->content) {
         free(entry->key);
         free(entry);
-        mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
         return -1;
     }
@@ -465,9 +493,34 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
         // Use free_entry_resources to ensure all resources are properly cleaned up
         free_entry_resources(cache, entry);
         free(entry);
-        mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
         return -1;
+    }
+
+    // Now that we have prepared the entry, acquire the write lock
+    mcp_rwlock_write_lock(cache->rwlock);
+
+    // Check if the key already exists
+    mcp_cache_entry_t* existing_entry = NULL;
+    bool key_exists = mcp_hashtable_get(cache->table, uri, (void**)&existing_entry) == 0 && existing_entry != NULL;
+
+    // --- LRU Eviction Logic ---
+    if (!key_exists && mcp_hashtable_size(cache->table) >= cache->capacity) {
+        mcp_log_warn("Cache full (capacity: %zu). Evicting LRU entry to insert '%s'.", cache->capacity, uri);
+        if (!evict_lru_entry(cache)) {
+            mcp_log_error("Cache full but failed to evict LRU entry.");
+            mcp_rwlock_write_unlock(cache->rwlock);
+            free_entry_resources(cache, entry);
+            free(entry);
+            PROFILE_END("mcp_cache_put");
+            return -1;
+        }
+    }
+    // --- End LRU Eviction Logic ---
+
+    // If the key exists, we need to remove the old entry from the LRU list
+    if (key_exists && existing_entry && existing_entry->lru_node) {
+        mcp_list_remove(cache->lru_list, existing_entry->lru_node, NULL);
     }
 
     // Add entry to LRU list and hash table
@@ -488,6 +541,8 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
     if (!cache || !uri)
         return -1;
 
+    int result = -1;
+
     // Acquire write lock - exclusive access for invalidation
     mcp_rwlock_write_lock(cache->rwlock);
 
@@ -504,14 +559,12 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
 
         // Now remove it from the hash table
         // mcp_hashtable_remove calls the value free function (free_cache_entry)
-        int result = mcp_hashtable_remove(cache->table, uri);
-        mcp_rwlock_write_unlock(cache->rwlock);
-        return result;
+        result = mcp_hashtable_remove(cache->table, uri);
     }
 
-    // Release write lock
+    // Always release write lock before returning
     mcp_rwlock_write_unlock(cache->rwlock);
-    return -1;
+    return result;
 }
 
 /**
@@ -579,9 +632,6 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     if (!cache)
         return 0;
 
-    // Acquire write lock - exclusive access for pruning
-    mcp_rwlock_write_lock(cache->rwlock);
-
     size_t removed_count = 0;
     time_t now = time(NULL);
 
@@ -591,10 +641,10 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     size_t keys_count = 0;
     size_t keys_capacity = 16;
 
+    // Allocate memory for keys and entries outside the lock
     keys_to_remove = (char**)malloc(keys_capacity * sizeof(char*));
     if (!keys_to_remove) {
         mcp_log_error("Failed to allocate initial keys_to_remove in prune_expired");
-        mcp_rwlock_write_unlock(cache->rwlock);
         return 0;
     }
 
@@ -602,7 +652,6 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     if (!entries_to_cleanup) {
         mcp_log_error("Failed to allocate entries_to_cleanup in prune_expired");
         free(keys_to_remove);
-        mcp_rwlock_write_unlock(cache->rwlock);
         return 0;
     }
 
@@ -617,6 +666,12 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
         .cache = cache
     };
 
+    // Acquire write lock - exclusive access for pruning
+    mcp_rwlock_write_lock(cache->rwlock);
+
+    // Use goto for error handling to ensure lock is always released
+    int error = 0;
+
     // Iterate through all entries to find expired ones
     mcp_hashtable_foreach(cache->table, collect_expired_keys, &callback_data);
 
@@ -629,24 +684,39 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
         if (keys_to_remove[i] && entries_to_cleanup[i]) {
             // Remove from LRU list first
             if (entries_to_cleanup[i]->lru_node) {
-                mcp_list_remove(cache->lru_list, entries_to_cleanup[i]->lru_node, NULL);
+                if (mcp_list_remove(cache->lru_list, entries_to_cleanup[i]->lru_node, NULL) != 0) {
+                    // Error removing from LRU list, but continue with other entries
+                    mcp_log_error("Failed to remove entry from LRU list in prune_expired");
+                    error = 1;
+                    continue;
+                }
             }
 
             // Clean up the entry's content items
             cleanup_cache_entry_content(cache, entries_to_cleanup[i]);
 
             // Now remove it from the hash table
-            mcp_hashtable_remove(cache->table, keys_to_remove[i]);
+            if (mcp_hashtable_remove(cache->table, keys_to_remove[i]) != 0) {
+                // Error removing from hash table, but continue with other entries
+                mcp_log_error("Failed to remove entry from hash table in prune_expired");
+                error = 1;
+            }
+
             free(keys_to_remove[i]); // Free the duplicated key string
         }
     }
+
+    // Release write lock before cleanup
+    mcp_rwlock_write_unlock(cache->rwlock);
 
     // Free the arrays
     free(keys_to_remove);
     free(entries_to_cleanup);
 
-    // Release write lock
-    mcp_rwlock_write_unlock(cache->rwlock);
+    // If there was an error, log it but still return the count of removed entries
+    if (error) {
+        mcp_log_warn("Some errors occurred during cache pruning, but %zu entries were removed", removed_count);
+    }
 
     return removed_count;
 }
