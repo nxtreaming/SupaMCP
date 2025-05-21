@@ -366,74 +366,152 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
         return -1;
     }
 
-    // Acquire write lock to copy content and update LRU position
+    // We need to make a copy of the entry's content for processing outside the lock
+    mcp_content_item_t** entry_content_copies = NULL;
+    size_t actual_content_count = 0;
+
+    // Acquire read lock to copy entry content information
+    mcp_rwlock_read_lock(cache->rwlock);
+
+    // Double-check that the entry is still in the cache and still valid
+    if (mcp_hashtable_get(cache->table, uri, (void**)&entry) == 0 && entry != NULL) {
+        // Check expiration again (0 means never expires)
+        if (entry->expiry_time == 0 || now < entry->expiry_time) {
+            // Make a temporary copy of the content pointers and count
+            actual_content_count = entry->content_count;
+            entry_content_copies = (mcp_content_item_t**)malloc(actual_content_count * sizeof(mcp_content_item_t*));
+
+            if (entry_content_copies) {
+                // Copy the content pointers
+                for (size_t i = 0; i < actual_content_count; ++i) {
+                    entry_content_copies[i] = entry->content[i];
+                }
+            }
+        } else {
+            // Entry expired between our checks
+            is_expired = true;
+        }
+    } else {
+        // Entry was removed between our checks
+        entry = NULL;
+    }
+
+    // Release read lock
+    mcp_rwlock_read_unlock(cache->rwlock);
+
+    // If entry was removed or expired, clean up and return
+    if (!entry || is_expired || !entry_content_copies) {
+        free(content_copy_ptrs);
+        free(entry_content_copies);
+
+        // If entry expired, remove it
+        if (entry && is_expired) {
+            mcp_rwlock_write_lock(cache->rwlock);
+
+            // Double-check again that the entry is still in the cache and still expired
+            if (mcp_hashtable_get(cache->table, uri, (void**)&entry) == 0 && entry != NULL) {
+                if (entry->expiry_time != 0 && now >= entry->expiry_time) {
+                    // Remove from LRU list first
+                    if (entry->lru_node) {
+                        mcp_list_remove(cache->lru_list, entry->lru_node, NULL);
+                    }
+                    mcp_hashtable_remove(cache->table, uri);
+                }
+            }
+
+            mcp_rwlock_write_unlock(cache->rwlock);
+        }
+
+        PROFILE_END("mcp_cache_get");
+        return -1;
+    }
+
+    // Now process the content outside the lock
+    size_t copied_count = 0;
+    bool copy_error = false;
+
+    // Copy content items
+    for (size_t i = 0; i < actual_content_count; ++i) {
+        // Validate content item before copying
+        if (!entry_content_copies[i]) {
+            mcp_log_error("NULL content item at index %zu in cache entry", i);
+            copy_error = true;
+            break;
+        }
+
+        // Validate mime_type before passing to acquire_pooled
+        const char* mime_type = entry_content_copies[i]->mime_type ? entry_content_copies[i]->mime_type : "";
+
+        // Acquire a pooled item and copy data into it
+        content_copy_ptrs[i] = mcp_content_item_acquire_pooled(
+            pool,
+            entry_content_copies[i]->type,
+            mime_type,
+            entry_content_copies[i]->data,
+            entry_content_copies[i]->data_size
+        );
+        if (!content_copy_ptrs[i]) {
+            copy_error = true;
+            break; // Exit loop on acquisition/copy failure
+        }
+        copied_count++;
+    }
+
+    // Free the temporary copy of content pointers
+    free(entry_content_copies);
+
+    if (copy_error) {
+        // Release partially acquired/copied items back to pool on error
+        for (size_t i = 0; i < copied_count; ++i) {
+            if (content_copy_ptrs[i]) {
+                cleanup_content_item(cache, content_copy_ptrs[i]);
+            }
+        }
+        free(content_copy_ptrs);
+        PROFILE_END("mcp_cache_get");
+        return -1;
+    }
+
+    // Now acquire write lock to update LRU position
     mcp_rwlock_write_lock(cache->rwlock);
 
     // Double-check that the entry is still in the cache and still valid
     if (mcp_hashtable_get(cache->table, uri, (void**)&entry) == 0 && entry != NULL) {
         // Check expiration again (0 means never expires)
         if (entry->expiry_time == 0 || now < entry->expiry_time) {
-            size_t copied_count = 0;
-            bool copy_error = false;
+            // Return the array of pointers to pooled items
+            *content = content_copy_ptrs;
+            *content_count = actual_content_count;
+            // Update last accessed time
+            entry->last_accessed = now;
 
-            // Copy content items
-            for (size_t i = 0; i < entry->content_count; ++i) {
-                // Validate content item before copying
-                if (!entry->content[i]) {
-                    mcp_log_error("NULL content item at index %zu in cache entry", i);
-                    copy_error = true;
-                    break;
-                }
+            // Update LRU position (move to front of list)
+            update_lru_position(cache, entry);
 
-                // Validate mime_type before passing to acquire_pooled
-                const char* mime_type = entry->content[i]->mime_type ? entry->content[i]->mime_type : "";
-
-                // Acquire a pooled item and copy data into it
-                content_copy_ptrs[i] = mcp_content_item_acquire_pooled(
-                    pool,
-                    entry->content[i]->type,
-                    mime_type,
-                    entry->content[i]->data,
-                    entry->content[i]->data_size
-                );
-                if (!content_copy_ptrs[i]) {
-                    copy_error = true;
-                    break; // Exit loop on acquisition/copy failure
-                }
-                copied_count++;
-            }
-
-            if (!copy_error) {
-                // Return the array of pointers to pooled items
-                *content = content_copy_ptrs;
-                *content_count = entry->content_count;
-                // Update last accessed time
-                entry->last_accessed = now;
-
-                // Update LRU position (move to front of list)
-                update_lru_position(cache, entry);
-
-                result = 0;
-            } else {
-                // Release partially acquired/copied items back to pool on error
-                for (size_t i = 0; i < copied_count; ++i) {
-                    if (content_copy_ptrs[i]) {
-                        cleanup_content_item(cache, content_copy_ptrs[i]);
-                    }
-                }
-                free(content_copy_ptrs);
-                // result remains -1 (error)
-            }
+            result = 0;
         } else {
             // Entry expired between our checks, remove it
             if (entry->lru_node) {
                 mcp_list_remove(cache->lru_list, entry->lru_node, NULL);
             }
             mcp_hashtable_remove(cache->table, uri);
+
+            // Release acquired items back to pool
+            for (size_t i = 0; i < copied_count; ++i) {
+                if (content_copy_ptrs[i]) {
+                    cleanup_content_item(cache, content_copy_ptrs[i]);
+                }
+            }
             free(content_copy_ptrs);
         }
     } else {
         // Entry was removed between our checks
+        // Release acquired items back to pool
+        for (size_t i = 0; i < copied_count; ++i) {
+            if (content_copy_ptrs[i]) {
+                cleanup_content_item(cache, content_copy_ptrs[i]);
+            }
+        }
         free(content_copy_ptrs);
     }
 
@@ -607,6 +685,7 @@ typedef struct {
     size_t* keys_count;                // Pointer to count of keys
     size_t* keys_capacity;             // Pointer to capacity of keys array
     size_t* removed_count;             // Pointer to count of removed entries
+    int* error_flag;                   // Pointer to error flag
     mcp_resource_cache_t* cache;       // Pointer to the cache
 } expired_keys_data_t;
 
@@ -634,6 +713,8 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
             char** new_keys = (char**)realloc(data->keys_to_remove, new_capacity * sizeof(char*));
             if (!new_keys) {
                 mcp_log_error("Failed to realloc keys_to_remove in prune_expired");
+                // Set error flag to indicate memory allocation failure
+                *(data->error_flag) = 1;
                 return; // Allocation failed, skip this key
             }
             data->keys_to_remove = new_keys;
@@ -643,6 +724,8 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
                 data->entries_to_cleanup, new_capacity * sizeof(mcp_cache_entry_t*));
             if (!new_entries) {
                 mcp_log_error("Failed to realloc entries_to_cleanup in prune_expired");
+                // Set error flag to indicate memory allocation failure
+                *(data->error_flag) = 1;
                 return; // Allocation failed, skip this key
             }
             data->entries_to_cleanup = new_entries;
@@ -660,6 +743,8 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
         char* key_dup = mcp_strdup(uri);
         if (!key_dup) {
             mcp_log_error("Failed to duplicate key in collect_expired_keys");
+            // Set error flag to indicate memory allocation failure
+            *(data->error_flag) = 1;
             return; // Memory allocation failed
         }
 
@@ -685,19 +770,20 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
     mcp_cache_entry_t** entries_to_cleanup = NULL;
     size_t keys_count = 0;
     size_t keys_capacity = 16;
+    int error = 0;
+    int lock_acquired = 0;
 
     // Allocate memory for keys and entries outside the lock
     keys_to_remove = (char**)calloc(keys_capacity, sizeof(char*));
     if (!keys_to_remove) {
         mcp_log_error("Failed to allocate initial keys_to_remove in prune_expired");
-        return 0;
+        goto cleanup;
     }
 
     entries_to_cleanup = (mcp_cache_entry_t**)calloc(keys_capacity, sizeof(mcp_cache_entry_t*));
     if (!entries_to_cleanup) {
         mcp_log_error("Failed to allocate entries_to_cleanup in prune_expired");
-        free(keys_to_remove);
-        return 0;
+        goto cleanup;
     }
 
     // Using calloc ensures all pointers are initialized to NULL
@@ -710,17 +796,22 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
         .keys_count = &keys_count,
         .keys_capacity = &keys_capacity,
         .removed_count = &removed_count,
+        .error_flag = &error,
         .cache = cache
     };
 
     // Acquire write lock - exclusive access for pruning
     mcp_rwlock_write_lock(cache->rwlock);
-
-    // Use goto for error handling to ensure lock is always released
-    int error = 0;
+    lock_acquired = 1;
 
     // Iterate through all entries to find expired ones
     mcp_hashtable_foreach(cache->table, collect_expired_keys, &callback_data);
+
+    // If memory allocation failed during callback, clean up and return
+    if (error) {
+        mcp_log_error("Memory allocation failed during cache pruning");
+        goto cleanup;
+    }
 
     // Update keys_to_remove pointer in case realloc changed it
     keys_to_remove = callback_data.keys_to_remove;
@@ -757,12 +848,26 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
         }
     }
 
-    // Release write lock before cleanup
-    mcp_rwlock_write_unlock(cache->rwlock);
+cleanup:
+    // Always release the lock if it was acquired
+    if (lock_acquired) {
+        mcp_rwlock_write_unlock(cache->rwlock);
+    }
 
-    // Free the arrays
-    free(keys_to_remove);
-    free(entries_to_cleanup);
+    // Free the arrays if they were allocated
+    if (keys_to_remove) {
+        // Free any keys that were allocated but not freed in the loop
+        for (size_t i = 0; i < keys_count; i++) {
+            if (keys_to_remove[i]) {
+                free(keys_to_remove[i]);
+            }
+        }
+        free(keys_to_remove);
+    }
+
+    if (entries_to_cleanup) {
+        free(entries_to_cleanup);
+    }
 
     // If there was an error, log it but still return the count of removed entries
     if (error) {
