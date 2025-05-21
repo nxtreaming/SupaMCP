@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <time.h>
+#include <openssl/crypto.h>
 
 /**
  * @brief Creates an auth context with wildcard permissions
@@ -43,8 +44,7 @@ static mcp_auth_context_t* create_wildcard_auth_context(mcp_auth_type_t auth_typ
 
     if (!context->identifier) {
         mcp_log_error("Failed to duplicate identifier");
-        mcp_auth_context_free(context);
-        return NULL;
+        goto error;
     }
 
     // Allocate and set wildcard resource permissions
@@ -52,8 +52,7 @@ static mcp_auth_context_t* create_wildcard_auth_context(mcp_auth_type_t auth_typ
     context->allowed_resources = (char**)malloc(sizeof(char*));
     if (!context->allowed_resources) {
         mcp_log_error("Failed to allocate resources array");
-        mcp_auth_context_free(context);
-        return NULL;
+        goto error;
     }
     context->allowed_resources[0] = mcp_strdup("*"); // Allow all resources
 
@@ -62,19 +61,69 @@ static mcp_auth_context_t* create_wildcard_auth_context(mcp_auth_type_t auth_typ
     context->allowed_tools = (char**)malloc(sizeof(char*));
     if (!context->allowed_tools) {
         mcp_log_error("Failed to allocate tools array");
-        mcp_auth_context_free(context);
-        return NULL;
+        goto error;
     }
     context->allowed_tools[0] = mcp_strdup("*"); // Allow all tools
 
     // Verify all allocations succeeded
     if (!context->allowed_resources[0] || !context->allowed_tools[0]) {
         mcp_log_error("Failed to allocate permission strings");
-        mcp_auth_context_free(context);
-        return NULL;
+        goto error;
     }
 
     return context;
+
+error:
+    mcp_auth_context_free(context);
+    return NULL;
+}
+
+/**
+ * @brief Creates a masked version of a sensitive string for logging
+ *
+ * @param sensitive The sensitive string to mask
+ * @return A statically allocated string with most characters masked
+ * @note The returned string is statically allocated and will be overwritten on subsequent calls
+ */
+static const char* create_masked_string(const char* sensitive) {
+    static char masked[64];
+
+    if (!sensitive) {
+        return "(null)";
+    }
+
+    size_t len = strlen(sensitive);
+    if (len == 0) {
+        return "(empty)";
+    }
+
+    // Show at most first 3 and last 3 characters, mask the rest with '*'
+    size_t prefix_len = len > 3 ? 3 : 1;
+    size_t suffix_len = len > 6 ? 3 : (len > 3 ? 1 : 0);
+    size_t mask_len = len - prefix_len - suffix_len;
+
+    // Ensure we don't overflow the buffer
+    if (prefix_len + mask_len + suffix_len + 1 > sizeof(masked)) {
+        mask_len = sizeof(masked) - prefix_len - suffix_len - 1;
+    }
+
+    // Copy prefix
+    memcpy(masked, sensitive, prefix_len);
+
+    // Add mask characters
+    for (size_t i = 0; i < mask_len; i++) {
+        masked[prefix_len + i] = '*';
+    }
+
+    // Copy suffix if any
+    if (suffix_len > 0) {
+        memcpy(masked + prefix_len + mask_len, sensitive + len - suffix_len, suffix_len);
+    }
+
+    // Null terminate
+    masked[prefix_len + mask_len + suffix_len] = '\0';
+
+    return masked;
 }
 
 /**
@@ -119,19 +168,19 @@ static bool check_access(const mcp_auth_context_t* context, const char* item_nam
         return false;
     }
 
+    const char* identifier = context->identifier ? context->identifier : "unknown";
     // Check against allowed patterns using the utility function
     for (size_t i = 0; i < allowed_items_count; ++i) {
         if (allowed_items[i] && mcp_wildcard_match(allowed_items[i], item_name)) {
             mcp_log_debug("Access granted for '%s' to %s '%s' (match: %s)",
-                    context->identifier ? context->identifier : "unknown",
-                    item_type, item_name, allowed_items[i]);
+                    identifier, item_type, item_name, allowed_items[i]);
             // Found a matching allowed pattern
             return true;
         }
     }
 
     mcp_log_info("Access denied for '%s' to %s '%s'. No matching rule found.",
-            context->identifier ? context->identifier : "unknown", item_type, item_name);
+            identifier, item_type, item_name);
     return false;
 }
 
@@ -179,25 +228,42 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
             return -1;
         }
 
-        // Check if provided credentials match the configured key
-        if (credentials && strcmp(credentials, server->config.api_key) == 0) {
-            // API Key matches, create context with full permissions
-            mcp_auth_context_t* context = create_wildcard_auth_context(MCP_AUTH_API_KEY, "authenticated_client", 0);
-            if (!context) {
-                mcp_log_error("Failed to create auth context for API key authentication");
-                PROFILE_END("mcp_auth_verify");
-                return -1;
-            }
-
-            *context_out = context;
-            mcp_log_debug("Successfully authenticated client '%s' via configured API Key.", context->identifier);
-            PROFILE_END("mcp_auth_verify");
-            return 0;
-        } else {
-            mcp_log_warn("API Key authentication failed: Provided key does not match configured key.");
+        // Check if credentials are provided
+        if (!credentials) {
+            mcp_log_warn("API Key authentication failed: No credentials provided.");
             PROFILE_END("mcp_auth_verify");
             return -1;
         }
+
+        // Get the length of both strings for constant-time comparison
+        size_t api_key_len = strlen(server->config.api_key);
+        size_t cred_len = strlen(credentials);
+
+        // Only perform comparison if lengths match (prevents timing attacks based on length)
+        if (api_key_len == cred_len) {
+            // Use constant-time comparison to prevent timing attacks
+            int result = CRYPTO_memcmp(credentials, server->config.api_key, api_key_len + 1);
+            if (result == 0) {
+                // API Key matches, create context with full permissions
+                mcp_auth_context_t* context = create_wildcard_auth_context(MCP_AUTH_API_KEY, "authenticated_client", 0);
+                if (!context) {
+                    mcp_log_error("Failed to create auth context for API key authentication");
+                    PROFILE_END("mcp_auth_verify");
+                    return -1;
+                }
+
+                *context_out = context;
+                mcp_log_debug("Successfully authenticated client '%s' via API Key.", context->identifier);
+                PROFILE_END("mcp_auth_verify");
+                return 0;
+            }
+        }
+
+        // Log failure with masked credentials for security
+        const char* masked_creds = create_masked_string(credentials);
+        mcp_log_warn("API Key authentication failed: Key '%s' does not match configured key.", masked_creds);
+        PROFILE_END("mcp_auth_verify");
+        return -1;
     }
 
     // --- Other Auth Types (Not Implemented) ---
