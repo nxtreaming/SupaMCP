@@ -52,26 +52,6 @@ int mcp_performance_export_metrics(const char* filename);
  */
 int mcp_performance_get_metrics_json(char* buffer, size_t size);
 
-/**
- * @brief Handler for the "get_performance_metrics" JSON-RPC method
- *
- * This function is implemented in mcp_performance_metrics_handlers.c
- */
-char* handle_get_performance_metrics_request(mcp_server_t* server, mcp_arena_t* arena,
-                                           const mcp_request_t* request,
-                                           const mcp_auth_context_t* auth_context,
-                                           int* error_code);
-
-/**
- * @brief Handler for the "reset_performance_metrics" JSON-RPC method
- *
- * This function is implemented in mcp_performance_metrics_handlers.c
- */
-char* handle_reset_performance_metrics_request(mcp_server_t* server, mcp_arena_t* arena,
-                                             const mcp_request_t* request,
-                                             const mcp_auth_context_t* auth_context,
-                                             int* error_code);
-
 #ifdef __cplusplus
 }
 #endif

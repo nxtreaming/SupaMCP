@@ -29,7 +29,8 @@ char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_re
 
     // Basic parameter validation
     if (server == NULL || request == NULL || error_code == NULL) {
-        if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        if (error_code)
+            *error_code = MCP_ERROR_INVALID_PARAMS;
         return NULL; // Cannot proceed without basic parameters
     }
 
@@ -66,8 +67,7 @@ char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_re
     }
 
     mcp_log_debug("Created ping response (ID: %llu): '%s'",
-        (unsigned long long)request->id,
-        response);
+        (unsigned long long)request->id, response);
 
     return response;
 }
@@ -107,7 +107,8 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
     mcp_performance_collect_request_start(&perf_timer);
 
     if (server == NULL || data == NULL || size == 0 || error_code == NULL) {
-        if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        if (error_code)
+            *error_code = MCP_ERROR_INVALID_PARAMS;
         return NULL;
     }
     *error_code = MCP_ERROR_NONE; // Default to success
@@ -142,7 +143,6 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
 
     // Parse message or batch
     int parse_result = mcp_json_parse_message_or_batch(json_str, &messages, &message_count);
-
     if (parse_result != 0 || messages == NULL) {
         mcp_log_error("JSON parsing failed (Code: %d)", parse_result);
         // No need to destroy the thread-local arena, just reset it
@@ -276,7 +276,6 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
 
             // Handle the request
             single_response_str = handle_request(server, arena, &current_msg->request, auth_context, &current_msg_error);
-
             // Process the response
             if (single_response_str != NULL) {
                 if (is_batch_response && batch_buffer_initialized) {
@@ -373,7 +372,8 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
 char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
     // Basic parameter validation
     if (server == NULL || request == NULL || error_code == NULL) {
-        if(error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
+        if(error_code)
+            *error_code = MCP_ERROR_INVALID_PARAMS;
         return NULL; // Cannot proceed without basic parameters
     }
 
@@ -383,7 +383,8 @@ char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request
         arena = mcp_arena_get_current();
         if (!arena) {
             mcp_log_error("Thread-local arena not initialized");
-            if(error_code) *error_code = MCP_ERROR_INTERNAL_ERROR;
+            if(error_code)
+                *error_code = MCP_ERROR_INTERNAL_ERROR;
             return NULL;
         }
     }
