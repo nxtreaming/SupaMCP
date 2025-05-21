@@ -1,6 +1,10 @@
 /**
  * @file mcp_cache_lru.c
  * @brief Implementation of resource cache with LRU eviction strategy
+ *
+ * This file implements a thread-safe resource cache with LRU (Least Recently Used)
+ * eviction strategy. The cache stores content items and manages their lifecycle
+ * based on access patterns and TTL (Time To Live) settings.
  */
 
 #include "mcp_types.h"
@@ -17,7 +21,12 @@
 #include <time.h>
 #include <stdio.h>
 
-// Structure for a cache entry
+/**
+ * Structure for a cache entry
+ *
+ * Each cache entry contains a key (URI), an array of content items,
+ * expiration information, and LRU tracking data.
+ */
 typedef struct {
     char* key;                   // Duplicate of the key (URI) for LRU list
     mcp_content_item_t** content;// Value (array of pointers to copies, malloc'd)
@@ -28,7 +37,12 @@ typedef struct {
     mcp_list_node_t* lru_node;   // Pointer to this entry's node in the LRU list
 } mcp_cache_entry_t;
 
-// Internal cache structure
+/**
+ * Internal cache structure
+ *
+ * The cache uses a hash table for O(1) lookups and a doubly-linked list
+ * for maintaining LRU order. Thread safety is provided by a read-write lock.
+ */
 struct mcp_resource_cache {
     mcp_rwlock_t* rwlock;        // Read-write lock for thread safety
     mcp_hashtable_t* table;      // Hash table for cache entries
@@ -46,9 +60,9 @@ static void free_cache_entry(void* value) {
 
     // Free the key duplicate used for LRU list
     free(entry->key);
-    
+
     // Just free the entry structure and the content array
-    // The actual content items will be handled separately
+    // The actual content items are handled separately in cleanup_cache_entry
     if (entry->content) {
         free(entry->content);
     }
@@ -106,6 +120,27 @@ mcp_resource_cache_t* mcp_cache_create(size_t capacity, time_t default_ttl_secon
     return cache;
 }
 
+// Helper function to clean up a content item
+static void cleanup_content_item(mcp_resource_cache_t* cache, mcp_content_item_t* item) {
+    if (!cache || !item)
+        return;
+
+    // Free the internal data
+    free(item->mime_type);
+    free(item->data);
+    item->mime_type = NULL;
+    item->data = NULL;
+    item->data_size = 0;
+
+    // If we have a pool, release the item back to it
+    if (cache->pool) {
+        mcp_object_pool_release(cache->pool, item);
+    } else {
+        // Otherwise, free it directly
+        free(item);
+    }
+}
+
 // Helper function to properly clean up a cache entry
 static void cleanup_cache_entry(mcp_resource_cache_t* cache, mcp_cache_entry_t* entry) {
     if (!cache || !entry)
@@ -114,20 +149,7 @@ static void cleanup_cache_entry(mcp_resource_cache_t* cache, mcp_cache_entry_t* 
     if (entry->content) {
         for (size_t i = 0; i < entry->content_count; ++i) {
             if (entry->content[i]) {
-                // Free the internal data
-                free(entry->content[i]->mime_type);
-                free(entry->content[i]->data);
-                entry->content[i]->mime_type = NULL;
-                entry->content[i]->data = NULL;
-                entry->content[i]->data_size = 0;
-
-                // If we have a pool, release the item back to it
-                if (cache->pool) {
-                    mcp_object_pool_release(cache->pool, entry->content[i]);
-                } else {
-                    // Otherwise, free it directly
-                    free(entry->content[i]);
-                }
+                cleanup_content_item(cache, entry->content[i]);
             }
         }
     }
@@ -175,39 +197,105 @@ void mcp_cache_destroy(mcp_resource_cache_t* cache) {
     free(cache);
 }
 
+// Helper function to create a new cache entry
+static mcp_cache_entry_t* create_cache_entry(const char* uri, time_t ttl_seconds, mcp_resource_cache_t* cache) {
+    if (!uri || !cache)
+        return NULL;
+
+    // Create a new cache entry
+    mcp_cache_entry_t* entry = (mcp_cache_entry_t*)malloc(sizeof(mcp_cache_entry_t));
+    if (!entry)
+        return NULL;
+
+    // Duplicate the key for the LRU list
+    entry->key = mcp_strdup(uri);
+    if (!entry->key) {
+        free(entry);
+        return NULL;
+    }
+
+    // Initialize entry
+    entry->content = NULL;
+    entry->content_count = 0;
+    entry->last_accessed = time(NULL);
+    time_t effective_ttl = (ttl_seconds == 0) ? cache->default_ttl_seconds : (time_t)ttl_seconds;
+    // 0 means never expires
+    entry->expiry_time = (effective_ttl < 0) ? 0 : entry->last_accessed + effective_ttl;
+    // Mark as pooled since we're using the pool
+    entry->is_pooled = true;
+    // Will be set after adding to LRU list
+    entry->lru_node = NULL;
+
+    return entry;
+}
+
 // Helper function to update LRU position
 static void update_lru_position(mcp_resource_cache_t* cache, mcp_cache_entry_t* entry) {
     if (!cache || !entry || !entry->lru_node)
         return;
-    
+
     // Move the entry to the front of the LRU list (most recently used)
     mcp_list_move_to_front(cache->lru_list, entry->lru_node);
+}
+
+// Helper function to clean up a cache entry and its resources
+static void free_entry_resources(mcp_resource_cache_t* cache, mcp_cache_entry_t* entry) {
+    if (!cache || !entry)
+        return;
+
+    // Clean up content items
+    for (size_t i = 0; i < entry->content_count; ++i) {
+        if (entry->content[i]) {
+            cleanup_content_item(cache, entry->content[i]);
+        }
+    }
+
+    // Free the entry's resources
+    free(entry->key);
+    free(entry->content);
+    // The entry itself will be freed by the hash table's free function
+}
+
+// Helper function to add an entry to the LRU list and hash table
+static int add_entry_to_cache(mcp_resource_cache_t* cache, const char* uri, mcp_cache_entry_t* entry) {
+    if (!cache || !uri || !entry)
+        return -1;
+
+    // Add entry to LRU list (at the front, as it's most recently used)
+    entry->lru_node = mcp_list_push_front(cache->lru_list, entry);
+    if (!entry->lru_node) {
+        return -1;
+    }
+
+    // Add entry to hash table (this will replace any existing entry with the same key)
+    // mcp_hashtable_put takes ownership of the 'entry' pointer if successful
+    return mcp_hashtable_put(cache->table, uri, entry);
 }
 
 // Helper function to evict the least recently used entry
 static bool evict_lru_entry(mcp_resource_cache_t* cache) {
     if (!cache || !cache->lru_list || mcp_list_is_empty(cache->lru_list))
         return false;
-    
+
     // Get the least recently used entry (from the back of the list)
     mcp_list_node_t* lru_node = cache->lru_list->tail;
     if (!lru_node)
         return false;
-    
+
     mcp_cache_entry_t* entry = (mcp_cache_entry_t*)lru_node->data;
     if (!entry)
         return false;
-    
+
     // Get the key from the entry
     const char* key_to_evict = entry->key;
     if (!key_to_evict)
         return false;
-    
+
     mcp_log_debug("Evicting LRU cache entry with key '%s'", key_to_evict);
-    
+
     // Remove the entry from the LRU list
     mcp_list_remove(cache->lru_list, lru_node, NULL);
-    
+
     // Remove the entry from the hash table
     return mcp_hashtable_remove(cache->table, key_to_evict) == 0;
 }
@@ -263,22 +351,16 @@ int mcp_cache_get(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
                     *content_count = entry->content_count;
                     // Update last accessed time
                     entry->last_accessed = now;
-                    
+
                     // Update LRU position (move to front of list)
                     update_lru_position(cache, entry);
-                    
+
                     result = 0;
                 } else {
                     // Release partially acquired/copied items back to pool on error
                     for (size_t i = 0; i < copied_count; ++i) {
                         if (content_copy_ptrs[i]) {
-                             // Free internal data/mime_type first
-                             free(content_copy_ptrs[i]->mime_type);
-                             free(content_copy_ptrs[i]->data);
-                             content_copy_ptrs[i]->mime_type = NULL;
-                             content_copy_ptrs[i]->data = NULL;
-                             content_copy_ptrs[i]->data_size = 0;
-                             mcp_object_pool_release(pool, content_copy_ptrs[i]);
+                            cleanup_content_item(cache, content_copy_ptrs[i]);
                         }
                     }
                     free(content_copy_ptrs);
@@ -342,17 +424,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     }
 
     // Create a new cache entry
-    mcp_cache_entry_t* entry = (mcp_cache_entry_t*)malloc(sizeof(mcp_cache_entry_t));
+    mcp_cache_entry_t* entry = create_cache_entry(uri, ttl_seconds, cache);
     if (!entry) {
-        mcp_rwlock_write_unlock(cache->rwlock);
-        PROFILE_END("mcp_cache_put");
-        return -1;
-    }
-
-    // Duplicate the key for the LRU list
-    entry->key = mcp_strdup(uri);
-    if (!entry->key) {
-        free(entry);
         mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
         return -1;
@@ -367,18 +440,6 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
         PROFILE_END("mcp_cache_put");
         return -1;
     }
-
-    // Initialize entry
-    // Will be incremented as items are copied
-    entry->content_count = 0;
-    entry->last_accessed = time(NULL);
-    time_t effective_ttl = (ttl_seconds == 0) ? cache->default_ttl_seconds : (time_t)ttl_seconds;
-    // 0 means never expires
-    entry->expiry_time = (effective_ttl < 0) ? 0 : entry->last_accessed + effective_ttl;
-    // Mark as pooled since we're using the pool
-    entry->is_pooled = true;
-    // Will be set after adding to LRU list
-    entry->lru_node = NULL;
 
     // Acquire pooled items and copy content into them
     bool copy_error = false;
@@ -395,15 +456,9 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
             copy_error = true;
             // Release already acquired/copied items back to pool
             for(size_t j = 0; j < i; ++j) {
-                 if (entry->content[j]) {
-                     // Free internal data/mime_type first
-                     free(entry->content[j]->mime_type);
-                     free(entry->content[j]->data);
-                     entry->content[j]->mime_type = NULL;
-                     entry->content[j]->data = NULL;
-                     entry->content[j]->data_size = 0;
-                     mcp_object_pool_release(pool, entry->content[j]);
-                 }
+                if (entry->content[j]) {
+                    cleanup_content_item(cache, entry->content[j]);
+                }
             }
             // Exit loop on acquisition/copy failure
             break;
@@ -421,48 +476,11 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
         return -1;
     }
 
-    // Add entry to LRU list (at the front, as it's most recently used)
-    entry->lru_node = mcp_list_push_front(cache->lru_list, entry);
-    if (!entry->lru_node) {
-        // Failed to add to LRU list
-        for (size_t i = 0; i < entry->content_count; ++i) {
-            if (entry->content[i]) {
-                free(entry->content[i]->mime_type);
-                free(entry->content[i]->data);
-                entry->content[i]->mime_type = NULL;
-                entry->content[i]->data = NULL;
-                entry->content[i]->data_size = 0;
-                mcp_object_pool_release(pool, entry->content[i]);
-            }
-        }
-        free(entry->key);
-        free(entry->content);
-        free(entry);
-        mcp_rwlock_write_unlock(cache->rwlock);
-        PROFILE_END("mcp_cache_put");
-        return -1;
-    }
-
-    // Add entry to hash table (this will replace any existing entry with the same key)
-    // mcp_hashtable_put takes ownership of the 'entry' pointer if successful.
-    // If it fails, we need to free the entry and its contents.
-    int result = mcp_hashtable_put(cache->table, uri, entry);
+    // Add entry to LRU list and hash table
+    int result = add_entry_to_cache(cache, uri, entry);
     if (result != 0) {
-        // hashtable put failed, free the entry we created
-        mcp_list_remove(cache->lru_list, entry->lru_node, NULL);
-        for (size_t i = 0; i < entry->content_count; ++i) {
-            if (entry->content[i]) {
-                // Free internal data/mime_type first
-                free(entry->content[i]->mime_type);
-                free(entry->content[i]->data);
-                entry->content[i]->mime_type = NULL;
-                entry->content[i]->data = NULL;
-                entry->content[i]->data_size = 0;
-                mcp_object_pool_release(pool, entry->content[i]);
-            }
-        }
-        free(entry->key);
-        free(entry->content);
+        // Failed to add to cache, clean up the entry
+        free_entry_resources(cache, entry);
         free(entry);
     }
 
@@ -486,8 +504,8 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
         if (entry->lru_node) {
             mcp_list_remove(cache->lru_list, entry->lru_node, NULL);
         }
-        
-        // Clean up the entry
+
+        // Clean up the entry's content items
         cleanup_cache_entry(cache, entry);
 
         // Now remove it from the hash table
@@ -502,15 +520,20 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
     return -1;
 }
 
-// Create a struct to hold all the data needed for the callback
+/**
+ * Structure to hold all the data needed for the expired keys callback
+ *
+ * This structure is used to pass data to and from the callback function
+ * that collects expired keys during cache pruning.
+ */
 typedef struct {
-    time_t now;
-    char** keys_to_remove;
-    mcp_cache_entry_t** entries_to_cleanup;
-    size_t* keys_count;
-    size_t* keys_capacity;
-    size_t* removed_count;
-    mcp_resource_cache_t* cache;
+    time_t now;                        // Current time for expiration check
+    char** keys_to_remove;             // Array of keys to remove
+    mcp_cache_entry_t** entries_to_cleanup; // Array of entries to clean up
+    size_t* keys_count;                // Pointer to count of keys
+    size_t* keys_capacity;             // Pointer to capacity of keys array
+    size_t* removed_count;             // Pointer to count of removed entries
+    mcp_resource_cache_t* cache;       // Pointer to the cache
 } expired_keys_data_t;
 
 // Callback function for mcp_hashtable_foreach to collect expired keys
@@ -532,7 +555,7 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
                 return; // Allocation failed, skip this key
             }
             data->keys_to_remove = new_keys;
-            
+
             // Also resize the entries array
             mcp_cache_entry_t** new_entries = (mcp_cache_entry_t**)realloc(
                 data->entries_to_cleanup, new_capacity * sizeof(mcp_cache_entry_t*));
@@ -541,7 +564,7 @@ static void collect_expired_keys(const void* key, void* value, void* user_data) 
                 return; // Allocation failed, skip this key
             }
             data->entries_to_cleanup = new_entries;
-            
+
             *(data->keys_capacity) = new_capacity;
         }
 
@@ -614,8 +637,8 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
             if (entries_to_cleanup[i]->lru_node) {
                 mcp_list_remove(cache->lru_list, entries_to_cleanup[i]->lru_node, NULL);
             }
-            
-            // Clean up the entry
+
+            // Clean up the entry's content items
             cleanup_cache_entry(cache, entries_to_cleanup[i]);
 
             // Now remove it from the hash table
@@ -630,6 +653,6 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
 
     // Release write lock
     mcp_rwlock_write_unlock(cache->rwlock);
-    
+
     return removed_count;
 }
