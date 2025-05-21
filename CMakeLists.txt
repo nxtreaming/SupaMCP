@@ -172,7 +172,7 @@ set(COMMON_SOURCES
     src/common/mcp_rwlock.c
     src/common/mcp_list.c
     src/common/mcp_buffer_pool.c
-    src/server/mcp_cache_lru.c
+    src/server/mcp_cache.c
     src/server/mcp_rate_limiter.c
     src/server/mcp_profiler.c
     src/common/mcp_hashtable.c
