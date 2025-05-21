@@ -141,16 +141,14 @@ static void cleanup_content_item(mcp_resource_cache_t* cache, mcp_content_item_t
     }
 }
 
-// Helper function to properly clean up a cache entry
-static void cleanup_cache_entry(mcp_resource_cache_t* cache, mcp_cache_entry_t* entry) {
-    if (!cache || !entry)
+// Helper function to clean up a cache entry's content items
+static void cleanup_cache_entry_content(mcp_resource_cache_t* cache, mcp_cache_entry_t* entry) {
+    if (!cache || !entry || !entry->content)
         return;
 
-    if (entry->content) {
-        for (size_t i = 0; i < entry->content_count; ++i) {
-            if (entry->content[i]) {
-                cleanup_content_item(cache, entry->content[i]);
-            }
+    for (size_t i = 0; i < entry->content_count; ++i) {
+        if (entry->content[i]) {
+            cleanup_content_item(cache, entry->content[i]);
         }
     }
 }
@@ -167,8 +165,8 @@ static void cleanup_all_cache_entries(mcp_resource_cache_t* cache) {
             mcp_hashtable_entry_t* next = bucket_entry->next;
             mcp_cache_entry_t* entry = (mcp_cache_entry_t*)bucket_entry->value;
 
-            // Clean up the entry
-            cleanup_cache_entry(cache, entry);
+            // Clean up the entry's content items
+            cleanup_cache_entry_content(cache, entry);
 
             bucket_entry = next;
         }
@@ -244,11 +242,7 @@ static void free_entry_resources(mcp_resource_cache_t* cache, mcp_cache_entry_t*
         return;
 
     // Clean up content items
-    for (size_t i = 0; i < entry->content_count; ++i) {
-        if (entry->content[i]) {
-            cleanup_content_item(cache, entry->content[i]);
-        }
-    }
+    cleanup_cache_entry_content(cache, entry);
 
     // Free the entry's resources
     free(entry->key);
@@ -468,8 +462,8 @@ int mcp_cache_put(mcp_resource_cache_t* cache, const char* uri, mcp_object_pool_
     }
 
     if (copy_error) {
-        free(entry->key);
-        free(entry->content);
+        // Use free_entry_resources to ensure all resources are properly cleaned up
+        free_entry_resources(cache, entry);
         free(entry);
         mcp_rwlock_write_unlock(cache->rwlock);
         PROFILE_END("mcp_cache_put");
@@ -506,7 +500,7 @@ int mcp_cache_invalidate(mcp_resource_cache_t* cache, const char* uri) {
         }
 
         // Clean up the entry's content items
-        cleanup_cache_entry(cache, entry);
+        cleanup_cache_entry_content(cache, entry);
 
         // Now remove it from the hash table
         // mcp_hashtable_remove calls the value free function (free_cache_entry)
@@ -639,7 +633,7 @@ size_t mcp_cache_prune_expired(mcp_resource_cache_t* cache) {
             }
 
             // Clean up the entry's content items
-            cleanup_cache_entry(cache, entries_to_cleanup[i]);
+            cleanup_cache_entry_content(cache, entries_to_cleanup[i]);
 
             // Now remove it from the hash table
             mcp_hashtable_remove(cache->table, keys_to_remove[i]);
