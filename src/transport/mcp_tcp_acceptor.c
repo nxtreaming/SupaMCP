@@ -1,12 +1,13 @@
 #include "internal/transport_internal.h"
 #include "internal/tcp_transport_internal.h"
+#include "mcp_log.h"
+#include "mcp_sync.h"
+#include "mcp_thread_pool.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include "mcp_log.h"
-#include "mcp_sync.h"
-#include <mcp_thread_pool.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -74,9 +75,19 @@ void* tcp_accept_thread_func(void* arg) {
                 // Socket was closed, likely due to shutdown
                 mcp_log_debug("Listening socket was closed, accept thread exiting");
                 break;
+            } else if (error == WSAEINTR) {
+                // Interrupted by signal, loop again
+                mcp_log_debug("select() was interrupted by signal, continuing");
+                continue;
+            } else if (error == WSAEINVAL) {
+                // Invalid argument, loop again
+                mcp_log_debug("select() interrupted by signal, continuing");
+                continue;
+            } else {
+                // Other errors
+                mcp_log_error("select() failed in accept thread: %d", error);
+                break;
             }
-            mcp_log_error("select() failed in accept thread: %d", error);
-            break;
         } else if (select_result == 0) {
             // Timeout, loop again to check running flag
             continue;
@@ -153,6 +164,12 @@ void* tcp_accept_thread_func(void* arg) {
             }
             // Continue listening even if one accept fails
             continue;
+        } else {
+            // Set TCP_NODELAY to reduce latency
+            int flag = 1;
+            int result = setsockopt(client_socket, IPPROTO_TCP, TCP_NODELAY, (char*)&flag, sizeof(flag)) ;
+            if (result != 0)
+                mcp_log_warn("Failed to set TCP_NODELAY on client socket: %d", mcp_socket_get_lasterror());
         }
 
         // Get client IP and port for logging
@@ -161,9 +178,10 @@ void* tcp_accept_thread_func(void* arg) {
         uint16_t client_port = ntohs(client_addr.sin_port);
 
         // Find an available client slot
+        mcp_mutex_lock(data->client_mutex);
         int client_index = tcp_find_free_client_slot(data);
-
         if (client_index == -1) {
+            mcp_mutex_unlock(data->client_mutex);
             mcp_log_warn("Max client connections reached (%d). Rejecting connection from %s:%d",
                         data->max_clients, client_ip, client_port);
             mcp_socket_close(client_socket);
@@ -198,7 +216,6 @@ void* tcp_accept_thread_func(void* arg) {
         client_init.client_port = client_port;
 
         // Update the client slot under lock
-        mcp_mutex_lock(data->client_mutex);
         memcpy(&data->clients[client_index], &client_init, sizeof(tcp_client_connection_t));
         mcp_mutex_unlock(data->client_mutex);
 
@@ -228,9 +245,6 @@ void* tcp_accept_thread_func(void* arg) {
                 // Update statistics
                 tcp_stats_update_connection_accepted(&data->stats);
 
-                // Log after releasing the lock to minimize lock time
-                mcp_mutex_unlock(data->client_mutex);
-
                 mcp_log_info("Accepted connection from %s:%d on socket %d (slot %d)",
                             client_ip, client_port, (int)client_socket, client_index);
             } else {
@@ -238,8 +252,9 @@ void* tcp_accept_thread_func(void* arg) {
                 mcp_log_warn("Client slot %d state changed before activation", client_index);
                 data->clients[client_index].state = CLIENT_STATE_INACTIVE;
                 data->clients[client_index].socket = MCP_INVALID_SOCKET;
-                mcp_mutex_unlock(data->client_mutex);
             }
+
+            mcp_mutex_unlock(data->client_mutex);
         }
     }
 
