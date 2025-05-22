@@ -25,15 +25,26 @@
  * @return mcp_auth_context_t* The created auth context, or NULL on failure
  */
 static mcp_auth_context_t* create_wildcard_auth_context(mcp_auth_type_t auth_type, const char* identifier, time_t expiry) {
+    PROFILE_START("create_wildcard_auth_context");
+
     if (!identifier) {
-        mcp_log_error("Invalid identifier for auth context");
+        mcp_log_error("Invalid identifier for auth context: NULL pointer provided");
+        PROFILE_END("create_wildcard_auth_context");
+        return NULL;
+    }
+
+    if (strlen(identifier) == 0) {
+        mcp_log_error("Invalid identifier for auth context: Empty string provided");
+        PROFILE_END("create_wildcard_auth_context");
         return NULL;
     }
 
     // Allocate and initialize the context
     mcp_auth_context_t* context = (mcp_auth_context_t*)calloc(1, sizeof(mcp_auth_context_t));
     if (!context) {
-        mcp_log_error("Failed to allocate auth context");
+        mcp_log_error("Failed to allocate auth context: Memory allocation failed (size: %zu bytes)",
+                     sizeof(mcp_auth_context_t));
+        PROFILE_END("create_wildcard_auth_context");
         return NULL;
     }
 
@@ -43,7 +54,7 @@ static mcp_auth_context_t* create_wildcard_auth_context(mcp_auth_type_t auth_typ
     context->expiry = expiry;
 
     if (!context->identifier) {
-        mcp_log_error("Failed to duplicate identifier");
+        mcp_log_error("Failed to duplicate identifier '%s': Memory allocation failed", identifier);
         goto error;
     }
 
@@ -51,7 +62,8 @@ static mcp_auth_context_t* create_wildcard_auth_context(mcp_auth_type_t auth_typ
     context->allowed_resources_count = 1;
     context->allowed_resources = (char**)malloc(sizeof(char*));
     if (!context->allowed_resources) {
-        mcp_log_error("Failed to allocate resources array");
+        mcp_log_error("Failed to allocate resources array: Memory allocation failed (size: %zu bytes)",
+                     sizeof(char*));
         goto error;
     }
     context->allowed_resources[0] = mcp_strdup("*"); // Allow all resources
@@ -60,21 +72,26 @@ static mcp_auth_context_t* create_wildcard_auth_context(mcp_auth_type_t auth_typ
     context->allowed_tools_count = 1;
     context->allowed_tools = (char**)malloc(sizeof(char*));
     if (!context->allowed_tools) {
-        mcp_log_error("Failed to allocate tools array");
+        mcp_log_error("Failed to allocate tools array: Memory allocation failed (size: %zu bytes)",
+                     sizeof(char*));
         goto error;
     }
     context->allowed_tools[0] = mcp_strdup("*"); // Allow all tools
 
     // Verify all allocations succeeded
     if (!context->allowed_resources[0] || !context->allowed_tools[0]) {
-        mcp_log_error("Failed to allocate permission strings");
+        mcp_log_error("Failed to allocate permission strings: Memory allocation failed for wildcard strings");
         goto error;
     }
 
+    mcp_log_debug("Successfully created auth context for '%s' (type: %d)", identifier, auth_type);
+    PROFILE_END("create_wildcard_auth_context");
     return context;
 
 error:
+    mcp_log_error("Auth context creation for '%s' failed, cleaning up partial allocations", identifier);
     mcp_auth_context_free(context);
+    PROFILE_END("create_wildcard_auth_context");
     return NULL;
 }
 
@@ -205,9 +222,12 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
     // --- No Authentication ---
     if (auth_type == MCP_AUTH_NONE && server->config.api_key == NULL) {
         // Only allow AUTH_NONE if no API key is configured on the server
+        mcp_log_debug("Creating anonymous auth context (MCP_AUTH_NONE)");
         mcp_auth_context_t* context = create_wildcard_auth_context(MCP_AUTH_NONE, "anonymous", 0);
         if (!context) {
-            mcp_log_error("Failed to create auth context for anonymous access");
+            mcp_log_error("Failed to create auth context for anonymous access: Memory allocation likely failed");
+            // Additional diagnostics that might help troubleshoot the issue
+            mcp_log_error("Current memory usage may be high or system resources constrained");
             PROFILE_END("mcp_auth_verify");
             return -1;
         }
@@ -239,15 +259,32 @@ int mcp_auth_verify(mcp_server_t* server, mcp_auth_type_t auth_type, const char*
         size_t api_key_len = strlen(server->config.api_key);
         size_t cred_len = strlen(credentials);
 
+        // Check for unreasonably long API keys (prevent potential buffer overflows)
+        if (api_key_len > 1024 || cred_len > 1024) {
+            mcp_log_error("API Key authentication failed: Key length exceeds maximum allowed (1024 characters)");
+            PROFILE_END("mcp_auth_verify");
+            return -1;
+        }
+
+        // Check for empty API keys
+        if (api_key_len == 0 || cred_len == 0) {
+            mcp_log_warn("API Key authentication failed: Empty API key provided");
+            PROFILE_END("mcp_auth_verify");
+            return -1;
+        }
+
         // Only perform comparison if lengths match (prevents timing attacks based on length)
         if (api_key_len == cred_len) {
             // Use constant-time comparison to prevent timing attacks
             int result = CRYPTO_memcmp(credentials, server->config.api_key, api_key_len + 1);
             if (result == 0) {
                 // API Key matches, create context with full permissions
+                mcp_log_debug("API Key authentication successful, creating auth context");
                 mcp_auth_context_t* context = create_wildcard_auth_context(MCP_AUTH_API_KEY, "authenticated_client", 0);
                 if (!context) {
-                    mcp_log_error("Failed to create auth context for API key authentication");
+                    mcp_log_error("Failed to create auth context for API key authentication: Memory allocation likely failed");
+                    // Additional diagnostics that might help troubleshoot the issue
+                    mcp_log_error("Current memory usage may be high or system resources constrained");
                     PROFILE_END("mcp_auth_verify");
                     return -1;
                 }
@@ -318,7 +355,6 @@ void mcp_auth_context_free(mcp_auth_context_t* context) {
 
     PROFILE_START("mcp_auth_context_free");
 
-    // Free identifier string
     if (context->identifier) {
         free(context->identifier);
         context->identifier = NULL;
@@ -350,7 +386,6 @@ void mcp_auth_context_free(mcp_auth_context_t* context) {
     }
     context->allowed_tools_count = 0;
 
-    // Free the context structure itself
     free(context);
 
     PROFILE_END("mcp_auth_context_free");
