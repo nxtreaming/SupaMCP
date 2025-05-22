@@ -22,33 +22,66 @@
 #endif
 
 // Global flag to indicate reconnection is in progress
+// This is accessed by other files, so it must remain a non-static global
 bool reconnection_in_progress = false;
 
+// Global mutex for thread-safe access to reconnection_in_progress
+static mcp_mutex_t* g_reconnect_mutex = NULL;
+static bool g_mutex_initialized = false;
+
+// Initialize global mutex if not already initialized
+static void init_global_mutex(void) {
+    if (!g_mutex_initialized) {
+        g_reconnect_mutex = mcp_mutex_create();
+        if (!g_reconnect_mutex) {
+            mcp_log_error("Failed to create global reconnect mutex");
+            return;
+        }
+        g_mutex_initialized = true;
+    }
+}
+
+// Thread-safe check if reconnection is in progress
+bool is_reconnection_in_progress(void) {
+    if (!g_mutex_initialized) {
+        return false;
+    }
+    
+    mcp_mutex_lock(g_reconnect_mutex);
+    bool in_progress = reconnection_in_progress;
+    mcp_mutex_unlock(g_reconnect_mutex);
+    return in_progress;
+}
+
+// Thread-safe set reconnection in progress
+static void set_reconnection_in_progress(bool in_progress) {
+    if (!g_mutex_initialized) {
+        return;
+    }
+    
+    mcp_mutex_lock(g_reconnect_mutex);
+    reconnection_in_progress = in_progress;
+    mcp_mutex_unlock(g_reconnect_mutex);
+}
+
 /**
- * @brief Simple string formatting helper function.
- *
- * This function provides a basic string formatting capability similar to sprintf,
- * but returns a statically allocated string. It's used for simple formatting needs
- * where dynamic allocation is not required.
- *
- * @note This function uses a static buffer and is not thread-safe.
- * @note The returned string is valid only until the next call to this function.
- *
- * @param format The format string
- * @param ... Variable arguments according to the format string
- * @return Pointer to a statically allocated formatted string
+ * @brief String formatting helper function with static buffer
+ * 
+ * @note This function is not thread-safe. For thread safety, use a mutex.
  */
 static const char* mcp_string_format(const char* format, ...) {
-    static char buffer[256]; // Static buffer for the formatted string
-
+    static char buffer[256];
+    
     va_list args;
     va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
+    int len = vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
-
-    // Ensure null termination
-    buffer[sizeof(buffer) - 1] = '\0';
-
+    
+    // Ensure null termination if truncation occurred
+    if (len >= (int)sizeof(buffer)) {
+        buffer[sizeof(buffer) - 1] = '\0';
+    }
+    
     return buffer;
 }
 
@@ -73,7 +106,6 @@ const mcp_reconnect_config_t MCP_DEFAULT_RECONNECT_CONFIG = {
  * @param new_state The new connection state
  */
 void mcp_tcp_client_update_connection_state(mcp_tcp_client_transport_data_t* data, mcp_connection_state_t new_state) {
-    // Validate parameters
     if (!data) {
         mcp_log_error("NULL data parameter in update_connection_state");
         return;
@@ -125,7 +157,6 @@ void mcp_tcp_client_update_connection_state(mcp_tcp_client_transport_data_t* dat
  * @return The delay in milliseconds
  */
 static uint32_t calculate_reconnect_delay(const mcp_reconnect_config_t* config, int attempt) {
-    // Validate parameters
     if (!config) {
         mcp_log_error("NULL config parameter in calculate_reconnect_delay");
         return 1000; // Return a reasonable default (1 second)
@@ -151,39 +182,41 @@ static uint32_t calculate_reconnect_delay(const mcp_reconnect_config_t* config, 
 
     // Add jitter if enabled (full jitter algorithm)
     if (config->randomize_delay) {
-        // Thread-safe random number generation
+        // Use thread-safe random number generation with mutex
         static mcp_mutex_t* rand_mutex = NULL;
-        static bool mutex_initialized = false;
+        static bool seeded = false;
 
-        // Initialize mutex for thread-safe random number generation
-        if (!mutex_initialized) {
-            rand_mutex = mcp_mutex_create();
-            mutex_initialized = true;
-        }
+        // Initialize random seed if not already done
+        if (!seeded) {
+            if (!rand_mutex) {
+                rand_mutex = mcp_mutex_create();
+                if (!rand_mutex) {
+                    mcp_log_error("Failed to create random number mutex");
+                    return (uint32_t)base_delay; // Fall back to base delay
+                }
+            }
 
-        if (rand_mutex) {
             mcp_mutex_lock(rand_mutex);
-
-            // Ensure random number generator is seeded
-            static bool seeded = false;
+            
             if (!seeded) {
-                // Use a better seed that includes both time and thread ID
-                unsigned int seed = (unsigned int)time(NULL);
+                // Use time and thread ID for seed
 #ifdef _WIN32
-                seed ^= (unsigned int)GetCurrentThreadId();
+                unsigned int seed = (unsigned int)(GetTickCount() ^ GetCurrentThreadId());
 #else
-                seed ^= (unsigned int)pthread_self();
+                unsigned int seed = (unsigned int)(time(NULL) ^ (uintptr_t)pthread_self());
 #endif
                 srand(seed);
                 seeded = true;
             }
-
-            // Full jitter: random value between 0 and base_delay
-            // This provides better distribution and prevents synchronized reconnection attempts
-            final_delay = ((float)rand() / RAND_MAX) * base_delay;
-
+            
             mcp_mutex_unlock(rand_mutex);
         }
+
+        // Generate random value between 0 and 1
+        float random = (float)rand() / (float)RAND_MAX;
+        
+        // Apply jitter: random value between 0 and base_delay
+        final_delay = random * base_delay;
 
         // Ensure minimum delay is at least 10% of base delay
         // This prevents very short delays that could lead to rapid reconnection attempts
@@ -192,8 +225,8 @@ static uint32_t calculate_reconnect_delay(const mcp_reconnect_config_t* config, 
         }
     }
 
-    // Convert to uint32_t for return
-    uint32_t delay_ms = (uint32_t)final_delay;
+    // Convert to uint32_t with bounds checking
+    uint32_t delay_ms = (final_delay > (float)UINT32_MAX) ? UINT32_MAX : (uint32_t)final_delay;
 
     // Log the calculated delay
     mcp_log_debug("Reconnect delay: base=%u ms, with jitter=%u ms (attempt %d)",
@@ -213,7 +246,6 @@ static uint32_t calculate_reconnect_delay(const mcp_reconnect_config_t* config, 
  * @return 0 on success, non-zero on failure
  */
 static int attempt_reconnect(mcp_tcp_client_transport_data_t* data) {
-    // Validate parameters
     if (!data) {
         mcp_log_error("NULL data parameter in attempt_reconnect");
         return -1;
@@ -240,7 +272,6 @@ static int attempt_reconnect(mcp_tcp_client_transport_data_t* data) {
     // Attempt to connect with a timeout (5 seconds)
     const int CONNECT_TIMEOUT_MS = 5000;
     data->sock = mcp_socket_connect(data->host, data->port, CONNECT_TIMEOUT_MS);
-
     if (data->sock == MCP_INVALID_SOCKET) {
         mcp_log_error("Reconnection attempt %d failed", data->reconnect_attempt);
         return -1;
@@ -250,9 +281,8 @@ static int attempt_reconnect(mcp_tcp_client_transport_data_t* data) {
     data->connected = true;
     mcp_log_info("Reconnected successfully to %s:%u", data->host, data->port);
 
-    // Set global flag to indicate reconnection is in progress
-    // This is used by the receiver thread to know it's being started after reconnection
-    reconnection_in_progress = true;
+    // Set global reconnection in progress flag
+    set_reconnection_in_progress(true);
 
     // Start receiver thread
     if (mcp_thread_create(&data->receive_thread, tcp_client_receive_thread_func, data->transport_handle) != 0) {
@@ -262,7 +292,7 @@ static int attempt_reconnect(mcp_tcp_client_transport_data_t* data) {
         mcp_socket_close(data->sock);
         data->sock = MCP_INVALID_SOCKET;
         data->connected = false;
-        reconnection_in_progress = false;
+        set_reconnection_in_progress(false);
 
         return -1;
     }
@@ -295,7 +325,6 @@ static int attempt_reconnect(mcp_tcp_client_transport_data_t* data) {
  * @return NULL on exit
  */
 void* tcp_client_reconnect_thread_func(void* arg) {
-    // Validate parameters
     if (!arg) {
         mcp_log_error("NULL argument to reconnect thread function");
         return NULL;
@@ -426,7 +455,6 @@ void* tcp_client_reconnect_thread_func(void* arg) {
  * @return 0 on success, non-zero on error
  */
 int start_reconnection_process(mcp_transport_t* transport) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_error("Invalid transport handle in start_reconnection_process");
         return -1;
@@ -459,8 +487,9 @@ int start_reconnection_process(mcp_transport_t* transport) {
     // Update connection state to reconnecting
     mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_RECONNECTING);
 
-    // Set flag before creating thread
+    // Set flag and update global state before creating thread
     data->reconnect_thread_running = true;
+    set_reconnection_in_progress(true);
 
     // Create reconnection thread
     int thread_result = mcp_thread_create(
@@ -468,21 +497,26 @@ int start_reconnection_process(mcp_transport_t* transport) {
         tcp_client_reconnect_thread_func,
         transport
     );
+    if (thread_result == 0) {
+        mcp_log_debug("Reconnection thread created successfully");
+    }
 
     if (thread_result != 0) {
         mcp_log_error("Failed to create reconnection thread (error: %d)", thread_result);
 
-        // Reset flag on failure
+        // Reset flags on failure
         data->reconnect_thread_running = false;
+        set_reconnection_in_progress(false);
 
         // Update connection state to failed
         mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_FAILED);
+        
+        mcp_log_error("Failed to start reconnection thread (error: %d)", thread_result);
 
         mcp_mutex_unlock(data->reconnect_mutex);
         return -1;
     }
 
-    mcp_log_debug("Reconnection thread created successfully");
     mcp_mutex_unlock(data->reconnect_mutex);
     return 0;
 }
@@ -497,7 +531,6 @@ int start_reconnection_process(mcp_transport_t* transport) {
  * @param transport The transport handle
  */
 void stop_reconnection_process(mcp_transport_t* transport) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_debug("Invalid transport handle in stop_reconnection_process");
         return;
@@ -520,11 +553,21 @@ void stop_reconnection_process(mcp_transport_t* transport) {
         // acquire the mutex to check the running flag
         mcp_mutex_unlock(data->reconnect_mutex);
 
-        // Wait for thread to exit
+        // Wait for thread to exit with timeout
         if (data->reconnect_thread) {
-            mcp_log_debug("Waiting for reconnection thread to exit");
-            mcp_thread_join(data->reconnect_thread, NULL);
+            const int THREAD_JOIN_TIMEOUT_MS = 5000; // 5 second timeout
+            mcp_log_debug("Waiting for reconnection thread to exit (timeout: %d ms)", THREAD_JOIN_TIMEOUT_MS);
+        
+            // Try to join the thread
+            // Note: Using mcp_thread_join without timeout for now
+            // In the future, consider implementing a proper timed join if needed
+            int join_result = mcp_thread_join(data->reconnect_thread, NULL);
+            if (join_result != 0) {
+                mcp_log_warn("Reconnection thread did not exit cleanly (error: %d)", join_result);
+            }
+        
             data->reconnect_thread = 0;
+            set_reconnection_in_progress(false);
             mcp_log_debug("Reconnection thread has exited");
         }
     } else {
@@ -550,7 +593,6 @@ int mcp_tcp_client_set_connection_state_callback(
     mcp_connection_state_callback_t callback,
     void* user_data
 ) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_error("Invalid transport handle in set_connection_state_callback");
         return -1;
@@ -590,7 +632,6 @@ int mcp_tcp_client_set_connection_state_callback(
  * @return The current connection state
  */
 mcp_connection_state_t mcp_tcp_client_get_connection_state(mcp_transport_t* transport) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_debug("Invalid transport handle in get_connection_state");
         return MCP_CONNECTION_STATE_DISCONNECTED;
@@ -615,7 +656,6 @@ mcp_connection_state_t mcp_tcp_client_get_connection_state(mcp_transport_t* tran
  * @return 0 on success, non-zero on error
  */
 int mcp_tcp_client_reconnect(mcp_transport_t* transport) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_error("Invalid transport handle in manual reconnect");
         return -1;
@@ -657,7 +697,6 @@ int mcp_tcp_client_reconnect(mcp_transport_t* transport) {
     // Try immediate reconnection first
     mcp_log_info("Attempting immediate reconnection");
     int result = attempt_reconnect(data);
-
     // If immediate reconnection failed, start reconnection process with backoff
     if (result != 0) {
         mcp_log_info("Immediate reconnection failed, starting reconnection process");
