@@ -33,6 +33,10 @@
 #define POOL_BUFFER_SIZE 8192
 #define POOL_NUM_BUFFERS 16
 
+// Health check configuration
+#define HEALTH_CHECK_INTERVAL_MS 30000  // 30 seconds
+#define HEALTH_CHECK_TIMEOUT_MS 5000    // 5 seconds
+
 // Forward declarations for internal functions
 static int tcp_pool_transport_start(
     mcp_transport_t* transport,
@@ -46,6 +50,12 @@ static void tcp_pool_transport_destroy(mcp_transport_t* transport);
 static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data, size_t size);
 static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
 static int tcp_pool_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms);
+
+// Helper function declarations
+static socket_handle_t tcp_pool_get_connection(mcp_tcp_pool_transport_data_t* data);
+static int tcp_pool_process_response(mcp_transport_t* transport, socket_handle_t sock, char* response, uint32_t response_len);
+static void tcp_pool_handle_error(mcp_transport_t* transport, socket_handle_t sock, int error_code);
+static void tcp_pool_free_resources(mcp_tcp_pool_transport_data_t* data);
 
 /**
  * @brief Starts the TCP pool transport.
@@ -65,7 +75,6 @@ static int tcp_pool_transport_start(
     void* user_data,
     mcp_transport_error_callback_t error_callback
 ) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_error("Invalid transport handle in start function");
         return -1;
@@ -92,10 +101,6 @@ static int tcp_pool_transport_start(
 
     // Create connection pool if not already created
     if (!data->connection_pool) {
-        // Constants for health check configuration
-        const int HEALTH_CHECK_INTERVAL_MS = 30000;  // 30 seconds
-        const int HEALTH_CHECK_TIMEOUT_MS = 5000;    // 5 seconds
-
         mcp_log_info("Creating connection pool for %s:%d (min: %zu, max: %zu)",
                     data->host, data->port, data->min_connections, data->max_connections);
 
@@ -137,7 +142,6 @@ static int tcp_pool_transport_start(
  * @return 0 on success, -1 on error
  */
 static int tcp_pool_transport_stop(mcp_transport_t* transport) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_error("Invalid transport handle in stop function");
         return -1;
@@ -168,6 +172,32 @@ static int tcp_pool_transport_stop(mcp_transport_t* transport) {
 }
 
 /**
+ * @brief Frees resources allocated for the TCP pool transport.
+ *
+ * @param data Pointer to the TCP pool transport data
+ */
+static void tcp_pool_free_resources(mcp_tcp_pool_transport_data_t* data) {
+    if (!data) return;
+
+    if (data->connection_pool) {
+        mcp_log_debug("Destroying connection pool");
+        mcp_connection_pool_destroy(data->connection_pool);
+        data->connection_pool = NULL;
+    }
+
+    if (data->buffer_pool) {
+        mcp_log_debug("Destroying buffer pool");
+        mcp_buffer_pool_destroy(data->buffer_pool);
+        data->buffer_pool = NULL;
+    }
+
+    if (data->host) {
+        free(data->host);
+        data->host = NULL;
+    }
+}
+
+/**
  * @brief Destroys the TCP pool transport.
  *
  * This function stops the transport if it's running, destroys the connection
@@ -176,7 +206,6 @@ static int tcp_pool_transport_stop(mcp_transport_t* transport) {
  * @param transport The transport handle to destroy
  */
 static void tcp_pool_transport_destroy(mcp_transport_t* transport) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_debug("Invalid transport handle in destroy function");
         return;
@@ -189,25 +218,8 @@ static void tcp_pool_transport_destroy(mcp_transport_t* transport) {
     // Ensure transport is stopped before destroying
     tcp_pool_transport_stop(transport);
 
-    // Destroy connection pool
-    if (data->connection_pool) {
-        mcp_log_debug("Destroying connection pool");
-        mcp_connection_pool_destroy(data->connection_pool);
-        data->connection_pool = NULL;
-    }
-
-    // Free host string
-    if (data->host) {
-        free(data->host);
-        data->host = NULL;
-    }
-
-    // Destroy buffer pool
-    if (data->buffer_pool) {
-        mcp_log_debug("Destroying buffer pool");
-        mcp_buffer_pool_destroy(data->buffer_pool);
-        data->buffer_pool = NULL;
-    }
+    // Free all resources
+    tcp_pool_free_resources(data);
 
     // Free the transport data structure
     free(data);
@@ -217,6 +229,96 @@ static void tcp_pool_transport_destroy(mcp_transport_t* transport) {
     free(transport);
 
     mcp_log_info("TCP pool transport destroyed");
+}
+
+/**
+ * @brief Gets a connection from the pool.
+ *
+ * @param data Pointer to the TCP pool transport data
+ * @return A valid socket handle on success, INVALID_SOCKET_HANDLE on error
+ */
+static socket_handle_t tcp_pool_get_connection(mcp_tcp_pool_transport_data_t* data) {
+    if (!data || !data->connection_pool) {
+        mcp_log_error("Invalid data or connection pool in tcp_pool_get_connection");
+        return INVALID_SOCKET_HANDLE;
+    }
+
+    mcp_log_debug("Getting connection from pool (timeout: %d ms)", data->request_timeout_ms);
+    socket_handle_t sock = mcp_connection_pool_get(data->connection_pool, data->request_timeout_ms);
+
+    if (sock == INVALID_SOCKET_HANDLE) {
+        int error_code = mcp_socket_get_lasterror();
+        mcp_log_error("Failed to get connection from pool (error: %d)", error_code);
+    }
+
+    return sock;
+}
+
+/**
+ * @brief Processes a response received from the server.
+ *
+ * @param transport The transport handle
+ * @param sock The socket handle
+ * @param response The response buffer
+ * @param response_len The length of the response
+ * @return 0 on success, -1 on error
+ */
+static int tcp_pool_process_response(mcp_transport_t* transport, socket_handle_t sock, char* response, uint32_t response_len) {
+    if (!transport || !transport->transport_data || !response) {
+        mcp_log_error("Invalid parameters in tcp_pool_process_response");
+        return -1;
+    }
+
+    mcp_tcp_pool_transport_data_t* data = (mcp_tcp_pool_transport_data_t*)transport->transport_data;
+    mcp_log_debug("Received response (%u bytes)", response_len);
+
+    // Call the message callback with the response if set
+    if (transport->message_callback) {
+        int error_code = 0;
+        char* callback_response = transport->message_callback(
+            transport->callback_user_data,
+            response,
+            (size_t)response_len,
+            &error_code
+        );
+
+        // Check for callback errors
+        if (error_code != 0) {
+            mcp_log_warn("Message callback returned error code: %d", error_code);
+        }
+
+        // Free the response string if one was returned
+        if (callback_response) {
+            free(callback_response);
+        }
+    }
+
+    // Release the connection back to the pool as valid
+    mcp_connection_pool_release(data->connection_pool, sock, true);
+    return 0;
+}
+
+/**
+ * @brief Handles errors during send/receive operations.
+ *
+ * @param transport The transport handle
+ * @param sock The socket handle
+ * @param error_code The error code
+ */
+static void tcp_pool_handle_error(mcp_transport_t* transport, socket_handle_t sock, int error_code) {
+    if (!transport || !transport->transport_data || sock == INVALID_SOCKET_HANDLE) {
+        return;
+    }
+
+    mcp_tcp_pool_transport_data_t* data = (mcp_tcp_pool_transport_data_t*)transport->transport_data;
+
+    // Release connection back to pool as invalid
+    mcp_connection_pool_release(data->connection_pool, sock, false);
+
+    // Call error callback if set
+    if (transport->error_callback) {
+        transport->error_callback(transport->callback_user_data, error_code);
+    }
 }
 
 /**
@@ -232,7 +334,6 @@ static void tcp_pool_transport_destroy(mcp_transport_t* transport) {
  * @return 0 on success, -1 on error
  */
 static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data_buf, size_t size) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_error("Invalid transport handle in send function");
         return -1;
@@ -256,19 +357,13 @@ static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data_
         return -1;
     }
 
-    // Get a connection from the pool with timeout
-    mcp_log_debug("Getting connection from pool (timeout: %d ms)", data->request_timeout_ms);
-    socket_handle_t sock = mcp_connection_pool_get(data->connection_pool, data->request_timeout_ms);
-
+    // Get a connection from the pool
+    socket_handle_t sock = tcp_pool_get_connection(data);
     if (sock == INVALID_SOCKET_HANDLE) {
         int error_code = mcp_socket_get_lasterror();
-        mcp_log_error("Failed to get connection from pool (error: %d)", error_code);
-
-        // Call error callback if set
         if (transport->error_callback) {
             transport->error_callback(transport->callback_user_data, error_code);
         }
-
         return -1;
     }
 
@@ -280,15 +375,7 @@ static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data_
     if (result != 0) {
         int error_code = mcp_socket_get_lasterror();
         mcp_log_error("Failed to send data (result: %d, error: %d)", result, error_code);
-
-        // Release connection back to pool as invalid
-        mcp_connection_pool_release(data->connection_pool, sock, false);
-
-        // Call error callback if set
-        if (transport->error_callback) {
-            transport->error_callback(transport->callback_user_data, error_code);
-        }
-
+        tcp_pool_handle_error(transport, sock, error_code);
         return -1;
     }
 
@@ -301,36 +388,9 @@ static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data_
 
     // Process the response
     if (result == 0 && response != NULL) {
-        mcp_log_debug("Received response (%u bytes)", response_len);
-
-        // Call the message callback with the response if set
-        if (transport->message_callback) {
-            int error_code = 0;
-            char* callback_response = transport->message_callback(
-                transport->callback_user_data,
-                response,
-                (size_t)response_len,
-                &error_code
-            );
-
-            // Check for callback errors
-            if (error_code != 0) {
-                mcp_log_warn("Message callback returned error code: %d", error_code);
-            }
-
-            // Free the response string if one was returned
-            if (callback_response) {
-                free(callback_response);
-            }
-        }
-
-        // Free the allocated response buffer
+        int process_result = tcp_pool_process_response(transport, sock, response, response_len);
         free(response);
-
-        // Release the connection back to the pool as valid
-        mcp_connection_pool_release(data->connection_pool, sock, true);
-
-        return 0;
+        return process_result;
     } else {
         // Handle receive error
         int error_code = mcp_socket_get_lasterror();
@@ -341,14 +401,7 @@ static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data_
             free(response);
         }
 
-        // Release connection back to pool as invalid
-        mcp_connection_pool_release(data->connection_pool, sock, false);
-
-        // Call error callback if set
-        if (transport->error_callback) {
-            transport->error_callback(transport->callback_user_data, error_code);
-        }
-
+        tcp_pool_handle_error(transport, sock, error_code);
         return -1;
     }
 }
@@ -366,7 +419,6 @@ static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data_
  * @return 0 on success, -1 on error
  */
 static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_error("Invalid transport handle in sendv function");
         return -1;
@@ -402,19 +454,13 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
         total_bytes += buffers[i].size;
     }
 
-    // Get a connection from the pool with timeout
-    mcp_log_debug("Getting connection from pool for sendv (timeout: %d ms)", data->request_timeout_ms);
-    socket_handle_t sock = mcp_connection_pool_get(data->connection_pool, data->request_timeout_ms);
-
+    // Get a connection from the pool
+    socket_handle_t sock = tcp_pool_get_connection(data);
     if (sock == INVALID_SOCKET_HANDLE) {
         int error_code = mcp_socket_get_lasterror();
-        mcp_log_error("Failed to get connection from pool (error: %d)", error_code);
-
-        // Call error callback if set
         if (transport->error_callback) {
             transport->error_callback(transport->callback_user_data, error_code);
         }
-
         return -1;
     }
 
@@ -422,10 +468,8 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
     mcp_iovec_t* iov = (mcp_iovec_t*)malloc(buffer_count * sizeof(mcp_iovec_t));
     if (!iov) {
         mcp_log_error("Failed to allocate iovec array for sendv (%zu elements)", buffer_count);
-
         // Release connection back to pool as valid (allocation failure is not a connection issue)
         mcp_connection_pool_release(data->connection_pool, sock, true);
-
         return -1;
     }
 
@@ -451,15 +495,7 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
     if (result != 0) {
         int error_code = mcp_socket_get_lasterror();
         mcp_log_error("Failed to send vectored data (result: %d, error: %d)", result, error_code);
-
-        // Release connection back to pool as invalid
-        mcp_connection_pool_release(data->connection_pool, sock, false);
-
-        // Call error callback if set
-        if (transport->error_callback) {
-            transport->error_callback(transport->callback_user_data, error_code);
-        }
-
+        tcp_pool_handle_error(transport, sock, error_code);
         return -1;
     }
 
@@ -472,36 +508,9 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
 
     // Process the response
     if (result == 0 && response != NULL) {
-        mcp_log_debug("Received response after vectored send (%u bytes)", response_len);
-
-        // Call the message callback with the response if set
-        if (transport->message_callback) {
-            int error_code = 0;
-            char* callback_response = transport->message_callback(
-                transport->callback_user_data,
-                response,
-                (size_t)response_len,
-                &error_code
-            );
-
-            // Check for callback errors
-            if (error_code != 0) {
-                mcp_log_warn("Message callback returned error code: %d", error_code);
-            }
-
-            // Free the response string if one was returned
-            if (callback_response) {
-                free(callback_response);
-            }
-        }
-
-        // Free the allocated response buffer
+        int process_result = tcp_pool_process_response(transport, sock, response, response_len);
         free(response);
-
-        // Release the connection back to the pool as valid
-        mcp_connection_pool_release(data->connection_pool, sock, true);
-
-        return 0;
+        return process_result;
     } else {
         // Handle receive error
         int error_code = mcp_socket_get_lasterror();
@@ -513,14 +522,7 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
             free(response);
         }
 
-        // Release connection back to pool as invalid
-        mcp_connection_pool_release(data->connection_pool, sock, false);
-
-        // Call error callback if set
-        if (transport->error_callback) {
-            transport->error_callback(transport->callback_user_data, error_code);
-        }
-
+        tcp_pool_handle_error(transport, sock, error_code);
         return -1;
     }
 }
@@ -538,7 +540,6 @@ static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer
  * @return Always returns -1 (not supported)
  */
 static int tcp_pool_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
-    // Validate parameters
     if (!transport || !transport->transport_data) {
         mcp_log_error("Invalid transport handle in receive function");
         return -1;
@@ -549,25 +550,16 @@ static int tcp_pool_transport_receive(mcp_transport_t* transport, char** data_ou
         return -1;
     }
 
-    mcp_tcp_pool_transport_data_t* data = (mcp_tcp_pool_transport_data_t*)transport->transport_data;
-
     // Initialize output parameters
     *data_out = NULL;
     *size_out = 0;
 
-    // Check if transport is running
-    if (!data->running) {
-        mcp_log_error("TCP pool transport not running for receive operation");
-        return -1;
-    }
-
     // Mark timeout_ms as unused to suppress warning
     (void)timeout_ms;
 
-    // This synchronous receive is not typically used with the pool transport
-    // since we handle the request-response cycle in the send/sendv functions.
+    // This transport uses a request-response model where responses are handled by callbacks
     mcp_log_error("Synchronous receive is not supported by TCP pool transport");
-    return -1; // Not supported
+    return -1;
 }
 
 /**
@@ -586,6 +578,35 @@ static int tcp_pool_transport_receive(mcp_transport_t* transport, char** data_ou
  * @param request_timeout_ms Timeout in milliseconds for request operations
  * @return A new transport handle, or NULL on error
  */
+/**
+ * @brief Validates connection pool parameters.
+ *
+ * @param port The port to connect to
+ * @param min_connections Minimum number of connections
+ * @param max_connections Maximum number of connections
+ * @return 0 if valid, -1 if invalid
+ */
+static int tcp_pool_validate_parameters(uint16_t port, size_t min_connections, size_t max_connections) {
+    // Check for invalid port values (port 0 is reserved)
+    if (port == 0) {
+        mcp_log_error("Invalid port value: %u", port);
+        return -1;
+    }
+
+    if (min_connections > max_connections) {
+        mcp_log_error("Invalid connection pool parameters: min (%zu) > max (%zu)",
+                     min_connections, max_connections);
+        return -1;
+    }
+
+    if (max_connections == 0) {
+        mcp_log_error("Invalid connection pool parameters: max_connections cannot be 0");
+        return -1;
+    }
+
+    return 0;
+}
+
 mcp_transport_t* mcp_tcp_pool_transport_create(
     const char* host,
     uint16_t port,
@@ -595,39 +616,22 @@ mcp_transport_t* mcp_tcp_pool_transport_create(
     int connect_timeout_ms,
     int request_timeout_ms
 ) {
-    // Validate parameters
     if (!host) {
         mcp_log_error("NULL host parameter in create function");
         return NULL;
     }
 
-    // Check for invalid port values (port 0 is reserved)
-    if (port == 0) {
-        mcp_log_error("Invalid port value: %u", port);
-        return NULL;
-    }
-
     // Validate connection pool parameters
-    if (min_connections > max_connections) {
-        mcp_log_error("Invalid connection pool parameters: min (%zu) > max (%zu)",
-                     min_connections, max_connections);
-        return NULL;
-    }
-
-    if (max_connections == 0) {
-        mcp_log_error("Invalid connection pool parameters: max_connections cannot be 0");
+    if (tcp_pool_validate_parameters(port, min_connections, max_connections) != 0) {
         return NULL;
     }
 
     // Allocate transport structure
-    mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
+    mcp_transport_t* transport = (mcp_transport_t*)calloc(1, sizeof(mcp_transport_t));
     if (!transport) {
         mcp_log_error("Failed to allocate transport structure");
         return NULL;
     }
-
-    // Zero-initialize the transport structure
-    memset(transport, 0, sizeof(mcp_transport_t));
 
     // Allocate transport data structure
     mcp_tcp_pool_transport_data_t* data = (mcp_tcp_pool_transport_data_t*)calloc(1, sizeof(mcp_tcp_pool_transport_data_t));
@@ -653,15 +657,13 @@ mcp_transport_t* mcp_tcp_pool_transport_create(
     data->idle_timeout_ms = idle_timeout_ms;
     data->connect_timeout_ms = connect_timeout_ms;
     data->request_timeout_ms = request_timeout_ms;
-    data->running = false;
-    data->connection_pool = NULL;
 
     // Create buffer pool for efficient memory management
     data->buffer_pool = mcp_buffer_pool_create(POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
     if (data->buffer_pool == NULL) {
         mcp_log_error("Failed to create buffer pool (size: %d, count: %d)",
                      POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
-        free(data->host);
+        tcp_pool_free_resources(data);
         free(data);
         free(transport);
         return NULL;
@@ -681,11 +683,6 @@ mcp_transport_t* mcp_tcp_pool_transport_create(
 
     // Set transport data
     transport->transport_data = data;
-
-    // Initialize callbacks to NULL (will be set in start function)
-    transport->message_callback = NULL;
-    transport->callback_user_data = NULL;
-    transport->error_callback = NULL;
 
     mcp_log_info("Created TCP pool transport for %s:%d (min: %zu, max: %zu, idle: %d ms, connect: %d ms, request: %d ms)",
                 host, port, min_connections, max_connections,
