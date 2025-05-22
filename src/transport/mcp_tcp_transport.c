@@ -1,3 +1,12 @@
+/**
+ * @file mcp_tcp_transport.c
+ * @brief Implementation of TCP server transport functionality.
+ *
+ * This file implements the TCP server transport, which listens for incoming
+ * connections, accepts them, and handles client messages using a thread pool.
+ * It supports multiple concurrent clients and provides efficient message
+ * processing with buffer pooling.
+ */
 #include "internal/transport_internal.h"
 #include "internal/tcp_transport_internal.h"
 #include <stdio.h>
@@ -18,20 +27,6 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #endif
-
-/**
- * @file mcp_tcp_transport.c
- * @brief Implementation of TCP server transport functionality.
- *
- * This file implements the TCP server transport, which listens for incoming
- * connections, accepts them, and handles client messages using a thread pool.
- * It supports multiple concurrent clients and provides efficient message
- * processing with buffer pooling.
- */
-
-// Note: These functions are declared in tcp_transport_internal.h
-// and implemented in mcp_tcp_server_utils.c
-// We're just using them here, not redefining them
 
 /**
  * @brief Starts the TCP server transport.

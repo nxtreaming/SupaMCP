@@ -1,3 +1,11 @@
+/**
+ * @file mcp_tcp_client_transport.c
+ * @brief Implementation of the TCP client transport layer.
+ *
+ * This file implements the TCP client transport layer, which provides
+ * functionality for connecting to a TCP server, sending and receiving
+ * messages, and handling reconnection in case of connection loss.
+ */
 #include "internal/tcp_client_transport_internal.h"
 #include "mcp_framing.h"
 #include <stdio.h>
@@ -15,15 +23,6 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #endif
-
-/**
- * @file mcp_tcp_client_transport.c
- * @brief Implementation of the TCP client transport layer.
- *
- * This file implements the TCP client transport layer, which provides
- * functionality for connecting to a TCP server, sending and receiving
- * messages, and handling reconnection in case of connection loss.
- */
 
 /**
  * @brief Starts the TCP client transport.

@@ -1,3 +1,12 @@
+/**
+ * @file mcp_tcp_client_receiver.c
+ * @brief Implementation of TCP client message receiver functionality.
+ *
+ * This file implements the receiver thread for TCP client connections,
+ * which continuously reads messages from the server using length-prefixed
+ * framing, processes them via the registered callback, and handles
+ * connection errors and reconnection.
+ */
 #include "internal/tcp_client_transport_internal.h"
 #include "mcp_framing.h"
 #include <stdio.h>
@@ -14,16 +23,6 @@
 #include <netinet/in.h>
 #include <sys/select.h>
 #endif
-
-/**
- * @file mcp_tcp_client_receiver.c
- * @brief Implementation of TCP client message receiver functionality.
- *
- * This file implements the receiver thread for TCP client connections,
- * which continuously reads messages from the server using length-prefixed
- * framing, processes them via the registered callback, and handles
- * connection errors and reconnection.
- */
 
 // Constants
 #define RECEIVER_ARENA_SIZE (1024 * 1024)  // 1MB arena for thread-local memory

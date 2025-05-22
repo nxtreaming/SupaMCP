@@ -1,3 +1,11 @@
+/**
+ * @file mcp_tcp_server_utils.c
+ * @brief Utility functions for TCP server transport.
+ *
+ * This file implements various utility functions for the TCP server transport,
+ * including client connection management, statistics tracking, and the cleanup
+ * thread for removing idle connections.
+ */
 #include "internal/transport_internal.h"
 #include "internal/tcp_transport_internal.h"
 #include <stdio.h>
@@ -18,15 +26,6 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #endif
-
-/**
- * @file mcp_tcp_server_utils.c
- * @brief Utility functions for TCP server transport.
- *
- * This file implements various utility functions for the TCP server transport,
- * including client connection management, statistics tracking, and the cleanup
- * thread for removing idle connections.
- */
 
 /**
  * @brief Client handler wrapper function for thread pool.

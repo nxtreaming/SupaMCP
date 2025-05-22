@@ -1,3 +1,11 @@
+/**
+ * @file mcp_tcp_client_reconnect.c
+ * @brief Implementation of TCP client reconnection functionality.
+ *
+ * This file implements the reconnection logic for TCP client connections,
+ * including exponential backoff with jitter, connection state management,
+ * and automatic reconnection attempts.
+ */
 #include "internal/tcp_client_transport_internal.h"
 #include <stdlib.h>
 #include <time.h>
@@ -12,15 +20,6 @@
 #include <pthread.h>
 #include <unistd.h>
 #endif
-
-/**
- * @file mcp_tcp_client_reconnect.c
- * @brief Implementation of TCP client reconnection functionality.
- *
- * This file implements the reconnection logic for TCP client connections,
- * including exponential backoff with jitter, connection state management,
- * and automatic reconnection attempts.
- */
 
 // Global flag to indicate reconnection is in progress
 bool reconnection_in_progress = false;

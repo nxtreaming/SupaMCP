@@ -1,3 +1,12 @@
+/**
+ * @file mcp_tcp_pool_transport.c
+ * @brief Implementation of TCP connection pool transport.
+ *
+ * This file implements a TCP client transport that uses a connection pool
+ * to efficiently manage multiple connections to a server. It provides
+ * automatic connection management, health checking, and request-response
+ * handling.
+ */
 #include "internal/tcp_pool_transport_internal.h"
 #include <mcp_log.h>
 #include <mcp_socket_utils.h>
@@ -19,18 +28,6 @@
 #include <netdb.h>
 #include <errno.h>
 #endif
-
-/**
- * @file mcp_tcp_pool_transport.c
- * @brief Implementation of TCP connection pool transport.
- *
- * This file implements a TCP client transport that uses a connection pool
- * to efficiently manage multiple connections to a server. It provides
- * automatic connection management, health checking, and request-response
- * handling.
- */
-
-// Note: MAX_MESSAGE_SIZE is defined in tcp_pool_transport_internal.h
 
 // Buffer pool configuration
 #define POOL_BUFFER_SIZE 8192
