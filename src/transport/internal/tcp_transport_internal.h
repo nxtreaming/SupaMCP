@@ -18,7 +18,7 @@
 #include <errno.h>
 
 // Constants
-#define MAX_TCP_CLIENTS 512                     // Increased max concurrent client connections
+#define MAX_TCP_CLIENTS 2048                    // Increased max concurrent client connections
 #define POOL_BUFFER_SIZE (1024 * 16)            // 16KB buffer size (More efficient)
 #define POOL_NUM_BUFFERS 1024                   // Increased number of buffers for better concurrency
 #define MAX_MCP_MESSAGE_SIZE (1024 * 1024)      // 1MB limit
