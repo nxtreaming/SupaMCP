@@ -29,6 +29,78 @@
 #endif
 
 /**
+ * @brief Sets up the POSIX pipe for signaling the accept thread to stop.
+ *
+ * @param data Pointer to the TCP transport data
+ * @return 0 on success, -1 on error
+ */
+static int tcp_transport_setup_posix_pipe(mcp_tcp_transport_data_t* data) {
+#ifndef _WIN32
+    data->stop_pipe[0] = -1;
+    data->stop_pipe[1] = -1;
+
+    if (pipe(data->stop_pipe) != 0) {
+        mcp_log_error("Failed to create stop pipe: %s", strerror(errno));
+        return -1;
+    }
+
+    int flags = fcntl(data->stop_pipe[0], F_GETFL, 0);
+    if (flags == -1 || fcntl(data->stop_pipe[0], F_SETFL, flags | O_NONBLOCK) == -1) {
+        mcp_log_error("Failed to set stop pipe to non-blocking mode: %s", strerror(errno));
+        close(data->stop_pipe[0]);
+        close(data->stop_pipe[1]);
+        data->stop_pipe[0] = -1;
+        data->stop_pipe[1] = -1;
+        return -1;
+    }
+    return 0;
+#else
+    (void)data;
+    return 0;
+#endif
+}
+
+/**
+ * @brief Cleans up resources allocated by the TCP transport.
+ *
+ * @param data Pointer to the TCP transport data
+ */
+static void tcp_transport_cleanup_resources(mcp_tcp_transport_data_t* data) {
+    if (!data) return;
+
+    // Close listening socket if open
+    if (data->listen_socket != MCP_INVALID_SOCKET) {
+        mcp_socket_close(data->listen_socket);
+        data->listen_socket = MCP_INVALID_SOCKET;
+    }
+
+#ifndef _WIN32
+    // Close the stop pipe
+    if (data->stop_pipe[0] != -1) {
+        close(data->stop_pipe[0]);
+        data->stop_pipe[0] = -1;
+    }
+    if (data->stop_pipe[1] != -1) {
+        close(data->stop_pipe[1]);
+        data->stop_pipe[1] = -1;
+    }
+#endif
+
+    // Destroy mutex if created
+    if (data->client_mutex) {
+        mcp_mutex_destroy(data->client_mutex);
+        data->client_mutex = NULL;
+    }
+
+    // Mark as not running
+    data->running = false;
+    data->cleanup_running = false;
+
+    // Clean up socket library
+    mcp_socket_cleanup();
+}
+
+/**
  * @brief Starts the TCP server transport.
  *
  * This function initializes the socket library, creates a listening socket,
@@ -47,7 +119,6 @@ static int tcp_transport_start(
     void* user_data,
     mcp_transport_error_callback_t error_callback
 ) {
-    // Validate parameters
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_error("Invalid transport handle in start function");
         return -1;
@@ -72,8 +143,7 @@ static int tcp_transport_start(
         return -1;
     }
 
-    // Create listening socket using the utility function
-    // SOMAXCONN is a reasonable default backlog for most operating systems
+    // Create listening socket
     data->listen_socket = mcp_socket_create_listener(data->host, data->port, SOMAXCONN);
     if (data->listen_socket == MCP_INVALID_SOCKET) {
         mcp_log_error("Failed to create listening socket on %s:%d", data->host, data->port);
@@ -89,41 +159,15 @@ static int tcp_transport_start(
         data->client_mutex = mcp_mutex_create();
         if (data->client_mutex == NULL) {
             mcp_log_error("Failed to create client mutex");
-            mcp_socket_close(data->listen_socket);
-            data->running = false;
-            mcp_socket_cleanup();
+            tcp_transport_cleanup_resources(data);
             return -1;
         }
     }
 
 #ifndef _WIN32
-    // Create stop pipe (POSIX only) for signaling the accept thread to stop
-    data->stop_pipe[0] = -1; // Initialize file descriptors
-    data->stop_pipe[1] = -1;
-
-    if (pipe(data->stop_pipe) != 0) {
-        mcp_log_error("Failed to create stop pipe: %s", strerror(errno));
-        mcp_socket_close(data->listen_socket);
-        mcp_mutex_destroy(data->client_mutex);
-        data->client_mutex = NULL;
-        data->running = false;
-        mcp_socket_cleanup();
-        return -1;
-    }
-
-    // Set read end to non-blocking mode
-    int flags = fcntl(data->stop_pipe[0], F_GETFL, 0);
-    if (flags == -1 || fcntl(data->stop_pipe[0], F_SETFL, flags | O_NONBLOCK) == -1) {
-        mcp_log_error("Failed to set stop pipe to non-blocking mode: %s", strerror(errno));
-        close(data->stop_pipe[0]);
-        close(data->stop_pipe[1]);
-        data->stop_pipe[0] = -1;
-        data->stop_pipe[1] = -1;
-        mcp_socket_close(data->listen_socket);
-        mcp_mutex_destroy(data->client_mutex);
-        data->client_mutex = NULL;
-        data->running = false;
-        mcp_socket_cleanup();
+    // Create stop pipe (POSIX only)
+    if (tcp_transport_setup_posix_pipe(data) != 0) {
+        tcp_transport_cleanup_resources(data);
         return -1;
     }
 #endif
@@ -132,20 +176,7 @@ static int tcp_transport_start(
     data->cleanup_running = true;
     if (mcp_thread_create(&data->cleanup_thread, tcp_cleanup_thread_func, data) != 0) {
         mcp_log_error("Failed to create cleanup thread");
-
-#ifndef _WIN32
-        // Close the stop pipe
-        if (data->stop_pipe[0] != -1) close(data->stop_pipe[0]);
-        if (data->stop_pipe[1] != -1) close(data->stop_pipe[1]);
-        data->stop_pipe[0] = -1;
-        data->stop_pipe[1] = -1;
-#endif
-
-        mcp_socket_close(data->listen_socket);
-        mcp_mutex_destroy(data->client_mutex);
-        data->client_mutex = NULL;
-        data->running = false;
-        mcp_socket_cleanup();
+        tcp_transport_cleanup_resources(data);
         return -1;
     }
 
@@ -158,25 +189,85 @@ static int tcp_transport_start(
         mcp_thread_join(data->cleanup_thread, NULL);
         data->cleanup_thread = 0;
 
-#ifndef _WIN32
-        // Close the stop pipe
-        if (data->stop_pipe[0] != -1) close(data->stop_pipe[0]);
-        if (data->stop_pipe[1] != -1) close(data->stop_pipe[1]);
-        data->stop_pipe[0] = -1;
-        data->stop_pipe[1] = -1;
-#endif
-
-        mcp_socket_close(data->listen_socket);
-        mcp_mutex_destroy(data->client_mutex);
-        data->client_mutex = NULL;
-        data->running = false;
-        mcp_socket_cleanup();
+        tcp_transport_cleanup_resources(data);
         return -1;
     }
 
     mcp_log_info("TCP server transport started on %s:%d (thread pool: %d threads)",
                 data->host, data->port, DEFAULT_THREAD_POOL_SIZE);
     return 0;
+}
+
+/**
+ * @brief Signals all client connections to stop.
+ *
+ * @param data Pointer to the TCP transport data
+ */
+static void tcp_transport_signal_clients_to_stop(mcp_tcp_transport_data_t* data) {
+    if (!data || !data->client_mutex) return;
+
+    mcp_mutex_lock(data->client_mutex);
+
+    for (int i = 0; i < data->max_clients; ++i) {
+        if (data->clients[i].state != CLIENT_STATE_INACTIVE) {
+            // Signal handler thread to stop
+            data->clients[i].should_stop = true;
+
+            // Shutdown the socket to unblock recv operations
+#ifdef _WIN32
+            shutdown(data->clients[i].socket, SD_BOTH);
+#else
+            shutdown(data->clients[i].socket, SHUT_RDWR);
+#endif
+
+            // Close the socket
+            if (data->clients[i].socket != MCP_INVALID_SOCKET) {
+                mcp_socket_close(data->clients[i].socket);
+                data->clients[i].socket = MCP_INVALID_SOCKET;
+            }
+
+            // Mark as inactive
+            data->clients[i].state = CLIENT_STATE_INACTIVE;
+
+            mcp_log_debug("Closed client connection %d", i);
+        }
+    }
+
+    mcp_mutex_unlock(data->client_mutex);
+}
+
+/**
+ * @brief Signals the accept thread to stop.
+ *
+ * @param data Pointer to the TCP transport data
+ */
+static void tcp_transport_signal_accept_thread(mcp_tcp_transport_data_t* data) {
+    if (!data) return;
+
+#ifdef _WIN32
+    // On Windows, close the listening socket to interrupt accept()
+    if (data->listen_socket != MCP_INVALID_SOCKET) {
+        shutdown(data->listen_socket, SD_BOTH);
+        mcp_socket_close(data->listen_socket);
+        data->listen_socket = MCP_INVALID_SOCKET;
+    }
+#else
+    // On POSIX systems, write to the stop pipe to interrupt select() or poll()
+    if (data->stop_pipe[1] != -1) {
+        char dummy = 's';
+        ssize_t written = write(data->stop_pipe[1], &dummy, 1);
+        if (written <= 0) {
+            mcp_log_warn("Failed to write to stop pipe: %s", strerror(errno));
+        }
+    }
+
+    // Also close the listening socket
+    if (data->listen_socket != MCP_INVALID_SOCKET) {
+        shutdown(data->listen_socket, SHUT_RDWR);
+        mcp_socket_close(data->listen_socket);
+        data->listen_socket = MCP_INVALID_SOCKET;
+    }
+#endif
 }
 
 /**
@@ -190,7 +281,6 @@ static int tcp_transport_start(
  * @return 0 on success, -1 on error
  */
 static int tcp_transport_stop(mcp_transport_t* transport) {
-    // Validate parameters
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_error("Invalid transport handle in stop function");
         return -1;
@@ -209,33 +299,8 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
     // Mark as not running to signal threads to exit
     data->running = false;
 
-    // Signal and close the listening socket/pipe to interrupt accept/select
-#ifdef _WIN32
-    // On Windows, close the listening socket to interrupt accept()
-    if (data->listen_socket != MCP_INVALID_SOCKET) {
-        // Try shutdown first to gracefully close any pending connections
-        shutdown(data->listen_socket, SD_BOTH);
-        mcp_socket_close(data->listen_socket);
-        data->listen_socket = MCP_INVALID_SOCKET;
-    }
-#else
-    // On POSIX systems, write to the stop pipe to interrupt select() or poll()
-    if (data->stop_pipe[1] != -1) {
-        char dummy = 's';
-        ssize_t written = write(data->stop_pipe[1], &dummy, 1);
-        if (written <= 0) {
-            mcp_log_warn("Failed to write to stop pipe: %s", strerror(errno));
-        }
-        // No need to close write end immediately, we'll close it later
-    }
-
-    // Also close the listening socket
-    if (data->listen_socket != MCP_INVALID_SOCKET) {
-        shutdown(data->listen_socket, SHUT_RDWR);
-        mcp_socket_close(data->listen_socket);
-        data->listen_socket = MCP_INVALID_SOCKET;
-    }
-#endif
+    // Signal the accept thread to stop
+    tcp_transport_signal_accept_thread(data);
 
     // Wait for the accept thread to finish
     if (data->accept_thread) {
@@ -257,50 +322,8 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
         }
     }
 
-    // Close the stop pipe (POSIX only)
-#ifndef _WIN32
-    if (data->stop_pipe[0] != -1) {
-        close(data->stop_pipe[0]);
-        data->stop_pipe[0] = -1;
-    }
-    if (data->stop_pipe[1] != -1) {
-        close(data->stop_pipe[1]);
-        data->stop_pipe[1] = -1;
-    }
-#endif
-
     // Signal all client connections to stop
-    if (data->client_mutex) {
-        mcp_mutex_lock(data->client_mutex);
-
-        for (int i = 0; i < data->max_clients; ++i) {
-            // Check if the slot is active
-            if (data->clients[i].state != CLIENT_STATE_INACTIVE) {
-                // Signal handler thread to stop
-                data->clients[i].should_stop = true;
-
-                // Shutdown the socket to unblock recv operations
-#ifdef _WIN32
-                shutdown(data->clients[i].socket, SD_BOTH);
-#else
-                shutdown(data->clients[i].socket, SHUT_RDWR);
-#endif
-
-                // Close the socket
-                if (data->clients[i].socket != MCP_INVALID_SOCKET) {
-                    mcp_socket_close(data->clients[i].socket);
-                    data->clients[i].socket = MCP_INVALID_SOCKET;
-                }
-
-                // Mark as inactive
-                data->clients[i].state = CLIENT_STATE_INACTIVE;
-
-                mcp_log_debug("Closed client connection %d", i);
-            }
-        }
-
-        mcp_mutex_unlock(data->client_mutex);
-    }
+    tcp_transport_signal_clients_to_stop(data);
 
     // Wait for all thread pool tasks to complete with a timeout
     if (data->thread_pool) {
@@ -317,18 +340,12 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
         data->thread_pool = NULL;
     }
 
-    // Clean up mutex
-    if (data->client_mutex) {
-        mcp_mutex_destroy(data->client_mutex);
-        data->client_mutex = NULL;
-    }
+    // Clean up resources
+    tcp_transport_cleanup_resources(data);
 
     // Log statistics
     mcp_log_info("TCP server transport stopped. Stats: %llu connections, %llu messages received, %llu messages sent",
                 data->stats.total_connections, data->stats.messages_received, data->stats.messages_sent);
-
-    // Cleanup socket library
-    mcp_socket_cleanup();
 
     return 0;
 }
@@ -345,7 +362,6 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
  * @param transport The transport handle to destroy
  */
 static void tcp_transport_destroy(mcp_transport_t* transport) {
-    // Validate parameters
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_debug("Invalid transport handle in destroy function");
         return;
@@ -359,39 +375,97 @@ static void tcp_transport_destroy(mcp_transport_t* transport) {
     tcp_transport_stop(transport);
 
     // Thread pool should already be destroyed in tcp_transport_stop
-    // This is just a safety check
     if (data->thread_pool) {
         mcp_log_warn("Thread pool still exists after stop, destroying it now");
         mcp_thread_pool_destroy(data->thread_pool);
         data->thread_pool = NULL;
     }
 
-    // Free the client array
+    // Free resources in a consistent order
     if (data->clients) {
         free(data->clients);
         data->clients = NULL;
     }
 
-    // Destroy the buffer pool
     if (data->buffer_pool) {
         mcp_buffer_pool_destroy(data->buffer_pool);
         data->buffer_pool = NULL;
     }
 
-    // Free the host string
     if (data->host) {
         free(data->host);
         data->host = NULL;
     }
 
-    // Free the transport data
     free(data);
     transport->transport_data = NULL;
-
-    // Free the transport struct itself
     free(transport);
 
     mcp_log_info("TCP server transport destroyed");
+}
+
+/**
+ * @brief Initializes client slots in the TCP transport data.
+ *
+ * @param data Pointer to the TCP transport data
+ * @return 0 on success, -1 on error
+ */
+static int tcp_transport_init_client_slots(mcp_tcp_transport_data_t* data) {
+    if (!data) return -1;
+
+    // Allocate client connection array
+    data->clients = (tcp_client_connection_t*)calloc(data->max_clients, sizeof(tcp_client_connection_t));
+    if (data->clients == NULL) {
+        mcp_log_error("Failed to allocate client array (%d slots)", data->max_clients);
+        return -1;
+    }
+
+    // Initialize all client slots
+    for (int i = 0; i < data->max_clients; i++) {
+        data->clients[i].state = CLIENT_STATE_INACTIVE;
+        data->clients[i].socket = MCP_INVALID_SOCKET;
+        data->clients[i].client_index = i;
+        data->clients[i].should_stop = false;
+        data->clients[i].last_activity_time = 0;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Frees resources allocated for a TCP transport.
+ *
+ * @param transport The transport handle to free
+ * @param tcp_data The TCP transport data to free
+ */
+static void tcp_transport_free_resources(mcp_transport_t* transport, mcp_tcp_transport_data_t* tcp_data) {
+    if (tcp_data) {
+        if (tcp_data->thread_pool) {
+            mcp_thread_pool_destroy(tcp_data->thread_pool);
+        }
+
+        if (tcp_data->buffer_pool) {
+            mcp_buffer_pool_destroy(tcp_data->buffer_pool);
+        }
+
+        if (tcp_data->client_mutex) {
+            mcp_mutex_destroy(tcp_data->client_mutex);
+        }
+
+        if (tcp_data->clients) {
+            free(tcp_data->clients);
+        }
+
+        if (tcp_data->host) {
+            free(tcp_data->host);
+        }
+
+        free(tcp_data);
+    }
+
+    if (transport) {
+        free(transport);
+    }
 }
 
 /**
@@ -411,23 +485,19 @@ mcp_transport_t* mcp_transport_tcp_create(
     uint16_t port,
     uint32_t idle_timeout_ms
 ) {
-    // Validate parameters
     if (host == NULL) {
         mcp_log_error("NULL host parameter in create function");
         return NULL;
     }
 
-    // Allocate transport structure
-    mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
+    // Allocate and initialize transport structure
+    mcp_transport_t* transport = (mcp_transport_t*)calloc(1, sizeof(mcp_transport_t));
     if (transport == NULL) {
         mcp_log_error("Failed to allocate transport structure");
         return NULL;
     }
 
-    // Zero-initialize the transport structure
-    memset(transport, 0, sizeof(mcp_transport_t));
-
-    // Allocate transport data structure
+    // Allocate and initialize transport data structure
     mcp_tcp_transport_data_t* tcp_data = (mcp_tcp_transport_data_t*)calloc(1, sizeof(mcp_tcp_transport_data_t));
     if (tcp_data == NULL) {
         mcp_log_error("Failed to allocate transport data structure");
@@ -439,8 +509,7 @@ mcp_transport_t* mcp_transport_tcp_create(
     tcp_data->host = mcp_strdup(host);
     if (tcp_data->host == NULL) {
         mcp_log_error("Failed to duplicate host string");
-        free(tcp_data);
-        free(transport);
+        tcp_transport_free_resources(transport, tcp_data);
         return NULL;
     }
 
@@ -448,10 +517,7 @@ mcp_transport_t* mcp_transport_tcp_create(
     tcp_data->port = port;
     tcp_data->idle_timeout_ms = idle_timeout_ms;
     tcp_data->listen_socket = MCP_INVALID_SOCKET;
-    tcp_data->running = false;
-    tcp_data->cleanup_running = false;
     tcp_data->max_clients = MAX_TCP_CLIENTS;
-    tcp_data->thread_pool = NULL;
 
 #ifndef _WIN32
     // Initialize pipe file descriptors (POSIX only)
@@ -462,33 +528,17 @@ mcp_transport_t* mcp_transport_tcp_create(
     // Initialize statistics
     tcp_stats_init(&tcp_data->stats);
 
-    // Allocate client connection array
-    tcp_data->clients = (tcp_client_connection_t*)calloc(tcp_data->max_clients, sizeof(tcp_client_connection_t));
-    if (tcp_data->clients == NULL) {
-        mcp_log_error("Failed to allocate client array (%d slots)", tcp_data->max_clients);
-        free(tcp_data->host);
-        free(tcp_data);
-        free(transport);
+    // Initialize client slots
+    if (tcp_transport_init_client_slots(tcp_data) != 0) {
+        tcp_transport_free_resources(transport, tcp_data);
         return NULL;
-    }
-
-    // Initialize all client slots
-    for (int i = 0; i < tcp_data->max_clients; i++) {
-        tcp_data->clients[i].state = CLIENT_STATE_INACTIVE;
-        tcp_data->clients[i].socket = MCP_INVALID_SOCKET;
-        tcp_data->clients[i].client_index = i;
-        tcp_data->clients[i].should_stop = false;
-        tcp_data->clients[i].last_activity_time = 0;
     }
 
     // Create the client mutex for thread synchronization
     tcp_data->client_mutex = mcp_mutex_create();
     if (tcp_data->client_mutex == NULL) {
         mcp_log_error("Failed to create client mutex");
-        free(tcp_data->clients);
-        free(tcp_data->host);
-        free(tcp_data);
-        free(transport);
+        tcp_transport_free_resources(transport, tcp_data);
         return NULL;
     }
 
@@ -497,11 +547,7 @@ mcp_transport_t* mcp_transport_tcp_create(
     if (tcp_data->buffer_pool == NULL) {
         mcp_log_error("Failed to create buffer pool (size: %d, count: %d)",
                      POOL_BUFFER_SIZE, POOL_NUM_BUFFERS);
-        mcp_mutex_destroy(tcp_data->client_mutex);
-        free(tcp_data->clients);
-        free(tcp_data->host);
-        free(tcp_data);
-        free(transport);
+        tcp_transport_free_resources(transport, tcp_data);
         return NULL;
     }
 
@@ -510,12 +556,7 @@ mcp_transport_t* mcp_transport_tcp_create(
     if (tcp_data->thread_pool == NULL) {
         mcp_log_error("Failed to create thread pool (size: %d, queue: %d)",
                      DEFAULT_THREAD_POOL_SIZE, CONNECTION_QUEUE_SIZE);
-        mcp_buffer_pool_destroy(tcp_data->buffer_pool);
-        mcp_mutex_destroy(tcp_data->client_mutex);
-        free(tcp_data->clients);
-        free(tcp_data->host);
-        free(tcp_data);
-        free(transport);
+        tcp_transport_free_resources(transport, tcp_data);
         return NULL;
     }
 
@@ -530,11 +571,6 @@ mcp_transport_t* mcp_transport_tcp_create(
 
     // Set transport data
     transport->transport_data = tcp_data;
-
-    // Initialize callbacks to NULL (will be set in start function)
-    transport->message_callback = NULL;
-    transport->callback_user_data = NULL;
-    transport->error_callback = NULL;
 
     mcp_log_info("Created TCP server transport on %s:%d (max clients: %d, thread pool: %d, idle timeout: %d ms)",
                 tcp_data->host, tcp_data->port, tcp_data->max_clients,
