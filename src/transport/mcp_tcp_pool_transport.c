@@ -45,18 +45,6 @@ static int tcp_pool_transport_start(
     mcp_transport_error_callback_t error_callback
 );
 
-static int tcp_pool_transport_stop(mcp_transport_t* transport);
-static void tcp_pool_transport_destroy(mcp_transport_t* transport);
-static int tcp_pool_transport_send(mcp_transport_t* transport, const void* data, size_t size);
-static int tcp_pool_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
-static int tcp_pool_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms);
-
-// Helper function declarations
-static socket_handle_t tcp_pool_get_connection(mcp_tcp_pool_transport_data_t* data);
-static int tcp_pool_process_response(mcp_transport_t* transport, socket_handle_t sock, char* response, uint32_t response_len);
-static void tcp_pool_handle_error(mcp_transport_t* transport, socket_handle_t sock, int error_code);
-static void tcp_pool_free_resources(mcp_tcp_pool_transport_data_t* data);
-
 /**
  * @brief Starts the TCP pool transport.
  *
