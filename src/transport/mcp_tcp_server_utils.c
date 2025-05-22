@@ -8,6 +8,7 @@
 #include "mcp_sync.h"
 #include "mcp_thread_local.h"
 #include "mcp_thread_pool.h"
+#include "mcp_socket_utils.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -36,7 +37,6 @@
  * @param arg Pointer to the client connection
  */
 void tcp_client_handler_wrapper(void* arg) {
-    // Validate parameters
     tcp_client_connection_t* client = (tcp_client_connection_t*)arg;
     if (!client) {
         mcp_log_error("Client handler wrapper called with NULL client");
@@ -64,7 +64,6 @@ void tcp_client_handler_wrapper(void* arg) {
  * @param client Pointer to the client connection
  */
 void tcp_update_client_activity(tcp_client_connection_t* client) {
-    // Validate parameters
     if (!client) {
         mcp_log_debug("tcp_update_client_activity called with NULL client");
         return;
@@ -84,7 +83,6 @@ void tcp_update_client_activity(tcp_client_connection_t* client) {
  * @return int Index of the free slot, or -1 if no free slot is available
  */
 int tcp_find_free_client_slot(mcp_tcp_transport_data_t* data) {
-    // Validate parameters
     if (!data || !data->clients) {
         mcp_log_error("Invalid data or clients array in find_free_client_slot");
         return -1;
@@ -114,7 +112,6 @@ int tcp_find_free_client_slot(mcp_tcp_transport_data_t* data) {
  * @param client_index Index of the client in the clients array
  */
 void tcp_close_client_connection(mcp_tcp_transport_data_t* data, int client_index) {
-    // Validate parameters
     if (!data) {
         mcp_log_error("NULL data parameter in close_client_connection");
         return;
@@ -186,7 +183,6 @@ void tcp_close_client_connection(mcp_tcp_transport_data_t* data, int client_inde
  * @return void* Always returns NULL
  */
 void* tcp_cleanup_thread_func(void* arg) {
-    // Validate parameters
     mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)arg;
     if (!data) {
         mcp_log_error("Cleanup thread started with NULL data");
@@ -218,11 +214,7 @@ void* tcp_cleanup_thread_func(void* arg) {
     // Main cleanup loop
     while (data->cleanup_running) {
         // Sleep for a short interval to be responsive to shutdown requests
-#ifdef _WIN32
-        Sleep(SLEEP_INTERVAL_MS);
-#else
-        usleep(SLEEP_INTERVAL_MS * 1000);  // Convert to microseconds
-#endif
+        mcp_sleep_ms(SLEEP_INTERVAL_MS);
 
         // Check if we should exit
         if (!data->cleanup_running) {
@@ -296,7 +288,6 @@ void* tcp_cleanup_thread_func(void* arg) {
  * @param stats Pointer to the statistics structure
  */
 void tcp_stats_init(tcp_server_stats_t* stats) {
-    // Validate parameters
     if (!stats) {
         mcp_log_error("NULL stats parameter in tcp_stats_init");
         return;
@@ -319,7 +310,6 @@ void tcp_stats_init(tcp_server_stats_t* stats) {
  * @param stats Pointer to the statistics structure
  */
 void tcp_stats_update_connection_accepted(tcp_server_stats_t* stats) {
-    // Validate parameters
     if (!stats) {
         mcp_log_error("NULL stats parameter in update_connection_accepted");
         return;
@@ -341,7 +331,6 @@ void tcp_stats_update_connection_accepted(tcp_server_stats_t* stats) {
  * @param stats Pointer to the statistics structure
  */
 void tcp_stats_update_connection_rejected(tcp_server_stats_t* stats) {
-    // Validate parameters
     if (!stats) {
         mcp_log_error("NULL stats parameter in update_connection_rejected");
         return;
@@ -363,7 +352,6 @@ void tcp_stats_update_connection_rejected(tcp_server_stats_t* stats) {
  * @param stats Pointer to the statistics structure
  */
 void tcp_stats_update_connection_closed(tcp_server_stats_t* stats) {
-    // Validate parameters
     if (!stats) {
         mcp_log_error("NULL stats parameter in update_connection_closed");
         return;
@@ -390,7 +378,6 @@ void tcp_stats_update_connection_closed(tcp_server_stats_t* stats) {
  * @param bytes Number of bytes received
  */
 void tcp_stats_update_message_received(tcp_server_stats_t* stats, size_t bytes) {
-    // Validate parameters
     if (!stats) {
         mcp_log_error("NULL stats parameter in update_message_received");
         return;
@@ -417,7 +404,6 @@ void tcp_stats_update_message_received(tcp_server_stats_t* stats, size_t bytes) 
  * @param bytes Number of bytes sent
  */
 void tcp_stats_update_message_sent(tcp_server_stats_t* stats, size_t bytes) {
-    // Validate parameters
     if (!stats) {
         mcp_log_error("NULL stats parameter in update_message_sent");
         return;
@@ -442,7 +428,6 @@ void tcp_stats_update_message_sent(tcp_server_stats_t* stats, size_t bytes) {
  * @param stats Pointer to the statistics structure
  */
 void tcp_stats_update_error(tcp_server_stats_t* stats) {
-    // Validate parameters
     if (!stats) {
         mcp_log_error("NULL stats parameter in update_error");
         return;
