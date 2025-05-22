@@ -322,7 +322,6 @@ static bool setup_static_file_mount(http_transport_data_t* data) {
  * @return mcp_transport_t* Newly created transport or NULL on failure
  */
 mcp_transport_t* mcp_transport_http_create(const mcp_http_config_t* config) {
-    // Validate input parameters
     if (config == NULL || config->host == NULL) {
         mcp_log_error("Invalid HTTP configuration");
         return NULL;
@@ -453,7 +452,6 @@ static int http_transport_start(mcp_transport_t* transport,
                               mcp_transport_message_callback_t message_callback,
                               void* user_data,
                               mcp_transport_error_callback_t error_callback) {
-    // Validate input parameters
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_error("Invalid parameters for http_transport_start");
         return -1;
@@ -542,7 +540,6 @@ static int http_transport_start(mcp_transport_t* transport,
  * @return int 0 on success, -1 on failure
  */
 static int http_transport_stop(mcp_transport_t* transport) {
-    // Validate input parameters
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_error("Invalid parameters for http_transport_stop");
         return -1;
@@ -596,7 +593,6 @@ static int http_transport_stop(mcp_transport_t* transport) {
  * @return int 0 on success, -1 on failure
  */
 static int http_transport_destroy(mcp_transport_t* transport) {
-    // Validate input parameters
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_error("Invalid parameters for http_transport_destroy");
         return -1;
@@ -631,7 +627,6 @@ static int http_transport_destroy(mcp_transport_t* transport) {
  * @return void* Always returns NULL
  */
 void* http_event_thread_func(void* arg) {
-    // Validate input parameters
     mcp_transport_t* transport = (mcp_transport_t*)arg;
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_error("Invalid parameters for http_event_thread_func");

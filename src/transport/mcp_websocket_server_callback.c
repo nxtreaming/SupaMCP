@@ -6,7 +6,6 @@ struct lws_protocols server_protocols[3];
 // Server callback function implementation
 int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                      void* user, void* in, size_t len) {
-    // Suppress unused parameter warning
     (void)user;
     struct lws_context* context = lws_get_context(wsi);
     ws_server_data_t* data = (ws_server_data_t*)lws_context_user(context);

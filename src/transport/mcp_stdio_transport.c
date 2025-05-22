@@ -406,7 +406,7 @@ static int wait_for_stdin_data(uint32_t timeout_ms) {
 }
 
 static int stdio_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
-    (void)transport;   // Unused in this function
+    (void)transport;
 
     if (data_out == NULL || size_out == NULL) {
         return -1;
@@ -589,7 +589,6 @@ static int stdio_transport_start(
  * @return 0 on success, -1 on error.
  */
 static int stdio_transport_stop(mcp_transport_t* transport) {
-    // Validate parameters
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_error("Invalid transport handle in stop function.");
         return -1;
@@ -637,7 +636,7 @@ static int stdio_transport_stop(mcp_transport_t* transport) {
  * @return 0 on success, -1 on error (e.g., write error, flush error).
  */
 static int stdio_transport_send(mcp_transport_t* transport, const void* payload_data, size_t payload_size) {
-    (void)transport; // Unused in this function
+    (void)transport;
 
     if (payload_data == NULL || payload_size == 0) {
         mcp_log_error("Invalid payload in send function.");
@@ -689,7 +688,7 @@ static int stdio_transport_send(mcp_transport_t* transport, const void* payload_
  * @return 0 on success, -1 on error (e.g., write error, flush error).
  */
 static int stdio_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
-    (void)transport; // Unused in this function
+    (void)transport;
 
     if (buffers == NULL || buffer_count == 0) {
         mcp_log_error("Invalid buffers in sendv function.");

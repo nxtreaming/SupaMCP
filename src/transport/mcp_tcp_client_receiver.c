@@ -47,7 +47,6 @@ static const char PING_MESSAGE_WITH_AUTH[] = "{\"jsonrpc\":\"2.0\",\"method\":\"
  * @return 0 on success, -1 on failure
  */
 static int send_ping_message(mcp_tcp_client_transport_data_t* data) {
-    // Validate parameters
     if (!data) {
         mcp_log_error("NULL data parameter in send_ping_message");
         return -1;
@@ -123,7 +122,6 @@ static int send_ping_message(mcp_tcp_client_transport_data_t* data) {
  * @return NULL on exit
  */
 void* tcp_client_receive_thread_func(void* arg) {
-    // Validate parameters
     if (!arg) {
         mcp_log_error("NULL argument to receive thread function");
         return NULL;

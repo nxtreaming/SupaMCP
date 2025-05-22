@@ -715,7 +715,6 @@ static bool read_http_body_unknown_length(socket_t sock, uint32_t timeout_ms,
 http_response_t* http_post_request(const char* url, const char* content_type,
                                   const void* data, size_t size,
                                   const char* api_key, uint32_t timeout_ms) {
-    // Validate input parameters
     if (url == NULL || data == NULL || size == 0 || content_type == NULL) {
         mcp_log_error("Invalid parameters for HTTP POST request");
         return NULL;

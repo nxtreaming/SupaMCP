@@ -49,7 +49,6 @@ static int is_within_bounds(const char* current, const char* start, size_t size)
  * @return uint64_t The extracted request ID, or 0 if not found or on error
  */
 uint64_t extract_request_id(const char* json_data, size_t size) {
-    // Validate input parameters
     if (json_data == NULL || size == 0) {
         mcp_log_error("Invalid parameters for extract_request_id");
         return DEFAULT_ID_VALUE;

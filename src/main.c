@@ -11,7 +11,6 @@
 #include <time.h>
 #include <errno.h>
 
-// On Windows, include winsock2.h before windows.h to avoid redefinition errors
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
@@ -488,7 +487,7 @@ static mcp_error_code_t server_tool_handler(
 
     (*content)[0] = item;
     *content_count = 1;
-    err_code = MCP_ERROR_NONE; // Success
+    err_code = MCP_ERROR_NONE;
 
 cleanup:
     // Free intermediate allocations on error

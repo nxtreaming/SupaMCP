@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Include OpenSSL headers */
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/crypto.h>

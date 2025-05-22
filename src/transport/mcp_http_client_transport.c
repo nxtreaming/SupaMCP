@@ -515,7 +515,6 @@ static char* clean_json_response(const char* response_data, size_t response_size
  * @return int 0 on success, -1 on failure
  */
 static int http_client_transport_send(mcp_transport_t* transport, const void* data, size_t size) {
-    // Validate input parameters
     if (transport == NULL || data == NULL || size == 0) {
         mcp_log_error("Invalid parameters for http_client_transport_send");
         return -1;
@@ -642,7 +641,6 @@ static int http_client_transport_send(mcp_transport_t* transport, const void* da
  * @return int 0 on success, -1 on failure
  */
 static int http_client_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
-    // Validate input parameters
     if (transport == NULL || buffers == NULL || buffer_count == 0) {
         mcp_log_error("Invalid parameters for http_client_transport_sendv");
         return -1;
@@ -725,7 +723,7 @@ static int http_client_transport_sendv(mcp_transport_t* transport, const mcp_buf
  * @return int 0 on success, -1 on failure
  */
 static int http_client_transport_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms) {
-    (void)timeout_ms; // Unused parameter - HTTP is synchronous
+    (void)timeout_ms;
 
     // Validate input parameters
     if (transport == NULL || data == NULL || size == NULL) {

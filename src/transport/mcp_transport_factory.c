@@ -12,12 +12,10 @@ mcp_transport_t* mcp_transport_factory_create(
     mcp_transport_type_t type,
     const mcp_transport_config_t* config
 ) {
-    // Input validation
     if (config == NULL && type != MCP_TRANSPORT_STDIO) {
-        return NULL; // Config is required for non-stdio transports
+        return NULL;
     }
 
-    // Create the appropriate transport based on the type
     switch (type) {
         case MCP_TRANSPORT_STDIO:
             return mcp_transport_stdio_create();

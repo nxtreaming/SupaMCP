@@ -65,21 +65,17 @@ static void replay_stored_events(struct lws* wsi, http_transport_data_t* data, h
  */
 int lws_root_handler(struct lws* wsi, enum lws_callback_reasons reason,
                     void* user, void* in, size_t len) {
-    (void)user; // Unused parameter
-    (void)len;  // Unused parameter
+    (void)user;
+    (void)len;
 
-    // Log the callback reason for debugging
     mcp_log_debug("Root handler: reason=%d", reason);
 
-    // Handle protocol initialization
     if (reason == LWS_CALLBACK_PROTOCOL_INIT) {
         mcp_log_info("Root handler: Protocol initialized");
-        return 0; // Return 0 to indicate success
+        return 0;
     }
 
-    // Handle HTTP requests
     if (reason == LWS_CALLBACK_HTTP) {
-        // Validate input parameters
         if (wsi == NULL || in == NULL) {
             mcp_log_error("Root handler: Invalid parameters");
             return -1;
@@ -175,7 +171,6 @@ int lws_root_handler(struct lws* wsi, enum lws_callback_reasons reason,
  */
 int add_cors_headers(struct lws* wsi, http_transport_data_t* data,
                     unsigned char** p, unsigned char* end) {
-    // Validate input parameters
     if (wsi == NULL || data == NULL || p == NULL || *p == NULL || end == NULL) {
         mcp_log_error("Invalid parameters for add_cors_headers");
         return -1;
@@ -462,7 +457,6 @@ static void replay_stored_events(struct lws* wsi, http_transport_data_t* data, h
  * @param data Transport data
  */
 void handle_sse_request(struct lws* wsi, http_transport_data_t* data) {
-    // Validate input parameters
     if (wsi == NULL || data == NULL) {
         mcp_log_error("Invalid parameters for handle_sse_request");
         return;

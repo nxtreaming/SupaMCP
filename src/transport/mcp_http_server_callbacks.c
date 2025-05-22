@@ -132,7 +132,6 @@ static int mcp_json_object_set_number(mcp_json_t* json, const char* name, double
  */
 static int lws_callback_http(struct lws* wsi, enum lws_callback_reasons reason,
                            void* user, void* in, size_t len) {
-    // Validate input parameters
     if (wsi == NULL) {
         mcp_log_error("Invalid WebSocket instance (NULL)");
         return -1;
@@ -252,9 +251,8 @@ struct lws_protocols http_protocols[] = {
 };
 
 static void handle_http_call_reason(struct lws* wsi, enum lws_callback_reasons reason) {
-    (void)wsi; // Unused parameter
+    (void)wsi;
 
-    // Log the callback reason
     const char* reason_str = "unknown";
     switch (reason) {
         case LWS_CALLBACK_HTTP: reason_str = "LWS_CALLBACK_HTTP"; break;
@@ -332,9 +330,8 @@ static void handle_http_call_reason(struct lws* wsi, enum lws_callback_reasons r
 
 // Handle WSI_CREATE callback
 static int handle_wsi_create(struct lws* wsi, http_session_data_t* session) {
-    (void)wsi; // Unused parameter
+    (void)wsi;
 
-    // Initialize session data
     if (session) {
         session->request_buffer = NULL;
         session->request_len = 0;
@@ -748,9 +745,8 @@ static char* extract_session_id_from_query(const char* query) {
  * @return int 0 on success, non-zero on failure
  */
 static int handle_http_body(struct lws* wsi, http_session_data_t* session, void* in, size_t len) {
-    (void)wsi; // Unused parameter
+    (void)wsi;
 
-    // Validate input parameters
     if (session == NULL || in == NULL || len == 0) {
         mcp_log_error("Invalid parameters for handle_http_body");
         return -1;
@@ -1362,7 +1358,6 @@ static int handle_http_404(struct lws* wsi, const char* uri) {
  * @return int 0 on success, non-zero on failure
  */
 static int handle_http_sse_request(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session) {
-    // Validate input parameters
     if (wsi == NULL || data == NULL || session == NULL) {
         mcp_log_error("Invalid parameters for handle_http_sse_request");
         return -1;
@@ -1475,7 +1470,6 @@ static int create_jsonrpc_error_response(int error_code, const char* error_messa
  * @return int 0 on success, non-zero on failure
  */
 static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session) {
-    // Validate input parameters
     if (wsi == NULL || data == NULL || session == NULL) {
         mcp_log_error("Invalid parameters for handle_http_body_completion");
         return -1;
@@ -1609,7 +1603,6 @@ static int handle_http_body_completion(struct lws* wsi, http_transport_data_t* d
  * @return int 0 on success, non-zero on failure
  */
 static int handle_closed_http(struct lws* wsi, http_transport_data_t* data, http_session_data_t* session) {
-    // Validate input parameters
     if (wsi == NULL || data == NULL || session == NULL) {
         mcp_log_error("Invalid parameters for handle_closed_http");
         return -1;
