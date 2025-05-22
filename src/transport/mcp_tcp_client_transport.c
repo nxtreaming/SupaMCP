@@ -14,7 +14,6 @@
 #include <errno.h>
 
 #ifdef _WIN32
-// Platform-specific headers are included via tcp_client_transport_internal.h
 #include <winsock2.h>
 #include <windows.h>
 #else
@@ -23,6 +22,75 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #endif
+
+// Constants
+#define CONNECT_TIMEOUT_MS 5000  // 5 seconds timeout for connection attempts
+
+/**
+ * @brief Validates a transport handle and returns the data structure.
+ *
+ * @param transport The transport handle to validate
+ * @param operation Name of the operation for error logging
+ * @return 0 if valid, -1 if invalid
+ */
+static int validate_transport(mcp_transport_t* transport, const char* operation) {
+    if (!transport || !transport->transport_data) {
+        mcp_log_error("Invalid transport handle in %s function",
+                     operation ? operation : "unknown");
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * @brief Establishes a connection to the server.
+ *
+ * @param data Pointer to the TCP client transport data
+ * @return 0 on success, -1 on error
+ */
+static int establish_connection(mcp_tcp_client_transport_data_t* data) {
+    if (!data || !data->host) {
+        mcp_log_error("Invalid data or host in establish_connection");
+        return -1;
+    }
+
+    // Update connection state to connecting
+    mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_CONNECTING);
+
+    // Establish connection with timeout
+    data->sock = mcp_socket_connect(data->host, data->port, CONNECT_TIMEOUT_MS);
+
+    if (data->sock == MCP_INVALID_SOCKET) {
+        mcp_log_error("Failed to connect to server %s:%u", data->host, data->port);
+        return -1;
+    }
+
+    // Connection successful
+    data->connected = true;
+    data->reconnect_attempt = 0; // Reset reconnection attempt counter
+    mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_CONNECTED);
+
+    mcp_log_info("Connected to %s:%u (socket %d)",
+                data->host, data->port, (int)data->sock);
+
+    return 0;
+}
+
+/**
+ * @brief Cleans up a connection, closing the socket and updating state.
+ *
+ * @param data Pointer to the TCP client transport data
+ */
+static void cleanup_connection(mcp_tcp_client_transport_data_t* data) {
+    if (!data) return;
+
+    if (data->sock != MCP_INVALID_SOCKET) {
+        mcp_socket_close(data->sock);
+        data->sock = MCP_INVALID_SOCKET;
+    }
+
+    data->connected = false;
+}
 
 /**
  * @brief Starts the TCP client transport.
@@ -43,9 +111,7 @@ static int tcp_client_transport_start(
     void* user_data,
     mcp_transport_error_callback_t error_callback
 ) {
-    // Validate parameters
-    if (!transport || !transport->transport_data) {
-        mcp_log_error("Invalid transport handle in start function");
+    if (validate_transport(transport, "start") != 0) {
         return -1;
     }
 
@@ -68,16 +134,8 @@ static int tcp_client_transport_start(
         return -1;
     }
 
-    // Update connection state to connecting
-    mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_CONNECTING);
-
-    // Establish connection with timeout (5 seconds)
-    const int CONNECT_TIMEOUT_MS = 5000;
-    data->sock = mcp_socket_connect(data->host, data->port, CONNECT_TIMEOUT_MS);
-
-    if (data->sock == MCP_INVALID_SOCKET) {
-        mcp_log_error("Failed to connect to server %s:%u", data->host, data->port);
-
+    // Establish connection
+    if (establish_connection(data) != 0) {
         // If reconnection is enabled, start reconnection process
         if (data->reconnect_enabled) {
             mcp_log_info("Starting reconnection process after initial connection failure");
@@ -85,8 +143,6 @@ static int tcp_client_transport_start(
 
             // Mark as running even though not connected yet
             data->running = true;
-
-            // Return success, reconnection will happen in background
             return 0;
         }
 
@@ -96,27 +152,16 @@ static int tcp_client_transport_start(
         return -1;
     }
 
-    // Connection successful
-    data->connected = true;
+    // Mark as running
     data->running = true;
-    data->reconnect_attempt = 0; // Reset reconnection attempt counter
-
-    // Update connection state to connected
-    mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_CONNECTED);
-
-    mcp_log_info("Connected to %s:%u (socket %d)",
-                data->host, data->port, (int)data->sock);
 
     // Start receiver thread
     if (mcp_thread_create(&data->receive_thread, tcp_client_receive_thread_func, transport) != 0) {
         mcp_log_error("Failed to create receiver thread");
 
         // Clean up on failure
-        mcp_socket_close(data->sock);
-        data->sock = MCP_INVALID_SOCKET;
-        data->connected = false;
+        cleanup_connection(data);
         data->running = false;
-
         mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_FAILED);
         mcp_socket_cleanup();
         return -1;
@@ -137,9 +182,7 @@ static int tcp_client_transport_start(
  * @return 0 on success, -1 on error
  */
 static int tcp_client_transport_stop(mcp_transport_t* transport) {
-    // Validate parameters
-    if (!transport || !transport->transport_data) {
-        mcp_log_error("Invalid transport handle in stop function");
+    if (validate_transport(transport, "stop") != 0) {
         return -1;
     }
 
@@ -187,19 +230,40 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
     mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
 
     // Close socket if not already closed by receiver
-    if (data->sock != MCP_INVALID_SOCKET) {
-        mcp_socket_close(data->sock);
-        data->sock = MCP_INVALID_SOCKET;
-    }
-
-    // Mark as disconnected
-    data->connected = false;
+    cleanup_connection(data);
 
     // Clean up socket library
     mcp_socket_cleanup();
 
     mcp_log_info("TCP client transport stopped successfully");
     return 0;
+}
+
+/**
+ * @brief Frees all resources allocated for a TCP client transport.
+ *
+ * @param data Pointer to the TCP client transport data
+ */
+static void free_transport_resources(mcp_tcp_client_transport_data_t* data) {
+    if (!data) return;
+
+    // Free host string
+    if (data->host) {
+        free(data->host);
+        data->host = NULL;
+    }
+
+    // Destroy buffer pool
+    if (data->buffer_pool) {
+        mcp_buffer_pool_destroy(data->buffer_pool);
+        data->buffer_pool = NULL;
+    }
+
+    // Destroy reconnection mutex
+    if (data->reconnect_mutex) {
+        mcp_mutex_destroy(data->reconnect_mutex);
+        data->reconnect_mutex = NULL;
+    }
 }
 
 /**
@@ -214,9 +278,7 @@ static int tcp_client_transport_stop(mcp_transport_t* transport) {
  * @return Always returns -1 to indicate error
  */
 static int handle_send_error(mcp_transport_t* transport, const char* error_msg) {
-    // Validate parameters
-    if (!transport || !transport->transport_data) {
-        mcp_log_error("Invalid transport handle in handle_send_error");
+    if (validate_transport(transport, "handle_send_error") != 0) {
         return -1;
     }
 
@@ -257,9 +319,7 @@ static int handle_send_error(mcp_transport_t* transport, const char* error_msg) 
  * @return 0 if ready, -1 if not ready
  */
 static int check_transport_ready(mcp_transport_t* transport, const char* operation_name) {
-    // Validate parameters
-    if (!transport || !transport->transport_data) {
-        mcp_log_error("Invalid transport handle in check_transport_ready");
+    if (validate_transport(transport, "check_transport_ready") != 0) {
         return -1;
     }
 
@@ -269,12 +329,13 @@ static int check_transport_ready(mcp_transport_t* transport, const char* operati
 
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
-    // Check all conditions for transport readiness
+    // Check if transport is running
     if (!data->running) {
         mcp_log_error("Transport not running for %s operation", operation_name);
         return -1;
     }
 
+    // Check if transport is connected
     if (!data->connected) {
         mcp_log_error("Transport not connected for %s operation", operation_name);
 
@@ -287,6 +348,7 @@ static int check_transport_ready(mcp_transport_t* transport, const char* operati
         return -1;
     }
 
+    // Check if socket is valid
     if (data->sock == MCP_INVALID_SOCKET) {
         mcp_log_error("Invalid socket for %s operation", operation_name);
 
@@ -322,9 +384,7 @@ static int check_transport_ready(mcp_transport_t* transport, const char* operati
  * @return 0 on success, -1 on error
  */
 static int tcp_client_transport_send(mcp_transport_t* transport, const void* data_buf, size_t size) {
-    // Validate parameters
-    if (!transport || !transport->transport_data) {
-        mcp_log_error("Invalid transport handle in send function");
+    if (validate_transport(transport, "send") != 0) {
         return -1;
     }
 
@@ -371,9 +431,7 @@ static int tcp_client_transport_send(mcp_transport_t* transport, const void* dat
  * @return 0 on success, -1 on error
  */
 static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
-    // Validate parameters
-    if (!transport || !transport->transport_data) {
-        mcp_log_error("Invalid transport handle in sendv function");
+    if (validate_transport(transport, "sendv") != 0) {
         return -1;
     }
 
@@ -404,6 +462,8 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
         total_bytes += buffers[i].size;
     }
 
+    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
+
     // Convert mcp_buffer_t to platform-specific mcp_iovec_t
     mcp_iovec_t* iov = (mcp_iovec_t*)malloc(buffer_count * sizeof(mcp_iovec_t));
     if (!iov) {
@@ -421,8 +481,6 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
         iov[i].iov_len = buffers[i].size;
 #endif
     }
-
-    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
     // Log send operation at debug level
     mcp_log_debug("Sending %zu bytes in %zu buffers to %s:%u",
@@ -443,6 +501,44 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
 }
 
 /**
+ * @brief Handles errors during receive operations.
+ *
+ * @param transport The transport handle
+ * @param last_error The error code
+ * @param timeout_ms The timeout value for logging
+ * @return -1 for general errors, -2 for timeouts
+ */
+static int handle_receive_error(mcp_transport_t* transport, int last_error, uint32_t timeout_ms) {
+    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
+
+    // Check if this is a timeout
+    if (last_error == EAGAIN || last_error == EWOULDBLOCK || last_error == ETIMEDOUT) {
+        mcp_log_debug("Receive operation timed out after %u ms", timeout_ms);
+        return -2; // Special return code for timeout
+    }
+
+    // Handle connection errors
+    if (last_error == ECONNRESET || last_error == ENOTCONN || last_error == EPIPE) {
+        mcp_log_error("Connection lost during receive: %d", last_error);
+
+        // Connection lost, mark as disconnected
+        data->connected = false;
+        mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
+
+        // If reconnection is enabled, start reconnection process
+        if (data->reconnect_enabled) {
+            mcp_log_info("Starting reconnection process after connection loss");
+            start_reconnection_process(transport);
+        }
+    } else {
+        // Other errors
+        mcp_log_error("Failed to receive message: error code %d", last_error);
+    }
+
+    return -1;
+}
+
+/**
  * @brief Implementation for the synchronous receive function.
  *
  * This function attempts to receive a message from the socket with a timeout.
@@ -456,9 +552,7 @@ static int tcp_client_transport_sendv(mcp_transport_t* transport, const mcp_buff
  * @return 0 on success, -1 on error, -2 on timeout
  */
 static int tcp_client_transport_receive(mcp_transport_t* transport, char** data_out, size_t* size_out, uint32_t timeout_ms) {
-    // Validate parameters
-    if (!transport || !transport->transport_data) {
-        mcp_log_error("Invalid transport handle in receive function");
+    if (validate_transport(transport, "receive") != 0) {
         return -1;
     }
 
@@ -506,32 +600,7 @@ static int tcp_client_transport_receive(mcp_transport_t* transport, char** data_
     // Handle receive errors
     if (frame_result != 0) {
         int last_error = mcp_socket_get_lasterror();
-
-        // Check if this is a timeout
-        if (last_error == EAGAIN || last_error == EWOULDBLOCK || last_error == ETIMEDOUT) {
-            mcp_log_debug("Receive operation timed out after %u ms", timeout_ms);
-            return -2; // Special return code for timeout
-        }
-
-        // Handle connection errors
-        if (last_error == ECONNRESET || last_error == ENOTCONN || last_error == EPIPE) {
-            mcp_log_error("Connection lost during receive: %d", last_error);
-
-            // Connection lost, mark as disconnected
-            data->connected = false;
-            mcp_tcp_client_update_connection_state(data, MCP_CONNECTION_STATE_DISCONNECTED);
-
-            // If reconnection is enabled, start reconnection process
-            if (data->reconnect_enabled) {
-                mcp_log_info("Starting reconnection process after connection loss");
-                start_reconnection_process(transport);
-            }
-        } else {
-            // Other errors
-            mcp_log_error("Failed to receive message: %d (error: %d)", frame_result, last_error);
-        }
-
-        return -1;
+        return handle_receive_error(transport, last_error, timeout_ms);
     }
 
     // Successfully received a message
@@ -553,9 +622,7 @@ static int tcp_client_transport_receive(mcp_transport_t* transport, char** data_
  * @param transport The transport handle to destroy
  */
 static void tcp_client_transport_destroy(mcp_transport_t* transport) {
-    // Validate parameters
-    if (!transport || !transport->transport_data) {
-        mcp_log_debug("Invalid transport handle in destroy function");
+    if (validate_transport(transport, "destroy") != 0) {
         return;
     }
 
@@ -566,23 +633,8 @@ static void tcp_client_transport_destroy(mcp_transport_t* transport) {
 
     mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)transport->transport_data;
 
-    // Free host string
-    if (data->host) {
-        free(data->host);
-        data->host = NULL;
-    }
-
-    // Destroy buffer pool
-    if (data->buffer_pool) {
-        mcp_buffer_pool_destroy(data->buffer_pool);
-        data->buffer_pool = NULL;
-    }
-
-    // Destroy reconnection mutex
-    if (data->reconnect_mutex) {
-        mcp_mutex_destroy(data->reconnect_mutex);
-        data->reconnect_mutex = NULL;
-    }
+    // Free all resources
+    free_transport_resources(data);
 
     // Free transport data
     free(data);
@@ -610,48 +662,32 @@ mcp_transport_t* mcp_transport_tcp_client_create(const char* host, uint16_t port
  * @param reconnect_config Reconnection configuration, or NULL for defaults
  * @return A new transport handle, or NULL on error
  */
-mcp_transport_t* mcp_tcp_client_create_reconnect(
+/**
+ * @brief Initializes a TCP client transport data structure.
+ *
+ * @param data Pointer to the TCP client transport data
+ * @param host The host to connect to
+ * @param port The port to connect to
+ * @param reconnect_config Reconnection configuration, or NULL for defaults
+ * @param transport Pointer to the transport structure
+ * @return 0 on success, -1 on error
+ */
+static int init_tcp_client_data(
+    mcp_tcp_client_transport_data_t* data,
     const char* host,
     uint16_t port,
-    const mcp_reconnect_config_t* reconnect_config
+    const mcp_reconnect_config_t* reconnect_config,
+    mcp_transport_t* transport
 ) {
-    // Validate input parameters
-    if (!host) {
-        mcp_log_error("NULL host parameter in create function");
-        return NULL;
-    }
-
-    // Check for invalid port values (port 0 is reserved)
-    if (port == 0) {
-        mcp_log_error("Invalid port value: %u", port);
-        return NULL;
-    }
-
-    // Allocate transport structure
-    mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
-    if (!transport) {
-        mcp_log_error("Failed to allocate transport structure");
-        return NULL;
-    }
-
-    // Zero-initialize the transport structure
-    memset(transport, 0, sizeof(mcp_transport_t));
-
-    // Allocate transport data structure
-    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)calloc(1, sizeof(mcp_tcp_client_transport_data_t));
-    if (!data) {
-        mcp_log_error("Failed to allocate transport data structure");
-        free(transport);
-        return NULL;
+    if (!data || !host || !transport) {
+        return -1;
     }
 
     // Duplicate host string
     data->host = mcp_strdup(host);
     if (!data->host) {
         mcp_log_error("Failed to duplicate host string");
-        free(data);
-        free(transport);
-        return NULL;
+        return -1;
     }
 
     // Initialize basic properties
@@ -682,9 +718,8 @@ mcp_transport_t* mcp_tcp_client_create_reconnect(
     if (data->reconnect_mutex == NULL) {
         mcp_log_error("Failed to create reconnection mutex");
         free(data->host);
-        free(data);
-        free(transport);
-        return NULL;
+        data->host = NULL;
+        return -1;
     }
 
     // Create buffer pool for efficient memory management
@@ -692,7 +727,48 @@ mcp_transport_t* mcp_tcp_client_create_reconnect(
     if (data->buffer_pool == NULL) {
         mcp_log_error("Failed to create buffer pool");
         mcp_mutex_destroy(data->reconnect_mutex);
+        data->reconnect_mutex = NULL;
         free(data->host);
+        data->host = NULL;
+        return -1;
+    }
+
+    return 0;
+}
+
+mcp_transport_t* mcp_tcp_client_create_reconnect(
+    const char* host,
+    uint16_t port,
+    const mcp_reconnect_config_t* reconnect_config
+) {
+    if (!host) {
+        mcp_log_error("NULL host parameter in create function");
+        return NULL;
+    }
+
+    // Check for invalid port values (port 0 is reserved)
+    if (port == 0) {
+        mcp_log_error("Invalid port value: %u", port);
+        return NULL;
+    }
+
+    // Allocate transport structure
+    mcp_transport_t* transport = (mcp_transport_t*)calloc(1, sizeof(mcp_transport_t));
+    if (!transport) {
+        mcp_log_error("Failed to allocate transport structure");
+        return NULL;
+    }
+
+    // Allocate transport data structure
+    mcp_tcp_client_transport_data_t* data = (mcp_tcp_client_transport_data_t*)calloc(1, sizeof(mcp_tcp_client_transport_data_t));
+    if (!data) {
+        mcp_log_error("Failed to allocate transport data structure");
+        free(transport);
+        return NULL;
+    }
+
+    // Initialize transport data
+    if (init_tcp_client_data(data, host, port, reconnect_config, transport) != 0) {
         free(data);
         free(transport);
         return NULL;
