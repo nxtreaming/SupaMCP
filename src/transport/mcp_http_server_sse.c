@@ -93,13 +93,11 @@ static bool allocate_event_fields(int index, http_transport_data_t* data,
         return false;
     }
 
-    // Initialize all fields to NULL to simplify cleanup on failure
     data->stored_events[index].id = NULL;
     data->stored_events[index].event_type = NULL;
     data->stored_events[index].data = NULL;
     data->stored_events[index].timestamp = 0;
 
-    // Store the event ID
     data->stored_events[index].id = mcp_strdup(event_id);
     if (data->stored_events[index].id == NULL) {
         mcp_log_error("Failed to allocate memory for event ID");
@@ -115,19 +113,16 @@ static bool allocate_event_fields(int index, http_transport_data_t* data,
         }
     }
 
-    // Store the event data
     data->stored_events[index].data = mcp_strdup(event_data);
     if (data->stored_events[index].data == NULL) {
         mcp_log_error("Failed to allocate memory for event data");
         goto cleanup_error;
     }
 
-    // Store the timestamp
     data->stored_events[index].timestamp = time(NULL);
     return true;
 
 cleanup_error:
-    // Free any allocated memory on failure
     free_stored_event(&data->stored_events[index]);
     return false;
 }
@@ -149,22 +144,18 @@ void store_sse_event(http_transport_data_t* data, const char* event, const char*
         return;
     }
 
-    // Validate event data
     if (!is_valid_sse_text(event_data)) {
         mcp_log_error("Invalid characters in SSE event data");
         return;
     }
 
-    // Validate event type if provided
     if (event != NULL && !is_valid_sse_text(event)) {
         mcp_log_error("Invalid characters in SSE event type");
         return;
     }
 
-    // Lock the event mutex to safely modify the circular buffer
     mcp_mutex_lock(data->event_mutex);
 
-    // Generate sequential event ID
     int event_id = data->next_event_id++;
 
     // Format the event ID as a string
@@ -292,7 +283,6 @@ void send_sse_heartbeat(http_transport_data_t* data) {
         // Send a comment as a heartbeat (using SSE comment format)
         // This will not trigger an event in the client but keeps the connection alive
         int result = lws_write_http(wsi, heartbeat_msg, msg_len);
-
         if (result < 0) {
             mcp_log_warn("Failed to send heartbeat to SSE client %d", i);
         } else {
@@ -359,7 +349,6 @@ static bool session_matches_id(http_session_data_t* session, const char* session
         return false;
     }
 
-    // Validate client session ID
     if (!is_valid_sse_text(session->session_id)) {
         mcp_log_warn("Client has invalid characters in session ID");
         return false;
@@ -376,7 +365,6 @@ static bool session_matches_id(http_session_data_t* session, const char* session
         return true;
     }
 
-    // Log mismatch for debugging purposes
     mcp_log_debug("Session ID mismatch - requested: %s, client has: %s",
                  session_id, session->session_id);
     return false;
@@ -435,7 +423,6 @@ static bool write_sse_field(struct lws* wsi, const char* field, const char* valu
         return false;
     }
 
-    // Validate field value if provided
     if (value && !is_valid_sse_text(value)) {
         mcp_log_error("Invalid characters in SSE field value");
         return false;
@@ -574,19 +561,16 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
         return -1;
     }
 
-    // Validate event data
     if (!is_valid_sse_text(data)) {
         mcp_log_error("Invalid characters in SSE event data");
         return -1;
     }
 
-    // Validate event type if provided
     if (event != NULL && !is_valid_sse_text(event)) {
         mcp_log_error("Invalid characters in SSE event type");
         return -1;
     }
 
-    // Validate session ID if provided
     if (session_id != NULL && !is_valid_sse_text(session_id)) {
         mcp_log_error("Invalid characters in SSE session ID");
         return -1;
@@ -631,7 +615,7 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
     for (int i = 0; i < transport_data->sse_client_count; i++) {
         struct lws* wsi = transport_data->sse_clients[i];
         if (wsi == NULL) {
-            continue; // Skip invalid client entries
+            continue;
         }
 
         // Get session data to check for event filter and session ID
@@ -684,5 +668,5 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
                     success_count, matched_clients);
     }
 
-    return 0; // Success
+    return 0;
 }
