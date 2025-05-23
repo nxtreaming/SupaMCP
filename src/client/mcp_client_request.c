@@ -44,7 +44,6 @@ int mcp_client_send_and_wait(
     mcp_error_code_t* error_code,
     char** error_message
 ) {
-    // Fast validation of input parameters
     if (client == NULL || request_json == NULL || result == NULL ||
         error_code == NULL || error_message == NULL) {
         mcp_log_error("Invalid parameters for send_and_wait");
@@ -426,7 +425,6 @@ int mcp_client_send_request(
     mcp_error_code_t* error_code,
     char** error_message
 ) {
-    // Fast validation of input parameters
     if (client == NULL || method == NULL || result == NULL ||
         error_code == NULL || error_message == NULL) {
         mcp_log_error("Invalid parameters for send_request");

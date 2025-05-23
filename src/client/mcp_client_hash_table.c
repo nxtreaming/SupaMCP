@@ -68,7 +68,6 @@ pending_request_entry_t* mcp_client_find_pending_request_entry(
     uint64_t id,
     bool find_empty_for_insert
 ) {
-    // Fast validation - ID 0 is reserved for empty slots
     if (id == 0 || client == NULL || client->pending_requests_table == NULL) {
         return NULL;
     }
@@ -162,7 +161,6 @@ int mcp_client_add_pending_request_entry(
     uint64_t id,
     pending_request_t* request
 ) {
-    // Fast validation of input parameters
     if (client == NULL || request == NULL || id == 0) {
         mcp_log_error("Invalid parameters for adding pending request");
         return -1;
@@ -244,7 +242,6 @@ int mcp_client_add_pending_request_entry(
  * @return 0 on success, -1 if not found or already invalid
  */
 int mcp_client_remove_pending_request_entry(mcp_client_t* client, uint64_t id) {
-    // Fast validation of input parameters
     if (client == NULL || id == 0 || client->pending_requests_table == NULL) {
         return -1;
     }
@@ -303,7 +300,6 @@ int mcp_client_remove_pending_request_entry(mcp_client_t* client, uint64_t id) {
  * @return 0 on success, -1 on failure
  */
 static int resize_pending_requests_table(mcp_client_t* client) {
-    // Fast validation
     if (client == NULL || client->pending_requests_table == NULL) {
         return -1;
     }

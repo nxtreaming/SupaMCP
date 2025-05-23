@@ -27,7 +27,6 @@ char* handle_ping_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_re
     (void)arena;
     (void)auth_context;
 
-    // Basic parameter validation
     if (server == NULL || request == NULL || error_code == NULL) {
         if (error_code)
             *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -370,7 +369,6 @@ char* handle_message(mcp_server_t* server, const void* data, size_t size, int* e
  * @return A malloc'd JSON string response (success or error response).
  */
 char* handle_request(mcp_server_t* server, mcp_arena_t* arena, const mcp_request_t* request, const mcp_auth_context_t* auth_context, int* error_code) {
-    // Basic parameter validation
     if (server == NULL || request == NULL || error_code == NULL) {
         if(error_code)
             *error_code = MCP_ERROR_INVALID_PARAMS;

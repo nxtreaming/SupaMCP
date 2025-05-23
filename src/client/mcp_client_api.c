@@ -112,7 +112,6 @@ int mcp_client_list_resources(
     mcp_resource_t*** resources,
     size_t* count
 ) {
-    // Fast validation of input parameters
     if (client == NULL || resources == NULL || count == NULL) {
         mcp_log_error("Invalid parameters for list_resources");
         return -1;
@@ -224,7 +223,6 @@ int mcp_client_list_resource_templates(
     mcp_resource_template_t*** templates,
     size_t* count
 ) {
-    // Fast validation of input parameters
     if (client == NULL || templates == NULL || count == NULL) {
         mcp_log_error("Invalid parameters for list_resource_templates");
         return -1;
@@ -334,7 +332,6 @@ int mcp_client_read_resource(
     mcp_content_item_t*** content,
     size_t* count
 ) {
-    // Fast validation of input parameters
     if (client == NULL || uri == NULL || content == NULL || count == NULL) {
         mcp_log_error("Invalid parameters for read_resource");
         return -1;
@@ -467,7 +464,6 @@ int mcp_client_list_tools(
     mcp_tool_t*** tools,
     size_t* count
 ) {
-    // Fast validation of input parameters
     if (client == NULL || tools == NULL || count == NULL) {
         mcp_log_error("Invalid parameters for list_tools");
         return -1;
@@ -581,7 +577,6 @@ int mcp_client_call_tool(
     size_t* count,
     bool* is_error
 ) {
-    // Fast validation of input parameters
     if (client == NULL || name == NULL || content == NULL || count == NULL || is_error == NULL) {
         mcp_log_error("Invalid parameters for call_tool");
         return -1;

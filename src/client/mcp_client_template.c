@@ -31,7 +31,6 @@ int mcp_client_expand_template(
     const char* params_json,
     char** expanded_uri
 ) {
-    // Fast validation of input parameters
     if (client == NULL || template_uri == NULL || params_json == NULL || expanded_uri == NULL) {
         mcp_log_error("Invalid parameters for template expansion");
         return -1;
@@ -107,7 +106,6 @@ int mcp_client_read_resource_with_template(
     mcp_content_item_t*** content,
     size_t* count
 ) {
-    // Fast validation of input parameters
     if (client == NULL || template_uri == NULL || params_json == NULL ||
         content == NULL || count == NULL) {
         mcp_log_error("Invalid parameters for reading resource with template");
@@ -171,7 +169,6 @@ int mcp_client_read_resources_with_template_batch(
     size_t** count_array,
     int** result_array
 ) {
-    // Fast validation of input parameters
     if (client == NULL || template_uri == NULL || params_json_array == NULL ||
         params_count == 0 || content_array == NULL || count_array == NULL ||
         result_array == NULL) {
@@ -259,7 +256,6 @@ void mcp_client_free_batch_resources(
     int* result_array,
     size_t params_count
 ) {
-    // Fast validation of input parameters
     if (content_array == NULL || count_array == NULL || result_array == NULL || params_count == 0) {
         mcp_log_warn("Invalid parameters for freeing batch resources");
         return;

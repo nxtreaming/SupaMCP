@@ -19,7 +19,6 @@ char* handle_get_performance_metrics_request(mcp_server_t* server, mcp_arena_t* 
                                            int* error_code) {
     PROFILE_START("handle_get_performance_metrics");
 
-    // Basic parameter validation
     if (server == NULL || request == NULL || error_code == NULL) {
         if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
         PROFILE_END("handle_get_performance_metrics");
@@ -78,7 +77,6 @@ char* handle_reset_performance_metrics_request(mcp_server_t* server, mcp_arena_t
                                              int* error_code) {
     PROFILE_START("handle_reset_performance_metrics");
 
-    // Basic parameter validation
     if (server == NULL || request == NULL || error_code == NULL) {
         if (error_code) *error_code = MCP_ERROR_INVALID_PARAMS;
         PROFILE_END("handle_reset_performance_metrics");

@@ -273,7 +273,6 @@ void mcp_client_transport_error_callback(void* user_data, int transport_error_co
  * @return NULL (client callback never sends a response back)
  */
 char* mcp_client_receive_callback(void* user_data, const void* data, size_t size, int* error_code) {
-    // Fast validation of input parameters
     if (user_data == NULL || data == NULL || size == 0 || error_code == NULL) {
         if (error_code) {
             *error_code = MCP_ERROR_INVALID_PARAMS;
@@ -395,7 +394,6 @@ char* mcp_client_receive_callback(void* user_data, const void* data, size_t size
  * @return 1 if connected, 0 if not connected, -1 on error.
  */
 int mcp_client_is_connected(mcp_client_t* client) {
-    // Fast validation of client and transport
     if (client == NULL || client->transport == NULL) {
         return -1;
     }

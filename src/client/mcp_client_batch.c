@@ -27,7 +27,6 @@
  * @param count Number of responses in the array.
  */
 void mcp_client_free_batch_responses(mcp_batch_response_t* responses, size_t count) {
-    // Fast validation of input parameters
     if (responses == NULL || count == 0) {
         return;
     }
@@ -81,7 +80,6 @@ int mcp_client_send_batch_request(
     mcp_batch_response_t** responses,
     size_t* response_count
 ) {
-    // Fast validation of input parameters
     if (client == NULL || requests == NULL || request_count == 0 ||
         responses == NULL || response_count == NULL) {
         mcp_log_error("Invalid parameters for batch request");
@@ -303,7 +301,6 @@ int mcp_client_send_batch_request_optimized(
     mcp_batch_response_t** responses,
     size_t* response_count
 ) {
-    // Fast validation of input parameters
     if (client == NULL || requests == NULL || request_count == 0 ||
         responses == NULL || response_count == NULL) {
         mcp_log_error("Invalid parameters for optimized batch request");
