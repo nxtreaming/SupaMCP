@@ -83,33 +83,31 @@ static bool parse_tcp_address(const char* address, char* host_buf, size_t host_b
     }
 
     if (strncmp(address, "tcp://", 6) != 0) {
-        return false; // Not a TCP address
+        return false;
     }
 
     const char* host_start = address + 6;
-    const char* port_sep = strrchr(host_start, ':'); // Find the last colon
+    const char* port_sep = strrchr(host_start, ':');
 
     if (!port_sep || port_sep == host_start) {
-        return false; // No port separator or empty host
+        return false;
     }
 
     size_t host_len = port_sep - host_start;
     if (host_len >= host_buf_size) {
-        return false; // Host buffer too small
+        return false;
     }
 
-    // Copy host
     memcpy(host_buf, host_start, host_len);
     host_buf[host_len] = '\0';
 
-    // Parse port
     const char* port_start = port_sep + 1;
     char* end_ptr = NULL;
     long parsed_port = strtol(port_start, &end_ptr, 10);
 
     // Check if parsing consumed the whole port string and if port is valid
     if (*end_ptr != '\0' || parsed_port <= 0 || parsed_port > 65535) {
-        return false; // Invalid port number
+        return false;
     }
 
     *port = (int)parsed_port;
@@ -157,7 +155,6 @@ static mcp_error_code_t server_resource_handler(
         char greeting[256];
         snprintf(greeting, sizeof(greeting), "Hello, %s!", resource_name);
         data_copy = mcp_strdup(greeting);
-
         if (!data_copy) {
             mcp_log_warn("Unknown resource name: %s", resource_name);
             *error_message = mcp_strdup("Resource not found.");
@@ -191,13 +188,12 @@ static mcp_error_code_t server_resource_handler(
         err_code = MCP_ERROR_INTERNAL_ERROR;
         goto cleanup;
     }
-
     // Populate the item
     item->type = MCP_CONTENT_TYPE_TEXT;
     item->mime_type = mcp_strdup("text/plain");
-    item->data = data_copy; // Transfer ownership
-    item->data_size = strlen(data_copy) + 1; // Include null terminator
-    data_copy = NULL; // Avoid double free
+    item->data = data_copy;
+    item->data_size = strlen(data_copy) + 1;
+    data_copy = NULL;
 
     if (!item->mime_type) {
         mcp_log_error("Failed to allocate mime type for resource: %s", resource_name);
@@ -275,11 +271,11 @@ static mcp_error_code_t server_tool_handler(
     // Dump the entire params object for debugging
     char* params_json = mcp_json_stringify(params);
     mcp_log_debug("Tool '%s': Raw params: %s", name, params_json ? params_json : "NULL");
-    if (params_json) free(params_json);
+    if (params_json)
+        free(params_json);
 
     // First try to get text directly from params
     mcp_json_t* text_node = mcp_json_object_get_property(params, "text");
-
     // If text not found directly, check for arguments object (for compatibility with different call formats)
     mcp_json_t* args = NULL;
     if (text_node == NULL) {
@@ -294,7 +290,6 @@ static mcp_error_code_t server_tool_handler(
             if (session_id_node != NULL) {
                 mcp_log_debug("Tool '%s': Found 'session_id' property in arguments, type: %d",
                              name, mcp_json_get_type(session_id_node));
-
                 if (mcp_json_get_type(session_id_node) == MCP_JSON_STRING) {
                     mcp_json_get_string(session_id_node, &session_id);
                     mcp_log_info("Tool '%s': Found session_id in arguments: %s",
@@ -316,7 +311,6 @@ static mcp_error_code_t server_tool_handler(
         if (session_id_node != NULL) {
             mcp_log_debug("Tool '%s': Found 'session_id' property directly in params, type: %d",
                          name, mcp_json_get_type(session_id_node));
-
             if (mcp_json_get_type(session_id_node) == MCP_JSON_STRING) {
                 mcp_json_get_string(session_id_node, &session_id);
                 mcp_log_info("Tool '%s': Found session_id directly in params: %s",
@@ -350,9 +344,6 @@ static mcp_error_code_t server_tool_handler(
     if (strcmp(name, "echo") == 0) {
         result_data = mcp_strdup(input_text);
         mcp_log_info("Echo tool called with text: %s", input_text);
-
-        // Send an SSE event with the echoed text if using HTTP transport
-        mcp_log_info("Checking transport protocol for SSE event...");
         if (server && server->transport) {
             mcp_transport_protocol_t protocol = mcp_transport_get_protocol(server->transport);
             mcp_log_info("Transport protocol: %d (HTTP=%d)", protocol, MCP_TRANSPORT_PROTOCOL_HTTP);
@@ -380,11 +371,6 @@ static mcp_error_code_t server_tool_handler(
     } else if (strcmp(name, "reverse") == 0) {
         // UTF-8 aware string reversal
         size_t len = strlen(input_text);
-
-        // First, count the number of UTF-8 characters
-        size_t char_count = 0;
-        size_t byte_pos = 0;
-
         // Array to store the byte positions of each character - use thread cache for better performance
         size_t* char_positions = (size_t*)mcp_thread_cache_alloc((len + 1) * sizeof(size_t));
         if (!char_positions) {
@@ -394,6 +380,10 @@ static mcp_error_code_t server_tool_handler(
             err_code = MCP_ERROR_INTERNAL_ERROR;
             goto cleanup;
         }
+
+        // First, count the number of UTF-8 characters
+        size_t char_count = 0;
+        size_t byte_pos = 0;
 
         // Record the starting byte position of each character
         while (byte_pos < len) {
@@ -440,14 +430,8 @@ static mcp_error_code_t server_tool_handler(
                 memcpy(result_data + out_pos, input_text + char_start, char_len);
                 out_pos += char_len;
             }
-
-            // Null-terminate the result
             result_data[len] = '\0';
-
             mcp_log_info("Reverse tool called with text: %s, result: %s", input_text, result_data);
-
-            // Send an SSE event with the reversed text if using HTTP transport
-            mcp_log_info("Checking transport protocol for SSE event...");
             if (server && server->transport) {
                 mcp_transport_protocol_t protocol = mcp_transport_get_protocol(server->transport);
                 mcp_log_info("Transport protocol: %d (HTTP=%d)", protocol, MCP_TRANSPORT_PROTOCOL_HTTP);
@@ -517,10 +501,9 @@ static mcp_error_code_t server_tool_handler(
 
     item->type = MCP_CONTENT_TYPE_TEXT;
     item->mime_type = mcp_strdup("text/plain");
-    item->data = result_data; // Transfer ownership
-    item->data_size = strlen(result_data) + 1; // Include null terminator
-    result_data = NULL; // Avoid double free
-
+    item->data = result_data;
+    item->data_size = strlen(result_data) + 1;
+    result_data = NULL;
     if (!item->mime_type) {
         mcp_log_error("Failed to allocate mime type for tool: %s", name);
         *is_error = true;
@@ -566,7 +549,7 @@ cleanup:
 static void server_cleanup(void) {
     mcp_log_info("Cleaning up resources");
 #ifdef MCP_ENABLE_PROFILING
-    mcp_profile_report(stdout); // Print profile report on exit if enabled
+    mcp_profile_report(stdout);
 #endif
 
     // Cleanup socket library
@@ -654,12 +637,16 @@ static void signal_handler(int sig) {
 static int daemonize(void) {
     pid_t pid, sid;
     pid = fork();
-    if (pid < 0) return -1;
-    if (pid > 0) exit(0); // Exit parent
+    if (pid < 0)
+        return -1;
+    if (pid > 0)
+        exit(0); // Exit parent
     umask(0);
     sid = setsid();
-    if (sid < 0) return -1;
-    if (chdir("/") < 0) return -1;
+    if (sid < 0)
+        return -1;
+    if (chdir("/") < 0)
+        return -1;
     close(STDIN_FILENO);
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
@@ -753,11 +740,8 @@ int main(int argc, char** argv) {
     if (parse_arguments(argc, argv, &config) != 0)
         return 1;
 
-    // Use new shared logging functions
-    if (mcp_log_init(config.log_file, config.log_level) != 0) {
-        // Error already printed to stderr by init_logging
+    if (mcp_log_init(config.log_file, config.log_level) != 0)
         return 1;
-    }
     mcp_log_info("Logging system initialized.");
 
 #ifndef _WIN32
@@ -811,9 +795,9 @@ int main(int argc, char** argv) {
     mcp_log_info("Socket library initialized");
 
     mcp_server_config_t server_config = {
-        .name = "example-mcp-server",
+        .name = "supa-mcp-server",
         .version = "1.0.0",
-        .description = "Example MCP server implementation",
+        .description = "Supa MCP server implementation",
         .api_key = config.api_key // Pass the parsed API key
     };
     mcp_server_capabilities_t capabilities = {
@@ -970,7 +954,7 @@ int main(int argc, char** argv) {
             .use_ssl = false,  // No SSL for now
             .cert_path = NULL,
             .key_path = NULL,
-            .doc_root = config.doc_root,  // Use doc_root from command line if provided
+            .doc_root = config.doc_root,
             .timeout_ms = 0    // No timeout
         };
 
@@ -1015,7 +999,6 @@ int main(int argc, char** argv) {
     }
 
     mcp_log_info("Main loop exiting.");
-    // Cleanup is handled by atexit
 
     return 0;
 }
