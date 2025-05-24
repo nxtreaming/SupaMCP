@@ -3,41 +3,14 @@
 #endif
 
 #include "internal/http_transport_internal.h"
+#include "mcp_http_sse_common.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
 
-// SSE event field constants
-#define SSE_FIELD_EVENT "event: "     /**< SSE event field prefix */
-#define SSE_FIELD_ID "id: "           /**< SSE ID field prefix */
-#define SSE_FIELD_DATA "data: "       /**< SSE data field prefix */
-
 // Buffer size constants
 #define SSE_ID_BUFFER_SIZE 32         /**< Maximum size for event ID strings */
-
-/**
- * @brief Validate that a string contains only valid characters for SSE text
- *
- * This function checks if a string contains only valid characters for SSE text.
- * It rejects control characters (except for newline, carriage return, and tab)
- * which could cause security or parsing issues.
- *
- * @param str The string to validate
- * @return bool true if the string is valid, false otherwise
- */
-static bool is_valid_sse_text(const char* str) {
-    if (!str) return false;
-
-    for (const char* p = str; *p; p++) {
-        // Reject control characters except newline, carriage return, and tab
-        if ((unsigned char)*p < 0x20 && *p != '\n' && *p != '\r' && *p != '\t') {
-            mcp_log_warn("Invalid control character (0x%02x) found in SSE text", (unsigned char)*p);
-            return false;
-        }
-    }
-    return true;
-}
 
 /**
  * @brief Free all memory associated with a stored SSE event
@@ -52,23 +25,8 @@ static void free_stored_event(sse_event_t* event) {
         return;
     }
 
-    if (event->id != NULL) {
-        free(event->id);
-        event->id = NULL;
-    }
-
-    if (event->event_type != NULL) {
-        free(event->event_type);
-        event->event_type = NULL;
-    }
-
-    if (event->data != NULL) {
-        free(event->data);
-        event->data = NULL;
-    }
-
-    // Reset timestamp to prevent potential issues with event expiration logic
-    event->timestamp = 0;
+    // Use the common sse_event_free function to free the event
+    sse_event_free(event);
 }
 
 /**
@@ -94,7 +52,7 @@ static bool allocate_event_fields(int index, http_transport_data_t* data,
     }
 
     data->stored_events[index].id = NULL;
-    data->stored_events[index].event_type = NULL;
+    data->stored_events[index].event = NULL;
     data->stored_events[index].data = NULL;
     data->stored_events[index].timestamp = 0;
 
@@ -106,20 +64,23 @@ static bool allocate_event_fields(int index, http_transport_data_t* data,
 
     // Store the event type (if provided)
     if (event_type != NULL) {
-        data->stored_events[index].event_type = mcp_strdup(event_type);
-        if (data->stored_events[index].event_type == NULL) {
+        data->stored_events[index].event = mcp_strdup(event_type);
+        if (data->stored_events[index].event == NULL) {
             mcp_log_error("Failed to allocate memory for event type");
             goto cleanup_error;
         }
     }
 
+    // Store the event data
     data->stored_events[index].data = mcp_strdup(event_data);
     if (data->stored_events[index].data == NULL) {
         mcp_log_error("Failed to allocate memory for event data");
         goto cleanup_error;
     }
 
+    // Set the timestamp
     data->stored_events[index].timestamp = time(NULL);
+    
     return true;
 
 cleanup_error:
@@ -191,6 +152,7 @@ void store_sse_event(http_transport_data_t* data, const char* event, const char*
     int index = data->event_tail;
 
     // Allocate and store the event fields
+    // Note: The event_type parameter will be stored in the 'event' field of mcp_sse_event_t
     if (!allocate_event_fields(index, data, id_str, event, event_data)) {
         mcp_log_error("Failed to allocate event fields, event not stored");
         mcp_mutex_unlock(data->event_mutex);

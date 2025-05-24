@@ -401,8 +401,8 @@ static void replay_stored_events(struct lws* wsi, http_transport_data_t* data, h
             // Check if the event matches the filter (if any)
             bool should_send = true;
 
-            if (session->event_filter != NULL && data->stored_events[current].event_type != NULL) {
-                if (strcmp(session->event_filter, data->stored_events[current].event_type) != 0) {
+            if (session->event_filter != NULL && data->stored_events[current].event != NULL) {
+                if (strcmp(session->event_filter, data->stored_events[current].event) != 0) {
                     should_send = false;
                 }
             }
@@ -410,11 +410,11 @@ static void replay_stored_events(struct lws* wsi, http_transport_data_t* data, h
             // Send the event if it passes the filter
             if (should_send) {
                 // Replay the event
-                if (data->stored_events[current].event_type != NULL) {
+                if (data->stored_events[current].event != NULL) {
                     // Write event type
                     lws_write_http(wsi, SSE_FIELD_EVENT, strlen(SSE_FIELD_EVENT));
-                    lws_write_http(wsi, data->stored_events[current].event_type,
-                                  strlen(data->stored_events[current].event_type));
+                    lws_write_http(wsi, data->stored_events[current].event,
+                                  strlen(data->stored_events[current].event));
                     lws_write_http(wsi, "\n", 1);
                 }
 

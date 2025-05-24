@@ -7,6 +7,7 @@
 #include "mcp_sync.h"
 #include "mcp_thread_pool.h"
 #include "mcp_string_utils.h"
+#include "mcp_http_sse_common.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -25,13 +26,6 @@ extern "C" {
 // Maximum number of stored SSE events for replay
 #define MAX_SSE_STORED_EVENTS 5000
 
-// SSE event structure for storing events for replay
-typedef struct {
-    char* id;           // Event ID
-    char* event_type;   // Event type
-    char* data;         // Event data
-    time_t timestamp;   // Event timestamp
-} sse_event_t;
 
 // HTTP transport data structure
 typedef struct {
@@ -49,6 +43,7 @@ typedef struct {
     mcp_mutex_t* sse_mutex;
 
     // SSE event storage for reconnection (circular buffer)
+    // Uses mcp_sse_event_t from mcp_http_sse_common.h
     sse_event_t stored_events[MAX_SSE_STORED_EVENTS];
     int event_head;          // Index of the oldest event
     int event_tail;          // Index where the next event will be stored

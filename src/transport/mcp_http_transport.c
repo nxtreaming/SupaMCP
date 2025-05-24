@@ -137,9 +137,9 @@ static void free_stored_sse_events(http_transport_data_t* data) {
             data->stored_events[current].id = NULL;
         }
 
-        if (data->stored_events[current].event_type) {
-            free(data->stored_events[current].event_type);
-            data->stored_events[current].event_type = NULL;
+        if (data->stored_events[current].event) {
+            free(data->stored_events[current].event);
+            data->stored_events[current].event = NULL;
         }
 
         if (data->stored_events[current].data) {

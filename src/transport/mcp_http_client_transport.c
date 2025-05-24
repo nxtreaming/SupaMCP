@@ -80,18 +80,6 @@ mcp_transport_t* mcp_transport_http_client_create(const char* host, uint16_t por
 }
 
 /**
- * @brief Helper function to safely free a string pointer and set it to NULL.
- *
- * @param str Pointer to the string pointer to free
- */
-static void safe_free_string(char** str) {
-    if (str != NULL && *str != NULL) {
-        free(*str);
-        *str = NULL;
-    }
-}
-
-/**
  * @brief Helper function to clean up transport data on error.
  *
  * @param data The transport data to clean up

@@ -24,6 +24,7 @@
 #include "mcp_string_utils.h"
 #include "mcp_socket_utils.h"
 #include "mcp_sync.h"
+#include "mcp_http_sse_common.h"
 
 /* Standard library headers */
 #include <stdlib.h>
@@ -70,104 +71,6 @@
 #define SSE_RECONNECT_INTERVALS (SSE_RECONNECT_DELAY_MS / SSE_SLEEP_INTERVAL_MS)
 #define SSE_HEARTBEAT_INTERVAL_MS 30000 /**< Interval for checking connection health (ms) */
 #define SSE_MAX_IDLE_TIME_MS 300000 /**< Maximum time without receiving data before reconnecting (ms) (5 minutes) */
-
- /**
-  * @brief Helper function to safely free a string pointer and set it to NULL.
-  *
-  * @param str Pointer to the string pointer to free
-  */
-static void safe_free_string(char** str) {
-    if (str != NULL && *str != NULL) {
-        free(*str);
-        *str = NULL;
-    }
-}
-
-/**
- * @brief Creates an SSE event structure with the specified properties.
- *
- * This function allocates and initializes a new SSE event structure,
- * copying the provided ID, event type, and data strings if they are not NULL.
- * The event timestamp is set to the current time.
- *
- * @param id The event ID (can be NULL)
- * @param event The event type (can be NULL)
- * @param data The event data (can be NULL)
- * @return sse_event_t* Newly created event or NULL on failure
- */
-sse_event_t* sse_event_create(const char* id, const char* event, const char* data) {
-    sse_event_t* sse_event = (sse_event_t*)malloc(sizeof(sse_event_t));
-    if (sse_event == NULL) {
-        mcp_log_error("Failed to allocate memory for SSE event");
-        return NULL;
-    }
-
-    // Initialize all fields to NULL/0
-    sse_event->id = NULL;
-    sse_event->event = NULL;
-    sse_event->data = NULL;
-    sse_event->timestamp = time(NULL);
-
-    // Copy ID if provided
-    if (id != NULL) {
-        sse_event->id = mcp_strdup(id);
-        if (sse_event->id == NULL && id[0] != '\0') {
-            mcp_log_error("Failed to allocate memory for SSE event ID");
-            sse_event_free(sse_event);
-            return NULL;
-        }
-    }
-
-    // Copy event type if provided
-    if (event != NULL) {
-        sse_event->event = mcp_strdup(event);
-        if (sse_event->event == NULL && event[0] != '\0') {
-            mcp_log_error("Failed to allocate memory for SSE event type");
-            sse_event_free(sse_event);
-            return NULL;
-        }
-    }
-
-    // Copy data if provided
-    if (data != NULL) {
-        sse_event->data = mcp_strdup(data);
-        if (sse_event->data == NULL && data[0] != '\0') {
-            mcp_log_error("Failed to allocate memory for SSE event data");
-            sse_event_free(sse_event);
-            return NULL;
-        }
-    }
-
-    mcp_log_debug("Created SSE event: id=%s, type=%s, data_length=%zu",
-                 id ? id : "(none)",
-                 event ? event : "(default)",
-                 data ? strlen(data) : 0);
-
-    return sse_event;
-}
-
-/**
- * @brief Frees an SSE event structure and all associated memory.
- *
- * This function safely releases all memory allocated for an SSE event,
- * including the ID, event type, data strings, and the event structure itself.
- * It handles NULL pointers safely at all levels.
- *
- * @param event The event to free (can be NULL)
- */
-void sse_event_free(sse_event_t* event) {
-    if (event == NULL) {
-        return;
-    }
-
-    // Free all allocated string fields
-    safe_free_string(&event->id);
-    safe_free_string(&event->event);
-    safe_free_string(&event->data);
-
-    // Free the event structure itself
-    free(event);
-}
 
 /**
  * @brief Creates a TCP socket and connects to the specified server with timeout.
