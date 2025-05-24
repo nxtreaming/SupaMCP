@@ -83,15 +83,14 @@ sse_event_t* sse_event_create(const char* id, const char* event, const char* dat
 }
 
 /**
- * @brief Frees an SSE event structure and all associated memory.
- *
- * This function safely releases all memory allocated for an SSE event,
- * including the ID, event type, data strings, and the event structure itself.
- * It handles NULL pointers safely at all levels.
- *
- * @param event The event to free (can be NULL)
+ * @brief Clears an SSE event by freeing all its data fields
+ * 
+ * This function frees all dynamically allocated fields of the event
+ * structure but does not free the event structure itself.
+ * 
+ * @param event Pointer to the event to clear
  */
-void sse_event_free(sse_event_t* event) {
+void sse_event_clear(sse_event_t* event) {
     if (event == NULL) {
         return;
     }
@@ -112,7 +111,28 @@ void sse_event_free(sse_event_t* event) {
         event->data = NULL;
     }
 
-    // Free the event structure itself
+    // Reset timestamp to a known value
+    event->timestamp = 0;
+}
+
+/**
+ * @brief Frees an SSE event and all its data
+ * 
+ * This function frees all dynamically allocated fields of the event
+ * and the event structure itself. Only use this for dynamically
+ * allocated events.
+ * 
+ * @param event Pointer to the event to free
+ */
+void sse_event_free(sse_event_t* event) {
+    if (event == NULL) {
+        return;
+    }
+    
+    // First clear all the data fields
+    sse_event_clear(event);
+    
+    // Then free the event structure itself
     free(event);
 }
 

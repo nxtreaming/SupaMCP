@@ -25,8 +25,8 @@ static void free_stored_event(sse_event_t* event) {
         return;
     }
 
-    // Use the common sse_event_free function to free the event
-    sse_event_free(event);
+    // Use sse_event_clear since the event is part of a fixed-size array
+    sse_event_clear(event);
 }
 
 /**
@@ -152,7 +152,6 @@ void store_sse_event(http_transport_data_t* data, const char* event, const char*
     int index = data->event_tail;
 
     // Allocate and store the event fields
-    // Note: The event_type parameter will be stored in the 'event' field of mcp_sse_event_t
     if (!allocate_event_fields(index, data, id_str, event, event_data)) {
         mcp_log_error("Failed to allocate event fields, event not stored");
         mcp_mutex_unlock(data->event_mutex);

@@ -13,7 +13,6 @@
 #include <stdio.h>
 #include <time.h>
 
-// Include libwebsockets for HTTP server implementation
 #include <libwebsockets.h>
 
 #ifdef __cplusplus
@@ -25,7 +24,6 @@ extern "C" {
 
 // Maximum number of stored SSE events for replay
 #define MAX_SSE_STORED_EVENTS 5000
-
 
 // HTTP transport data structure
 typedef struct {
@@ -43,7 +41,6 @@ typedef struct {
     mcp_mutex_t* sse_mutex;
 
     // SSE event storage for reconnection (circular buffer)
-    // Uses mcp_sse_event_t from mcp_http_sse_common.h
     sse_event_t stored_events[MAX_SSE_STORED_EVENTS];
     int event_head;          // Index of the oldest event
     int event_tail;          // Index where the next event will be stored
