@@ -233,13 +233,10 @@ mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_ser
     // Copy prewarm URIs if provided
     if (config->prewarm_resource_uris && config->prewarm_count > 0) {
         server->config.prewarm_count = config->prewarm_count;
-        server->config.prewarm_resource_uris = (char**)malloc(config->prewarm_count * sizeof(char*));
-
+        server->config.prewarm_resource_uris = (char**)calloc(config->prewarm_count, sizeof(char*));
         if (!server->config.prewarm_resource_uris) {
             goto create_error_cleanup;
         }
-
-        memset(server->config.prewarm_resource_uris, 0, config->prewarm_count * sizeof(char*));
 
         for (size_t i = 0; i < config->prewarm_count; ++i) {
             if (config->prewarm_resource_uris[i]) {
@@ -247,9 +244,6 @@ mcp_server_t* mcp_server_create(const mcp_server_config_t* config, const mcp_ser
                 if (!server->config.prewarm_resource_uris[i]) {
                     goto create_error_cleanup;
                 }
-            } else {
-                // Ensure NULL if source is NULL
-                server->config.prewarm_resource_uris[i] = NULL;
             }
         }
     } else {
