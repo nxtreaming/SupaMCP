@@ -149,7 +149,7 @@ void store_sse_event(http_transport_data_t* data, const char* event, const char*
         return;
     }
 
-    if (event != NULL && !is_valid_sse_text(event)) {
+    if (!is_valid_sse_text(event)) {
         mcp_log_error("Invalid characters in SSE event type");
         return;
     }
@@ -226,15 +226,14 @@ void send_sse_heartbeat(http_transport_data_t* data) {
         return;
     }
 
-    // Check if it's time for a heartbeat based on configured interval
-    time_t now = time(NULL);
     int heartbeat_interval_sec = data->heartbeat_interval_ms / 1000;
-
     // Ensure minimum interval of 1 second
     if (heartbeat_interval_sec <= 0) {
         heartbeat_interval_sec = 1;
     }
 
+    // Check if it's time for a heartbeat based on configured interval
+    time_t now = time(NULL);
     // Skip if not enough time has passed since last heartbeat
     if (now - data->last_heartbeat < heartbeat_interval_sec) {
         return;
@@ -423,7 +422,7 @@ static bool write_sse_field(struct lws* wsi, const char* field, const char* valu
         return false;
     }
 
-    if (value && !is_valid_sse_text(value)) {
+    if (!is_valid_sse_text(value)) {
         mcp_log_error("Invalid characters in SSE field value");
         return false;
     }
@@ -470,7 +469,7 @@ static bool send_sse_event_to_client(struct lws* wsi, const char* event,
     }
 
     // Validate event type if provided
-    if (event != NULL && !is_valid_sse_text(event)) {
+    if (!is_valid_sse_text(event)) {
         mcp_log_error("Invalid characters in SSE event type");
         return false;
     }
@@ -566,12 +565,12 @@ int mcp_http_transport_send_sse(mcp_transport_t* transport, const char* event,
         return -1;
     }
 
-    if (event != NULL && !is_valid_sse_text(event)) {
+    if (!is_valid_sse_text(event)) {
         mcp_log_error("Invalid characters in SSE event type");
         return -1;
     }
 
-    if (session_id != NULL && !is_valid_sse_text(session_id)) {
+    if (!is_valid_sse_text(session_id)) {
         mcp_log_error("Invalid characters in SSE session ID");
         return -1;
     }
