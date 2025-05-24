@@ -35,7 +35,6 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -97,7 +96,6 @@ static void safe_free_string(char** str) {
  * @return sse_event_t* Newly created event or NULL on failure
  */
 sse_event_t* sse_event_create(const char* id, const char* event, const char* data) {
-    // Allocate memory for the event structure
     sse_event_t* sse_event = (sse_event_t*)malloc(sizeof(sse_event_t));
     if (sse_event == NULL) {
         mcp_log_error("Failed to allocate memory for SSE event");
@@ -195,7 +193,7 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
     // Set socket to non-blocking mode if timeout is specified
     if (timeout_ms > 0) {
 #ifdef _WIN32
-        u_long mode = 1;  // Non-blocking mode
+        u_long mode = 1;
         if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
             mcp_log_error("Failed to set socket to non-blocking mode: %d", mcp_socket_get_lasterror());
             mcp_socket_close(sock);
@@ -214,8 +212,7 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
     // Resolve host
     struct hostent* server = gethostbyname(host);
     if (server == NULL) {
-        mcp_log_error("Failed to resolve host: %s (error: %d)",
-                     host, mcp_socket_get_lasterror());
+        mcp_log_error("Failed to resolve host: %s (error: %d)", host, mcp_socket_get_lasterror());
         mcp_socket_close(sock);
         return MCP_INVALID_SOCKET;
     }
@@ -247,11 +244,9 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
 
         // Wait for connection to complete or timeout
         int select_result = select((int)sock + 1, NULL, &write_fds, NULL, &tv);
-
         if (select_result <= 0) {
             // Timeout or error
-            mcp_log_error("Connection to %s:%d timed out after %u ms",
-                         host, port, timeout_ms);
+            mcp_log_error("Connection to %s:%d timed out after %u ms", host, port, timeout_ms);
             mcp_socket_close(sock);
             return MCP_INVALID_SOCKET;
         }
@@ -267,7 +262,7 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
 
         // Set socket back to blocking mode
 #ifdef _WIN32
-        u_long mode = 0;  // Blocking mode
+        u_long mode = 0;
         if (ioctlsocket(sock, FIONBIO, &mode) != 0) {
             mcp_log_error("Failed to set socket back to blocking mode: %d", mcp_socket_get_lasterror());
             mcp_socket_close(sock);
@@ -303,7 +298,7 @@ static socket_t create_and_connect_socket(const char* host, uint16_t port, uint3
  */
 static int setup_ssl_connection(http_client_transport_data_t* data, socket_t sock) {
     if (!data->use_ssl) {
-        return 0; // SSL not required
+        return 0;
     }
 
     mcp_log_info("Initializing SSL for SSE connection");
@@ -383,7 +378,6 @@ static int build_and_send_sse_request(http_client_transport_data_t* data, socket
 
     // End headers with an empty line
     int end_len = snprintf(request + request_len, sizeof(request) - request_len, "\r\n");
-
     if (end_len < 0 || (request_len + end_len) >= (int)sizeof(request)) {
         mcp_log_error("HTTP request buffer overflow when adding end of headers");
         return -1;
@@ -496,25 +490,24 @@ void process_sse_event(http_client_transport_data_t* data, const sse_event_t* ev
         char* new_event_id = mcp_strdup(event->id);
         if (new_event_id == NULL && event->id[0] != '\0') {
             mcp_log_error("Failed to allocate memory for last event ID");
-            return; // Exit function on memory allocation failure
+            return;
         }
 
-        mcp_mutex_lock(data->mutex);  // Lock to safely update last_event_id
+        mcp_mutex_lock(data->mutex);
 
         // Free previous event ID if exists
         safe_free_string(&data->last_event_id);
 
         // Store new event ID
         data->last_event_id = new_event_id;
-        mcp_log_debug("Updated last event ID: %s", data->last_event_id);
-
         mcp_mutex_unlock(data->mutex);
+
+        mcp_log_debug("Updated last event ID: %s", data->last_event_id);
     }
 
     // Process event data if provided
     if (event->data != NULL) {
         size_t data_length = strlen(event->data);
-
         // Check if data is too large (arbitrary limit to prevent processing extremely large events)
         if (data_length > 1024 * 1024) { // 1MB limit
             mcp_log_warn("SSE event data too large (%zu bytes), truncating to 1MB", data_length);
@@ -528,10 +521,9 @@ void process_sse_event(http_client_transport_data_t* data, const sse_event_t* ev
         // Call message callback if registered
         if (data->message_callback != NULL) {
             int error_code = 0;
-            char* result = NULL;
 
             // Call the callback with the event data
-            result = data->message_callback(
+            char *result = data->message_callback(
                 data->callback_user_data,
                 event->data,
                 data_length,
@@ -629,7 +621,7 @@ static bool process_sse_line(const char* line, char** event_type, char** event_i
 
     // Empty line indicates end of event
     if (strlen(line) == 0) {
-        return *event_data != NULL; // Event is complete if we have data
+        return *event_data != NULL;
     }
 
     // Event type
@@ -680,7 +672,8 @@ static void wait_with_running_check(http_client_transport_data_t* data, int wait
 
     // Calculate number of intervals based on sleep interval constant
     int intervals = wait_ms / SSE_SLEEP_INTERVAL_MS;
-    if (intervals <= 0) intervals = 1;
+    if (intervals <= 0)
+        intervals = 1;
 
     // Sleep in small intervals, checking running flag each time
     for (int i = 0; i < intervals && data->running; i++) {
@@ -722,7 +715,6 @@ void* http_client_event_thread_func(void* arg) {
         if (sock == MCP_INVALID_SOCKET) {
             mcp_log_error("Failed to connect to SSE endpoint, retrying in %d ms",
                          SSE_RECONNECT_DELAY_MS);
-
             // Wait before retry, checking running flag periodically
             wait_with_running_check(data, SSE_RECONNECT_DELAY_MS);
             continue;
@@ -773,7 +765,7 @@ void* http_client_event_thread_func(void* arg) {
             if (idle_time_ms > SSE_MAX_IDLE_TIME_MS) {
                 mcp_log_warn("SSE connection idle for %d seconds (threshold: %d seconds), reconnecting",
                            (int)(idle_time_ms / 1000), SSE_MAX_IDLE_TIME_MS / 1000);
-                break; // Exit the reading loop to reconnect
+                break;
             }
 
             // If select timed out, continue to next iteration (will check idle time again)

@@ -30,11 +30,10 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
 typedef SOCKET socket_handle_t;
 #define INVALID_SOCKET_HANDLE INVALID_SOCKET
 #define SOCKET_ERROR_HANDLE SOCKET_ERROR
-#else // Linux/macOS
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
