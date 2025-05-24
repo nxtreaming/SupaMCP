@@ -68,9 +68,53 @@ typedef struct {
     const char* doc_root;  // Document root for static file serving
 } server_config_t;
 
-// Forward declarations
-static void cleanup(void);
-static bool parse_tcp_address(const char* address, char* host_buf, size_t host_buf_size, int* port);
+/**
+ * @internal
+ * @brief Parses a "tcp://host:port" string.
+ * @param address The input address string.
+ * @param host_buf Buffer to store the extracted host.
+ * @param host_buf_size Size of the host buffer.
+ * @param port Pointer to store the extracted port number.
+ * @return true on success, false on parsing failure.
+ */
+static bool parse_tcp_address(const char* address, char* host_buf, size_t host_buf_size, int* port) {
+    if (!address || !host_buf || host_buf_size == 0 || !port) {
+        return false;
+    }
+
+    if (strncmp(address, "tcp://", 6) != 0) {
+        return false; // Not a TCP address
+    }
+
+    const char* host_start = address + 6;
+    const char* port_sep = strrchr(host_start, ':'); // Find the last colon
+
+    if (!port_sep || port_sep == host_start) {
+        return false; // No port separator or empty host
+    }
+
+    size_t host_len = port_sep - host_start;
+    if (host_len >= host_buf_size) {
+        return false; // Host buffer too small
+    }
+
+    // Copy host
+    memcpy(host_buf, host_start, host_len);
+    host_buf[host_len] = '\0';
+
+    // Parse port
+    const char* port_start = port_sep + 1;
+    char* end_ptr = NULL;
+    long parsed_port = strtol(port_start, &end_ptr, 10);
+
+    // Check if parsing consumed the whole port string and if port is valid
+    if (*end_ptr != '\0' || parsed_port <= 0 || parsed_port > 65535) {
+        return false; // Invalid port number
+    }
+
+    *port = (int)parsed_port;
+    return true;
+}
 
 static mcp_error_code_t server_resource_handler(
     mcp_server_t* server,
@@ -519,7 +563,7 @@ cleanup:
 /**
  * Clean up resources
  */
-static void cleanup(void) {
+static void server_cleanup(void) {
     mcp_log_info("Cleaning up resources");
 #ifdef MCP_ENABLE_PROFILING
     mcp_profile_report(stdout); // Print profile report on exit if enabled
@@ -595,7 +639,7 @@ static void signal_handler(int sig) {
         mcp_sleep_ms(1000);
 
         // Call cleanup directly to ensure resources are freed
-        cleanup();
+        server_cleanup();
     }
 
     // Force exit to ensure we don't hang
@@ -728,7 +772,7 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    atexit(cleanup);
+    atexit(server_cleanup);
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 #ifndef _WIN32
@@ -974,52 +1018,4 @@ int main(int argc, char** argv) {
     // Cleanup is handled by atexit
 
     return 0;
-}
-
-/**
- * @internal
- * @brief Parses a "tcp://host:port" string.
- * @param address The input address string.
- * @param host_buf Buffer to store the extracted host.
- * @param host_buf_size Size of the host buffer.
- * @param port Pointer to store the extracted port number.
- * @return true on success, false on parsing failure.
- */
-static bool parse_tcp_address(const char* address, char* host_buf, size_t host_buf_size, int* port) {
-    if (!address || !host_buf || host_buf_size == 0 || !port) {
-        return false;
-    }
-
-    if (strncmp(address, "tcp://", 6) != 0) {
-        return false; // Not a TCP address
-    }
-
-    const char* host_start = address + 6;
-    const char* port_sep = strrchr(host_start, ':'); // Find the last colon
-
-    if (!port_sep || port_sep == host_start) {
-        return false; // No port separator or empty host
-    }
-
-    size_t host_len = port_sep - host_start;
-    if (host_len >= host_buf_size) {
-        return false; // Host buffer too small
-    }
-
-    // Copy host
-    memcpy(host_buf, host_start, host_len);
-    host_buf[host_len] = '\0';
-
-    // Parse port
-    const char* port_start = port_sep + 1;
-    char* end_ptr = NULL;
-    long parsed_port = strtol(port_start, &end_ptr, 10);
-
-    // Check if parsing consumed the whole port string and if port is valid
-    if (*end_ptr != '\0' || parsed_port <= 0 || parsed_port > 65535) {
-        return false; // Invalid port number
-    }
-
-    *port = (int)parsed_port;
-    return true;
 }
