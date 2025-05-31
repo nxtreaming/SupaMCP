@@ -292,14 +292,14 @@ static void extract_session_header(struct lws* wsi, http_streamable_session_data
         return;
     }
 
-    // Try to extract session ID from custom header
-    // This is a simplified implementation - in practice, we would need
-    // to implement proper custom header extraction
-    session->has_session = false;
-    session->session_id[0] = '\0';
+    // Extract session ID from Mcp-Session-Id header
+    session->has_session = extract_session_id(wsi, session->session_id);
 
-    // TODO: Implement proper session ID extraction from Mcp-Session-Id header
-    // For now, we'll leave this as a placeholder
+    if (session->has_session) {
+        mcp_log_info("Request has session ID: %s", session->session_id);
+    } else {
+        mcp_log_debug("Request has no session ID");
+    }
 }
 
 // LWS protocols for streamable HTTP transport

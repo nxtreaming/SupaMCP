@@ -303,14 +303,140 @@ int handle_mcp_get_request(struct lws* wsi, http_streamable_transport_data_t* da
     // Check Accept header
     char accept_header[256];
     int accept_len = lws_hdr_copy(wsi, accept_header, sizeof(accept_header), WSI_TOKEN_HTTP_ACCEPT);
-    
+
     if (accept_len <= 0 || strstr(accept_header, "text/event-stream") == NULL) {
         return send_http_error_response(wsi, HTTP_STATUS_BAD_REQUEST, "SSE stream requires Accept: text/event-stream");
     }
 
-    // TODO: Implement SSE stream initialization
-    // For now, return method not allowed
-    return send_http_error_response(wsi, HTTP_STATUS_METHOD_NOT_ALLOWED, "SSE streams not yet implemented");
+    // Initialize SSE stream
+    session_data->is_sse_stream = true;
+
+    // Get session if available
+    mcp_http_session_t* session = NULL;
+    if (session_data->has_session && data->session_manager) {
+        session = mcp_session_manager_get_session(data->session_manager, session_data->session_id);
+        if (session) {
+            session_data->session = session;
+            mcp_session_touch(session);
+        }
+    }
+
+    // Create SSE context for this stream
+    size_t max_events = data->config.max_stored_events > 0 ? data->config.max_stored_events : MAX_SSE_STORED_EVENTS_DEFAULT;
+    session_data->sse_context = sse_stream_context_create(max_events);
+    if (session_data->sse_context == NULL) {
+        mcp_log_error("Failed to create SSE context");
+        return send_http_error_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, "Failed to initialize SSE stream");
+    }
+
+    // Check for Last-Event-ID header for stream resumability
+    char last_event_id[HTTP_LAST_EVENT_ID_BUFFER_SIZE];
+    if (extract_last_event_id(wsi, last_event_id)) {
+        mcp_log_info("SSE stream resuming from event ID: %s", last_event_id);
+
+        // Use session-specific or global SSE context for replay
+        sse_stream_context_t* replay_context = session_data->sse_context;
+        if (session == NULL && data->global_sse_context) {
+            replay_context = data->global_sse_context;
+        }
+
+        // We'll replay events after sending headers
+    }
+
+    // Prepare SSE response headers
+    unsigned char headers[512];
+    unsigned char* p = headers;
+    unsigned char* end = headers + sizeof(headers);
+
+    if (lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end)) {
+        return -1;
+    }
+
+    if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
+                                    (unsigned char*)"text/event-stream", 18, &p, end)) {
+        return -1;
+    }
+
+    if (lws_add_http_header_by_name(wsi, (unsigned char*)"Cache-Control",
+                                   (unsigned char*)"no-cache", 8, &p, end)) {
+        return -1;
+    }
+
+    if (lws_add_http_header_by_name(wsi, (unsigned char*)"Connection",
+                                   (unsigned char*)"keep-alive", 10, &p, end)) {
+        return -1;
+    }
+
+    // Add session ID header if available
+    if (session_data->has_session) {
+        if (lws_add_http_header_by_name(wsi, (unsigned char*)MCP_SESSION_HEADER_NAME,
+                                       (unsigned char*)session_data->session_id,
+                                       (int)strlen(session_data->session_id), &p, end)) {
+            return -1;
+        }
+    }
+
+    // Add CORS headers if enabled
+    if (data->enable_cors) {
+        add_streamable_cors_headers(wsi, data, &p, end);
+    }
+
+    if (lws_finalize_http_header(wsi, &p, end)) {
+        return -1;
+    }
+
+    // Write headers
+    if (lws_write(wsi, headers, p - headers, LWS_WRITE_HTTP_HEADERS) < 0) {
+        return -1;
+    }
+
+    // Add to SSE clients list
+    mcp_mutex_lock(data->sse_mutex);
+
+    // Find a free slot
+    bool added = false;
+    for (size_t i = 0; i < data->max_sse_clients; i++) {
+        if (data->sse_clients[i] == NULL) {
+            data->sse_clients[i] = wsi;
+            data->sse_client_count++;
+            added = true;
+            break;
+        }
+    }
+
+    mcp_mutex_unlock(data->sse_mutex);
+
+    if (!added) {
+        mcp_log_warn("SSE client limit reached (%zu)", data->max_sse_clients);
+        return send_http_error_response(wsi, HTTP_STATUS_SERVICE_UNAVAILABLE, "SSE client limit reached");
+    }
+
+    // Replay events if Last-Event-ID was provided
+    if (last_event_id[0] != '\0') {
+        sse_stream_context_t* replay_context = session_data->sse_context;
+        if (session == NULL && data->global_sse_context) {
+            replay_context = data->global_sse_context;
+        }
+
+        if (replay_context) {
+            int replayed = sse_stream_context_replay_events(replay_context, wsi, last_event_id);
+            mcp_log_info("Replayed %d events for SSE stream", replayed);
+        }
+    }
+
+    // Send initial connection event
+    char connection_data[256];
+    snprintf(connection_data, sizeof(connection_data),
+             "{\"type\":\"connection\",\"session_id\":\"%s\",\"timestamp\":%lld}",
+             session_data->has_session ? session_data->session_id : "null",
+             (long long)time(NULL));
+
+    send_sse_event(wsi, NULL, "connection", connection_data);
+
+    mcp_log_info("SSE stream initialized for %s",
+                session_data->has_session ? session_data->session_id : "anonymous client");
+
+    return 0;
 }
 
 /**

@@ -258,6 +258,11 @@ bool extract_last_event_id(struct lws* wsi, char* last_event_id_out);
 void add_streamable_cors_headers(struct lws* wsi, http_streamable_transport_data_t* data,
                                 unsigned char** p, unsigned char* end);
 
+/**
+ * @brief Validate SSE text input for control characters
+ */
+bool validate_sse_text_input(const char* text);
+
 // LWS protocols for streamable HTTP transport
 extern struct lws_protocols http_streamable_protocols[];
 

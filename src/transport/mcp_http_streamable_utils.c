@@ -482,13 +482,34 @@ bool extract_session_id(struct lws* wsi, char* session_id_out) {
         return false;
     }
 
-    // TODO: Implement proper custom header extraction for Mcp-Session-Id
-    // libwebsockets doesn't have a direct way to extract custom headers
-    // We would need to iterate through all headers or use a different approach
+    // Use libwebsockets custom header API to extract Mcp-Session-Id
+    const char* header_name = "mcp-session-id:";
+    int header_name_len = (int)strlen(header_name);
 
-    // For now, return false as this is a placeholder implementation
-    session_id_out[0] = '\0';
-    return false;
+    // Get the length of the header value
+    int value_len = lws_hdr_custom_length(wsi, header_name, header_name_len);
+    if (value_len <= 0 || value_len >= MCP_SESSION_ID_MAX_LENGTH) {
+        session_id_out[0] = '\0';
+        return false;
+    }
+
+    // Copy the header value
+    int copied = lws_hdr_custom_copy(wsi, session_id_out, MCP_SESSION_ID_MAX_LENGTH,
+                                    header_name, header_name_len);
+    if (copied <= 0) {
+        session_id_out[0] = '\0';
+        return false;
+    }
+
+    // Validate the session ID format
+    if (!mcp_session_id_is_valid(session_id_out)) {
+        mcp_log_warn("Invalid session ID format: %s", session_id_out);
+        session_id_out[0] = '\0';
+        return false;
+    }
+
+    mcp_log_debug("Extracted session ID: %s", session_id_out);
+    return true;
 }
 
 /**
@@ -499,10 +520,63 @@ bool extract_last_event_id(struct lws* wsi, char* last_event_id_out) {
         return false;
     }
 
-    // Try to get the Last-Event-ID header
-    // This is a placeholder implementation
-    last_event_id_out[0] = '\0';
-    return false;
+    // Use libwebsockets custom header API to extract Last-Event-ID
+    const char* header_name = "last-event-id:";
+    int header_name_len = (int)strlen(header_name);
+
+    // Get the length of the header value
+    int value_len = lws_hdr_custom_length(wsi, header_name, header_name_len);
+    if (value_len <= 0 || value_len >= HTTP_LAST_EVENT_ID_BUFFER_SIZE) {
+        last_event_id_out[0] = '\0';
+        return false;
+    }
+
+    // Copy the header value
+    int copied = lws_hdr_custom_copy(wsi, last_event_id_out, HTTP_LAST_EVENT_ID_BUFFER_SIZE,
+                                    header_name, header_name_len);
+    if (copied <= 0) {
+        last_event_id_out[0] = '\0';
+        return false;
+    }
+
+    // Basic validation - event ID should be alphanumeric
+    for (int i = 0; last_event_id_out[i] != '\0'; i++) {
+        char c = last_event_id_out[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' || c == '_')) {
+            mcp_log_warn("Invalid Last-Event-ID format: %s", last_event_id_out);
+            last_event_id_out[0] = '\0';
+            return false;
+        }
+    }
+
+    mcp_log_debug("Extracted Last-Event-ID: %s", last_event_id_out);
+    return true;
+}
+
+/**
+ * @brief Validate SSE text input for control characters
+ */
+bool validate_sse_text_input(const char* text) {
+    if (text == NULL) {
+        return false;
+    }
+
+    for (const char* p = text; *p != '\0'; p++) {
+        unsigned char c = (unsigned char)*p;
+
+        // Allow newlines, carriage returns, and tabs
+        if (c == '\n' || c == '\r' || c == '\t') {
+            continue;
+        }
+
+        // Reject other control characters (below 0x20)
+        if (c < 0x20) {
+            mcp_log_warn("Invalid control character in SSE text: 0x%02x", c);
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /**
