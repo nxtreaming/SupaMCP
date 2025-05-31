@@ -248,5 +248,15 @@ else()
     target_link_libraries(websocket_server_high_capacity PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# Thread Pool Exit Test Example
+add_executable(thread_pool_exit_test thread_pool_exit_test.c)
+target_link_libraries(thread_pool_exit_test PRIVATE mcpcore)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(thread_pool_exit_test PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(thread_pool_exit_test PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
 # install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server websocket_connection_pool websocket_server_high_capacity DESTINATION bin/examples)

@@ -25,6 +25,9 @@
 #define DEFAULT_THREAD_POOL_SIZE 4              // Default number of worker threads in the pool
 #define CONNECTION_QUEUE_SIZE 32                // Size of the connection queue for the thread pool
 
+#define MONITOR_INTERVAL_MS 1000
+#define ADJUST_INTERVAL_MS 30000
+
 // Client connection states
 typedef enum {
     CLIENT_STATE_INACTIVE,
@@ -78,6 +81,7 @@ typedef struct {
     mcp_thread_pool_t* thread_pool;   // Thread pool for handling client connections
     tcp_server_stats_t stats;         // Server statistics
     mcp_thread_t cleanup_thread;      // Thread for cleaning up idle connections
+    mcp_thread_t monitor_thread;      // Thread for monitoring and adjusting settings
     volatile bool cleanup_running;    // Flag indicating if the cleanup thread is running
 #ifndef _WIN32
     int stop_pipe[2];                 // Pipe used to signal the accept thread to stop on POSIX

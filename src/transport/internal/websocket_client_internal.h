@@ -7,7 +7,7 @@
 #include "internal/transport_interfaces.h"
 #include "mcp_log.h"
 #include "mcp_sync.h"
-#include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 #include "mcp_thread_local.h"
 #include "mcp_client.h"
 

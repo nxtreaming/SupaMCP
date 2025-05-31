@@ -17,6 +17,7 @@
 #include "mcp_log.h"
 #include "mcp_sync.h"
 #include "mcp_thread_pool.h"
+#include "mcp_sys_utils.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -98,6 +99,41 @@ static void tcp_transport_cleanup_resources(mcp_tcp_transport_data_t* data) {
 
     // Clean up socket library
     mcp_socket_cleanup();
+}
+
+/**
+ * @brief Monitor thread function for automatic thread pool adjustment.
+ *
+ * This thread periodically monitors system load and adjusts the thread pool
+ * size based on actual resource utilization and workload patterns.
+ *
+ * @param arg Pointer to the TCP transport data
+ * @return NULL when the thread exits
+ */
+static void* tcp_transport_monitor_thread(void* arg) {
+    mcp_tcp_transport_data_t* data = (mcp_tcp_transport_data_t*)arg;
+    int time_until_adjust = ADJUST_INTERVAL_MS;
+
+    while (data->running) {
+        // Sleep for a shorter interval and check running flag
+        mcp_sleep_ms(MONITOR_INTERVAL_MS);
+
+        if (!data->running) {
+            break;
+        }
+
+        // Decrement the time until next adjustment
+        time_until_adjust -= MONITOR_INTERVAL_MS;
+
+        // If it's time to adjust and we're still running
+        if (time_until_adjust <= 0 && data->thread_pool) {
+            // Use smart adjustment with TCP transport context
+            mcp_thread_pool_smart_adjust(data->thread_pool, data);
+            time_until_adjust = ADJUST_INTERVAL_MS;  // Reset the timer
+        }
+    }
+
+    return NULL;
 }
 
 /**
@@ -191,6 +227,12 @@ static int tcp_transport_start(
 
         tcp_transport_cleanup_resources(data);
         return -1;
+    }
+
+    // Start the monitor thread for smart thread pool adjustment
+    if (mcp_thread_create(&data->monitor_thread, tcp_transport_monitor_thread, data) != 0) {
+        mcp_log_error("Failed to create monitor thread");
+        // Not fatal, continue without smart auto-adjustment
     }
 
     mcp_log_info("TCP server transport started on %s:%d (thread pool: %d threads)",
@@ -320,6 +362,14 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
             data->cleanup_thread = 0;
             mcp_log_debug("Cleanup thread stopped");
         }
+    }
+
+    // Stop the monitor thread
+    if (data->monitor_thread) {
+        mcp_log_debug("Stopping monitor thread...");
+        mcp_thread_join(data->monitor_thread, NULL);
+        data->monitor_thread = 0;
+        mcp_log_debug("Monitor thread stopped");
     }
 
     // Signal all client connections to stop

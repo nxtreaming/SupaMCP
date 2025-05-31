@@ -17,6 +17,7 @@
 #include "mcp_thread_local.h"
 #include "mcp_thread_pool.h"
 #include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 
 #ifdef _WIN32
 #include <winsock2.h>

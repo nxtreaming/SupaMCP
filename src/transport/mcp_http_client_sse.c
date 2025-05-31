@@ -23,6 +23,7 @@
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
 #include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 #include "mcp_sync.h"
 #include "mcp_http_sse_common.h"
 

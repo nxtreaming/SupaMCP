@@ -29,6 +29,7 @@
 #include "mcp_profiler.h"
 #include "mcp_json.h"
 #include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 #include "mcp_gateway.h"
 #include "mcp_thread_local.h"
 #include "mcp_connection_pool.h"

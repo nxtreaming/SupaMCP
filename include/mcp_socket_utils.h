@@ -8,7 +8,7 @@
 
 #ifdef _WIN32
 // Include our Windows socket compatibility header
-#include "win_socket_compat.h"
+#	include "win_socket_compat.h"
 #   pragma comment(lib, "Ws2_32.lib")
     typedef SOCKET socket_t;
     typedef WSABUF mcp_iovec_t;
@@ -41,18 +41,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * @brief Pauses execution for the specified number of milliseconds.
- * @param milliseconds The duration to sleep in milliseconds.
- */
-void mcp_sleep_ms(uint32_t milliseconds);
-
-/**
- * @brief Get the current time in the unit of  milliseconds.
- * @return current time in milliseconds.
- */
-long long mcp_get_time_ms();
 
 /**
  * @brief Initializes the socket library (required on Windows).

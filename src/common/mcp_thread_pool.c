@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include "mcp_types.h"
 #include "mcp_log.h"
+#include "mcp_sys_utils.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -15,6 +16,23 @@
 #else
 #include <sched.h>
 #endif
+
+// Constants for thread pool management
+#define MIN_THREAD_COUNT 2  // Minimum number of threads to maintain
+
+// Smart adjustment constants
+#define HIGH_LOAD_THRESHOLD 0.8     // 80% utilization considered high load
+#define LOW_LOAD_THRESHOLD 0.2      // 20% utilization considered low load
+#define QUEUE_PRESSURE_THRESHOLD 0.5 // 50% queue full considered pressure
+#define ADJUSTMENT_COOLDOWN_MS 10000  // 10 seconds between adjustments
+
+// System load monitoring structure
+typedef struct {
+    double cpu_usage_percent;      // Current CPU usage (0.0 - 100.0)
+    size_t available_memory_mb;    // Available memory in MB
+    uint64_t last_update_time;     // Last time metrics were updated
+    bool metrics_valid;            // Whether metrics are valid
+} system_load_metrics_t;
 
 #ifdef _MSC_VER
 #   pragma warning(push)
@@ -64,6 +82,8 @@ static void* thread_pool_worker(void* arg);
 typedef struct {
     struct mcp_thread_pool* pool;
     size_t worker_index;
+    volatile bool should_exit;  // Explicit exit flag for this worker
+    volatile bool is_active;    // Whether this worker is currently active
 } worker_arg_t;
 
 #ifdef _MSC_VER
@@ -420,6 +440,8 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
         }
         arg->pool = pool;
         arg->worker_index = i;
+        arg->should_exit = false;  // Initialize exit flag
+        arg->is_active = false;    // Initialize active flag
 
         // Store the worker argument for later cleanup
         pool->worker_args[i] = arg;
@@ -514,6 +536,336 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
     }
 
     return pool;
+}
+
+size_t mcp_get_optimal_thread_count(void) {
+    size_t num_cores = 4; // Default fallback
+
+#ifdef _WIN32
+    SYSTEM_INFO sysinfo;
+    GetSystemInfo(&sysinfo);
+    num_cores = sysinfo.dwNumberOfProcessors;
+#else
+    num_cores = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+
+    // 2 * num_cores + 1 is a good balance for I/O bound workloads
+    return (2 * num_cores) + 1;
+}
+
+// Get current system load metrics
+static int get_system_load_metrics(system_load_metrics_t* metrics) {
+    if (!metrics) return -1;
+
+    uint64_t current_time = mcp_get_time_ms();
+
+    // Update metrics every 5 seconds to avoid overhead
+    if (metrics->metrics_valid && (current_time - metrics->last_update_time) < 5000) {
+        return 0; // Use cached metrics
+    }
+
+#ifdef _WIN32
+    // Windows implementation
+    MEMORYSTATUSEX mem_status;
+    mem_status.dwLength = sizeof(mem_status);
+    if (GlobalMemoryStatusEx(&mem_status)) {
+        metrics->available_memory_mb = (size_t)(mem_status.ullAvailPhys / (1024 * 1024));
+    } else {
+        metrics->available_memory_mb = 1024; // 1GB fallback
+    }
+
+    // Simple CPU usage estimation (not perfect but sufficient)
+    static ULARGE_INTEGER last_idle, last_kernel, last_user;
+    FILETIME idle_time, kernel_time, user_time;
+
+    if (GetSystemTimes(&idle_time, &kernel_time, &user_time)) {
+        ULARGE_INTEGER idle, kernel, user;
+        idle.LowPart = idle_time.dwLowDateTime;
+        idle.HighPart = idle_time.dwHighDateTime;
+        kernel.LowPart = kernel_time.dwLowDateTime;
+        kernel.HighPart = kernel_time.dwHighDateTime;
+        user.LowPart = user_time.dwLowDateTime;
+        user.HighPart = user_time.dwHighDateTime;
+
+        if (last_idle.QuadPart != 0) {
+            ULONGLONG idle_diff = idle.QuadPart - last_idle.QuadPart;
+            ULONGLONG kernel_diff = kernel.QuadPart - last_kernel.QuadPart;
+            ULONGLONG user_diff = user.QuadPart - last_user.QuadPart;
+            ULONGLONG total_diff = kernel_diff + user_diff;
+
+            if (total_diff > 0) {
+                metrics->cpu_usage_percent = 100.0 - (100.0 * idle_diff / total_diff);
+            } else {
+                metrics->cpu_usage_percent = 0.0;
+            }
+        } else {
+            metrics->cpu_usage_percent = 50.0; // Initial estimate
+        }
+
+        last_idle = idle;
+        last_kernel = kernel;
+        last_user = user;
+    } else {
+        metrics->cpu_usage_percent = 50.0; // Fallback
+    }
+
+#else
+    // POSIX implementation
+    // Get available memory
+    long pages = sysconf(_SC_AVPHYS_PAGES);
+    long page_size = sysconf(_SC_PAGE_SIZE);
+    if (pages > 0 && page_size > 0) {
+        metrics->available_memory_mb = (size_t)((pages * page_size) / (1024 * 1024));
+    } else {
+        metrics->available_memory_mb = 1024; // 1GB fallback
+    }
+
+    // Simple CPU load estimation using load average
+    double load_avg[3];
+    if (getloadavg(load_avg, 1) != -1) {
+        size_t num_cores = sysconf(_SC_NPROCESSORS_ONLN);
+        if (num_cores > 0) {
+            // Convert load average to percentage (rough estimate)
+            metrics->cpu_usage_percent = (load_avg[0] / num_cores) * 100.0;
+            if (metrics->cpu_usage_percent > 100.0) {
+                metrics->cpu_usage_percent = 100.0;
+            }
+        } else {
+            metrics->cpu_usage_percent = 50.0;
+        }
+    } else {
+        metrics->cpu_usage_percent = 50.0; // Fallback
+    }
+#endif
+
+    metrics->last_update_time = current_time;
+    metrics->metrics_valid = true;
+
+    return 0;
+}
+
+int mcp_thread_pool_resize(mcp_thread_pool_t* pool, size_t new_thread_count) {
+    if (!pool || new_thread_count == 0) {
+        return -1;
+    }
+
+    // Take write lock for thread-safe resizing
+    mcp_rwlock_write_lock(pool->rwlock);
+
+    // If new size is same as current, nothing to do
+    if (new_thread_count == pool->thread_count) {
+        mcp_rwlock_write_unlock(pool->rwlock);
+        return 0;
+    }
+
+    // Add minimum thread count validation
+    if (new_thread_count < MIN_THREAD_COUNT) {
+        new_thread_count = MIN_THREAD_COUNT;
+    }
+
+    // If shrinking
+    if (new_thread_count < pool->thread_count) {
+        // First, explicitly signal threads that should exit
+        for (size_t i = new_thread_count; i < pool->thread_count; i++) {
+            if (pool->worker_args[i] != NULL) {
+                pool->worker_args[i]->should_exit = true;
+                mcp_log_debug("Signaling worker %zu to exit during pool shrink", i);
+            }
+        }
+
+        // Set new thread count after signaling exit flags
+        pool->thread_count = new_thread_count;
+
+        // Signal all threads to check their exit flags
+        mcp_mutex_lock(pool->cond_mutex);
+        mcp_cond_broadcast(pool->notify);
+        mcp_mutex_unlock(pool->cond_mutex);
+
+        // Worker threads will exit when they see their should_exit flag is true
+        mcp_log_debug("Pool shrunk from %zu to %zu threads", pool->thread_count + (pool->thread_count - new_thread_count), new_thread_count);
+    }
+    // If expanding
+    else {
+        // Create new worker threads
+        size_t threads_to_add = new_thread_count - pool->thread_count;
+        for (size_t i = 0; i < threads_to_add; i++) {
+            worker_arg_t* arg = (worker_arg_t*)malloc(sizeof(worker_arg_t));
+            if (!arg) {
+                mcp_log_error("Failed to allocate memory for worker arg");
+                pool->thread_count += i; // Update to actual number of threads
+                mcp_rwlock_write_unlock(pool->rwlock);
+                return -1;
+            }
+            arg->pool = pool;
+            arg->worker_index = pool->thread_count + i;
+            arg->should_exit = false;  // Initialize exit flag
+            arg->is_active = false;    // Initialize active flag
+
+            // Store the worker argument for cleanup
+            pool->worker_args[arg->worker_index] = arg;
+
+            if (mcp_thread_create(&(pool->threads[arg->worker_index]), thread_pool_worker, arg) != 0) {
+                mcp_log_error("Failed to create worker thread");
+                free(arg);
+                pool->worker_args[arg->worker_index] = NULL;
+                pool->thread_count += i; // Update to actual number of threads
+                mcp_rwlock_write_unlock(pool->rwlock);
+                return -1;
+            }
+        }
+        pool->thread_count = new_thread_count;
+    }
+
+    mcp_rwlock_write_unlock(pool->rwlock);
+    return 0;
+}
+
+int mcp_thread_pool_auto_adjust(mcp_thread_pool_t* pool) {
+    if (!pool) return -1;
+
+    size_t optimal_threads = mcp_get_optimal_thread_count();
+    return mcp_thread_pool_resize(pool, optimal_threads);
+}
+
+int mcp_thread_pool_smart_adjust(mcp_thread_pool_t* pool, void* context) {
+    (void)context; // Unused parameter, can be used for additional context if needed
+    if (!pool) return -1;
+
+    static system_load_metrics_t metrics = {0};
+    static uint64_t last_adjustment_time = 0;
+
+    uint64_t current_time = mcp_get_time_ms();
+
+    // Enforce cooldown period between adjustments
+    if (last_adjustment_time != 0 &&
+        (current_time - last_adjustment_time) < ADJUSTMENT_COOLDOWN_MS) {
+        return 0; // Skip adjustment, too soon
+    }
+
+    // Get current system load metrics
+    if (get_system_load_metrics(&metrics) != 0) {
+        mcp_log_warn("Failed to get system load metrics, falling back to basic auto-adjust");
+        return mcp_thread_pool_auto_adjust(pool);
+    }
+
+    // Get current pool statistics
+    size_t submitted, completed, failed, active_tasks;
+    if (mcp_thread_pool_get_stats(pool, &submitted, &completed, &failed, &active_tasks) != 0) {
+        mcp_log_warn("Failed to get thread pool stats, falling back to basic auto-adjust");
+        return mcp_thread_pool_auto_adjust(pool);
+    }
+
+    // Get current thread count and queue info
+    size_t current_threads = mcp_thread_pool_get_thread_count(pool);
+    size_t optimal_threads = mcp_get_optimal_thread_count();
+
+    // Calculate utilization metrics
+    double thread_utilization = current_threads > 0 ? (double)active_tasks / current_threads : 0.0;
+
+    // Calculate queue pressure from work-stealing deques
+    mcp_rwlock_read_lock(pool->rwlock);
+    size_t total_queued_tasks = 0;
+    size_t total_queue_capacity = 0;
+    size_t thread_count_local = pool->thread_count;
+
+    // Sum up tasks in all deques
+    for (size_t i = 0; i < thread_count_local; i++) {
+        if (pool->deques) {
+            size_t deque_top = load_size(&pool->deques[i].top);
+            size_t deque_bottom = load_size(&pool->deques[i].bottom);
+
+            // Calculate current queue size for this deque
+            if (deque_bottom >= deque_top) {
+                total_queued_tasks += (deque_bottom - deque_top);
+            }
+
+            // Add deque capacity
+            total_queue_capacity += pool->deque_capacity;
+        }
+    }
+    mcp_rwlock_read_unlock(pool->rwlock);
+
+    double queue_pressure = total_queue_capacity > 0 ? (double)total_queued_tasks / total_queue_capacity : 0.0;
+
+    // Decision logic for thread count adjustment
+    size_t target_threads = current_threads;
+    const char* reason = "no change";
+
+    // High load conditions - increase threads
+    if ((metrics.cpu_usage_percent < 80.0) && // CPU not maxed out
+        (metrics.available_memory_mb > 100) && // Sufficient memory
+        ((thread_utilization > HIGH_LOAD_THRESHOLD) ||
+         (queue_pressure > QUEUE_PRESSURE_THRESHOLD))) {
+
+        // Increase threads, but not beyond optimal * 1.5
+        size_t max_threads = optimal_threads + (optimal_threads / 2);
+        if (current_threads < max_threads) {
+            target_threads = current_threads + 1;
+            reason = "high load/queue pressure";
+        }
+    }
+    // Low load conditions - decrease threads
+    else if ((thread_utilization < LOW_LOAD_THRESHOLD) &&
+             (queue_pressure < 0.1) && // Very low queue pressure
+             (current_threads > MIN_THREAD_COUNT)) {
+
+        // Decrease threads, but not below minimum
+        target_threads = current_threads - 1;
+        if (target_threads < MIN_THREAD_COUNT) {
+            target_threads = MIN_THREAD_COUNT;
+        }
+        reason = "low load";
+    }
+    // Memory pressure - reduce threads
+    else if (metrics.available_memory_mb < 50) { // Less than 50MB available
+        if (current_threads > MIN_THREAD_COUNT) {
+            target_threads = current_threads - 1;
+            if (target_threads < MIN_THREAD_COUNT) {
+                target_threads = MIN_THREAD_COUNT;
+            }
+            reason = "memory pressure";
+        }
+    }
+    // CPU pressure - reduce threads if we have too many
+    else if ((metrics.cpu_usage_percent > 95.0) &&
+             (current_threads > optimal_threads)) {
+        target_threads = optimal_threads;
+        reason = "CPU pressure";
+    }
+
+    // Apply the adjustment if needed
+    int result = 0;
+    if (target_threads != current_threads) {
+        result = mcp_thread_pool_resize(pool, target_threads);
+        if (result == 0) {
+            last_adjustment_time = current_time;
+            mcp_log_info("Smart thread pool adjustment: %zu -> %zu threads (%s) "
+                        "[CPU: %.1f%%, Mem: %zuMB, Thread util: %.1f%%, Queue: %.1f%%]",
+                        current_threads, target_threads, reason,
+                        metrics.cpu_usage_percent, metrics.available_memory_mb,
+                        thread_utilization * 100.0, queue_pressure * 100.0);
+        } else {
+            mcp_log_warn("Failed to adjust thread pool from %zu to %zu threads",
+                        current_threads, target_threads);
+        }
+    } else {
+        mcp_log_debug("Smart adjustment: no change needed "
+                     "[CPU: %.1f%%, Mem: %zuMB, Thread util: %.1f%%, Queue: %.1f%%]",
+                     metrics.cpu_usage_percent, metrics.available_memory_mb,
+                     thread_utilization * 100.0, queue_pressure * 100.0);
+    }
+
+    return result;
+}
+
+size_t mcp_thread_pool_get_thread_count(mcp_thread_pool_t* pool) {
+    if (!pool) return 0;
+
+    mcp_rwlock_read_lock(pool->rwlock);
+    size_t count = pool->thread_count;
+    mcp_rwlock_read_unlock(pool->rwlock);
+
+    return count;
 }
 
 /**
@@ -838,6 +1190,30 @@ static void* thread_pool_worker(void* arg) {
     worker_locals.pool->worker_args[worker_locals.my_index] = worker_locals.worker_data;
 
     while (1) {
+        // Check if this thread should exit - use explicit exit flag first, then fallback to index check
+        bool should_exit_explicit = worker_locals.worker_data->should_exit;
+        bool should_exit_index = false;
+
+        // Only check index-based exit if explicit flag is not set (for backward compatibility)
+        if (!should_exit_explicit) {
+            mcp_rwlock_read_lock(worker_locals.pool->rwlock);
+            should_exit_index = (worker_locals.my_index >= worker_locals.pool->thread_count);
+            mcp_rwlock_read_unlock(worker_locals.pool->rwlock);
+        }
+
+        if (should_exit_explicit || should_exit_index) {
+            // Mark worker as inactive before exiting
+            worker_locals.pool->worker_status[worker_locals.my_index] = 0;
+            worker_locals.worker_data->is_active = false;
+
+            if (should_exit_explicit) {
+                mcp_log_debug("Worker %zu exiting due to explicit exit signal", worker_locals.my_index);
+            } else {
+                mcp_log_debug("Worker %zu exiting due to pool shrink (index >= thread_count)", worker_locals.my_index);
+            }
+            break;  // Let the function's cleanup code handle the rest
+        }
+        
         // 1. Try to pop from own deque
         if (deque_pop_bottom(worker_locals.my_deque, &worker_locals.task)) {
             worker_locals.steal_attempts = 0;
@@ -845,6 +1221,7 @@ static void* thread_pool_worker(void* arg) {
 
             // Mark worker as active
             worker_locals.pool->worker_status[worker_locals.my_index] = 1;
+            worker_locals.worker_data->is_active = true;
             fetch_add_size(&worker_locals.pool->active_tasks, 1);
 
             PROFILE_START("thread_pool_task_execution");
@@ -858,6 +1235,7 @@ static void* thread_pool_worker(void* arg) {
 
             // Mark worker as idle
             worker_locals.pool->worker_status[worker_locals.my_index] = 0;
+            worker_locals.worker_data->is_active = false;
 
             continue;
         }
@@ -956,6 +1334,7 @@ static void* thread_pool_worker(void* arg) {
 
                 // Mark worker as active
                 worker_locals.pool->worker_status[worker_locals.my_index] = 1;
+                worker_locals.worker_data->is_active = true;
                 fetch_add_size(&worker_locals.pool->active_tasks, 1);
 
                 PROFILE_START("thread_pool_task_execution_steal");
@@ -969,6 +1348,7 @@ static void* thread_pool_worker(void* arg) {
 
                 // Mark worker as idle
                 worker_locals.pool->worker_status[worker_locals.my_index] = 0;
+                worker_locals.worker_data->is_active = false;
 
                 continue;
             }
@@ -1013,6 +1393,12 @@ static void* thread_pool_worker(void* arg) {
 
             // Longer wait using mutex/condvar for shutdown signal
             if (mcp_mutex_lock(worker_locals.pool->cond_mutex) == 0) {
+                // Check for explicit exit signal first
+                if (worker_locals.worker_data->should_exit) {
+                    mcp_mutex_unlock(worker_locals.pool->cond_mutex);
+                    break; // Exit the loop and clean up
+                }
+
                 // Use read lock to check shutdown state - allows multiple threads to check concurrently
                 mcp_rwlock_read_lock(worker_locals.pool->rwlock);
                 int current_shutdown = worker_locals.pool->shutdown_flag;
