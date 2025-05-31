@@ -165,6 +165,12 @@ set(COMMON_SOURCES
     src/common/mcp_sys_utils.c
     src/common/mcp_framing.c
     src/common/mcp_thread_pool.c
+    src/common/mcp_thread_pool_atomic.c
+    src/common/mcp_thread_pool_deque.c
+    src/common/mcp_thread_pool_system.c
+    src/common/mcp_thread_pool_tasks.c
+    src/common/mcp_thread_pool_worker.c
+    src/common/mcp_thread_pool_stats.c
     src/common/mcp_object_pool.c
     src/common/mcp_memory_pool.c
     src/common/mcp_thread_cache.c

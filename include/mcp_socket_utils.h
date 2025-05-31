@@ -7,8 +7,7 @@
 #include "mcp_cache_aligned.h"
 
 #ifdef _WIN32
-// Include our Windows socket compatibility header
-#	include "win_socket_compat.h"
+#   include "win_socket_compat.h"
 #   pragma comment(lib, "Ws2_32.lib")
     typedef SOCKET socket_t;
     typedef WSABUF mcp_iovec_t;

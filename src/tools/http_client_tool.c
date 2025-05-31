@@ -12,6 +12,7 @@
 #include "mcp_string_utils.h"
 #include "mcp_json_utils.h"
 #include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 
 #include <stdio.h>
 #include <stdlib.h>
