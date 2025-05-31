@@ -2,10 +2,10 @@
  * @file rwlock_demo.c
  * @brief Demonstrates the use of read-write locks
  */
-
 #include "mcp_rwlock.h"
 #include "mcp_log.h"
 #include "mcp_thread_pool.h"
+#include "mcp_sys_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,14 +29,7 @@ typedef struct {
 
 // Function to simulate some work (sleep for a while)
 void simulate_work(int ms) {
-#ifdef _WIN32
-    Sleep(ms);
-#else
-    struct timespec ts;
-    ts.tv_sec = ms / 1000;
-    ts.tv_nsec = (ms % 1000) * 1000000;
-    nanosleep(&ts, NULL);
-#endif
+    mcp_sleep_ms(ms);
 }
 
 // Reader task function

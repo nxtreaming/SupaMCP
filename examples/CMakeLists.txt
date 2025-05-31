@@ -238,6 +238,16 @@ else()
     target_link_libraries(factory_streamable_server PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# HTTP Streamable Client Example
+add_executable(http_streamable_client http_streamable_client.c)
+target_link_libraries(http_streamable_client PRIVATE mcpcore)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(http_streamable_client PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(http_streamable_client PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Basic HTTP Server Example (no libwebsockets dependency)
 add_executable(basic_http_server basic_http_server.c)
 # Link platform-specific libraries needed by the transport

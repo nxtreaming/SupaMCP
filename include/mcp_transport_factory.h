@@ -12,15 +12,16 @@ extern "C" {
  * @brief Enumeration of supported transport types.
  */
 typedef enum mcp_transport_type {
-    MCP_TRANSPORT_STDIO,              /**< Standard input/output transport */
-    MCP_TRANSPORT_TCP,                /**< TCP server transport */
-    MCP_TRANSPORT_TCP_CLIENT,         /**< TCP client transport */
-    MCP_TRANSPORT_WS_SERVER,          /**< WebSocket server transport */
-    MCP_TRANSPORT_WS_CLIENT,          /**< WebSocket client transport */
-    MCP_TRANSPORT_WS_POOL,            /**< WebSocket connection pool transport */
-    MCP_TRANSPORT_HTTP_SERVER,        /**< HTTP server transport */
-    MCP_TRANSPORT_HTTP_CLIENT,        /**< HTTP client transport */
-    MCP_TRANSPORT_HTTP_STREAMABLE     /**< HTTP Streamable transport (MCP 2025-03-26) */
+    MCP_TRANSPORT_STDIO,                    /**< Standard input/output transport */
+    MCP_TRANSPORT_TCP,                      /**< TCP server transport */
+    MCP_TRANSPORT_TCP_CLIENT,               /**< TCP client transport */
+    MCP_TRANSPORT_WS_SERVER,                /**< WebSocket server transport */
+    MCP_TRANSPORT_WS_CLIENT,                /**< WebSocket client transport */
+    MCP_TRANSPORT_WS_POOL,                  /**< WebSocket connection pool transport */
+    MCP_TRANSPORT_HTTP_SERVER,              /**< HTTP server transport */
+    MCP_TRANSPORT_HTTP_CLIENT,              /**< HTTP client transport */
+    MCP_TRANSPORT_HTTP_STREAMABLE,          /**< HTTP Streamable server transport (MCP 2025-03-26) */
+    MCP_TRANSPORT_HTTP_STREAMABLE_CLIENT    /**< HTTP Streamable client transport (MCP 2025-03-26) */
 } mcp_transport_type_t;
 
 /**
@@ -108,6 +109,27 @@ typedef union mcp_transport_config {
         uint32_t heartbeat_interval_ms;      /**< Heartbeat interval in milliseconds */
         int enable_legacy_endpoints;         /**< Whether to enable legacy HTTP+SSE endpoints (1 for true, 0 for false) */
     } http_streamable;
+
+    struct {
+        const char* host;                    /**< Server hostname or IP address */
+        uint16_t port;                       /**< Server port number */
+        int use_ssl;                         /**< Whether to use HTTPS/SSL (1 for true, 0 for false) */
+        const char* cert_path;               /**< Path to SSL certificate (optional) */
+        const char* key_path;                /**< Path to SSL private key (optional) */
+        const char* ca_cert_path;            /**< Path to CA certificate for verification (optional) */
+        int verify_ssl;                      /**< Whether to verify SSL certificates (1 for true, 0 for false) */
+        const char* mcp_endpoint;            /**< MCP endpoint path (default: "/mcp") */
+        const char* user_agent;              /**< User-Agent header (optional) */
+        const char* api_key;                 /**< API key for authentication (optional) */
+        uint32_t connect_timeout_ms;         /**< Connection timeout in milliseconds */
+        uint32_t request_timeout_ms;         /**< Request timeout in milliseconds */
+        uint32_t sse_reconnect_delay_ms;     /**< SSE reconnection delay in milliseconds */
+        uint32_t max_reconnect_attempts;     /**< Maximum SSE reconnection attempts (0 = infinite) */
+        int enable_sessions;                 /**< Whether to use session management (1 for true, 0 for false) */
+        int enable_sse_streams;              /**< Whether to enable SSE event streams (1 for true, 0 for false) */
+        int auto_reconnect_sse;              /**< Whether to automatically reconnect SSE streams (1 for true, 0 for false) */
+        const char* custom_headers;          /**< Additional custom headers (format: "Key1: Value1\r\nKey2: Value2") */
+    } http_streamable_client;
 
 } mcp_transport_config_t;
 

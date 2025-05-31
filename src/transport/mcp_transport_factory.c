@@ -7,6 +7,7 @@
 #include "mcp_http_transport.h"
 #include "mcp_http_client_transport.h"
 #include "mcp_http_streamable_transport.h"
+#include "mcp_http_streamable_client_transport.h"
 #include <stdlib.h>
 
 mcp_transport_t* mcp_transport_factory_create(
@@ -182,6 +183,35 @@ mcp_transport_t* mcp_transport_factory_create(
                     .enable_legacy_endpoints = config->http_streamable.enable_legacy_endpoints ? true : false
                 };
                 return mcp_transport_http_streamable_create(&streamable_config);
+            }
+
+        case MCP_TRANSPORT_HTTP_STREAMABLE_CLIENT:
+            if (config == NULL) {
+                return NULL;
+            }
+            {
+                // Convert from transport factory config to HTTP Streamable client config
+                mcp_http_streamable_client_config_t client_config = {
+                    .host = config->http_streamable_client.host,
+                    .port = config->http_streamable_client.port,
+                    .use_ssl = config->http_streamable_client.use_ssl ? true : false,
+                    .cert_path = config->http_streamable_client.cert_path,
+                    .key_path = config->http_streamable_client.key_path,
+                    .ca_cert_path = config->http_streamable_client.ca_cert_path,
+                    .verify_ssl = config->http_streamable_client.verify_ssl ? true : false,
+                    .mcp_endpoint = config->http_streamable_client.mcp_endpoint,
+                    .user_agent = config->http_streamable_client.user_agent,
+                    .api_key = config->http_streamable_client.api_key,
+                    .connect_timeout_ms = config->http_streamable_client.connect_timeout_ms,
+                    .request_timeout_ms = config->http_streamable_client.request_timeout_ms,
+                    .sse_reconnect_delay_ms = config->http_streamable_client.sse_reconnect_delay_ms,
+                    .max_reconnect_attempts = config->http_streamable_client.max_reconnect_attempts,
+                    .enable_sessions = config->http_streamable_client.enable_sessions ? true : false,
+                    .enable_sse_streams = config->http_streamable_client.enable_sse_streams ? true : false,
+                    .auto_reconnect_sse = config->http_streamable_client.auto_reconnect_sse ? true : false,
+                    .custom_headers = config->http_streamable_client.custom_headers
+                };
+                return mcp_transport_http_streamable_client_create(&client_config);
             }
 
         default:

@@ -4,12 +4,6 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <pthread.h>
-#endif
-
 typedef struct mcp_thread_pool mcp_thread_pool_t;
 
 /**

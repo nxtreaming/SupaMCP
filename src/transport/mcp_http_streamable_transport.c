@@ -588,22 +588,6 @@ static int http_streamable_transport_sendv(mcp_transport_t* transport, const mcp
 
 // Public API functions
 
-mcp_transport_t* mcp_transport_http_streamable_client_create(const char* host,
-                                                           uint16_t port,
-                                                           const char* mcp_endpoint,
-                                                           bool use_ssl,
-                                                           const char* api_key) {
-    // TODO: Implement client transport
-    // For now, return NULL as client implementation is not yet complete
-    (void)host;
-    (void)port;
-    (void)mcp_endpoint;
-    (void)use_ssl;
-    (void)api_key;
-
-    mcp_log_error("Streamable HTTP client transport not yet implemented");
-    return NULL;
-}
 
 int mcp_transport_http_streamable_send_with_session(mcp_transport_t* transport,
                                                    const void* data,
