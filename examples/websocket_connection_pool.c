@@ -1,6 +1,7 @@
 #include "mcp_websocket_connection_pool.h"
 #include "mcp_log.h"
 #include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

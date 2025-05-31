@@ -6,6 +6,7 @@
 #include <mcp_websocket_transport.h>
 #include <mcp_types.h>
 #include <mcp_socket_utils.h>
+#include <mcp_sys_utils.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>

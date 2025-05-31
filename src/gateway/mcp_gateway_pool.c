@@ -6,6 +6,7 @@
 #include "mcp_sync.h"
 #include "mcp_tcp_client_transport.h"
 #include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>

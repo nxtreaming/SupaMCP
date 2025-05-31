@@ -20,6 +20,7 @@
 #include "mcp_log.h"
 #include "mcp_json_rpc.h"
 #include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 #include "mcp_thread_local.h"
 
 // Helper function to convert string from local encoding to UTF-8 on Windows

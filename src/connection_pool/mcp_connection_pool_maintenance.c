@@ -1,5 +1,6 @@
 #include "internal/connection_pool_internal.h"
 #include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 #include "mcp_object_pool.h"
 #include <stdlib.h>
 #include <string.h>

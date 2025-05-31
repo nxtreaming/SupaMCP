@@ -12,14 +12,15 @@ extern "C" {
  * @brief Enumeration of supported transport types.
  */
 typedef enum mcp_transport_type {
-    MCP_TRANSPORT_STDIO,       /**< Standard input/output transport */
-    MCP_TRANSPORT_TCP,         /**< TCP server transport */
-    MCP_TRANSPORT_TCP_CLIENT,  /**< TCP client transport */
-    MCP_TRANSPORT_WS_SERVER,   /**< WebSocket server transport */
-    MCP_TRANSPORT_WS_CLIENT,   /**< WebSocket client transport */
-    MCP_TRANSPORT_WS_POOL,     /**< WebSocket connection pool transport */
-    MCP_TRANSPORT_HTTP_SERVER, /**< HTTP server transport */
-    MCP_TRANSPORT_HTTP_CLIENT  /**< HTTP client transport */
+    MCP_TRANSPORT_STDIO,              /**< Standard input/output transport */
+    MCP_TRANSPORT_TCP,                /**< TCP server transport */
+    MCP_TRANSPORT_TCP_CLIENT,         /**< TCP client transport */
+    MCP_TRANSPORT_WS_SERVER,          /**< WebSocket server transport */
+    MCP_TRANSPORT_WS_CLIENT,          /**< WebSocket client transport */
+    MCP_TRANSPORT_WS_POOL,            /**< WebSocket connection pool transport */
+    MCP_TRANSPORT_HTTP_SERVER,        /**< HTTP server transport */
+    MCP_TRANSPORT_HTTP_CLIENT,        /**< HTTP client transport */
+    MCP_TRANSPORT_HTTP_STREAMABLE     /**< HTTP Streamable transport (MCP 2025-03-26) */
 } mcp_transport_type_t;
 
 /**
@@ -82,6 +83,31 @@ typedef union mcp_transport_config {
         uint32_t timeout_ms;      /**< Connection timeout in milliseconds (0 to disable) */
         const char* api_key;      /**< API key for authentication (optional) */
     } http_client;
+
+    struct {
+        const char* host;                    /**< Hostname or IP address to bind to */
+        uint16_t port;                       /**< Port number */
+        int use_ssl;                         /**< Whether to use SSL/TLS (1 for true, 0 for false) */
+        const char* cert_path;               /**< Path to SSL certificate (if use_ssl is true) */
+        const char* key_path;                /**< Path to SSL private key (if use_ssl is true) */
+        const char* doc_root;                /**< Document root for serving static files (optional) */
+        uint32_t timeout_ms;                 /**< Connection timeout in milliseconds (0 to disable) */
+        const char* mcp_endpoint;            /**< MCP endpoint path (default: "/mcp") */
+        int enable_sessions;                 /**< Whether to enable session management (1 for true, 0 for false) */
+        uint32_t session_timeout_seconds;    /**< Session timeout in seconds (0 for default) */
+        int validate_origin;                 /**< Whether to validate Origin header (1 for true, 0 for false) */
+        const char* allowed_origins;         /**< Comma-separated list of allowed origins */
+        int enable_cors;                     /**< Whether to enable CORS (1 for true, 0 for false) */
+        const char* cors_allow_origin;       /**< Allowed origins for CORS */
+        const char* cors_allow_methods;      /**< Allowed methods for CORS */
+        const char* cors_allow_headers;      /**< Allowed headers for CORS */
+        int cors_max_age;                    /**< Max age for CORS preflight requests in seconds */
+        int enable_sse_resumability;         /**< Whether to enable SSE stream resumability (1 for true, 0 for false) */
+        uint32_t max_stored_events;          /**< Maximum number of events to store for resumability */
+        int send_heartbeats;                 /**< Whether to send SSE heartbeats (1 for true, 0 for false) */
+        uint32_t heartbeat_interval_ms;      /**< Heartbeat interval in milliseconds */
+        int enable_legacy_endpoints;         /**< Whether to enable legacy HTTP+SSE endpoints (1 for true, 0 for false) */
+    } http_streamable;
 
 } mcp_transport_config_t;
 

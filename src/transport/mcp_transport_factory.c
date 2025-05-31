@@ -6,6 +6,7 @@
 #include "mcp_websocket_connection_pool.h"
 #include "mcp_http_transport.h"
 #include "mcp_http_client_transport.h"
+#include "mcp_http_streamable_transport.h"
 #include <stdlib.h>
 
 mcp_transport_t* mcp_transport_factory_create(
@@ -148,6 +149,39 @@ mcp_transport_t* mcp_transport_factory_create(
                     .api_key = config->http_client.api_key
                 };
                 return mcp_transport_http_client_create_with_config(&http_client_config);
+            }
+
+        case MCP_TRANSPORT_HTTP_STREAMABLE:
+            if (config == NULL) {
+                return NULL;
+            }
+            {
+                // Convert from transport factory config to HTTP Streamable config
+                mcp_http_streamable_config_t streamable_config = {
+                    .host = config->http_streamable.host,
+                    .port = config->http_streamable.port,
+                    .use_ssl = config->http_streamable.use_ssl ? true : false,
+                    .cert_path = config->http_streamable.cert_path,
+                    .key_path = config->http_streamable.key_path,
+                    .doc_root = config->http_streamable.doc_root,
+                    .timeout_ms = config->http_streamable.timeout_ms,
+                    .mcp_endpoint = config->http_streamable.mcp_endpoint,
+                    .enable_sessions = config->http_streamable.enable_sessions ? true : false,
+                    .session_timeout_seconds = config->http_streamable.session_timeout_seconds,
+                    .validate_origin = config->http_streamable.validate_origin ? true : false,
+                    .allowed_origins = config->http_streamable.allowed_origins,
+                    .enable_cors = config->http_streamable.enable_cors ? true : false,
+                    .cors_allow_origin = config->http_streamable.cors_allow_origin,
+                    .cors_allow_methods = config->http_streamable.cors_allow_methods,
+                    .cors_allow_headers = config->http_streamable.cors_allow_headers,
+                    .cors_max_age = config->http_streamable.cors_max_age,
+                    .enable_sse_resumability = config->http_streamable.enable_sse_resumability ? true : false,
+                    .max_stored_events = config->http_streamable.max_stored_events,
+                    .send_heartbeats = config->http_streamable.send_heartbeats ? true : false,
+                    .heartbeat_interval_ms = config->http_streamable.heartbeat_interval_ms,
+                    .enable_legacy_endpoints = config->http_streamable.enable_legacy_endpoints ? true : false
+                };
+                return mcp_transport_http_streamable_create(&streamable_config);
             }
 
         default:

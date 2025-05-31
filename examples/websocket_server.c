@@ -17,6 +17,7 @@
 #include "mcp_thread_local.h"
 #include "mcp_json.h"
 #include "mcp_socket_utils.h"
+#include "mcp_sys_utils.h"
 
 // Global server instance for signal handling
 static mcp_server_t* g_server = NULL;
