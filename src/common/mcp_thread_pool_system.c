@@ -5,7 +5,6 @@
  * This file implements system load monitoring functionality and provides
  * utilities for determining optimal thread counts based on system resources.
  */
-
 #include "internal/mcp_thread_pool_internal.h"
 
 size_t mcp_get_optimal_thread_count(void) {

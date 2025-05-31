@@ -138,10 +138,6 @@ struct mcp_thread_pool {
 #   pragma warning(pop)
 #endif
 
-// ============================================================================
-// ATOMIC OPERATIONS (from mcp_thread_pool_atomic.c)
-// ============================================================================
-
 // Atomic Compare-and-Swap for size_t
 bool compare_and_swap_size(volatile size_t* ptr, size_t expected, size_t desired);
 
@@ -157,10 +153,6 @@ void store_int(volatile int* ptr, int value);
 // Atomic Fetch-and-Add for size_t
 size_t fetch_add_size(volatile size_t* ptr, size_t value);
 
-// ============================================================================
-// WORK-STEALING DEQUE OPERATIONS (from mcp_thread_pool_deque.c)
-// ============================================================================
-
 // Push task onto the bottom of the deque (owner thread only)
 bool deque_push_bottom(work_stealing_deque_t* deque, mcp_task_t task);
 
@@ -170,16 +162,8 @@ bool deque_pop_bottom(work_stealing_deque_t* deque, mcp_task_t* task);
 // Steal task from the top of the deque (thief threads only)
 bool deque_steal_top(work_stealing_deque_t* deque, mcp_task_t* task);
 
-// ============================================================================
-// SYSTEM LOAD MONITORING (from mcp_thread_pool_system.c)
-// ============================================================================
-
 // Get current system load metrics
 int get_system_load_metrics(system_load_metrics_t* metrics);
-
-// ============================================================================
-// WORKER THREAD IMPLEMENTATION (from mcp_thread_pool_worker.c)
-// ============================================================================
 
 // The worker thread function
 void* thread_pool_worker(void* arg);

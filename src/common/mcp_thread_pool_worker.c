@@ -5,7 +5,6 @@
  * This file implements the worker thread function that handles task execution,
  * work stealing, and thread lifecycle management.
  */
-
 #include "internal/mcp_thread_pool_internal.h"
 
 #ifdef _MSC_VER

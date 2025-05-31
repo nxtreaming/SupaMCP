@@ -3,7 +3,6 @@
  * @brief Core thread pool management functions.
  *
  */
-
 #include "internal/mcp_thread_pool_internal.h"
 
 /**
@@ -379,15 +378,7 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
                             i, join_attempts + 1, max_join_attempts);
                 join_attempts++;
 
-                // Short sleep before retry
-                #ifdef _WIN32
-                Sleep(100);
-                #else
-                struct timespec ts;
-                ts.tv_sec = 0;
-                ts.tv_nsec = 100000000; // 100ms
-                nanosleep(&ts, NULL);
-                #endif
+                mcp_sleep_ms(100);  // Short sleep before retry
             }
         }
 

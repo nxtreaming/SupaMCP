@@ -5,7 +5,6 @@
  * This file contains platform-specific atomic operations used by the thread pool
  * for lock-free synchronization between worker threads and task submission.
  */
-
 #include "internal/mcp_thread_pool_internal.h"
 
 // Atomic Compare-and-Swap for size_t

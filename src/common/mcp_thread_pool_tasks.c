@@ -5,7 +5,6 @@
  * This file implements task submission and waiting functionality for the thread pool,
  * including task distribution across work-stealing deques and synchronization.
  */
-
 #include "internal/mcp_thread_pool_internal.h"
 
 /**

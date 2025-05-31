@@ -6,7 +6,6 @@
  * Each worker thread has its own deque where it can push/pop tasks from the bottom,
  * while other threads can steal tasks from the top.
  */
-
 #include "internal/mcp_thread_pool_internal.h"
 
 // Push task onto the bottom of the deque (owner thread only)

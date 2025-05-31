@@ -5,7 +5,6 @@
  * This file implements statistics collection and smart adjustment algorithms
  * for the thread pool, including auto-adjustment based on system load.
  */
-
 #include "internal/mcp_thread_pool_internal.h"
 
 int mcp_thread_pool_auto_adjust(mcp_thread_pool_t* pool) {
