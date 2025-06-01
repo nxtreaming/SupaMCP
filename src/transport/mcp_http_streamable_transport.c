@@ -544,7 +544,6 @@ static int http_streamable_transport_sendv(mcp_transport_t* transport, const mcp
     }
 
     http_streamable_transport_data_t* transport_data = (http_streamable_transport_data_t*)transport->transport_data;
-
     if (!transport_data->running) {
         mcp_log_error("Streamable HTTP transport not running");
         return -1;

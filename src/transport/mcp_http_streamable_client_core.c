@@ -8,21 +8,9 @@
 #include "internal/http_streamable_client_internal.h"
 
 /**
- * @brief Connect to host with timeout
- */
-static socket_t mcp_socket_connect_with_timeout(const char* host, uint16_t port, uint32_t timeout_ms) {
-    if (host == NULL) {
-        return MCP_INVALID_SOCKET;
-    }
-
-    // Use the existing socket connect function
-    return mcp_socket_connect(host, port, timeout_ms);
-}
-
-/**
  * @brief Receive data with timeout
  */
-static ssize_t mcp_socket_recv_with_timeout(socket_t socket_fd, void* buffer, size_t size, uint32_t timeout_ms) {
+static ssize_t socket_recv_with_timeout(socket_t socket_fd, void* buffer, size_t size, uint32_t timeout_ms) {
     if (socket_fd == MCP_INVALID_SOCKET || buffer == NULL || size == 0) {
         return -1;
     }
@@ -48,7 +36,7 @@ socket_t http_client_create_socket(const char* host, uint16_t port, uint32_t tim
         return MCP_INVALID_SOCKET;
     }
 
-    socket_t socket_fd = mcp_socket_connect_with_timeout(host, port, timeout_ms);
+    socket_t socket_fd = mcp_socket_connect(host, port, timeout_ms);
     if (socket_fd == MCP_INVALID_SOCKET) {
         mcp_log_error("Failed to connect to %s:%d", host, port);
         return MCP_INVALID_SOCKET;
@@ -143,14 +131,12 @@ char* http_client_build_request(http_streamable_client_data_t* data, const char*
  * @brief Send HTTP request over socket
  */
 int http_client_send_raw_request(socket_t socket_fd, const char* request, uint32_t timeout_ms) {
-    (void)timeout_ms; // Timeout is not used in this function
+    (void)timeout_ms;
     if (socket_fd == MCP_INVALID_SOCKET || request == NULL) {
         return -1;
     }
 
     size_t request_len = strlen(request);
-
-    // Use the existing socket utility function
     int result = mcp_socket_send_exact(socket_fd, request, request_len, NULL);
     if (result != 0) {
         mcp_log_error("Failed to send request");
@@ -173,9 +159,7 @@ int http_client_receive_response(socket_t socket_fd, char* buffer, size_t buffer
     size_t headers_end = 0;
 
     while (received < buffer_size - 1) {
-        // Use the existing socket utility function for receiving with timeout
-        ssize_t bytes_received = mcp_socket_recv_with_timeout(socket_fd, buffer + received, buffer_size - received - 1, timeout_ms);
-
+        ssize_t bytes_received = socket_recv_with_timeout(socket_fd, buffer + received, buffer_size - received - 1, timeout_ms);
         if (bytes_received < 0) {
             if (received > 0) {
                 break; // We have some data, might be complete
@@ -215,12 +199,7 @@ int http_client_receive_response(socket_t socket_fd, char* buffer, size_t buffer
         // Check if we have received the complete response
         if (headers_complete) {
             size_t expected_total = headers_end + content_length;
-
-            if (content_length == 0) {
-                break;
-            }
-
-            if (received >= expected_total) {
+            if (content_length == 0 || received >= expected_total) {
                 break;
             }
         }

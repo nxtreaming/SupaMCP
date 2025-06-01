@@ -94,7 +94,7 @@ static int lws_callback_http_streamable(struct lws* wsi, enum lws_callback_reaso
  * @brief Handle WebSocket instance creation
  */
 static int handle_wsi_create(struct lws* wsi, http_streamable_session_data_t* session) {
-    (void)wsi; // Unused parameter
+    (void)wsi;
     if (session == NULL) {
         mcp_log_error("Session data is NULL");
         return -1;
@@ -195,7 +195,7 @@ static int handle_http_request(struct lws* wsi, http_streamable_transport_data_t
  * @brief Handle HTTP request body data
  */
 static int handle_http_body(struct lws* wsi, http_streamable_session_data_t* session, void* in, size_t len) {
-    (void)wsi; // Unused parameter
+    (void)wsi;
     if (session == NULL || in == NULL || len == 0) {
         return 0; // Not an error, just no data
     }

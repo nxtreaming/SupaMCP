@@ -65,6 +65,7 @@ sse_test.md
 ws.md
 ws_*.md
 tcp_opt*.md
+shttp_opt.md
 TCP_call_process.txt
 thread_pool_exit_enhancements.md
 

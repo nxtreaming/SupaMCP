@@ -12,8 +12,6 @@
 #endif
 #include "internal/http_streamable_client_internal.h"
 
-// Note: Interface is now handled in the transport layer
-
 /**
  * @brief Parse HTTP response
  */
@@ -440,7 +438,6 @@ void* sse_client_thread_func(void* arg) {
         }
 
         ssize_t bytes_received = recv(data->sse_conn->socket_fd, temp_buffer, sizeof(temp_buffer) - 1, 0);
-
         if (bytes_received <= 0) {
             if (bytes_received == 0) {
                 mcp_log_info("SSE connection closed by server");
@@ -449,7 +446,6 @@ void* sse_client_thread_func(void* arg) {
             }
             break;
         }
-
         temp_buffer[bytes_received] = '\0';
 
         // Add to buffer

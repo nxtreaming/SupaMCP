@@ -23,7 +23,6 @@ void* http_streamable_event_thread_func(void* arg) {
 
     mcp_transport_t* transport = (mcp_transport_t*)arg;
     http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
-
     if (data == NULL) {
         mcp_log_error("Invalid transport data for HTTP streamable event thread");
         return NULL;
@@ -85,7 +84,6 @@ void* http_streamable_cleanup_thread_func(void* arg) {
 
     mcp_transport_t* transport = (mcp_transport_t*)arg;
     http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
-
     if (data == NULL) {
         mcp_log_error("Invalid transport data for HTTP streamable cleanup thread");
         return NULL;
@@ -313,7 +311,6 @@ int handle_mcp_get_request(struct lws* wsi, http_streamable_transport_data_t* da
     // Check Accept header
     char accept_header[256];
     int accept_len = lws_hdr_copy(wsi, accept_header, sizeof(accept_header), WSI_TOKEN_HTTP_ACCEPT);
-
     if (accept_len <= 0 || strstr(accept_header, "text/event-stream") == NULL) {
         return send_http_error_response(wsi, HTTP_STATUS_BAD_REQUEST, "SSE stream requires Accept: text/event-stream");
     }
@@ -475,7 +472,6 @@ int handle_mcp_delete_request(struct lws* wsi, http_streamable_transport_data_t*
 
     // Terminate the session
     bool terminated = mcp_session_manager_terminate_session(data->session_manager, session_data->session_id);
-    
     if (terminated) {
         // Send 204 No Content response
         unsigned char headers[256];

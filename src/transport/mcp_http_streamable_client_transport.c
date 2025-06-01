@@ -76,7 +76,7 @@ mcp_transport_t* mcp_transport_http_streamable_client_create(const mcp_http_stre
  * @brief Initialize the transport
  */
 static int http_streamable_client_init(mcp_transport_t* transport) {
-    (void)transport; // Unused parameter
+    (void)transport;
     // This function is called by the transport framework
     // The actual initialization is done in the create function
     return 0;
@@ -315,7 +315,6 @@ static int http_streamable_client_send(mcp_transport_t* transport, const void* d
     memset(&response, 0, sizeof(response));
     
     int result = http_client_send_request(data, message, &response);
-    
     if (result == 0 && response.body != NULL) {
         // Update statistics
         http_client_update_stats(data, "request_sent");
@@ -472,7 +471,6 @@ int mcp_http_streamable_client_set_state_callback(
     mcp_transport_t* transport,
     mcp_client_state_callback_t callback,
     void* user_data) {
-
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
@@ -491,7 +489,6 @@ int mcp_http_streamable_client_set_sse_callback(
     mcp_transport_t* transport,
     mcp_client_sse_event_callback_t callback,
     void* user_data) {
-
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
@@ -590,7 +587,6 @@ int mcp_http_streamable_client_terminate_session(mcp_transport_t* transport) {
     }
 
     http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
-
     if (!data->config.enable_sessions || !data->has_session) {
         return 0; // No session to terminate
     }
