@@ -217,7 +217,7 @@ curl -X POST http://localhost:8080/mcp \
 
 Enable debug logging:
 ```c
-mcp_log_set_level(MCP_LOG_LEVEL_DEBUG);
+mcp_log_set_level(NULL, MCP_LOG_LEVEL_DEBUG);
 ```
 
 Monitor network traffic:
