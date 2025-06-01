@@ -2,7 +2,6 @@
 #   ifndef _CRT_SECURE_NO_WARNINGS
 #       define _CRT_SECURE_NO_WARNINGS
 #   endif
-#include "win_socket_compat.h"
 #endif
 
 #include "internal/http_streamable_transport_internal.h"
