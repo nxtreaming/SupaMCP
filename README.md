@@ -5,9 +5,10 @@ A cross-platform implementation of the Model Context Protocol (MCP) server/clien
 ## Features
 
 - Cross-platform support (Windows, macOS, Linux)
-- Multiple transport options (stdio, TCP, HTTP, WebSocket)
+- Multiple transport options (stdio, TCP, HTTP, WebSocket, **Streamable HTTP**)
 - Resource and tool support
 - **MCP Gateway Mode:** Can act as a gateway to route requests to downstream MCP servers.
+- **Streamable HTTP Transport:** Full MCP 2025-03-26 protocol support with unified endpoints, session management, and streaming responses
 - HTTP protocol with Server-Sent Events (SSE) support
 - CORS support for web integration
 - Extensible architecture
@@ -130,6 +131,9 @@ mcp_server --tcp --host 127.0.0.1 --port 8080
 
 # Run with HTTP transport
 mcp_server --http --host 127.0.0.1 --port 8080
+
+# Run with Streamable HTTP transport (MCP 2025-03-26)
+./build/examples/http_streamable_server 8080
 
 # Run with logging to file
 mcp_server --log-file /path/to/log/file.log
@@ -266,6 +270,7 @@ The server provides the following example tools:
 
 Additional documentation is available in the `docs` directory:
 
+- [Streamable HTTP Transport](docs/streamable_http_transport.md): Complete documentation for the MCP 2025-03-26 Streamable HTTP Transport implementation, including server and client usage.
 - [HTTP Protocol Implementation Optimization](docs/http_protocol_optimization.md): Details about the optimizations made to the HTTP protocol implementation in SupaMCP and how to test these optimizations.
 - [HTTP Protocol](docs/http_protocol.md): Comprehensive documentation of the HTTP protocol implementation in SupaMCP.
 - [HTTP Client Transport](docs/http_client.md): Documentation of the HTTP client transport implementation in SupaMCP, including SSE support.
