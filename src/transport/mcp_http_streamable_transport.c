@@ -476,6 +476,11 @@ static int http_streamable_transport_stop(mcp_transport_t* transport) {
     // Set running flag to false
     data->running = false;
 
+    // Cancel all connections to help libwebsockets shutdown faster
+    if (data->context) {
+        lws_cancel_service(data->context);
+    }
+
     // Wait for event thread to finish
     if (data->event_thread) {
         mcp_thread_join(data->event_thread, NULL);

@@ -246,8 +246,12 @@ int handle_mcp_post_request(struct lws* wsi, http_streamable_transport_data_t* d
     }
 
     // Check if we have a complete request body
+    mcp_log_debug("POST request body check: body=%p, size=%zu",
+                  session_data->request_body, session_data->request_body_size);
+
     if (session_data->request_body == NULL || session_data->request_body_size == 0) {
-        mcp_log_error("No request body for POST request");
+        mcp_log_error("No request body for POST request (body=%p, size=%zu)",
+                      session_data->request_body, session_data->request_body_size);
         return send_http_error_response(wsi, HTTP_STATUS_BAD_REQUEST, "Request body required");
     }
 
@@ -262,23 +266,30 @@ int handle_mcp_post_request(struct lws* wsi, http_streamable_transport_data_t* d
     // Check Accept header to determine response type
     char accept_header[256];
     int accept_len = lws_hdr_copy(wsi, accept_header, sizeof(accept_header), WSI_TOKEN_HTTP_ACCEPT);
-    
+
+    mcp_log_debug("Accept header: '%s' (length: %d)", accept_len > 0 ? accept_header : "(none)", accept_len);
+
     bool wants_sse = (accept_len > 0 && strstr(accept_header, "text/event-stream") != NULL);
+    mcp_log_debug("Client wants SSE: %s", wants_sse ? "yes" : "no");
 
     if (wants_sse) {
         // Start SSE stream
         mcp_log_info("Starting SSE stream for POST request");
-        
+
         // TODO: Implement SSE stream response
         // For now, send JSON response
-        int result = send_http_json_response(wsi, response, 
+        mcp_log_debug("About to call send_http_json_response (SSE path)");
+        int result = send_http_json_response(wsi, response,
                                            session_data->has_session ? session_data->session_id : NULL);
+        mcp_log_debug("send_http_json_response returned: %d (SSE path)", result);
         free(response);
         return result;
     } else {
         // Send JSON response
-        int result = send_http_json_response(wsi, response, 
+        mcp_log_debug("About to call send_http_json_response (normal path)");
+        int result = send_http_json_response(wsi, response,
                                            session_data->has_session ? session_data->session_id : NULL);
+        mcp_log_debug("send_http_json_response returned: %d (normal path)", result);
         free(response);
         return result;
     }
@@ -343,18 +354,26 @@ int handle_mcp_get_request(struct lws* wsi, http_streamable_transport_data_t* da
     }
 
     // Prepare SSE response headers
-    unsigned char headers[512];
+    mcp_log_debug("handle_mcp_get_request: Preparing SSE response headers");
+    unsigned char headers[1024];  // Increased buffer size
     unsigned char* p = headers;
     unsigned char* end = headers + sizeof(headers);
 
-    if (lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end)) {
+    mcp_log_debug("handle_mcp_get_request: Adding HTTP status header (buffer size: %zu)", sizeof(headers));
+    int status_result = lws_add_http_header_status(wsi, 200, &p, end);  // Use 200 instead of HTTP_STATUS_OK
+    mcp_log_debug("handle_mcp_get_request: lws_add_http_header_status returned: %d", status_result);
+    if (status_result) {
+        mcp_log_error("handle_mcp_get_request: Failed to add HTTP status header (result: %d)", status_result);
         return -1;
     }
+    mcp_log_debug("handle_mcp_get_request: HTTP status header added successfully");
 
     if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
-                                    (unsigned char*)"text/event-stream", 18, &p, end)) {
+                                    (unsigned char*)"text/event-stream", 17, &p, end)) {
+        mcp_log_error("handle_mcp_get_request: Failed to add Content-Type header");
         return -1;
     }
+    mcp_log_debug("handle_mcp_get_request: Content-Type header added successfully");
 
     if (lws_add_http_header_by_name(wsi, (unsigned char*)"Cache-Control",
                                    (unsigned char*)"no-cache", 8, &p, end)) {
@@ -430,11 +449,14 @@ int handle_mcp_get_request(struct lws* wsi, http_streamable_transport_data_t* da
              session_data->has_session ? session_data->session_id : "null",
              (long long)time(NULL));
 
-    send_sse_event(wsi, NULL, "connection", connection_data);
+    mcp_log_debug("handle_mcp_get_request: Sending initial connection event: %s", connection_data);
+    int sse_result = send_sse_event(wsi, NULL, "connection", connection_data);
+    mcp_log_debug("handle_mcp_get_request: send_sse_event returned: %d", sse_result);
 
     mcp_log_info("SSE stream initialized for %s",
                 session_data->has_session ? session_data->session_id : "anonymous client");
 
+    mcp_log_debug("handle_mcp_get_request: Returning 0 (success)");
     return 0;
 }
 

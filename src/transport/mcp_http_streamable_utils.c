@@ -352,8 +352,11 @@ int send_http_error_response(struct lws* wsi, int status_code, const char* messa
  */
 int send_http_json_response(struct lws* wsi, const char* json_data, const char* session_id) {
     if (wsi == NULL || json_data == NULL) {
+        mcp_log_error("send_http_json_response: invalid parameters (wsi=%p, json_data=%p)", wsi, json_data);
         return -1;
     }
+
+    mcp_log_debug("send_http_json_response: sending %zu bytes of JSON data", strlen(json_data));
 
     // Prepare response headers
     unsigned char headers[512];
@@ -369,6 +372,14 @@ int send_http_json_response(struct lws* wsi, const char* json_data, const char* 
         return -1;
     }
 
+    // Add Content-Length header
+    char content_length_str[32];
+    snprintf(content_length_str, sizeof(content_length_str), "%zu", strlen(json_data));
+    if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_LENGTH,
+                                    (unsigned char*)content_length_str, (int)strlen(content_length_str), &p, end)) {
+        mcp_log_error("send_http_json_response: failed to add Content-Length header");
+        return -1;
+    }
     // Add session ID header if provided
     if (session_id != NULL) {
         if (lws_add_http_header_by_name(wsi, (unsigned char*)MCP_SESSION_HEADER_NAME,
@@ -382,20 +393,26 @@ int send_http_json_response(struct lws* wsi, const char* json_data, const char* 
     }
 
     // Write headers
-    if (lws_write(wsi, headers, p - headers, LWS_WRITE_HTTP_HEADERS) < 0) {
+    size_t header_len = p - headers;
+    int header_bytes = lws_write(wsi, headers, header_len, LWS_WRITE_HTTP_HEADERS);
+    if (header_bytes < 0) {
+        mcp_log_error("send_http_json_response: failed to write headers");
         return -1;
     }
 
     // Write JSON body
-    if (lws_write(wsi, (unsigned char*)json_data, strlen(json_data), LWS_WRITE_HTTP) < 0) {
+    size_t json_len = strlen(json_data);
+    int body_bytes = lws_write(wsi, (unsigned char*)json_data, json_len, LWS_WRITE_HTTP);
+    if (body_bytes < 0) {
+        mcp_log_error("send_http_json_response: failed to write body");
         return -1;
     }
 
     // Complete transaction
     if (lws_http_transaction_completed(wsi)) {
+        mcp_log_error("send_http_json_response: failed to complete transaction");
         return -1;
     }
-
     return 0;
 }
 

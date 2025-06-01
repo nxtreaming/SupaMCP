@@ -87,6 +87,7 @@ typedef struct {
     char* request_body;                          /**< Accumulated request body */
     size_t request_body_size;                    /**< Size of accumulated request body */
     size_t request_body_capacity;                /**< Capacity of request body buffer */
+    char request_uri[256];                       /**< Request URI saved for POST body completion */
     
     // Origin validation
     char origin[HTTP_ORIGIN_BUFFER_SIZE];        /**< Origin header value */

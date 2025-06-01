@@ -1,3 +1,9 @@
+#ifdef _WIN32
+#   ifndef _CRT_SECURE_NO_WARNINGS
+#       define _CRT_SECURE_NO_WARNINGS
+#   endif
+#endif
+
 #include "internal/http_streamable_transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
@@ -61,7 +67,18 @@ static int lws_callback_http_streamable(struct lws* wsi, enum lws_callback_reaso
 
         case LWS_CALLBACK_HTTP_BODY_COMPLETION:
             // Handle HTTP request body completion
-            return handle_http_body_completion(wsi, data, session);
+            handle_http_body_completion(wsi, data, session);
+
+            // Now process the POST request with complete body
+            mcp_log_debug("Processing completed POST request for URI: %s", session->request_uri);
+            if (strcmp(session->request_uri, data->mcp_endpoint) == 0) {
+                mcp_log_debug("Calling handle_mcp_endpoint_request for POST with body");
+                int result = handle_mcp_endpoint_request(wsi, data, session);
+                mcp_log_debug("handle_mcp_endpoint_request returned: %d", result);
+                return result;
+            }
+            mcp_log_debug("URI does not match MCP endpoint: %s", data->mcp_endpoint);
+            return 0;
 
         case LWS_CALLBACK_CLOSED_HTTP:
             // Handle HTTP connection closure
@@ -91,6 +108,7 @@ static int handle_wsi_create(struct lws* wsi, http_streamable_session_data_t* se
     session->request_body = NULL;
     session->request_body_size = 0;
     session->request_body_capacity = 0;
+    session->request_uri[0] = '\0';
     session->origin_validated = false;
 
     mcp_log_debug("Initialized session data for new connection");
@@ -100,14 +118,39 @@ static int handle_wsi_create(struct lws* wsi, http_streamable_session_data_t* se
 /**
  * @brief Handle HTTP request
  */
-static int handle_http_request(struct lws* wsi, http_streamable_transport_data_t* data, 
+static int handle_http_request(struct lws* wsi, http_streamable_transport_data_t* data,
                               http_streamable_session_data_t* session, const char* uri) {
     if (wsi == NULL || data == NULL || session == NULL || uri == NULL) {
+        mcp_log_error("handle_http_request: Invalid parameters");
         return -1;
     }
 
     // Check if this is the MCP endpoint
     if (strcmp(uri, data->mcp_endpoint) == 0) {
+        // For POST requests, we need to wait for the body
+        char method[16] = {0};
+
+        // Check for POST method using multiple approaches
+        int post_uri_len = lws_hdr_total_length(wsi, WSI_TOKEN_POST_URI);
+        int get_uri_len = lws_hdr_total_length(wsi, WSI_TOKEN_GET_URI);
+
+        if (post_uri_len > 0) {
+            strncpy(method, "POST", sizeof(method) - 1);
+        } else if (get_uri_len > 0) {
+            strncpy(method, "GET", sizeof(method) - 1);
+        } else {
+            // Default to GET if we can't determine the method
+            strncpy(method, "GET", sizeof(method) - 1);
+        }
+
+        // If this is a POST request, save URI and return 0 to wait for body
+        if (strcmp(method, "POST") == 0) {
+            strncpy(session->request_uri, uri, sizeof(session->request_uri) - 1);
+            session->request_uri[sizeof(session->request_uri) - 1] = '\0';
+            return 0; // Tell libwebsockets to expect a body
+        }
+
+        // For non-POST requests, handle immediately
         return handle_mcp_endpoint_request(wsi, data, session);
     }
 
@@ -301,7 +344,7 @@ struct lws_protocols http_streamable_protocols[] = {
         "http-streamable",
         lws_callback_http_streamable,
         sizeof(http_streamable_session_data_t),
-        0,  // rx buffer size (0 = default)
+        4096,  // rx buffer size - increased for POST body handling
     },
     { NULL, NULL, 0, 0 } // terminator
 };

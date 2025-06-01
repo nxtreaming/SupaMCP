@@ -20,6 +20,7 @@
 #include "mcp_log.h"
 #include "mcp_json.h"
 #include "mcp_json_utils.h"
+#include "mcp_sys_utils.h"
 
 // Global client instance for signal handling
 static mcp_transport_t* g_client = NULL;
@@ -113,17 +114,15 @@ static void error_callback(void* user_data, int error_code) {
  * @brief Send initialize request
  */
 static void send_initialize_request(mcp_transport_t* client) {
-    const char* initialize_request = 
+    const char* initialize_request =
         "{"
         "\"jsonrpc\": \"2.0\","
         "\"id\": 1,"
         "\"method\": \"initialize\","
         "\"params\": {"
-            "\"protocolVersion\": \"2024-11-05\","
+            "\"protocolVersion\": \"2025-03-26\","
             "\"capabilities\": {"
-                "\"roots\": {"
-                    "\"listChanged\": true"
-                "}"
+                "\"tools\": {}"
             "},"
             "\"clientInfo\": {"
                 "\"name\": \"SupaMCP-Client\","
@@ -131,7 +130,7 @@ static void send_initialize_request(mcp_transport_t* client) {
             "}"
         "}"
         "}";
-    
+
     printf("Sending initialize request...\n");
     if (mcp_transport_send(client, initialize_request, strlen(initialize_request)) != 0) {
         printf("Failed to send initialize request\n");
@@ -203,7 +202,7 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signal_handler);
     
     // Initialize logging
-    mcp_log_set_level(MCP_LOG_LEVEL_INFO);
+    mcp_log_set_level(MCP_LOG_LEVEL_DEBUG);
     
     printf("Starting MCP Streamable HTTP Client...\n");
     printf("Server: %s:%d\n", host, port);
@@ -238,37 +237,17 @@ int main(int argc, char* argv[]) {
     printf("Client started successfully!\n");
     
     // Wait a moment for connection to establish
-    #ifdef _WIN32
-    Sleep(1000);
-    #else
-    sleep(1);
-    #endif
-    
+    mcp_sleep_ms(1000);
     // Send some test requests
     send_initialize_request(g_client);
     
-    #ifdef _WIN32
-    Sleep(2000);
-    #else
-    sleep(2);
-    #endif
-    
+    mcp_sleep_ms(2000);
     send_tools_list_request(g_client);
-    
-    #ifdef _WIN32
-    Sleep(2000);
-    #else
-    sleep(2);
-    #endif
-    
+
+    mcp_sleep_ms(2000);
     send_tool_call_request(g_client, "echo", "Hello from client!");
     
-    #ifdef _WIN32
-    Sleep(2000);
-    #else
-    sleep(2);
-    #endif
-    
+    mcp_sleep_ms(2000);
     send_tool_call_request(g_client, "reverse", "Hello World");
     
     // Keep running until interrupted
@@ -277,12 +256,7 @@ int main(int argc, char* argv[]) {
     
     // Print statistics periodically
     while (g_running) {
-        #ifdef _WIN32
-        Sleep(5000);
-        #else
-        sleep(5);
-        #endif
-        
+        mcp_sleep_ms(5000);        
         if (!g_running) break;
         
         mcp_client_connection_stats_t stats;

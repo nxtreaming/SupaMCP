@@ -24,21 +24,25 @@
 #include "mcp_json.h"
 #include "mcp_json_utils.h"
 #include "mcp_string_utils.h"
+#include "mcp_sys_utils.h"
 
 // Global server instance for signal handling
 static mcp_server_t* g_server = NULL;
 static mcp_transport_t* g_transport = NULL;
+static volatile bool g_running = true;
 
 /**
  * @brief Signal handler for graceful shutdown
  */
 static void signal_handler(int sig) {
     printf("\nReceived signal %d, shutting down...\n", sig);
-    
+
+    g_running = false;
+
     if (g_server) {
         mcp_server_stop(g_server);
     }
-    
+
     if (g_transport) {
         mcp_transport_stop(g_transport);
     }
@@ -194,7 +198,7 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signal_handler);
     
     // Initialize logging
-    mcp_log_set_level(MCP_LOG_LEVEL_INFO);
+    mcp_log_set_level(MCP_LOG_LEVEL_DEBUG);
     
     printf("Starting MCP Streamable HTTP Server...\n");
     printf("Host: %s\n", host);
@@ -283,14 +287,10 @@ int main(int argc, char* argv[]) {
     
     printf("\nPress Ctrl+C to stop the server.\n");
 
-    // Wait for server to finish (simple loop since mcp_server_wait doesn't exist)
-    while (g_server != NULL) {
+    // Wait for server to finish
+    while (g_running) {
         // Sleep for 1 second
-        #ifdef _WIN32
-        Sleep(1000);
-        #else
-        sleep(1);
-        #endif
+        mcp_sleep_ms(1000);
     }
     
     // Cleanup
