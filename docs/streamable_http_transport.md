@@ -4,7 +4,11 @@ This document describes the Streamable HTTP transport implementation in SupaMCP,
 
 ## Overview
 
-The Streamable HTTP transport is the latest transport mechanism for the Model Context Protocol (MCP), replacing the HTTP+SSE transport from the 2024-11-05 specification. It provides:
+The Streamable HTTP transport is the latest transport mechanism for the Model Context Protocol (MCP), replacing the HTTP+SSE transport from the 2024-11-05 specification.
+
+**Status**: ✅ **Server and Client implementations are complete and functional**
+
+It provides:
 
 - **Unified MCP Endpoint**: A single endpoint that handles both POST and GET requests
 - **Session Management**: Optional session support with `Mcp-Session-Id` headers
@@ -36,6 +40,7 @@ config.session_timeout_seconds = 3600; // 1 hour timeout
 ```
 
 Session workflow:
+
 1. Client sends `initialize` request to MCP endpoint
 2. Server responds with `Mcp-Session-Id` header if sessions are enabled
 3. Client includes `Mcp-Session-Id` header in subsequent requests
@@ -118,9 +123,9 @@ mcp_http_streamable_config_t config = {
 // Create server transport
 mcp_transport_t* mcp_transport_http_streamable_create(const mcp_http_streamable_config_t* config);
 
-// Create client transport (TODO: Not yet implemented)
+// Create client transport
 mcp_transport_t* mcp_transport_http_streamable_client_create(
-    const char* host, 
+    const char* host,
     uint16_t port,
     const char* mcp_endpoint,
     bool use_ssl,
@@ -182,6 +187,72 @@ int main() {
     // Cleanup
     mcp_server_destroy(server);
     mcp_transport_destroy(transport);
+    return 0;
+}
+```
+
+### Client Example (C)
+
+```c
+#include "mcp_transport.h"
+#include "mcp_http_streamable_client_transport.h"
+
+// Message callback
+static char* message_callback(void* user_data, const void* data, size_t size, int* error_code) {
+    char* message = (char*)malloc(size + 1);
+    if (message) {
+        memcpy(message, data, size);
+        message[size] = '\0';
+        printf("Response: %s\n", message);
+        free(message);
+    }
+    return NULL; // No response needed
+}
+
+// Error callback
+static void error_callback(void* user_data, int error_code) {
+    printf("Transport error: %d\n", error_code);
+}
+
+int main() {
+    // Create client transport
+    mcp_transport_t* client = mcp_transport_http_streamable_client_create(
+        "localhost", 8080, "/mcp", false, NULL
+    );
+
+    if (!client) {
+        fprintf(stderr, "Failed to create client\n");
+        return 1;
+    }
+
+    // Start client with callbacks
+    if (mcp_transport_start(client, message_callback, NULL, error_callback) != 0) {
+        fprintf(stderr, "Failed to start client\n");
+        mcp_transport_destroy(client);
+        return 1;
+    }
+
+    // Send initialize request
+    const char* init_request =
+        "{"
+        "\"jsonrpc\": \"2.0\","
+        "\"id\": 1,"
+        "\"method\": \"initialize\","
+        "\"params\": {"
+            "\"protocolVersion\": \"2025-03-26\","
+            "\"capabilities\": {\"tools\": {}},"
+            "\"clientInfo\": {\"name\": \"test-client\", \"version\": \"1.0.0\"}"
+        "}"
+        "}";
+
+    mcp_transport_send(client, init_request, strlen(init_request));
+
+    // Keep running to receive responses
+    sleep(5);
+
+    // Cleanup
+    mcp_transport_stop(client);
+    mcp_transport_destroy(client);
     return 0;
 }
 ```
@@ -265,21 +336,25 @@ The transport supports legacy HTTP+SSE endpoints when `enable_legacy_endpoints` 
 
 ## Testing
 
-Use the provided test script to verify functionality:
+Use the provided test tools to verify functionality:
 
 ```bash
 # Start the server
 ./build/examples/http_streamable_server 8080
 
-# Run tests
+# Test with C client
+./build/examples/http_streamable_client
+
+# Test with Python script
 python3 examples/test_streamable_http.py http://localhost:8080
 ```
 
 ## Limitations
 
-1. **Client Transport**: Client transport implementation is not yet complete
+1. **SSL Support**: HTTPS/SSL support in client transport needs implementation
 2. **Header Extraction**: Custom header extraction needs improvement
-3. **SSE Implementation**: Some SSE features are still being implemented
+3. **Connection Pooling**: Client connection pooling not yet implemented
+4. **Advanced SSE Features**: Some advanced SSE features are still being implemented
 
 ## Migration from HTTP+SSE Transport
 
