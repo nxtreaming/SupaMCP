@@ -16,17 +16,6 @@ The Streamable HTTP Transport implements the MCP 2025-03-26 protocol specificati
 
 ### 1. Build the Example
 
-**Windows:**
-```cmd
-build_streamable_example.bat
-```
-
-**Linux/macOS:**
-```bash
-./build_streamable_example.sh
-```
-
-**Manual Build:**
 ```bash
 # Create and configure build directory
 mkdir -p build
