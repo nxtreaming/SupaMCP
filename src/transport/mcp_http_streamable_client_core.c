@@ -33,7 +33,11 @@ static ssize_t mcp_socket_recv_with_timeout(socket_t socket_fd, void* buffer, si
         return -1; // Timeout or error
     }
 
-    return recv(socket_fd, (char*)buffer, (int)size, 0);
+    ssize_t result = recv(socket_fd, (char*)buffer, (int)size, 0);
+    if (result < 0) {
+        mcp_log_debug("recv failed with error: %d", errno);
+    }
+    return result;
 }
 
 /**
@@ -152,8 +156,6 @@ int http_client_send_raw_request(socket_t socket_fd, const char* request, uint32
         mcp_log_error("Failed to send request");
         return -1;
     }
-
-    mcp_log_debug("Sent %zu bytes", request_len);
     return 0;
 }
 
@@ -200,13 +202,25 @@ int http_client_receive_response(socket_t socket_fd, char* buffer, size_t buffer
                 char* content_length_header = strstr(buffer, "Content-Length:");
                 if (content_length_header) {
                     content_length = strtoul(content_length_header + 15, NULL, 10);
+                } else {
+                    // Try case-insensitive search
+                    content_length_header = strstr(buffer, "content-length:");
+                    if (content_length_header) {
+                        content_length = strtoul(content_length_header + 15, NULL, 10);
+                    }
                 }
             }
         }
 
         // Check if we have received the complete response
         if (headers_complete) {
-            if (content_length == 0 || received >= headers_end + content_length) {
+            size_t expected_total = headers_end + content_length;
+
+            if (content_length == 0) {
+                break;
+            }
+
+            if (received >= expected_total) {
                 break;
             }
         }
