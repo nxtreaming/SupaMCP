@@ -54,7 +54,7 @@ mcp_transport_t* mcp_transport_sthttp_client_create(const mcp_sthttp_client_conf
 
     // Set transport type and protocol
     transport->type = MCP_TRANSPORT_TYPE_CLIENT;
-    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_HTTP;
+    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_STHTTP;
 
     // Initialize client operations
     transport->client.init = sthttp_client_init;
@@ -522,7 +522,7 @@ void http_client_set_state(sthttp_client_data_t* data, mcp_client_connection_sta
             // Create a temporary transport structure for the callback
             mcp_transport_t temp_transport = {
                 .type = MCP_TRANSPORT_TYPE_CLIENT,
-                .protocol_type = MCP_TRANSPORT_PROTOCOL_HTTP,
+                .protocol_type = MCP_TRANSPORT_PROTOCOL_STHTTP,
                 .transport_data = data
             };
             data->state_callback(&temp_transport, old_state, new_state, data->state_callback_user_data);

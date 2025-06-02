@@ -412,6 +412,12 @@ int mcp_client_is_connected(mcp_client_t* client) {
             // In the future, we could implement a ping/pong mechanism
             return 1;
 
+        case MCP_TRANSPORT_PROTOCOL_STHTTP:
+            // HTTP Streamable transport has connection state management
+            // For now, assume connected if transport exists
+            // TODO: Implement proper connection state checking for STHTTP
+            return 1;
+
         case MCP_TRANSPORT_PROTOCOL_TCP:
             // For TCP, we could check if the socket is valid and connected
             // For now, assume connected if transport exists
