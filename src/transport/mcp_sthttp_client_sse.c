@@ -1,5 +1,5 @@
 /**
- * @file mcp_http_streamable_client_sse.c
+ * @file mcp_sthttp_client_sse.c
  * @brief SSE (Server-Sent Events) client implementation for Streamable HTTP transport
  *
  * This file implements SSE stream handling, event parsing, and reconnection logic
@@ -10,7 +10,7 @@
 #       define _CRT_SECURE_NO_WARNINGS
 #   endif
 #endif
-#include "internal/http_streamable_client_internal.h"
+#include "internal/sthttp_client_internal.h"
 
 /**
  * @brief Parse HTTP response
@@ -287,7 +287,7 @@ void sse_free_event(sse_event_t* event) {
 /**
  * @brief Connect SSE stream
  */
-int sse_client_connect(http_streamable_client_data_t* data) {
+int sse_client_connect(sthttp_client_data_t* data) {
     if (data == NULL) {
         return -1;
     }
@@ -410,7 +410,7 @@ int sse_client_connect(http_streamable_client_data_t* data) {
 /**
  * @brief Disconnect SSE stream
  */
-void sse_client_disconnect(http_streamable_client_data_t* data) {
+void sse_client_disconnect(sthttp_client_data_t* data) {
     if (data == NULL) {
         return;
     }
@@ -458,7 +458,7 @@ void sse_client_disconnect(http_streamable_client_data_t* data) {
  * @brief SSE receive thread function
  */
 void* sse_client_thread_func(void* arg) {
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)arg;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)arg;
     if (data == NULL) {
         return NULL;
     }

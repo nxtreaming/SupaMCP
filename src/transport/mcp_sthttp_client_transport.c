@@ -1,29 +1,29 @@
 /**
- * @file mcp_http_streamable_client_transport.c
+ * @file mcp_sthttp_client_transport.c
  * @brief HTTP Streamable Client Transport Implementation
  *
  * This file implements the client-side HTTP Streamable transport for MCP 2025-03-26.
  * It provides functionality for connecting to MCP servers via HTTP POST requests
  * and receiving events via SSE streams.
  */
-#include "internal/http_streamable_client_internal.h"
+#include "internal/sthttp_client_internal.h"
 
 // Forward declarations for transport interface
-static int http_streamable_client_init(mcp_transport_t* transport);
-static void http_streamable_client_destroy(mcp_transport_t* transport);
-static int http_streamable_client_start(mcp_transport_t* transport,
+static int sthttp_client_init(mcp_transport_t* transport);
+static void sthttp_client_destroy(mcp_transport_t* transport);
+static int sthttp_client_start(mcp_transport_t* transport,
                                        mcp_transport_message_callback_t message_callback,
                                        void* user_data,
                                        mcp_transport_error_callback_t error_callback);
-static int http_streamable_client_stop(mcp_transport_t* transport);
-static int http_streamable_client_send(mcp_transport_t* transport, const void* data, size_t size);
-static int http_streamable_client_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
-static int http_streamable_client_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms);
+static int sthttp_client_stop(mcp_transport_t* transport);
+static int sthttp_client_send(mcp_transport_t* transport, const void* data, size_t size);
+static int sthttp_client_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
+static int sthttp_client_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms);
 
 /**
  * @brief Create HTTP Streamable client transport
  */
-mcp_transport_t* mcp_transport_http_streamable_client_create(const mcp_http_streamable_client_config_t* config) {
+mcp_transport_t* mcp_transport_sthttp_client_create(const mcp_sthttp_client_config_t* config) {
     if (config == NULL) {
         mcp_log_error("HTTP Streamable client config cannot be NULL");
         return NULL;
@@ -37,7 +37,7 @@ mcp_transport_t* mcp_transport_http_streamable_client_create(const mcp_http_stre
     }
 
     // Allocate client data
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)malloc(sizeof(http_streamable_client_data_t));
+    sthttp_client_data_t* data = (sthttp_client_data_t*)malloc(sizeof(sthttp_client_data_t));
     if (data == NULL) {
         mcp_log_error("Failed to allocate HTTP Streamable client data");
         free(transport);
@@ -45,7 +45,7 @@ mcp_transport_t* mcp_transport_http_streamable_client_create(const mcp_http_stre
     }
 
     // Initialize client data
-    if (http_streamable_client_init_data(data, config) != 0) {
+    if (sthttp_client_init_data(data, config) != 0) {
         mcp_log_error("Failed to initialize HTTP Streamable client data");
         free(data);
         free(transport);
@@ -57,13 +57,13 @@ mcp_transport_t* mcp_transport_http_streamable_client_create(const mcp_http_stre
     transport->protocol_type = MCP_TRANSPORT_PROTOCOL_HTTP;
 
     // Initialize client operations
-    transport->client.init = http_streamable_client_init;
-    transport->client.destroy = http_streamable_client_destroy;
-    transport->client.start = http_streamable_client_start;
-    transport->client.stop = http_streamable_client_stop;
-    transport->client.send = http_streamable_client_send;
-    transport->client.sendv = http_streamable_client_sendv;
-    transport->client.receive = http_streamable_client_receive;
+    transport->client.init = sthttp_client_init;
+    transport->client.destroy = sthttp_client_destroy;
+    transport->client.start = sthttp_client_start;
+    transport->client.stop = sthttp_client_stop;
+    transport->client.send = sthttp_client_send;
+    transport->client.sendv = sthttp_client_sendv;
+    transport->client.receive = sthttp_client_receive;
 
     // Set transport data
     transport->transport_data = data;
@@ -75,7 +75,7 @@ mcp_transport_t* mcp_transport_http_streamable_client_create(const mcp_http_stre
 /**
  * @brief Initialize the transport
  */
-static int http_streamable_client_init(mcp_transport_t* transport) {
+static int sthttp_client_init(mcp_transport_t* transport) {
     (void)transport;
     // This function is called by the transport framework
     // The actual initialization is done in the create function
@@ -85,13 +85,13 @@ static int http_streamable_client_init(mcp_transport_t* transport) {
 /**
  * @brief Initialize HTTP client transport data
  */
-int http_streamable_client_init_data(http_streamable_client_data_t* data, const mcp_http_streamable_client_config_t* config) {
+int sthttp_client_init_data(sthttp_client_data_t* data, const mcp_sthttp_client_config_t* config) {
     if (data == NULL || config == NULL) {
         return -1;
     }
 
     // Clear the structure
-    memset(data, 0, sizeof(http_streamable_client_data_t));
+    memset(data, 0, sizeof(sthttp_client_data_t));
 
     // Copy configuration
     data->config = *config;
@@ -138,7 +138,7 @@ int http_streamable_client_init_data(http_streamable_client_data_t* data, const 
     data->stats_mutex = mcp_mutex_create();
     
     if (data->state_mutex == NULL || data->sse_mutex == NULL || data->stats_mutex == NULL) {
-        http_streamable_client_cleanup(data);
+        sthttp_client_cleanup(data);
         return -1;
     }
 
@@ -153,7 +153,7 @@ int http_streamable_client_init_data(http_streamable_client_data_t* data, const 
 /**
  * @brief Cleanup HTTP client transport data
  */
-void http_streamable_client_cleanup(http_streamable_client_data_t* data) {
+void sthttp_client_cleanup(sthttp_client_data_t* data) {
     if (data == NULL) {
         return;
     }
@@ -201,7 +201,7 @@ void http_streamable_client_cleanup(http_streamable_client_data_t* data) {
 /**
  * @brief Start the client transport
  */
-static int http_streamable_client_start(mcp_transport_t* transport,
+static int sthttp_client_start(mcp_transport_t* transport,
                                        mcp_transport_message_callback_t message_callback,
                                        void* user_data,
                                        mcp_transport_error_callback_t error_callback) {
@@ -209,7 +209,7 @@ static int http_streamable_client_start(mcp_transport_t* transport,
         return -1;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
 
     // Store callbacks
     transport->message_callback = message_callback;
@@ -254,12 +254,12 @@ static int http_streamable_client_start(mcp_transport_t* transport,
 /**
  * @brief Stop the client transport
  */
-static int http_streamable_client_stop(mcp_transport_t* transport) {
+static int sthttp_client_stop(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
     
     mcp_mutex_lock(data->state_mutex);
     
@@ -285,7 +285,7 @@ static int http_streamable_client_stop(mcp_transport_t* transport) {
 /**
  * @brief Send message via the client transport
  */
-static int http_streamable_client_send(mcp_transport_t* transport, const void* data_ptr, size_t size) {
+static int sthttp_client_send(mcp_transport_t* transport, const void* data_ptr, size_t size) {
     if (transport == NULL || transport->transport_data == NULL || data_ptr == NULL || size == 0) {
         return -1;
     }
@@ -298,7 +298,7 @@ static int http_streamable_client_send(mcp_transport_t* transport, const void* d
     memcpy(message, data_ptr, size);
     message[size] = '\0';
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
     
     mcp_mutex_lock(data->state_mutex);
     
@@ -345,7 +345,7 @@ static int http_streamable_client_send(mcp_transport_t* transport, const void* d
 /**
  * @brief Send data from multiple buffers through the transport
  */
-static int http_streamable_client_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
+static int sthttp_client_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
     if (transport == NULL || buffers == NULL || buffer_count == 0) {
         return -1;
     }
@@ -370,7 +370,7 @@ static int http_streamable_client_sendv(mcp_transport_t* transport, const mcp_bu
     }
 
     // Send combined data
-    int result = http_streamable_client_send(transport, combined_data, total_size);
+    int result = sthttp_client_send(transport, combined_data, total_size);
     free(combined_data);
     return result;
 }
@@ -378,7 +378,7 @@ static int http_streamable_client_sendv(mcp_transport_t* transport, const mcp_bu
 /**
  * @brief Receive data synchronously (not implemented for HTTP client)
  */
-static int http_streamable_client_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms) {
+static int sthttp_client_receive(mcp_transport_t* transport, char** data, size_t* size, uint32_t timeout_ms) {
     // HTTP client transport doesn't support synchronous receive
     // Data is received via callbacks
     (void)transport;
@@ -391,19 +391,19 @@ static int http_streamable_client_receive(mcp_transport_t* transport, char** dat
 /**
  * @brief Destroy the client transport
  */
-static void http_streamable_client_destroy(mcp_transport_t* transport) {
+static void sthttp_client_destroy(mcp_transport_t* transport) {
     if (transport == NULL) {
         return;
     }
 
     if (transport->transport_data != NULL) {
-        http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+        sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
         
         // Stop the transport first
-        http_streamable_client_stop(transport);
+        sthttp_client_stop(transport);
         
         // Cleanup data
-        http_streamable_client_cleanup(data);
+        sthttp_client_cleanup(data);
         free(data);
     }
 
@@ -416,12 +416,12 @@ static void http_streamable_client_destroy(mcp_transport_t* transport) {
 /**
  * @brief Get current connection state
  */
-mcp_client_connection_state_t mcp_http_streamable_client_get_state(mcp_transport_t* transport) {
+mcp_client_connection_state_t mcp_sthttp_client_get_state(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return MCP_CLIENT_STATE_ERROR;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
 
     mcp_mutex_lock(data->state_mutex);
     mcp_client_connection_state_t state = data->state;
@@ -433,12 +433,12 @@ mcp_client_connection_state_t mcp_http_streamable_client_get_state(mcp_transport
 /**
  * @brief Get connection statistics
  */
-int mcp_http_streamable_client_get_stats(mcp_transport_t* transport, mcp_client_connection_stats_t* stats) {
+int mcp_sthttp_client_get_stats(mcp_transport_t* transport, mcp_client_connection_stats_t* stats) {
     if (transport == NULL || transport->transport_data == NULL || stats == NULL) {
         return -1;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
 
     mcp_mutex_lock(data->stats_mutex);
     *stats = data->stats;
@@ -450,12 +450,12 @@ int mcp_http_streamable_client_get_stats(mcp_transport_t* transport, mcp_client_
 /**
  * @brief Get current session ID
  */
-const char* mcp_http_streamable_client_get_session_id(mcp_transport_t* transport) {
+const char* mcp_sthttp_client_get_session_id(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return NULL;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
 
     if (!data->config.enable_sessions || !data->has_session) {
         return NULL;
@@ -467,7 +467,7 @@ const char* mcp_http_streamable_client_get_session_id(mcp_transport_t* transport
 /**
  * @brief Set connection state change callback
  */
-int mcp_http_streamable_client_set_state_callback(
+int mcp_sthttp_client_set_state_callback(
     mcp_transport_t* transport,
     mcp_client_state_callback_t callback,
     void* user_data) {
@@ -475,7 +475,7 @@ int mcp_http_streamable_client_set_state_callback(
         return -1;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
     data->state_callback = callback;
     data->state_callback_user_data = user_data;
 
@@ -485,7 +485,7 @@ int mcp_http_streamable_client_set_state_callback(
 /**
  * @brief Set SSE event callback
  */
-int mcp_http_streamable_client_set_sse_callback(
+int mcp_sthttp_client_set_sse_callback(
     mcp_transport_t* transport,
     mcp_client_sse_event_callback_t callback,
     void* user_data) {
@@ -493,7 +493,7 @@ int mcp_http_streamable_client_set_sse_callback(
         return -1;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
     data->sse_callback = callback;
     data->sse_callback_user_data = user_data;
 
@@ -503,7 +503,7 @@ int mcp_http_streamable_client_set_sse_callback(
 /**
  * @brief Change connection state
  */
-void http_client_set_state(http_streamable_client_data_t* data, mcp_client_connection_state_t new_state) {
+void http_client_set_state(sthttp_client_data_t* data, mcp_client_connection_state_t new_state) {
     if (data == NULL) {
         return;
     }
@@ -533,7 +533,7 @@ void http_client_set_state(http_streamable_client_data_t* data, mcp_client_conne
 /**
  * @brief Update connection statistics
  */
-void http_client_update_stats(http_streamable_client_data_t* data, const char* stat_type) {
+void http_client_update_stats(sthttp_client_data_t* data, const char* stat_type) {
     if (data == NULL || stat_type == NULL) {
         return;
     }
@@ -560,12 +560,12 @@ void http_client_update_stats(http_streamable_client_data_t* data, const char* s
 /**
  * @brief Force reconnection of SSE stream
  */
-int mcp_http_streamable_client_reconnect_sse(mcp_transport_t* transport) {
+int mcp_sthttp_client_reconnect_sse(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
 
     // Disconnect current SSE stream
     sse_client_disconnect(data);
@@ -581,12 +581,12 @@ int mcp_http_streamable_client_reconnect_sse(mcp_transport_t* transport) {
 /**
  * @brief Terminate current session
  */
-int mcp_http_streamable_client_terminate_session(mcp_transport_t* transport) {
+int mcp_sthttp_client_terminate_session(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
     if (!data->config.enable_sessions || !data->has_session) {
         return 0; // No session to terminate
     }
@@ -622,12 +622,12 @@ int mcp_http_streamable_client_terminate_session(mcp_transport_t* transport) {
 /**
  * @brief Enable or disable automatic SSE reconnection
  */
-int mcp_http_streamable_client_set_auto_reconnect(mcp_transport_t* transport, bool enable) {
+int mcp_sthttp_client_set_auto_reconnect(mcp_transport_t* transport, bool enable) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
 
-    http_streamable_client_data_t* data = (http_streamable_client_data_t*)transport->transport_data;
+    sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
     data->auto_reconnect = enable;
 
     mcp_log_debug("Auto-reconnect %s", enable ? "enabled" : "disabled");

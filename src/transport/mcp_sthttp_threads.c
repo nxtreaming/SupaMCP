@@ -4,7 +4,7 @@
 #   endif
 #endif
 
-#include "internal/http_streamable_transport_internal.h"
+#include "internal/sthttp_transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_sys_utils.h"
 #include <stdlib.h>
@@ -15,14 +15,14 @@
 /**
  * @brief Thread function for HTTP event processing
  */
-void* http_streamable_event_thread_func(void* arg) {
+void* sthttp_event_thread_func(void* arg) {
     if (arg == NULL) {
         mcp_log_error("Invalid argument for HTTP streamable event thread");
         return NULL;
     }
 
     mcp_transport_t* transport = (mcp_transport_t*)arg;
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)transport->transport_data;
     if (data == NULL) {
         mcp_log_error("Invalid transport data for HTTP streamable event thread");
         return NULL;
@@ -76,14 +76,14 @@ void* http_streamable_event_thread_func(void* arg) {
 /**
  * @brief Thread function for periodic cleanup
  */
-void* http_streamable_cleanup_thread_func(void* arg) {
+void* sthttp_cleanup_thread_func(void* arg) {
     if (arg == NULL) {
         mcp_log_error("Invalid argument for HTTP streamable cleanup thread");
         return NULL;
     }
 
     mcp_transport_t* transport = (mcp_transport_t*)arg;
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)transport->transport_data;
     if (data == NULL) {
         mcp_log_error("Invalid transport data for HTTP streamable cleanup thread");
         return NULL;
@@ -138,7 +138,7 @@ void* http_streamable_cleanup_thread_func(void* arg) {
 /**
  * @brief Process JSON-RPC request and generate response
  */
-char* process_jsonrpc_request(http_streamable_transport_data_t* data, const char* request_json, const char* session_id) {
+char* process_jsonrpc_request(sthttp_transport_data_t* data, const char* request_json, const char* session_id) {
     if (data == NULL || request_json == NULL) {
         return NULL;
     }
@@ -176,7 +176,7 @@ char* process_jsonrpc_request(http_streamable_transport_data_t* data, const char
 /**
  * @brief Handle MCP endpoint request
  */
-int handle_mcp_endpoint_request(struct lws* wsi, http_streamable_transport_data_t* data, http_streamable_session_data_t* session_data) {
+int handle_mcp_endpoint_request(struct lws* wsi, sthttp_transport_data_t* data, sthttp_session_data_t* session_data) {
     if (wsi == NULL || data == NULL || session_data == NULL) {
         return -1;
     }
@@ -231,7 +231,7 @@ int handle_mcp_endpoint_request(struct lws* wsi, http_streamable_transport_data_
 /**
  * @brief Handle MCP endpoint POST request
  */
-int handle_mcp_post_request(struct lws* wsi, http_streamable_transport_data_t* data, http_streamable_session_data_t* session_data) {
+int handle_mcp_post_request(struct lws* wsi, sthttp_transport_data_t* data, sthttp_session_data_t* session_data) {
     if (wsi == NULL || data == NULL || session_data == NULL) {
         return -1;
     }
@@ -296,7 +296,7 @@ int handle_mcp_post_request(struct lws* wsi, http_streamable_transport_data_t* d
 /**
  * @brief Handle MCP endpoint GET request (SSE stream)
  */
-int handle_mcp_get_request(struct lws* wsi, http_streamable_transport_data_t* data, http_streamable_session_data_t* session_data) {
+int handle_mcp_get_request(struct lws* wsi, sthttp_transport_data_t* data, sthttp_session_data_t* session_data) {
     if (wsi == NULL || data == NULL || session_data == NULL) {
         return -1;
     }
@@ -460,7 +460,7 @@ int handle_mcp_get_request(struct lws* wsi, http_streamable_transport_data_t* da
 /**
  * @brief Handle MCP endpoint DELETE request (session termination)
  */
-int handle_mcp_delete_request(struct lws* wsi, http_streamable_transport_data_t* data, http_streamable_session_data_t* session_data) {
+int handle_mcp_delete_request(struct lws* wsi, sthttp_transport_data_t* data, sthttp_session_data_t* session_data) {
     if (wsi == NULL || data == NULL || session_data == NULL) {
         return -1;
     }
@@ -495,7 +495,7 @@ int handle_mcp_delete_request(struct lws* wsi, http_streamable_transport_data_t*
 /**
  * @brief Handle OPTIONS request (CORS preflight)
  */
-int handle_options_request(struct lws* wsi, http_streamable_transport_data_t* data) {
+int handle_options_request(struct lws* wsi, sthttp_transport_data_t* data) {
     if (wsi == NULL || data == NULL) {
         return -1;
     }

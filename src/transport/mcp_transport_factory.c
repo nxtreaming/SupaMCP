@@ -6,8 +6,8 @@
 #include "mcp_websocket_connection_pool.h"
 #include "mcp_http_transport.h"
 #include "mcp_http_client_transport.h"
-#include "mcp_http_streamable_transport.h"
-#include "mcp_http_streamable_client_transport.h"
+#include "mcp_sthttp_transport.h"
+#include "mcp_sthttp_client_transport.h"
 #include <stdlib.h>
 
 mcp_transport_t* mcp_transport_factory_create(
@@ -158,7 +158,7 @@ mcp_transport_t* mcp_transport_factory_create(
             }
             {
                 // Convert from transport factory config to HTTP Streamable config
-                mcp_http_streamable_config_t streamable_config = {
+                mcp_sthttp_config_t streamable_config = {
                     .host = config->http_streamable.host,
                     .port = config->http_streamable.port,
                     .use_ssl = config->http_streamable.use_ssl ? true : false,
@@ -182,7 +182,7 @@ mcp_transport_t* mcp_transport_factory_create(
                     .heartbeat_interval_ms = config->http_streamable.heartbeat_interval_ms,
                     .enable_legacy_endpoints = config->http_streamable.enable_legacy_endpoints ? true : false
                 };
-                return mcp_transport_http_streamable_create(&streamable_config);
+                return mcp_transport_sthttp_create(&streamable_config);
             }
 
         case MCP_TRANSPORT_HTTP_STREAMABLE_CLIENT:
@@ -191,7 +191,7 @@ mcp_transport_t* mcp_transport_factory_create(
             }
             {
                 // Convert from transport factory config to HTTP Streamable client config
-                mcp_http_streamable_client_config_t client_config = {
+                mcp_sthttp_client_config_t client_config = {
                     .host = config->http_streamable_client.host,
                     .port = config->http_streamable_client.port,
                     .use_ssl = config->http_streamable_client.use_ssl ? true : false,
@@ -211,7 +211,7 @@ mcp_transport_t* mcp_transport_factory_create(
                     .auto_reconnect_sse = config->http_streamable_client.auto_reconnect_sse ? true : false,
                     .custom_headers = config->http_streamable_client.custom_headers
                 };
-                return mcp_transport_http_streamable_client_create(&client_config);
+                return mcp_transport_sthttp_client_create(&client_config);
             }
 
         default:

@@ -1,13 +1,13 @@
 /**
- * @file mcp_http_streamable_client_transport.h
+ * @file mcp_sthttp_client_transport.h
  * @brief HTTP Streamable Client Transport for MCP 2025-03-26
  *
  * This header defines the client-side implementation of the Streamable HTTP
  * transport as specified in MCP 2025-03-26. It provides functionality for
  * connecting to MCP servers via HTTP POST requests and SSE streams.
  */
-#ifndef MCP_HTTP_STREAMABLE_CLIENT_TRANSPORT_H
-#define MCP_HTTP_STREAMABLE_CLIENT_TRANSPORT_H
+#ifndef MCP_STHTTP_CLIENT_TRANSPORT_H
+#define MCP_STHTTP_CLIENT_TRANSPORT_H
 
 #include "mcp_transport.h"
 #include <stdint.h>
@@ -43,12 +43,12 @@ typedef struct {
     bool auto_reconnect_sse;             /**< Whether to automatically reconnect SSE streams */
     
     const char* custom_headers;          /**< Additional custom headers (format: "Key1: Value1\r\nKey2: Value2") */
-} mcp_http_streamable_client_config_t;
+} mcp_sthttp_client_config_t;
 
 /**
  * @brief Default configuration for HTTP Streamable client transport
  */
-#define MCP_HTTP_STREAMABLE_CLIENT_CONFIG_DEFAULT { \
+#define MCP_STHTTP_CLIENT_CONFIG_DEFAULT { \
     .host = "localhost", \
     .port = 8080, \
     .use_ssl = false, \
@@ -134,7 +134,7 @@ typedef void (*mcp_client_sse_event_callback_t)(
  * @param config Configuration for the client transport
  * @return Pointer to the created transport, or NULL on failure
  */
-mcp_transport_t* mcp_transport_http_streamable_client_create(const mcp_http_streamable_client_config_t* config);
+mcp_transport_t* mcp_transport_sthttp_client_create(const mcp_sthttp_client_config_t* config);
 
 /**
  * @brief Get current connection state
@@ -142,7 +142,7 @@ mcp_transport_t* mcp_transport_http_streamable_client_create(const mcp_http_stre
  * @param transport The client transport instance
  * @return Current connection state
  */
-mcp_client_connection_state_t mcp_http_streamable_client_get_state(mcp_transport_t* transport);
+mcp_client_connection_state_t mcp_sthttp_client_get_state(mcp_transport_t* transport);
 
 /**
  * @brief Get connection statistics
@@ -151,7 +151,7 @@ mcp_client_connection_state_t mcp_http_streamable_client_get_state(mcp_transport
  * @param stats Pointer to structure to fill with statistics
  * @return 0 on success, non-zero on error
  */
-int mcp_http_streamable_client_get_stats(mcp_transport_t* transport, mcp_client_connection_stats_t* stats);
+int mcp_sthttp_client_get_stats(mcp_transport_t* transport, mcp_client_connection_stats_t* stats);
 
 /**
  * @brief Get current session ID (if sessions are enabled)
@@ -159,7 +159,7 @@ int mcp_http_streamable_client_get_stats(mcp_transport_t* transport, mcp_client_
  * @param transport The client transport instance
  * @return Session ID string, or NULL if no session or sessions disabled
  */
-const char* mcp_http_streamable_client_get_session_id(mcp_transport_t* transport);
+const char* mcp_sthttp_client_get_session_id(mcp_transport_t* transport);
 
 /**
  * @brief Set connection state change callback
@@ -169,7 +169,7 @@ const char* mcp_http_streamable_client_get_session_id(mcp_transport_t* transport
  * @param user_data User data to pass to callback
  * @return 0 on success, non-zero on error
  */
-int mcp_http_streamable_client_set_state_callback(
+int mcp_sthttp_client_set_state_callback(
     mcp_transport_t* transport,
     mcp_client_state_callback_t callback,
     void* user_data
@@ -183,7 +183,7 @@ int mcp_http_streamable_client_set_state_callback(
  * @param user_data User data to pass to callback
  * @return 0 on success, non-zero on error
  */
-int mcp_http_streamable_client_set_sse_callback(
+int mcp_sthttp_client_set_sse_callback(
     mcp_transport_t* transport,
     mcp_client_sse_event_callback_t callback,
     void* user_data
@@ -195,7 +195,7 @@ int mcp_http_streamable_client_set_sse_callback(
  * @param transport The client transport instance
  * @return 0 on success, non-zero on error
  */
-int mcp_http_streamable_client_reconnect_sse(mcp_transport_t* transport);
+int mcp_sthttp_client_reconnect_sse(mcp_transport_t* transport);
 
 /**
  * @brief Terminate current session (if sessions are enabled)
@@ -203,7 +203,7 @@ int mcp_http_streamable_client_reconnect_sse(mcp_transport_t* transport);
  * @param transport The client transport instance
  * @return 0 on success, non-zero on error
  */
-int mcp_http_streamable_client_terminate_session(mcp_transport_t* transport);
+int mcp_sthttp_client_terminate_session(mcp_transport_t* transport);
 
 /**
  * @brief Enable or disable automatic SSE reconnection
@@ -212,10 +212,10 @@ int mcp_http_streamable_client_terminate_session(mcp_transport_t* transport);
  * @param enable Whether to enable automatic reconnection
  * @return 0 on success, non-zero on error
  */
-int mcp_http_streamable_client_set_auto_reconnect(mcp_transport_t* transport, bool enable);
+int mcp_sthttp_client_set_auto_reconnect(mcp_transport_t* transport, bool enable);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // MCP_HTTP_STREAMABLE_CLIENT_TRANSPORT_H
+#endif // MCP_STHTTP_CLIENT_TRANSPORT_H

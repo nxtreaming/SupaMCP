@@ -1,14 +1,14 @@
 /**
- * @file http_streamable_client_internal.h
+ * @file sthttp_client_internal.h
  * @brief Internal definitions for HTTP Streamable Client Transport
  *
  * This header contains internal structures and functions for the
  * HTTP Streamable client transport implementation.
  */
-#ifndef HTTP_STREAMABLE_CLIENT_INTERNAL_H
-#define HTTP_STREAMABLE_CLIENT_INTERNAL_H
+#ifndef STHTTP_CLIENT_INTERNAL_H
+#define STHTTP_CLIENT_INTERNAL_H
 
-#include "mcp_http_streamable_client_transport.h"
+#include "mcp_sthttp_client_transport.h"
 #include "transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_sync.h"
@@ -88,7 +88,7 @@ typedef struct {
  * @brief HTTP Streamable client transport data
  */
 typedef struct {
-    mcp_http_streamable_client_config_t config;
+    mcp_sthttp_client_config_t config;
     
     // Connection state
     mcp_client_connection_state_t state;
@@ -126,24 +126,24 @@ typedef struct {
     mcp_thread_t reconnect_thread;
     volatile bool reconnect_thread_running;
     volatile bool shutdown_requested;
-} http_streamable_client_data_t;
+} sthttp_client_data_t;
 
 // Function declarations
 
 /**
  * @brief Initialize HTTP client transport data
  */
-int http_streamable_client_init_data(http_streamable_client_data_t* data, const mcp_http_streamable_client_config_t* config);
+int sthttp_client_init_data(sthttp_client_data_t* data, const mcp_sthttp_client_config_t* config);
 
 /**
  * @brief Cleanup HTTP client transport data
  */
-void http_streamable_client_cleanup(http_streamable_client_data_t* data);
+void sthttp_client_cleanup(sthttp_client_data_t* data);
 
 /**
  * @brief Send HTTP POST request
  */
-int http_client_send_request(http_streamable_client_data_t* data, const char* json_data, http_response_t* response);
+int http_client_send_request(sthttp_client_data_t* data, const char* json_data, http_response_t* response);
 
 /**
  * @brief Parse HTTP response
@@ -158,12 +158,12 @@ void http_client_free_response(http_response_t* response);
 /**
  * @brief Connect SSE stream
  */
-int sse_client_connect(http_streamable_client_data_t* data);
+int sse_client_connect(sthttp_client_data_t* data);
 
 /**
  * @brief Disconnect SSE stream
  */
-void sse_client_disconnect(http_streamable_client_data_t* data);
+void sse_client_disconnect(sthttp_client_data_t* data);
 
 /**
  * @brief SSE receive thread function
@@ -183,12 +183,12 @@ void sse_free_event(sse_event_t* event);
 /**
  * @brief Change connection state
  */
-void http_client_set_state(http_streamable_client_data_t* data, mcp_client_connection_state_t new_state);
+void http_client_set_state(sthttp_client_data_t* data, mcp_client_connection_state_t new_state);
 
 /**
  * @brief Update connection statistics
  */
-void http_client_update_stats(http_streamable_client_data_t* data, const char* stat_type);
+void http_client_update_stats(sthttp_client_data_t* data, const char* stat_type);
 
 /**
  * @brief Reconnection thread function
@@ -213,7 +213,7 @@ int http_client_receive_response(socket_t socket_fd, char* buffer, size_t buffer
 /**
  * @brief Build HTTP request string
  */
-char* http_client_build_request(http_streamable_client_data_t* data, const char* method, const char* json_data);
+char* http_client_build_request(sthttp_client_data_t* data, const char* method, const char* json_data);
 
 /**
  * @brief Extract session ID from response headers
@@ -229,4 +229,4 @@ int http_client_validate_ssl_cert(const char* host, const char* cert_path);
 }
 #endif
 
-#endif // HTTP_STREAMABLE_CLIENT_INTERNAL_H
+#endif // STHTTP_CLIENT_INTERNAL_H

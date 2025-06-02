@@ -17,7 +17,7 @@
 #endif
 
 #include "mcp_server.h"
-#include "mcp_http_streamable_transport.h"
+#include "mcp_sthttp_transport.h"
 #include "mcp_log.h"
 #include "mcp_types.h"
 #include "mcp_json.h"
@@ -231,7 +231,7 @@ int main(int argc, char* argv[]) {
     printf("\n");
     
     // Create transport configuration
-    mcp_http_streamable_config_t config = MCP_HTTP_STREAMABLE_CONFIG_DEFAULT;
+    mcp_sthttp_config_t config = MCP_STHTTP_CONFIG_DEFAULT;
     config.host = host;
     config.port = port;
     config.mcp_endpoint = mcp_endpoint;
@@ -241,7 +241,7 @@ int main(int argc, char* argv[]) {
     config.allowed_origins = "http://localhost:*,https://localhost:*,http://127.0.0.1:*,https://127.0.0.1:*";
     
     // Create transport
-    g_transport = mcp_transport_http_streamable_create(&config);
+    g_transport = mcp_transport_sthttp_create(&config);
     if (g_transport == NULL) {
         fprintf(stderr, "Failed to create Streamable HTTP transport\n");
         return 1;
@@ -304,7 +304,7 @@ int main(int argc, char* argv[]) {
     
     if (enable_sessions) {
         printf("Session management: enabled\n");
-        printf("Session count: %zu\n", mcp_transport_http_streamable_get_session_count(g_transport));
+        printf("Session count: %zu\n", mcp_transport_sthttp_get_session_count(g_transport));
     }
     
     printf("\nPress Ctrl+C to stop the server.\n");

@@ -16,7 +16,7 @@
 #include <unistd.h>
 #endif
 
-#include "mcp_http_streamable_client_transport.h"
+#include "mcp_sthttp_client_transport.h"
 #include "mcp_log.h"
 #include "mcp_json.h"
 #include "mcp_json_utils.h"
@@ -201,7 +201,7 @@ static void test_sse_connection(mcp_transport_t* client) {
 
     // Get client statistics to check SSE status
     mcp_client_connection_stats_t stats;
-    if (mcp_http_streamable_client_get_stats(client, &stats) == 0) {
+    if (mcp_sthttp_client_get_stats(client, &stats) == 0) {
         printf("SSE Connection Status:\n");
         printf("  - SSE Events Received: %llu\n", (unsigned long long)stats.sse_events_received);
         printf("  - Connection Errors: %llu\n", (unsigned long long)stats.connection_errors);
@@ -241,7 +241,7 @@ int main(int argc, char* argv[]) {
     printf("\n");
     
     // Create client configuration
-    mcp_http_streamable_client_config_t config = MCP_HTTP_STREAMABLE_CLIENT_CONFIG_DEFAULT;
+    mcp_sthttp_client_config_t config = MCP_STHTTP_CLIENT_CONFIG_DEFAULT;
     config.host = host;
     config.port = port;
     config.enable_sessions = true;
@@ -249,15 +249,15 @@ int main(int argc, char* argv[]) {
     config.auto_reconnect_sse = true;
     
     // Create client transport
-    g_client = mcp_transport_http_streamable_client_create(&config);
+    g_client = mcp_transport_sthttp_client_create(&config);
     if (g_client == NULL) {
         fprintf(stderr, "Failed to create HTTP Streamable client transport\n");
         return 1;
     }
     
     // Set callbacks
-    mcp_http_streamable_client_set_state_callback(g_client, state_callback, NULL);
-    mcp_http_streamable_client_set_sse_callback(g_client, sse_event_callback, NULL);
+    mcp_sthttp_client_set_state_callback(g_client, state_callback, NULL);
+    mcp_sthttp_client_set_sse_callback(g_client, sse_event_callback, NULL);
 
     // Start client with callbacks
     if (mcp_transport_start(g_client, message_callback, NULL, error_callback) != 0) {
@@ -291,7 +291,7 @@ int main(int argc, char* argv[]) {
     
     // Keep running until interrupted
     printf("\nClient is running. Press Ctrl+C to stop.\n");
-    printf("Session ID: %s\n", mcp_http_streamable_client_get_session_id(g_client));
+    printf("Session ID: %s\n", mcp_sthttp_client_get_session_id(g_client));
     
     // Print statistics periodically
     while (g_running) {
@@ -299,7 +299,7 @@ int main(int argc, char* argv[]) {
         if (!g_running) break;
         
         mcp_client_connection_stats_t stats;
-        if (mcp_http_streamable_client_get_stats(g_client, &stats) == 0) {
+        if (mcp_sthttp_client_get_stats(g_client, &stats) == 0) {
             printf("Statistics: Requests=%llu, Responses=%llu, SSE Events=%llu, Errors=%llu\n",
                    (unsigned long long)stats.requests_sent,
                    (unsigned long long)stats.responses_received,

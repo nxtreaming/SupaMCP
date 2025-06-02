@@ -1,14 +1,14 @@
 /**
- * @file http_streamable_transport_internal.h
+ * @file sthttp_transport_internal.h
  * @brief Internal definitions for Streamable HTTP Transport
  *
  * This header contains internal structures and functions for the
  * Streamable HTTP transport implementation.
  */
-#ifndef HTTP_STREAMABLE_TRANSPORT_INTERNAL_H
-#define HTTP_STREAMABLE_TRANSPORT_INTERNAL_H
+#ifndef STHTTP_TRANSPORT_INTERNAL_H
+#define STHTTP_TRANSPORT_INTERNAL_H
 
-#include "mcp_http_streamable_transport.h"
+#include "mcp_sthttp_transport.h"
 #include "mcp_http_session_manager.h"
 #include "internal/transport_internal.h"
 #include "mcp_log.h"
@@ -92,13 +92,13 @@ typedef struct {
     // Origin validation
     char origin[HTTP_ORIGIN_BUFFER_SIZE];        /**< Origin header value */
     bool origin_validated;                       /**< Whether origin has been validated */
-} http_streamable_session_data_t;
+} sthttp_session_data_t;
 
 /**
  * @brief Streamable HTTP transport data structure
  */
 typedef struct {
-    mcp_http_streamable_config_t config;
+    mcp_sthttp_config_t config;
     struct lws_context* context;
     volatile bool running;
     mcp_thread_t event_thread;
@@ -144,19 +144,19 @@ typedef struct {
     mcp_transport_message_callback_t message_callback;
     void* callback_user_data;
     mcp_transport_error_callback_t error_callback;
-} http_streamable_transport_data_t;
+} sthttp_transport_data_t;
 
 // Function declarations
 
 /**
  * @brief Thread function for HTTP event processing
  */
-void* http_streamable_event_thread_func(void* arg);
+void* sthttp_event_thread_func(void* arg);
 
 /**
  * @brief Thread function for periodic cleanup
  */
-void* http_streamable_cleanup_thread_func(void* arg);
+void* sthttp_cleanup_thread_func(void* arg);
 
 /**
  * @brief Create SSE stream context
@@ -181,7 +181,7 @@ int sse_stream_context_replay_events(sse_stream_context_t* context, struct lws* 
 /**
  * @brief Validate origin against allowed origins list
  */
-bool validate_origin(http_streamable_transport_data_t* data, const char* origin);
+bool validate_origin(sthttp_transport_data_t* data, const char* origin);
 
 /**
  * @brief Parse allowed origins string into array
@@ -216,32 +216,32 @@ int send_sse_heartbeat_to_wsi(struct lws* wsi);
 /**
  * @brief Handle MCP endpoint request
  */
-int handle_mcp_endpoint_request(struct lws* wsi, http_streamable_transport_data_t* data, http_streamable_session_data_t* session_data);
+int handle_mcp_endpoint_request(struct lws* wsi, sthttp_transport_data_t* data, sthttp_session_data_t* session_data);
 
 /**
  * @brief Handle MCP endpoint POST request
  */
-int handle_mcp_post_request(struct lws* wsi, http_streamable_transport_data_t* data, http_streamable_session_data_t* session_data);
+int handle_mcp_post_request(struct lws* wsi, sthttp_transport_data_t* data, sthttp_session_data_t* session_data);
 
 /**
  * @brief Handle MCP endpoint GET request (SSE stream)
  */
-int handle_mcp_get_request(struct lws* wsi, http_streamable_transport_data_t* data, http_streamable_session_data_t* session_data);
+int handle_mcp_get_request(struct lws* wsi, sthttp_transport_data_t* data, sthttp_session_data_t* session_data);
 
 /**
  * @brief Handle MCP endpoint DELETE request (session termination)
  */
-int handle_mcp_delete_request(struct lws* wsi, http_streamable_transport_data_t* data, http_streamable_session_data_t* session_data);
+int handle_mcp_delete_request(struct lws* wsi, sthttp_transport_data_t* data, sthttp_session_data_t* session_data);
 
 /**
  * @brief Handle OPTIONS request (CORS preflight)
  */
-int handle_options_request(struct lws* wsi, http_streamable_transport_data_t* data);
+int handle_options_request(struct lws* wsi, sthttp_transport_data_t* data);
 
 /**
  * @brief Process JSON-RPC request and generate response
  */
-char* process_jsonrpc_request(http_streamable_transport_data_t* data, const char* request_json, const char* session_id);
+char* process_jsonrpc_request(sthttp_transport_data_t* data, const char* request_json, const char* session_id);
 
 /**
  * @brief Extract session ID from headers
@@ -256,7 +256,7 @@ bool extract_last_event_id(struct lws* wsi, char* last_event_id_out);
 /**
  * @brief Add CORS headers to response for streamable transport
  */
-void add_streamable_cors_headers(struct lws* wsi, http_streamable_transport_data_t* data,
+void add_streamable_cors_headers(struct lws* wsi, sthttp_transport_data_t* data,
                                 unsigned char** p, unsigned char* end);
 
 /**
@@ -265,10 +265,10 @@ void add_streamable_cors_headers(struct lws* wsi, http_streamable_transport_data
 bool validate_sse_text_input(const char* text);
 
 // LWS protocols for streamable HTTP transport
-extern struct lws_protocols http_streamable_protocols[];
+extern struct lws_protocols sthttp_protocols[];
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // HTTP_STREAMABLE_TRANSPORT_INTERNAL_H
+#endif // STHTTP_TRANSPORT_INTERNAL_H

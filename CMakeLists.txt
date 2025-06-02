@@ -156,13 +156,13 @@ set(COMMON_SOURCES
     src/transport/mcp_http_client_utils.c
     src/transport/http_client_ssl_internal.c
     src/transport/mcp_http_session_manager.c
-    src/transport/mcp_http_streamable_transport.c
-    src/transport/mcp_http_streamable_utils.c
-    src/transport/mcp_http_streamable_threads.c
-    src/transport/mcp_http_streamable_callbacks.c
-    src/transport/mcp_http_streamable_client_transport.c
-    src/transport/mcp_http_streamable_client_core.c
-    src/transport/mcp_http_streamable_client_sse.c
+    src/transport/mcp_sthttp_transport.c
+    src/transport/mcp_sthttp_utils.c
+    src/transport/mcp_sthttp_threads.c
+    src/transport/mcp_sthttp_callbacks.c
+    src/transport/mcp_sthttp_client_transport.c
+    src/transport/mcp_sthttp_client_core.c
+    src/transport/mcp_sthttp_client_sse.c
     src/common/mcp_types.c
     src/common/mcp_arena.c
     src/common/mcp_log.c

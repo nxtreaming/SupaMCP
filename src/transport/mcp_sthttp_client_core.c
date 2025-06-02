@@ -1,11 +1,11 @@
 /**
- * @file mcp_http_streamable_client_core.c
+ * @file mcp_sthttp_client_core.c
  * @brief Core HTTP client functionality for Streamable HTTP transport
  *
  * This file implements the core HTTP client functionality including
  * socket management, HTTP request/response handling, and SSE stream processing.
  */
-#include "internal/http_streamable_client_internal.h"
+#include "internal/sthttp_client_internal.h"
 
 /**
  * @brief Receive data with timeout
@@ -49,7 +49,7 @@ socket_t http_client_create_socket(const char* host, uint16_t port, uint32_t tim
 /**
  * @brief Build HTTP request string
  */
-char* http_client_build_request(http_streamable_client_data_t* data, const char* method, const char* json_data) {
+char* http_client_build_request(sthttp_client_data_t* data, const char* method, const char* json_data) {
     if (data == NULL || method == NULL) {
         return NULL;
     }
@@ -212,7 +212,7 @@ int http_client_receive_response(socket_t socket_fd, char* buffer, size_t buffer
 /**
  * @brief Send HTTP POST request
  */
-int http_client_send_request(http_streamable_client_data_t* data, const char* json_data, http_response_t* response) {
+int http_client_send_request(sthttp_client_data_t* data, const char* json_data, http_response_t* response) {
     if (data == NULL || json_data == NULL || response == NULL) {
         return -1;
     }

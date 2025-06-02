@@ -1,12 +1,12 @@
 /**
- * @file mcp_http_streamable_transport.h
+ * @file mcp_sthttp_transport.h
  * @brief Streamable HTTP Transport for MCP Protocol 2025-03-26
  *
  * This header defines the Streamable HTTP transport implementation
  * as specified in the MCP 2025-03-26 protocol specification.
  */
-#ifndef MCP_HTTP_STREAMABLE_TRANSPORT_H
-#define MCP_HTTP_STREAMABLE_TRANSPORT_H
+#ifndef MCP_STHTTP_TRANSPORT_H
+#define MCP_STHTTP_TRANSPORT_H
 
 #include "mcp_transport.h"
 #include <stdbool.h>
@@ -19,7 +19,7 @@ extern "C" {
 /**
  * @brief Configuration for Streamable HTTP transport
  */
-typedef struct mcp_http_streamable_config {
+typedef struct mcp_sthttp_config {
     const char* host;         /**< Host to bind to (e.g., "127.0.0.1" for localhost only) */
     uint16_t port;            /**< Port to listen on */
     bool use_ssl;             /**< Whether to use HTTPS */
@@ -54,7 +54,7 @@ typedef struct mcp_http_streamable_config {
     
     // Backwards compatibility
     bool enable_legacy_endpoints;    /**< Whether to enable legacy HTTP+SSE endpoints for backwards compatibility */
-} mcp_http_streamable_config_t;
+} mcp_sthttp_config_t;
 
 /**
  * @brief Create a Streamable HTTP server transport
@@ -65,7 +65,7 @@ typedef struct mcp_http_streamable_config {
  * @param config Streamable HTTP transport configuration
  * @return mcp_transport_t* Transport handle or NULL on failure
  */
-mcp_transport_t* mcp_transport_http_streamable_create(const mcp_http_streamable_config_t* config);
+mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config);
 
 /**
  * @brief Create a Streamable HTTP client transport
@@ -80,7 +80,7 @@ mcp_transport_t* mcp_transport_http_streamable_create(const mcp_http_streamable_
  * @param api_key API key for authentication (optional)
  * @return mcp_transport_t* Transport handle or NULL on failure
  */
-mcp_transport_t* mcp_transport_http_streamable_client_create(const char* host, 
+mcp_transport_t* mcp_transport_sthttp_client_create(const char* host, 
                                                            uint16_t port,
                                                            const char* mcp_endpoint,
                                                            bool use_ssl,
@@ -98,7 +98,7 @@ mcp_transport_t* mcp_transport_http_streamable_client_create(const char* host,
  * @param session_id Session ID to associate with the message (optional)
  * @return int 0 on success, non-zero on error
  */
-int mcp_transport_http_streamable_send_with_session(mcp_transport_t* transport, 
+int mcp_transport_sthttp_send_with_session(mcp_transport_t* transport, 
                                                    const void* data, 
                                                    size_t size,
                                                    const char* session_id);
@@ -109,7 +109,7 @@ int mcp_transport_http_streamable_send_with_session(mcp_transport_t* transport,
  * @param transport Transport handle
  * @return const char* MCP endpoint path or NULL if not a streamable HTTP transport
  */
-const char* mcp_transport_http_streamable_get_endpoint(mcp_transport_t* transport);
+const char* mcp_transport_sthttp_get_endpoint(mcp_transport_t* transport);
 
 /**
  * @brief Check if the transport supports sessions
@@ -117,7 +117,7 @@ const char* mcp_transport_http_streamable_get_endpoint(mcp_transport_t* transpor
  * @param transport Transport handle
  * @return bool true if sessions are supported and enabled, false otherwise
  */
-bool mcp_transport_http_streamable_has_sessions(mcp_transport_t* transport);
+bool mcp_transport_sthttp_has_sessions(mcp_transport_t* transport);
 
 /**
  * @brief Get active session count
@@ -125,7 +125,7 @@ bool mcp_transport_http_streamable_has_sessions(mcp_transport_t* transport);
  * @param transport Transport handle
  * @return size_t Number of active sessions, or 0 if sessions not supported
  */
-size_t mcp_transport_http_streamable_get_session_count(mcp_transport_t* transport);
+size_t mcp_transport_sthttp_get_session_count(mcp_transport_t* transport);
 
 /**
  * @brief Terminate a specific session
@@ -134,14 +134,14 @@ size_t mcp_transport_http_streamable_get_session_count(mcp_transport_t* transpor
  * @param session_id Session ID to terminate
  * @return bool true if session was found and terminated, false otherwise
  */
-bool mcp_transport_http_streamable_terminate_session(mcp_transport_t* transport, const char* session_id);
+bool mcp_transport_sthttp_terminate_session(mcp_transport_t* transport, const char* session_id);
 
 /**
  * @brief Default configuration initializer
  *
  * This macro provides default values for the Streamable HTTP transport configuration.
  */
-#define MCP_HTTP_STREAMABLE_CONFIG_DEFAULT { \
+#define MCP_STHTTP_CONFIG_DEFAULT { \
     .host = "127.0.0.1", \
     .port = 8080, \
     .use_ssl = false, \
@@ -170,4 +170,4 @@ bool mcp_transport_http_streamable_terminate_session(mcp_transport_t* transport,
 }
 #endif
 
-#endif /* MCP_HTTP_STREAMABLE_TRANSPORT_H */
+#endif /* MCP_STHTTP_TRANSPORT_H */

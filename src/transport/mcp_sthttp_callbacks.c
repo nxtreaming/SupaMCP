@@ -4,7 +4,7 @@
 #   endif
 #endif
 
-#include "internal/http_streamable_transport_internal.h"
+#include "internal/sthttp_transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
 #include <stdlib.h>
@@ -12,31 +12,31 @@
 #include <stdio.h>
 
 // Forward declarations
-static int lws_callback_http_streamable(struct lws* wsi, enum lws_callback_reasons reason,
+static int lws_callback_sthttp(struct lws* wsi, enum lws_callback_reasons reason,
                                        void* user, void* in, size_t len);
-static int handle_wsi_create(struct lws* wsi, http_streamable_session_data_t* session);
-static int handle_http_request(struct lws* wsi, http_streamable_transport_data_t* data, 
-                              http_streamable_session_data_t* session, const char* uri);
-static int handle_http_body(struct lws* wsi, http_streamable_session_data_t* session, void* in, size_t len);
-static int handle_http_body_completion(struct lws* wsi, http_streamable_transport_data_t* data, 
-                                      http_streamable_session_data_t* session);
-static int handle_closed_http(struct lws* wsi, http_streamable_transport_data_t* data, 
-                             http_streamable_session_data_t* session);
-static void extract_origin_header(struct lws* wsi, http_streamable_session_data_t* session);
-static void extract_session_header(struct lws* wsi, http_streamable_session_data_t* session);
+static int handle_wsi_create(struct lws* wsi, sthttp_session_data_t* session);
+static int handle_http_request(struct lws* wsi, sthttp_transport_data_t* data, 
+                              sthttp_session_data_t* session, const char* uri);
+static int handle_http_body(struct lws* wsi, sthttp_session_data_t* session, void* in, size_t len);
+static int handle_http_body_completion(struct lws* wsi, sthttp_transport_data_t* data, 
+                                      sthttp_session_data_t* session);
+static int handle_closed_http(struct lws* wsi, sthttp_transport_data_t* data, 
+                             sthttp_session_data_t* session);
+static void extract_origin_header(struct lws* wsi, sthttp_session_data_t* session);
+static void extract_session_header(struct lws* wsi, sthttp_session_data_t* session);
 
 /**
  * @brief Main HTTP callback function for libwebsockets
  */
-static int lws_callback_http_streamable(struct lws* wsi, enum lws_callback_reasons reason,
+static int lws_callback_sthttp(struct lws* wsi, enum lws_callback_reasons reason,
                                        void* user, void* in, size_t len) {
     if (wsi == NULL) {
         mcp_log_error("Invalid WebSocket instance (NULL)");
         return -1;
     }
 
-    http_streamable_session_data_t* session = (http_streamable_session_data_t*)user;
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)lws_context_user(lws_get_context(wsi));
+    sthttp_session_data_t* session = (sthttp_session_data_t*)user;
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)lws_context_user(lws_get_context(wsi));
 
     switch (reason) {
         case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
@@ -93,7 +93,7 @@ static int lws_callback_http_streamable(struct lws* wsi, enum lws_callback_reaso
 /**
  * @brief Handle WebSocket instance creation
  */
-static int handle_wsi_create(struct lws* wsi, http_streamable_session_data_t* session) {
+static int handle_wsi_create(struct lws* wsi, sthttp_session_data_t* session) {
     (void)wsi;
     if (session == NULL) {
         mcp_log_error("Session data is NULL");
@@ -101,7 +101,7 @@ static int handle_wsi_create(struct lws* wsi, http_streamable_session_data_t* se
     }
 
     // Initialize session data
-    memset(session, 0, sizeof(http_streamable_session_data_t));
+    memset(session, 0, sizeof(sthttp_session_data_t));
     session->has_session = false;
     session->is_sse_stream = false;
     session->sse_context = NULL;
@@ -118,8 +118,8 @@ static int handle_wsi_create(struct lws* wsi, http_streamable_session_data_t* se
 /**
  * @brief Handle HTTP request
  */
-static int handle_http_request(struct lws* wsi, http_streamable_transport_data_t* data,
-                              http_streamable_session_data_t* session, const char* uri) {
+static int handle_http_request(struct lws* wsi, sthttp_transport_data_t* data,
+                              sthttp_session_data_t* session, const char* uri) {
     if (wsi == NULL || data == NULL || session == NULL || uri == NULL) {
         mcp_log_error("handle_http_request: Invalid parameters");
         return -1;
@@ -194,7 +194,7 @@ static int handle_http_request(struct lws* wsi, http_streamable_transport_data_t
 /**
  * @brief Handle HTTP request body data
  */
-static int handle_http_body(struct lws* wsi, http_streamable_session_data_t* session, void* in, size_t len) {
+static int handle_http_body(struct lws* wsi, sthttp_session_data_t* session, void* in, size_t len) {
     (void)wsi;
     if (session == NULL || in == NULL || len == 0) {
         return 0; // Not an error, just no data
@@ -229,8 +229,8 @@ static int handle_http_body(struct lws* wsi, http_streamable_session_data_t* ses
 /**
  * @brief Handle HTTP request body completion
  */
-static int handle_http_body_completion(struct lws* wsi, http_streamable_transport_data_t* data, 
-                                      http_streamable_session_data_t* session) {
+static int handle_http_body_completion(struct lws* wsi, sthttp_transport_data_t* data, 
+                                      sthttp_session_data_t* session) {
     if (session == NULL) {
         return -1;
     }
@@ -262,8 +262,8 @@ static int handle_http_body_completion(struct lws* wsi, http_streamable_transpor
 /**
  * @brief Handle HTTP connection closure
  */
-static int handle_closed_http(struct lws* wsi, http_streamable_transport_data_t* data, 
-                             http_streamable_session_data_t* session) {
+static int handle_closed_http(struct lws* wsi, sthttp_transport_data_t* data, 
+                             sthttp_session_data_t* session) {
     if (session == NULL) {
         return 0;
     }
@@ -307,7 +307,7 @@ static int handle_closed_http(struct lws* wsi, http_streamable_transport_data_t*
 /**
  * @brief Extract Origin header
  */
-static void extract_origin_header(struct lws* wsi, http_streamable_session_data_t* session) {
+static void extract_origin_header(struct lws* wsi, sthttp_session_data_t* session) {
     if (wsi == NULL || session == NULL) {
         return;
     }
@@ -323,7 +323,7 @@ static void extract_origin_header(struct lws* wsi, http_streamable_session_data_
 /**
  * @brief Extract session header
  */
-static void extract_session_header(struct lws* wsi, http_streamable_session_data_t* session) {
+static void extract_session_header(struct lws* wsi, sthttp_session_data_t* session) {
     if (wsi == NULL || session == NULL) {
         return;
     }
@@ -339,11 +339,11 @@ static void extract_session_header(struct lws* wsi, http_streamable_session_data
 }
 
 // LWS protocols for streamable HTTP transport
-struct lws_protocols http_streamable_protocols[] = {
+struct lws_protocols sthttp_protocols[] = {
     {
-        "http-streamable",
-        lws_callback_http_streamable,
-        sizeof(http_streamable_session_data_t),
+        "sthttp",
+        lws_callback_sthttp,
+        sizeof(sthttp_session_data_t),
         4096,  // rx buffer size - increased for POST body handling
     },
     { NULL, NULL, 0, 0 } // terminator

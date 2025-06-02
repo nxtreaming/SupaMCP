@@ -4,7 +4,7 @@
 #   endif
 #endif
 
-#include "internal/http_streamable_transport_internal.h"
+#include "internal/sthttp_transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_string_utils.h"
 #include <stdlib.h>
@@ -175,7 +175,7 @@ int sse_stream_context_replay_events(sse_stream_context_t* context, struct lws* 
 /**
  * @brief Validate origin against allowed origins list
  */
-bool validate_origin(http_streamable_transport_data_t* data, const char* origin) {
+bool validate_origin(sthttp_transport_data_t* data, const char* origin) {
     if (data == NULL || !data->validate_origin || origin == NULL) {
         return true; // No validation required
     }
@@ -598,7 +598,7 @@ bool validate_sse_text_input(const char* text) {
 /**
  * @brief Add CORS headers to response for streamable transport
  */
-void add_streamable_cors_headers(struct lws* wsi, http_streamable_transport_data_t* data,
+void add_streamable_cors_headers(struct lws* wsi, sthttp_transport_data_t* data,
                                 unsigned char** p, unsigned char* end) {
     if (wsi == NULL || data == NULL || !data->enable_cors || p == NULL || *p == NULL || end == NULL) {
         return;

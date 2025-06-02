@@ -4,8 +4,8 @@
 #   endif
 #endif
 
-#include "mcp_http_streamable_transport.h"
-#include "internal/http_streamable_transport_internal.h"
+#include "mcp_sthttp_transport.h"
+#include "internal/sthttp_transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_sync.h"
 #include "mcp_thread_pool.h"
@@ -29,25 +29,25 @@
 #define HTTP_STREAMABLE_CLEANUP_INTERVAL_SECONDS 60
 
 // Forward declarations of static functions
-static int http_streamable_transport_start(mcp_transport_t* transport,
+static int sthttp_transport_start(mcp_transport_t* transport,
     mcp_transport_message_callback_t message_callback,
     void* user_data,
     mcp_transport_error_callback_t error_callback);
-static int http_streamable_transport_stop(mcp_transport_t* transport);
-static int http_streamable_transport_destroy(mcp_transport_t* transport);
-static int http_streamable_transport_send(mcp_transport_t* transport, const void* data, size_t size);
-static int http_streamable_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
+static int sthttp_transport_stop(mcp_transport_t* transport);
+static int sthttp_transport_destroy(mcp_transport_t* transport);
+static int sthttp_transport_send(mcp_transport_t* transport, const void* data, size_t size);
+static int sthttp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
 
-static void free_transport_data(http_streamable_transport_data_t* data);
-static bool initialize_cors_settings(http_streamable_transport_data_t* data, const mcp_http_streamable_config_t* config);
-static bool initialize_mutexes(http_streamable_transport_data_t* data);
-static bool setup_static_file_mount(http_streamable_transport_data_t* data);
-static bool initialize_session_manager(http_streamable_transport_data_t* data);
+static void free_transport_data(sthttp_transport_data_t* data);
+static bool initialize_cors_settings(sthttp_transport_data_t* data, const mcp_sthttp_config_t* config);
+static bool initialize_mutexes(sthttp_transport_data_t* data);
+static bool setup_static_file_mount(sthttp_transport_data_t* data);
+static bool initialize_session_manager(sthttp_transport_data_t* data);
 
 /**
  * @brief Free all memory associated with transport data
  */
-static void free_transport_data(http_streamable_transport_data_t* data) {
+static void free_transport_data(sthttp_transport_data_t* data) {
     if (data == NULL) {
         return;
     }
@@ -118,7 +118,7 @@ static void free_transport_data(http_streamable_transport_data_t* data) {
 /**
  * @brief Initialize CORS settings for the transport
  */
-static bool initialize_cors_settings(http_streamable_transport_data_t* data, const mcp_http_streamable_config_t* config) {
+static bool initialize_cors_settings(sthttp_transport_data_t* data, const mcp_sthttp_config_t* config) {
     if (data == NULL || config == NULL) {
         return false;
     }
@@ -174,7 +174,7 @@ static bool initialize_cors_settings(http_streamable_transport_data_t* data, con
 /**
  * @brief Initialize mutexes for the transport
  */
-static bool initialize_mutexes(http_streamable_transport_data_t* data) {
+static bool initialize_mutexes(sthttp_transport_data_t* data) {
     if (data == NULL) {
         return false;
     }
@@ -192,7 +192,7 @@ static bool initialize_mutexes(http_streamable_transport_data_t* data) {
 /**
  * @brief Set up static file mount for the HTTP server
  */
-static bool setup_static_file_mount(http_streamable_transport_data_t* data) {
+static bool setup_static_file_mount(sthttp_transport_data_t* data) {
     if (data == NULL || data->config.doc_root == NULL) {
         return false;
     }
@@ -227,7 +227,7 @@ static bool setup_static_file_mount(http_streamable_transport_data_t* data) {
 /**
  * @brief Initialize session manager
  */
-static bool initialize_session_manager(http_streamable_transport_data_t* data) {
+static bool initialize_session_manager(sthttp_transport_data_t* data) {
     if (data == NULL) {
         return false;
     }
@@ -252,7 +252,7 @@ static bool initialize_session_manager(http_streamable_transport_data_t* data) {
     return true;
 }
 
-mcp_transport_t* mcp_transport_http_streamable_create(const mcp_http_streamable_config_t* config) {
+mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config) {
     if (config == NULL || config->host == NULL) {
         mcp_log_error("Invalid Streamable HTTP configuration");
         return NULL;
@@ -266,7 +266,7 @@ mcp_transport_t* mcp_transport_http_streamable_create(const mcp_http_streamable_
     }
 
     // Allocate transport data
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)calloc(1, sizeof(http_streamable_transport_data_t));
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)calloc(1, sizeof(sthttp_transport_data_t));
     if (data == NULL) {
         mcp_log_error("Failed to allocate memory for Streamable HTTP transport data");
         free(transport);
@@ -274,7 +274,7 @@ mcp_transport_t* mcp_transport_http_streamable_create(const mcp_http_streamable_
     }
 
     // Copy configuration
-    memcpy(&data->config, config, sizeof(mcp_http_streamable_config_t));
+    memcpy(&data->config, config, sizeof(mcp_sthttp_config_t));
 
     // Set MCP endpoint
     if (config->mcp_endpoint) {
@@ -358,9 +358,9 @@ mcp_transport_t* mcp_transport_http_streamable_create(const mcp_http_streamable_
     transport->protocol_type = MCP_TRANSPORT_PROTOCOL_HTTP_STREAMABLE;
 
     // Initialize server operations
-    transport->server.start = http_streamable_transport_start;
-    transport->server.stop = http_streamable_transport_stop;
-    transport->server.destroy = http_streamable_transport_destroy;
+    transport->server.start = sthttp_transport_start;
+    transport->server.stop = sthttp_transport_stop;
+    transport->server.destroy = sthttp_transport_destroy;
 
     // Set transport data
     transport->transport_data = data;
@@ -379,16 +379,16 @@ mcp_transport_t* mcp_transport_http_streamable_create(const mcp_http_streamable_
 /**
  * @brief Start Streamable HTTP transport
  */
-static int http_streamable_transport_start(mcp_transport_t* transport,
+static int sthttp_transport_start(mcp_transport_t* transport,
                                          mcp_transport_message_callback_t message_callback,
                                          void* user_data,
                                          mcp_transport_error_callback_t error_callback) {
     if (transport == NULL || transport->transport_data == NULL) {
-        mcp_log_error("Invalid parameters for http_streamable_transport_start");
+        mcp_log_error("Invalid parameters for sthttp_transport_start");
         return -1;
     }
 
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)transport->transport_data;
 
     // Store callback and user data
     data->message_callback = message_callback;
@@ -399,7 +399,7 @@ static int http_streamable_transport_start(mcp_transport_t* transport,
     struct lws_context_creation_info info = {0};
     info.port = data->config.port;
     info.iface = data->config.host;
-    info.protocols = http_streamable_protocols;
+    info.protocols = sthttp_protocols;
     info.user = data;
 
     // Set options
@@ -441,7 +441,7 @@ static int http_streamable_transport_start(mcp_transport_t* transport,
     data->running = true;
 
     // Create event thread
-    int thread_result = mcp_thread_create(&data->event_thread, http_streamable_event_thread_func, transport);
+    int thread_result = mcp_thread_create(&data->event_thread, sthttp_event_thread_func, transport);
     if (thread_result != 0) {
         mcp_log_error("Failed to create Streamable HTTP event thread: %d", thread_result);
         lws_context_destroy(data->context);
@@ -452,7 +452,7 @@ static int http_streamable_transport_start(mcp_transport_t* transport,
 
     // Create cleanup thread for session management
     if (data->session_manager) {
-        thread_result = mcp_thread_create(&data->cleanup_thread, http_streamable_cleanup_thread_func, transport);
+        thread_result = mcp_thread_create(&data->cleanup_thread, sthttp_cleanup_thread_func, transport);
         if (thread_result != 0) {
             mcp_log_error("Failed to create cleanup thread: %d", thread_result);
             // Continue without cleanup thread - not critical
@@ -466,12 +466,12 @@ static int http_streamable_transport_start(mcp_transport_t* transport,
 /**
  * @brief Stop Streamable HTTP transport
  */
-static int http_streamable_transport_stop(mcp_transport_t* transport) {
+static int sthttp_transport_stop(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
 
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)transport->transport_data;
 
     // Set running flag to false
     data->running = false;
@@ -506,17 +506,17 @@ static int http_streamable_transport_stop(mcp_transport_t* transport) {
 /**
  * @brief Destroy Streamable HTTP transport
  */
-static int http_streamable_transport_destroy(mcp_transport_t* transport) {
+static int sthttp_transport_destroy(mcp_transport_t* transport) {
     if (transport == NULL) {
         return -1;
     }
 
     // Stop the transport first
-    http_streamable_transport_stop(transport);
+    sthttp_transport_stop(transport);
 
     // Free transport data
     if (transport->transport_data) {
-        free_transport_data((http_streamable_transport_data_t*)transport->transport_data);
+        free_transport_data((sthttp_transport_data_t*)transport->transport_data);
         transport->transport_data = NULL;
     }
 
@@ -530,20 +530,20 @@ static int http_streamable_transport_destroy(mcp_transport_t* transport) {
 /**
  * @brief Send data through Streamable HTTP transport
  */
-static int http_streamable_transport_send(mcp_transport_t* transport, const void* data, size_t size) {
+static int sthttp_transport_send(mcp_transport_t* transport, const void* data, size_t size) {
     mcp_buffer_t buffer = { data, size };
-    return http_streamable_transport_sendv(transport, &buffer, 1);
+    return sthttp_transport_sendv(transport, &buffer, 1);
 }
 
 /**
  * @brief Send data from multiple buffers through Streamable HTTP transport
  */
-static int http_streamable_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
+static int sthttp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count) {
     if (transport == NULL || transport->transport_data == NULL || buffers == NULL || buffer_count == 0) {
         return -1;
     }
 
-    http_streamable_transport_data_t* transport_data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* transport_data = (sthttp_transport_data_t*)transport->transport_data;
     if (!transport_data->running) {
         mcp_log_error("Streamable HTTP transport not running");
         return -1;
@@ -592,7 +592,7 @@ static int http_streamable_transport_sendv(mcp_transport_t* transport, const mcp
 // Public API functions
 
 
-int mcp_transport_http_streamable_send_with_session(mcp_transport_t* transport,
+int mcp_transport_sthttp_send_with_session(mcp_transport_t* transport,
                                                    const void* data,
                                                    size_t size,
                                                    const char* session_id) {
@@ -605,7 +605,7 @@ int mcp_transport_http_streamable_send_with_session(mcp_transport_t* transport,
         return -1;
     }
 
-    http_streamable_transport_data_t* transport_data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* transport_data = (sthttp_transport_data_t*)transport->transport_data;
 
     if (!transport_data->running) {
         mcp_log_error("Streamable HTTP transport not running");
@@ -626,10 +626,10 @@ int mcp_transport_http_streamable_send_with_session(mcp_transport_t* transport,
     }
 
     // Send to all clients (fallback behavior)
-    return http_streamable_transport_send(transport, data, size);
+    return sthttp_transport_send(transport, data, size);
 }
 
-const char* mcp_transport_http_streamable_get_endpoint(mcp_transport_t* transport) {
+const char* mcp_transport_sthttp_get_endpoint(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return NULL;
     }
@@ -638,11 +638,11 @@ const char* mcp_transport_http_streamable_get_endpoint(mcp_transport_t* transpor
         return NULL;
     }
 
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)transport->transport_data;
     return data->mcp_endpoint;
 }
 
-bool mcp_transport_http_streamable_has_sessions(mcp_transport_t* transport) {
+bool mcp_transport_sthttp_has_sessions(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return false;
     }
@@ -651,11 +651,11 @@ bool mcp_transport_http_streamable_has_sessions(mcp_transport_t* transport) {
         return false;
     }
 
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)transport->transport_data;
     return data->session_manager != NULL;
 }
 
-size_t mcp_transport_http_streamable_get_session_count(mcp_transport_t* transport) {
+size_t mcp_transport_sthttp_get_session_count(mcp_transport_t* transport) {
     if (transport == NULL || transport->transport_data == NULL) {
         return 0;
     }
@@ -664,7 +664,7 @@ size_t mcp_transport_http_streamable_get_session_count(mcp_transport_t* transpor
         return 0;
     }
 
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)transport->transport_data;
     if (data->session_manager == NULL) {
         return 0;
     }
@@ -672,7 +672,7 @@ size_t mcp_transport_http_streamable_get_session_count(mcp_transport_t* transpor
     return mcp_session_manager_get_active_count(data->session_manager);
 }
 
-bool mcp_transport_http_streamable_terminate_session(mcp_transport_t* transport, const char* session_id) {
+bool mcp_transport_sthttp_terminate_session(mcp_transport_t* transport, const char* session_id) {
     if (transport == NULL || transport->transport_data == NULL || session_id == NULL) {
         return false;
     }
@@ -681,7 +681,7 @@ bool mcp_transport_http_streamable_terminate_session(mcp_transport_t* transport,
         return false;
     }
 
-    http_streamable_transport_data_t* data = (http_streamable_transport_data_t*)transport->transport_data;
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)transport->transport_data;
     if (data->session_manager == NULL) {
         return false;
     }
