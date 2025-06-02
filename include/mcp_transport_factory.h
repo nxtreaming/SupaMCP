@@ -20,8 +20,8 @@ typedef enum mcp_transport_type {
     MCP_TRANSPORT_WS_POOL,                  /**< WebSocket connection pool transport */
     MCP_TRANSPORT_HTTP_SERVER,              /**< HTTP server transport */
     MCP_TRANSPORT_HTTP_CLIENT,              /**< HTTP client transport */
-    MCP_TRANSPORT_HTTP_STREAMABLE,          /**< HTTP Streamable server transport (MCP 2025-03-26) */
-    MCP_TRANSPORT_HTTP_STREAMABLE_CLIENT    /**< HTTP Streamable client transport (MCP 2025-03-26) */
+    MCP_TRANSPORT_STHTTP,                   /**< HTTP Streamable server transport (MCP 2025-03-26) */
+    MCP_TRANSPORT_STHTTP_CLIENT             /**< HTTP Streamable client transport (MCP 2025-03-26) */
 } mcp_transport_type_t;
 
 /**
@@ -108,7 +108,7 @@ typedef union mcp_transport_config {
         int send_heartbeats;                 /**< Whether to send SSE heartbeats (1 for true, 0 for false) */
         uint32_t heartbeat_interval_ms;      /**< Heartbeat interval in milliseconds */
         int enable_legacy_endpoints;         /**< Whether to enable legacy HTTP+SSE endpoints (1 for true, 0 for false) */
-    } http_streamable;
+    } sthttp;
 
     struct {
         const char* host;                    /**< Server hostname or IP address */
@@ -129,7 +129,7 @@ typedef union mcp_transport_config {
         int enable_sse_streams;              /**< Whether to enable SSE event streams (1 for true, 0 for false) */
         int auto_reconnect_sse;              /**< Whether to automatically reconnect SSE streams (1 for true, 0 for false) */
         const char* custom_headers;          /**< Additional custom headers (format: "Key1: Value1\r\nKey2: Value2") */
-    } http_streamable_client;
+    } sthttp_client;
 
 } mcp_transport_config_t;
 

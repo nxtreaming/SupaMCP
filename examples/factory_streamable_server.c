@@ -130,27 +130,27 @@ int main(int argc, char* argv[]) {
     
     // Create transport configuration using factory
     mcp_transport_config_t config = {0};
-    config.http_streamable.host = host;
-    config.http_streamable.port = port;
-    config.http_streamable.use_ssl = 0;
-    config.http_streamable.mcp_endpoint = mcp_endpoint;
-    config.http_streamable.enable_sessions = 1;
-    config.http_streamable.session_timeout_seconds = 3600;
-    config.http_streamable.validate_origin = 1;
-    config.http_streamable.allowed_origins = "http://localhost:*,https://localhost:*,http://127.0.0.1:*,https://127.0.0.1:*";
-    config.http_streamable.enable_cors = 1;
-    config.http_streamable.cors_allow_origin = "*";
-    config.http_streamable.cors_allow_methods = "GET, POST, OPTIONS, DELETE";
-    config.http_streamable.cors_allow_headers = "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID";
-    config.http_streamable.cors_max_age = 86400;
-    config.http_streamable.enable_sse_resumability = 1;
-    config.http_streamable.max_stored_events = 1000;
-    config.http_streamable.send_heartbeats = 1;
-    config.http_streamable.heartbeat_interval_ms = 30000;
-    config.http_streamable.enable_legacy_endpoints = 1;
+    config.sthttp.host = host;
+    config.sthttp.port = port;
+    config.sthttp.use_ssl = 0;
+    config.sthttp.mcp_endpoint = mcp_endpoint;
+    config.sthttp.enable_sessions = 1;
+    config.sthttp.session_timeout_seconds = 3600;
+    config.sthttp.validate_origin = 1;
+    config.sthttp.allowed_origins = "http://localhost:*,https://localhost:*,http://127.0.0.1:*,https://127.0.0.1:*";
+    config.sthttp.enable_cors = 1;
+    config.sthttp.cors_allow_origin = "*";
+    config.sthttp.cors_allow_methods = "GET, POST, OPTIONS, DELETE";
+    config.sthttp.cors_allow_headers = "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID";
+    config.sthttp.cors_max_age = 86400;
+    config.sthttp.enable_sse_resumability = 1;
+    config.sthttp.max_stored_events = 1000;
+    config.sthttp.send_heartbeats = 1;
+    config.sthttp.heartbeat_interval_ms = 30000;
+    config.sthttp.enable_legacy_endpoints = 1;
     
     // Create transport using factory
-    g_transport = mcp_transport_factory_create(MCP_TRANSPORT_HTTP_STREAMABLE, &config);
+    g_transport = mcp_transport_factory_create(MCP_TRANSPORT_STHTTP, &config);
     if (g_transport == NULL) {
         fprintf(stderr, "Failed to create Streamable HTTP transport using factory\n");
         return 1;

@@ -35,7 +35,7 @@ void* sthttp_event_thread_func(void* arg) {
     while (data->running) {
         // Service libwebsockets
         if (data->context) {
-            int service_result = lws_service(data->context, HTTP_STREAMABLE_LWS_SERVICE_TIMEOUT_MS);
+            int service_result = lws_service(data->context, STHTTP_LWS_SERVICE_TIMEOUT_MS);
             if (service_result < 0) {
                 mcp_log_error("lws_service failed: %d", service_result);
                 break;
@@ -93,7 +93,7 @@ void* sthttp_cleanup_thread_func(void* arg) {
 
     while (data->running) {
         // Sleep for the cleanup interval
-        for (int i = 0; i < HTTP_STREAMABLE_CLEANUP_INTERVAL_SECONDS && data->running; i++) {
+        for (int i = 0; i < STHTTP_CLEANUP_INTERVAL_SECONDS && data->running; i++) {
             mcp_sleep_ms(1000);
         }
 

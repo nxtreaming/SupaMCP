@@ -16,17 +16,17 @@
 #include <time.h>
 
 // Default values
-#define HTTP_STREAMABLE_DEFAULT_HEARTBEAT_INTERVAL_MS 30000  // 30 seconds
-#define HTTP_STREAMABLE_DEFAULT_CORS_MAX_AGE 86400           // 24 hours
-#define HTTP_STREAMABLE_DEFAULT_CORS_ALLOW_ORIGIN "*"
-#define HTTP_STREAMABLE_DEFAULT_CORS_ALLOW_METHODS "GET, POST, OPTIONS, DELETE"
-#define HTTP_STREAMABLE_DEFAULT_CORS_ALLOW_HEADERS "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID"
+#define STHTTP_DEFAULT_HEARTBEAT_INTERVAL_MS 30000  // 30 seconds
+#define STHTTP_DEFAULT_CORS_MAX_AGE 86400           // 24 hours
+#define STHTTP_DEFAULT_CORS_ALLOW_ORIGIN "*"
+#define STHTTP_DEFAULT_CORS_ALLOW_METHODS "GET, POST, OPTIONS, DELETE"
+#define STHTTP_DEFAULT_CORS_ALLOW_HEADERS "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID"
 
 // LWS service timeout in milliseconds
-#define HTTP_STREAMABLE_LWS_SERVICE_TIMEOUT_MS 100
+#define STHTTP_LWS_SERVICE_TIMEOUT_MS 100
 
 // Cleanup thread interval in seconds
-#define HTTP_STREAMABLE_CLEANUP_INTERVAL_SECONDS 60
+#define STHTTP_CLEANUP_INTERVAL_SECONDS 60
 
 // Forward declarations of static functions
 static int sthttp_transport_start(mcp_transport_t* transport,
@@ -129,7 +129,7 @@ static bool initialize_cors_settings(sthttp_transport_data_t* data, const mcp_st
     if (config->cors_allow_origin) {
         data->cors_allow_origin = mcp_strdup(config->cors_allow_origin);
     } else {
-        data->cors_allow_origin = mcp_strdup(HTTP_STREAMABLE_DEFAULT_CORS_ALLOW_ORIGIN);
+        data->cors_allow_origin = mcp_strdup(STHTTP_DEFAULT_CORS_ALLOW_ORIGIN);
     }
 
     if (data->cors_allow_origin == NULL) {
@@ -141,7 +141,7 @@ static bool initialize_cors_settings(sthttp_transport_data_t* data, const mcp_st
     if (config->cors_allow_methods) {
         data->cors_allow_methods = mcp_strdup(config->cors_allow_methods);
     } else {
-        data->cors_allow_methods = mcp_strdup(HTTP_STREAMABLE_DEFAULT_CORS_ALLOW_METHODS);
+        data->cors_allow_methods = mcp_strdup(STHTTP_DEFAULT_CORS_ALLOW_METHODS);
     }
 
     if (data->cors_allow_methods == NULL) {
@@ -153,7 +153,7 @@ static bool initialize_cors_settings(sthttp_transport_data_t* data, const mcp_st
     if (config->cors_allow_headers) {
         data->cors_allow_headers = mcp_strdup(config->cors_allow_headers);
     } else {
-        data->cors_allow_headers = mcp_strdup(HTTP_STREAMABLE_DEFAULT_CORS_ALLOW_HEADERS);
+        data->cors_allow_headers = mcp_strdup(STHTTP_DEFAULT_CORS_ALLOW_HEADERS);
     }
 
     if (data->cors_allow_headers == NULL) {
@@ -162,7 +162,7 @@ static bool initialize_cors_settings(sthttp_transport_data_t* data, const mcp_st
     }
 
     // Set CORS max age
-    data->cors_max_age = config->cors_max_age > 0 ? config->cors_max_age : HTTP_STREAMABLE_DEFAULT_CORS_MAX_AGE;
+    data->cors_max_age = config->cors_max_age > 0 ? config->cors_max_age : STHTTP_DEFAULT_CORS_MAX_AGE;
 
     mcp_log_debug("CORS settings initialized: enabled=%d, origin=%s, methods=%s, headers=%s, max_age=%d",
                  data->enable_cors, data->cors_allow_origin, data->cors_allow_methods,
@@ -331,7 +331,7 @@ mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config) 
     data->send_heartbeats = config->send_heartbeats;
     data->heartbeat_interval_ms = config->heartbeat_interval_ms > 0 ? 
                                   config->heartbeat_interval_ms : 
-                                  HTTP_STREAMABLE_DEFAULT_HEARTBEAT_INTERVAL_MS;
+                                  STHTTP_DEFAULT_HEARTBEAT_INTERVAL_MS;
 
     // Create global SSE context for non-session streams
     size_t max_events = config->max_stored_events > 0 ? config->max_stored_events : MAX_SSE_STORED_EVENTS_DEFAULT;
@@ -355,7 +355,7 @@ mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config) 
 
     // Set transport type to server
     transport->type = MCP_TRANSPORT_TYPE_SERVER;
-    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_HTTP_STREAMABLE;
+    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_STHTTP;
 
     // Initialize server operations
     transport->server.start = sthttp_transport_start;
@@ -600,7 +600,7 @@ int mcp_transport_sthttp_send_with_session(mcp_transport_t* transport,
         return -1;
     }
 
-    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_HTTP_STREAMABLE) {
+    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_STHTTP) {
         mcp_log_error("Transport is not a Streamable HTTP transport");
         return -1;
     }
@@ -634,7 +634,7 @@ const char* mcp_transport_sthttp_get_endpoint(mcp_transport_t* transport) {
         return NULL;
     }
 
-    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_HTTP_STREAMABLE) {
+    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_STHTTP) {
         return NULL;
     }
 
@@ -647,7 +647,7 @@ bool mcp_transport_sthttp_has_sessions(mcp_transport_t* transport) {
         return false;
     }
 
-    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_HTTP_STREAMABLE) {
+    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_STHTTP) {
         return false;
     }
 
@@ -660,7 +660,7 @@ size_t mcp_transport_sthttp_get_session_count(mcp_transport_t* transport) {
         return 0;
     }
 
-    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_HTTP_STREAMABLE) {
+    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_STHTTP) {
         return 0;
     }
 
@@ -677,7 +677,7 @@ bool mcp_transport_sthttp_terminate_session(mcp_transport_t* transport, const ch
         return false;
     }
 
-    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_HTTP_STREAMABLE) {
+    if (transport->protocol_type != MCP_TRANSPORT_PROTOCOL_STHTTP) {
         return false;
     }
 

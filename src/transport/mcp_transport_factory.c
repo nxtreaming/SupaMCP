@@ -152,64 +152,64 @@ mcp_transport_t* mcp_transport_factory_create(
                 return mcp_transport_http_client_create_with_config(&http_client_config);
             }
 
-        case MCP_TRANSPORT_HTTP_STREAMABLE:
+        case MCP_TRANSPORT_STHTTP:
             if (config == NULL) {
                 return NULL;
             }
             {
                 // Convert from transport factory config to HTTP Streamable config
                 mcp_sthttp_config_t streamable_config = {
-                    .host = config->http_streamable.host,
-                    .port = config->http_streamable.port,
-                    .use_ssl = config->http_streamable.use_ssl ? true : false,
-                    .cert_path = config->http_streamable.cert_path,
-                    .key_path = config->http_streamable.key_path,
-                    .doc_root = config->http_streamable.doc_root,
-                    .timeout_ms = config->http_streamable.timeout_ms,
-                    .mcp_endpoint = config->http_streamable.mcp_endpoint,
-                    .enable_sessions = config->http_streamable.enable_sessions ? true : false,
-                    .session_timeout_seconds = config->http_streamable.session_timeout_seconds,
-                    .validate_origin = config->http_streamable.validate_origin ? true : false,
-                    .allowed_origins = config->http_streamable.allowed_origins,
-                    .enable_cors = config->http_streamable.enable_cors ? true : false,
-                    .cors_allow_origin = config->http_streamable.cors_allow_origin,
-                    .cors_allow_methods = config->http_streamable.cors_allow_methods,
-                    .cors_allow_headers = config->http_streamable.cors_allow_headers,
-                    .cors_max_age = config->http_streamable.cors_max_age,
-                    .enable_sse_resumability = config->http_streamable.enable_sse_resumability ? true : false,
-                    .max_stored_events = config->http_streamable.max_stored_events,
-                    .send_heartbeats = config->http_streamable.send_heartbeats ? true : false,
-                    .heartbeat_interval_ms = config->http_streamable.heartbeat_interval_ms,
-                    .enable_legacy_endpoints = config->http_streamable.enable_legacy_endpoints ? true : false
+                    .host = config->sthttp.host,
+                    .port = config->sthttp.port,
+                    .use_ssl = config->sthttp.use_ssl ? true : false,
+                    .cert_path = config->sthttp.cert_path,
+                    .key_path = config->sthttp.key_path,
+                    .doc_root = config->sthttp.doc_root,
+                    .timeout_ms = config->sthttp.timeout_ms,
+                    .mcp_endpoint = config->sthttp.mcp_endpoint,
+                    .enable_sessions = config->sthttp.enable_sessions ? true : false,
+                    .session_timeout_seconds = config->sthttp.session_timeout_seconds,
+                    .validate_origin = config->sthttp.validate_origin ? true : false,
+                    .allowed_origins = config->sthttp.allowed_origins,
+                    .enable_cors = config->sthttp.enable_cors ? true : false,
+                    .cors_allow_origin = config->sthttp.cors_allow_origin,
+                    .cors_allow_methods = config->sthttp.cors_allow_methods,
+                    .cors_allow_headers = config->sthttp.cors_allow_headers,
+                    .cors_max_age = config->sthttp.cors_max_age,
+                    .enable_sse_resumability = config->sthttp.enable_sse_resumability ? true : false,
+                    .max_stored_events = config->sthttp.max_stored_events,
+                    .send_heartbeats = config->sthttp.send_heartbeats ? true : false,
+                    .heartbeat_interval_ms = config->sthttp.heartbeat_interval_ms,
+                    .enable_legacy_endpoints = config->sthttp.enable_legacy_endpoints ? true : false
                 };
                 return mcp_transport_sthttp_create(&streamable_config);
             }
 
-        case MCP_TRANSPORT_HTTP_STREAMABLE_CLIENT:
+        case MCP_TRANSPORT_STHTTP_CLIENT:
             if (config == NULL) {
                 return NULL;
             }
             {
                 // Convert from transport factory config to HTTP Streamable client config
                 mcp_sthttp_client_config_t client_config = {
-                    .host = config->http_streamable_client.host,
-                    .port = config->http_streamable_client.port,
-                    .use_ssl = config->http_streamable_client.use_ssl ? true : false,
-                    .cert_path = config->http_streamable_client.cert_path,
-                    .key_path = config->http_streamable_client.key_path,
-                    .ca_cert_path = config->http_streamable_client.ca_cert_path,
-                    .verify_ssl = config->http_streamable_client.verify_ssl ? true : false,
-                    .mcp_endpoint = config->http_streamable_client.mcp_endpoint,
-                    .user_agent = config->http_streamable_client.user_agent,
-                    .api_key = config->http_streamable_client.api_key,
-                    .connect_timeout_ms = config->http_streamable_client.connect_timeout_ms,
-                    .request_timeout_ms = config->http_streamable_client.request_timeout_ms,
-                    .sse_reconnect_delay_ms = config->http_streamable_client.sse_reconnect_delay_ms,
-                    .max_reconnect_attempts = config->http_streamable_client.max_reconnect_attempts,
-                    .enable_sessions = config->http_streamable_client.enable_sessions ? true : false,
-                    .enable_sse_streams = config->http_streamable_client.enable_sse_streams ? true : false,
-                    .auto_reconnect_sse = config->http_streamable_client.auto_reconnect_sse ? true : false,
-                    .custom_headers = config->http_streamable_client.custom_headers
+                    .host = config->sthttp_client.host,
+                    .port = config->sthttp_client.port,
+                    .use_ssl = config->sthttp_client.use_ssl ? true : false,
+                    .cert_path = config->sthttp_client.cert_path,
+                    .key_path = config->sthttp_client.key_path,
+                    .ca_cert_path = config->sthttp_client.ca_cert_path,
+                    .verify_ssl = config->sthttp_client.verify_ssl ? true : false,
+                    .mcp_endpoint = config->sthttp_client.mcp_endpoint,
+                    .user_agent = config->sthttp_client.user_agent,
+                    .api_key = config->sthttp_client.api_key,
+                    .connect_timeout_ms = config->sthttp_client.connect_timeout_ms,
+                    .request_timeout_ms = config->sthttp_client.request_timeout_ms,
+                    .sse_reconnect_delay_ms = config->sthttp_client.sse_reconnect_delay_ms,
+                    .max_reconnect_attempts = config->sthttp_client.max_reconnect_attempts,
+                    .enable_sessions = config->sthttp_client.enable_sessions ? true : false,
+                    .enable_sse_streams = config->sthttp_client.enable_sse_streams ? true : false,
+                    .auto_reconnect_sse = config->sthttp_client.auto_reconnect_sse ? true : false,
+                    .custom_headers = config->sthttp_client.custom_headers
                 };
                 return mcp_transport_sthttp_client_create(&client_config);
             }

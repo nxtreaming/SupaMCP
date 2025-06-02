@@ -37,10 +37,10 @@ extern "C" {
 #define MCP_ENDPOINT_DEFAULT "/mcp"
 
 // LWS service timeout in milliseconds
-#define HTTP_STREAMABLE_LWS_SERVICE_TIMEOUT_MS 100
+#define STHTTP_LWS_SERVICE_TIMEOUT_MS 100
 
 // Cleanup thread interval in seconds
-#define HTTP_STREAMABLE_CLEANUP_INTERVAL_SECONDS 60
+#define STHTTP_CLEANUP_INTERVAL_SECONDS 60
 
 // HTTP status codes
 #define HTTP_STATUS_OK 200
