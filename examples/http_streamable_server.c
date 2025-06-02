@@ -5,7 +5,6 @@
  * This example demonstrates how to use the Streamable HTTP transport
  * as specified in MCP 2025-03-26.
  */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,7 +59,6 @@ static mcp_error_code_t echo_tool_handler(
     size_t* content_count,
     bool* is_error,
     char** error_message) {
-    
     (void)server;
     (void)user_data;
     
@@ -115,7 +113,6 @@ static mcp_error_code_t reverse_tool_handler(
     size_t* content_count,
     bool* is_error,
     char** error_message) {
-    
     (void)server;
     (void)user_data;
     
@@ -187,7 +184,6 @@ static mcp_error_code_t unified_tool_handler(
     size_t* content_count,
     bool* is_error,
     char** error_message) {
-
     // Dispatch to appropriate tool handler based on name
     if (strcmp(name, "echo") == 0) {
         return echo_tool_handler(server, name, params, user_data, content, content_count, is_error, error_message);
@@ -315,7 +311,6 @@ int main(int argc, char* argv[]) {
 
     // Wait for server to finish
     while (g_running) {
-        // Sleep for 1 second
         mcp_sleep_ms(1000);
     }
     

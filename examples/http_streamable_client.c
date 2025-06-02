@@ -127,7 +127,6 @@ static void error_callback(void* user_data, int error_code) {
  */
 static void send_ping_request(mcp_transport_t* client) {
     int request_id = ++g_request_id;
-
     char ping_request[256];
     snprintf(ping_request, sizeof(ping_request),
         "{"
@@ -147,7 +146,6 @@ static void send_ping_request(mcp_transport_t* client) {
  */
 static void send_tools_list_request(mcp_transport_t* client) {
     int request_id = ++g_request_id;
-
     char tools_request[256];
     snprintf(tools_request, sizeof(tools_request),
         "{"
@@ -279,16 +277,16 @@ int main(int argc, char* argv[]) {
     // Send some test requests
     send_ping_request(g_client);
 
-    mcp_sleep_ms(2000);
+    mcp_sleep_ms(1000);
     send_tools_list_request(g_client);
 
-    mcp_sleep_ms(2000);
+    mcp_sleep_ms(1000);
     send_tool_call_request(g_client, "echo", "Hello from client!");
 
     mcp_sleep_ms(2000);
     send_tool_call_request(g_client, "reverse", "Hello World");
 
-    mcp_sleep_ms(2000);
+    mcp_sleep_ms(1000);
     test_sse_connection(g_client);
     
     // Keep running until interrupted
