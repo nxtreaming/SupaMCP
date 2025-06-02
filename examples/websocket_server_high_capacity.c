@@ -58,7 +58,7 @@ static mcp_error_code_t resource_callback(mcp_server_t* server, const char* reso
         item->type = MCP_CONTENT_TYPE_TEXT;
         item->mime_type = mcp_strdup("text/plain");
         item->data = mcp_strdup("High-capacity WebSocket server example!");
-        item->data_size = strlen((char*)item->data);
+        item->data_size = strlen((char*)item->data) + 1;
 
         (*content)[0] = item;
         *content_count = 1;

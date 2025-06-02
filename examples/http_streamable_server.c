@@ -88,7 +88,7 @@ static mcp_error_code_t echo_tool_handler(
         return MCP_ERROR_INTERNAL_ERROR;
     }
 
-    (*content)[0] = mcp_content_item_create(MCP_CONTENT_TYPE_TEXT, "text/plain", text, strlen(text));
+    (*content)[0] = mcp_content_item_create(MCP_CONTENT_TYPE_TEXT, "text/plain", text, strlen(text) + 1);
     if ((*content)[0] == NULL) {
         free(*content);
         *is_error = true;
@@ -158,7 +158,7 @@ static mcp_error_code_t reverse_tool_handler(
         return MCP_ERROR_INTERNAL_ERROR;
     }
 
-    (*content)[0] = mcp_content_item_create(MCP_CONTENT_TYPE_TEXT, "text/plain", reversed, len);
+    (*content)[0] = mcp_content_item_create(MCP_CONTENT_TYPE_TEXT, "text/plain", reversed, len + 1);
     free(reversed);
 
     if ((*content)[0] == NULL) {
@@ -173,6 +173,32 @@ static mcp_error_code_t reverse_tool_handler(
     
     printf("Reverse tool called with text: %s\n", text);
     return MCP_ERROR_NONE;
+}
+
+/**
+ * @brief Unified tool handler that dispatches to specific tool handlers
+ */
+static mcp_error_code_t unified_tool_handler(
+    mcp_server_t* server,
+    const char* name,
+    const mcp_json_t* params,
+    void* user_data,
+    mcp_content_item_t*** content,
+    size_t* content_count,
+    bool* is_error,
+    char** error_message) {
+
+    // Dispatch to appropriate tool handler based on name
+    if (strcmp(name, "echo") == 0) {
+        return echo_tool_handler(server, name, params, user_data, content, content_count, is_error, error_message);
+    } else if (strcmp(name, "reverse") == 0) {
+        return reverse_tool_handler(server, name, params, user_data, content, content_count, is_error, error_message);
+    } else {
+        // Unknown tool
+        *is_error = true;
+        *error_message = mcp_strdup("Unknown tool");
+        return MCP_ERROR_TOOL_NOT_FOUND;
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -259,8 +285,8 @@ int main(int argc, char* argv[]) {
         mcp_tool_free(reverse_tool);
     }
     
-    // Set tool handlers
-    mcp_server_set_tool_handler(g_server, echo_tool_handler, NULL);
+    // Set unified tool handler
+    mcp_server_set_tool_handler(g_server, unified_tool_handler, NULL);
     
     // Start server with transport
     if (mcp_server_start(g_server, g_transport) != 0) {

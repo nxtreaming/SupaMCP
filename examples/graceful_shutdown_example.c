@@ -57,7 +57,7 @@ mcp_error_code_t resource_handler(
             MCP_CONTENT_TYPE_TEXT,
             "text/plain",
             response_text,
-            strlen(response_text)
+            strlen(response_text) +1
         );
 
         if (!items[0]) {
@@ -86,7 +86,7 @@ mcp_error_code_t resource_handler(
             MCP_CONTENT_TYPE_TEXT,
             "text/plain",
             response_text,
-            strlen(response_text)
+            strlen(response_text) + 1
         );
 
         if (!items[0]) {

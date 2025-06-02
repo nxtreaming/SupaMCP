@@ -25,6 +25,7 @@
 // Global client instance for signal handling
 static mcp_transport_t* g_client = NULL;
 static volatile bool g_running = true;
+static int g_request_id = 0;  // Global request ID counter
 
 /**
  * @brief Signal handler for graceful shutdown
@@ -125,14 +126,17 @@ static void error_callback(void* user_data, int error_code) {
  * @brief Send ping request (server health check)
  */
 static void send_ping_request(mcp_transport_t* client) {
-    const char* ping_request =
+    int request_id = ++g_request_id;
+
+    char ping_request[256];
+    snprintf(ping_request, sizeof(ping_request),
         "{"
         "\"jsonrpc\": \"2.0\","
-        "\"id\": 1,"
+        "\"id\": %d,"
         "\"method\": \"ping\""
-        "}";
+        "}", request_id);
 
-    printf("Sending ping request...\n");
+    printf("Sending ping request with ID %d...\n", request_id);
     if (mcp_transport_send(client, ping_request, strlen(ping_request)) != 0) {
         printf("Failed to send ping request\n");
     }
@@ -142,14 +146,17 @@ static void send_ping_request(mcp_transport_t* client) {
  * @brief Send tools list request (using correct method name)
  */
 static void send_tools_list_request(mcp_transport_t* client) {
-    const char* tools_request =
+    int request_id = ++g_request_id;
+
+    char tools_request[256];
+    snprintf(tools_request, sizeof(tools_request),
         "{"
         "\"jsonrpc\": \"2.0\","
-        "\"id\": 2,"
+        "\"id\": %d,"
         "\"method\": \"list_tools\""
-        "}";
+        "}", request_id);
 
-    printf("Sending tools list request...\n");
+    printf("Sending tools list request with ID %d...\n", request_id);
     if (mcp_transport_send(client, tools_request, strlen(tools_request)) != 0) {
         printf("Failed to send tools list request\n");
     }
@@ -165,10 +172,12 @@ static void send_tool_call_request(mcp_transport_t* client, const char* tool_nam
         return;
     }
 
+    int request_id = ++g_request_id;  // Use unique ID for each request
+
     snprintf(tool_request, 512,
         "{"
         "\"jsonrpc\": \"2.0\","
-        "\"id\": 3,"
+        "\"id\": %d,"
         "\"method\": \"call_tool\","
         "\"params\": {"
             "\"name\": \"%s\","
@@ -176,9 +185,9 @@ static void send_tool_call_request(mcp_transport_t* client, const char* tool_nam
                 "\"text\": \"%s\""
             "}"
         "}"
-        "}", tool_name, text);
+        "}", request_id, tool_name, text);
 
-    printf("Sending tool call request (%s)...\n", tool_name);
+    printf("Sending tool call request (%s) with ID %d...\n", tool_name, request_id);
     if (mcp_transport_send(client, tool_request, strlen(tool_request)) != 0) {
         printf("Failed to send tool call request\n");
     }

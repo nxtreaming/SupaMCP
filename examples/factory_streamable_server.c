@@ -84,7 +84,7 @@ static mcp_error_code_t echo_tool_handler(
         return MCP_ERROR_INTERNAL_ERROR;
     }
     
-    (*content)[0] = mcp_content_item_create(MCP_CONTENT_TYPE_TEXT, "text/plain", text, strlen(text));
+    (*content)[0] = mcp_content_item_create(MCP_CONTENT_TYPE_TEXT, "text/plain", text, strlen(text)+1);
     if ((*content)[0] == NULL) {
         free(*content);
         *is_error = true;
