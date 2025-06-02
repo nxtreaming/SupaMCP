@@ -34,7 +34,7 @@ Sessions provide stateful communication between clients and servers:
 
 ```c
 // Enable sessions in configuration
-mcp_http_streamable_config_t config = MCP_HTTP_STREAMABLE_CONFIG_DEFAULT;
+mcp_sthttp_config_t config = MCP_STHTTP_CONFIG_DEFAULT;
 config.enable_sessions = true;
 config.session_timeout_seconds = 3600; // 1 hour timeout
 ```
@@ -78,13 +78,13 @@ config.host = "127.0.0.1";
 config.port = 8080;
 config.mcp_endpoint = "/mcp";
 
-mcp_transport_t* transport = mcp_transport_http_streamable_create(&config);
+mcp_transport_t* transport = mcp_transport_sthttp_create(&config);
 ```
 
 ### Advanced Configuration
 
 ```c
-mcp_http_streamable_config_t config = {
+mcp_sthttp_config_t config = {
     .host = "127.0.0.1",
     .port = 8080,
     .use_ssl = false,
@@ -121,10 +121,10 @@ mcp_http_streamable_config_t config = {
 
 ```c
 // Create server transport
-mcp_transport_t* mcp_transport_http_streamable_create(const mcp_http_streamable_config_t* config);
+mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config);
 
 // Create client transport
-mcp_transport_t* mcp_transport_http_streamable_client_create(
+mcp_transport_t* mcp_transport_sthttp_client_create(
     const char* host,
     uint16_t port,
     const char* mcp_endpoint,
@@ -133,7 +133,7 @@ mcp_transport_t* mcp_transport_http_streamable_client_create(
 );
 
 // Send message with session context
-int mcp_transport_http_streamable_send_with_session(
+int mcp_transport_sthttp_send_with_session(
     mcp_transport_t* transport, 
     const void* data, 
     size_t size,
@@ -145,16 +145,16 @@ int mcp_transport_http_streamable_send_with_session(
 
 ```c
 // Get MCP endpoint path
-const char* mcp_transport_http_streamable_get_endpoint(mcp_transport_t* transport);
+const char* mcp_transport_sthttp_get_endpoint(mcp_transport_t* transport);
 
 // Check if sessions are enabled
-bool mcp_transport_http_streamable_has_sessions(mcp_transport_t* transport);
+bool mcp_transport_sthttp_has_sessions(mcp_transport_t* transport);
 
 // Get active session count
-size_t mcp_transport_http_streamable_get_session_count(mcp_transport_t* transport);
+size_t mcp_transport_sthttp_get_session_count(mcp_transport_t* transport);
 
 // Terminate a specific session
-bool mcp_transport_http_streamable_terminate_session(mcp_transport_t* transport, const char* session_id);
+bool mcp_transport_sthttp_terminate_session(mcp_transport_t* transport, const char* session_id);
 ```
 
 ## Usage Examples
@@ -163,13 +163,13 @@ bool mcp_transport_http_streamable_terminate_session(mcp_transport_t* transport,
 
 ```c
 #include "mcp_server.h"
-#include "mcp_http_streamable_transport.h"
+#include "mcp_sthttp_transport.h"
 
 int main() {
     // Create transport
-    mcp_http_streamable_config_t config = MCP_HTTP_STREAMABLE_CONFIG_DEFAULT;
+    mcp_sthttp_config_t config = MCP_STHTTP_CONFIG_DEFAULT;
     config.port = 8080;
-    mcp_transport_t* transport = mcp_transport_http_streamable_create(&config);
+    mcp_transport_t* transport = mcp_transport_sthttp_create(&config);
     
     // Create server
     mcp_server_config_t server_config = {
@@ -195,7 +195,7 @@ int main() {
 
 ```c
 #include "mcp_transport.h"
-#include "mcp_http_streamable_client_transport.h"
+#include "mcp_sthttp_client_transport.h"
 
 // Message callback
 static char* message_callback(void* user_data, const void* data, size_t size, int* error_code) {
@@ -216,7 +216,7 @@ static void error_callback(void* user_data, int error_code) {
 
 int main() {
     // Create client transport
-    mcp_transport_t* client = mcp_transport_http_streamable_client_create(
+    mcp_transport_t* client = mcp_transport_sthttp_client_create(
         "localhost", 8080, "/mcp", false, NULL
     );
 
@@ -360,7 +360,7 @@ python3 examples/test_streamable_http.py http://localhost:8080
 
 To migrate from the old HTTP+SSE transport:
 
-1. Replace `mcp_transport_http_create()` with `mcp_transport_http_streamable_create()`
+1. Replace `mcp_transport_http_create()` with `mcp_transport_sthttp_create()`
 2. Update client code to use the unified MCP endpoint
 3. Add session management if desired
 4. Update CORS configuration for new headers
