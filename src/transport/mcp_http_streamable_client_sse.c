@@ -49,19 +49,36 @@ int http_client_parse_response(const char* raw_response, size_t response_length,
     memcpy(response->headers, raw_response, headers_length);
     response->headers[headers_length] = '\0';
 
-    // Extract Content-Type
-    const char* content_type_start = strstr(response->headers, "Content-Type:");
+    // Extract Content-Type (case-insensitive)
+    const char* content_type_start = NULL;
+
+    // Try different case variations
+    content_type_start = strstr(response->headers, "Content-Type:");
+    if (!content_type_start) {
+        content_type_start = strstr(response->headers, "content-type:");
+    }
+    if (!content_type_start) {
+        content_type_start = strstr(response->headers, "Content-type:");
+    }
+    if (!content_type_start) {
+        content_type_start = strstr(response->headers, "CONTENT-TYPE:");
+    }
+
     if (content_type_start) {
-        content_type_start += 13; // Skip "Content-Type:"
-        while (*content_type_start == ' ') content_type_start++; // Skip spaces
-        
-        const char* content_type_end = strstr(content_type_start, "\r\n");
-        if (content_type_end) {
-            size_t content_type_length = content_type_end - content_type_start;
-            response->content_type = (char*)malloc(content_type_length + 1);
-            if (response->content_type) {
-                memcpy(response->content_type, content_type_start, content_type_length);
-                response->content_type[content_type_length] = '\0';
+        // Find the colon and skip it
+        const char* colon = strchr(content_type_start, ':');
+        if (colon) {
+            content_type_start = colon + 1;
+            while (*content_type_start == ' ') content_type_start++; // Skip spaces
+
+            const char* content_type_end = strstr(content_type_start, "\r\n");
+            if (content_type_end) {
+                size_t content_type_length = content_type_end - content_type_start;
+                response->content_type = (char*)malloc(content_type_length + 1);
+                if (response->content_type) {
+                    memcpy(response->content_type, content_type_start, content_type_length);
+                    response->content_type[content_type_length] = '\0';
+                }
             }
         }
     }
@@ -109,12 +126,29 @@ char* http_client_extract_session_id(const char* headers) {
         return NULL;
     }
 
+    // Try different case variations for session header
     const char* session_header = strstr(headers, "Mcp-Session-Id:");
+    if (!session_header) {
+        session_header = strstr(headers, "mcp-session-id:");
+    }
+    if (!session_header) {
+        session_header = strstr(headers, "MCP-SESSION-ID:");
+    }
+    if (!session_header) {
+        session_header = strstr(headers, "Mcp-session-id:");
+    }
+
     if (session_header == NULL) {
         return NULL;
     }
 
-    session_header += 15; // Skip "Mcp-Session-Id:"
+    // Find the colon and skip it
+    const char* colon = strchr(session_header, ':');
+    if (colon) {
+        session_header = colon + 1;
+    } else {
+        return NULL;
+    }
     while (*session_header == ' ') session_header++; // Skip spaces
 
     const char* session_end = strstr(session_header, "\r\n");
@@ -333,9 +367,14 @@ int sse_client_connect(http_streamable_client_data_t* data) {
         return -1;
     }
 
+    // Debug: Log the full response for troubleshooting
+    mcp_log_debug("SSE Response headers (%d bytes): %.*s", header_length, header_length, header_buffer);
+    mcp_log_debug("Parsed content type: '%s'", response.content_type ? response.content_type : "NULL");
+
     // Verify content type
     if (response.content_type == NULL || strstr(response.content_type, "text/event-stream") == NULL) {
         mcp_log_error("Invalid SSE content type: %s", response.content_type ? response.content_type : "none");
+        mcp_log_error("Expected: text/event-stream");
         http_client_free_response(&response);
         mcp_socket_close(data->sse_conn->socket_fd);
         mcp_mutex_unlock(data->sse_mutex);

@@ -93,7 +93,18 @@ static char* message_callback(void* user_data, const void* data, size_t size, in
     if (message) {
         memcpy(message, data, size);
         message[size] = '\0';
-        printf("Response received:\n%s\n\n", message);
+        printf("Response received (%zu bytes):\n%s\n", size, message);
+
+        // Check response type
+        if (strstr(message, "\"error\"")) {
+            printf("Error response detected!\n");
+            if (strstr(message, "Method not found")) {
+                printf("Hint: Server doesn't recognize this method. Check method name.\n");
+            }
+        } else if (strstr(message, "\"result\"")) {
+            printf("Success response detected!\n");
+        }
+        printf("\n");
         free(message);
     }
 
@@ -111,43 +122,33 @@ static void error_callback(void* user_data, int error_code) {
 }
 
 /**
- * @brief Send initialize request
+ * @brief Send ping request (server health check)
  */
-static void send_initialize_request(mcp_transport_t* client) {
-    const char* initialize_request =
+static void send_ping_request(mcp_transport_t* client) {
+    const char* ping_request =
         "{"
         "\"jsonrpc\": \"2.0\","
         "\"id\": 1,"
-        "\"method\": \"initialize\","
-        "\"params\": {"
-            "\"protocolVersion\": \"2025-03-26\","
-            "\"capabilities\": {"
-                "\"tools\": {}"
-            "},"
-            "\"clientInfo\": {"
-                "\"name\": \"SupaMCP-Client\","
-                "\"version\": \"1.0.0\""
-            "}"
-        "}"
+        "\"method\": \"ping\""
         "}";
 
-    printf("Sending initialize request...\n");
-    if (mcp_transport_send(client, initialize_request, strlen(initialize_request)) != 0) {
-        printf("Failed to send initialize request\n");
+    printf("Sending ping request...\n");
+    if (mcp_transport_send(client, ping_request, strlen(ping_request)) != 0) {
+        printf("Failed to send ping request\n");
     }
 }
 
 /**
- * @brief Send tools list request
+ * @brief Send tools list request (using correct method name)
  */
 static void send_tools_list_request(mcp_transport_t* client) {
-    const char* tools_request = 
+    const char* tools_request =
         "{"
         "\"jsonrpc\": \"2.0\","
         "\"id\": 2,"
-        "\"method\": \"tools/list\""
+        "\"method\": \"list_tools\""
         "}";
-    
+
     printf("Sending tools list request...\n");
     if (mcp_transport_send(client, tools_request, strlen(tools_request)) != 0) {
         printf("Failed to send tools list request\n");
@@ -163,12 +164,12 @@ static void send_tool_call_request(mcp_transport_t* client, const char* tool_nam
         printf("Failed to allocate tool request buffer\n");
         return;
     }
-    
+
     snprintf(tool_request, 512,
         "{"
         "\"jsonrpc\": \"2.0\","
         "\"id\": 3,"
-        "\"method\": \"tools/call\","
+        "\"method\": \"call_tool\","
         "\"params\": {"
             "\"name\": \"%s\","
             "\"arguments\": {"
@@ -176,13 +177,37 @@ static void send_tool_call_request(mcp_transport_t* client, const char* tool_nam
             "}"
         "}"
         "}", tool_name, text);
-    
+
     printf("Sending tool call request (%s)...\n", tool_name);
     if (mcp_transport_send(client, tool_request, strlen(tool_request)) != 0) {
         printf("Failed to send tool call request\n");
     }
-    
+
     free(tool_request);
+}
+
+/**
+ * @brief Test SSE connection status
+ */
+static void test_sse_connection(mcp_transport_t* client) {
+    printf("Testing SSE connection status...\n");
+
+    // Get client statistics to check SSE status
+    mcp_client_connection_stats_t stats;
+    if (mcp_http_streamable_client_get_stats(client, &stats) == 0) {
+        printf("SSE Connection Status:\n");
+        printf("  - SSE Events Received: %llu\n", (unsigned long long)stats.sse_events_received);
+        printf("  - Connection Errors: %llu\n", (unsigned long long)stats.connection_errors);
+
+        if (stats.sse_events_received > 0) {
+            printf("SSE connection appears to be working!\n");
+        } else {
+            printf("No SSE events received yet. Connection may have issues.\n");
+        }
+    } else {
+        printf("Failed to get connection statistics\n");
+    }
+    printf("\n");
 }
 
 int main(int argc, char* argv[]) {
@@ -238,17 +263,24 @@ int main(int argc, char* argv[]) {
     
     // Wait a moment for connection to establish
     mcp_sleep_ms(1000);
+
+    // Test SSE connection first
+    test_sse_connection(g_client);
+
     // Send some test requests
-    send_initialize_request(g_client);
-    
+    send_ping_request(g_client);
+
     mcp_sleep_ms(2000);
     send_tools_list_request(g_client);
 
     mcp_sleep_ms(2000);
     send_tool_call_request(g_client, "echo", "Hello from client!");
-    
+
     mcp_sleep_ms(2000);
     send_tool_call_request(g_client, "reverse", "Hello World");
+
+    mcp_sleep_ms(2000);
+    test_sse_connection(g_client);
     
     // Keep running until interrupted
     printf("\nClient is running. Press Ctrl+C to stop.\n");
