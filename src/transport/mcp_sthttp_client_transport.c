@@ -11,10 +11,8 @@
 // Forward declarations for transport interface
 static int sthttp_client_init(mcp_transport_t* transport);
 static void sthttp_client_destroy(mcp_transport_t* transport);
-static int sthttp_client_start(mcp_transport_t* transport,
-                                       mcp_transport_message_callback_t message_callback,
-                                       void* user_data,
-                                       mcp_transport_error_callback_t error_callback);
+static int sthttp_client_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback,
+                              void* user_data, mcp_transport_error_callback_t error_callback);
 static int sthttp_client_stop(mcp_transport_t* transport);
 static int sthttp_client_send(mcp_transport_t* transport, const void* data, size_t size);
 static int sthttp_client_sendv(mcp_transport_t* transport, const mcp_buffer_t* buffers, size_t buffer_count);
@@ -201,10 +199,8 @@ void sthttp_client_cleanup(sthttp_client_data_t* data) {
 /**
  * @brief Start the client transport
  */
-static int sthttp_client_start(mcp_transport_t* transport,
-                                       mcp_transport_message_callback_t message_callback,
-                                       void* user_data,
-                                       mcp_transport_error_callback_t error_callback) {
+static int sthttp_client_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback,
+                              void* user_data, mcp_transport_error_callback_t error_callback) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
@@ -411,8 +407,6 @@ static void sthttp_client_destroy(mcp_transport_t* transport) {
     mcp_log_debug("HTTP Streamable client transport destroyed");
 }
 
-// Note: Message and error callbacks are now set in the start function
-
 /**
  * @brief Get current connection state
  */
@@ -456,7 +450,6 @@ const char* mcp_sthttp_client_get_session_id(mcp_transport_t* transport) {
     }
 
     sthttp_client_data_t* data = (sthttp_client_data_t*)transport->transport_data;
-
     if (!data->config.enable_sessions || !data->has_session) {
         return NULL;
     }
@@ -467,10 +460,7 @@ const char* mcp_sthttp_client_get_session_id(mcp_transport_t* transport) {
 /**
  * @brief Set connection state change callback
  */
-int mcp_sthttp_client_set_state_callback(
-    mcp_transport_t* transport,
-    mcp_client_state_callback_t callback,
-    void* user_data) {
+int mcp_sthttp_client_set_state_callback(mcp_transport_t* transport, mcp_client_state_callback_t callback, void* user_data) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
@@ -485,10 +475,7 @@ int mcp_sthttp_client_set_state_callback(
 /**
  * @brief Set SSE event callback
  */
-int mcp_sthttp_client_set_sse_callback(
-    mcp_transport_t* transport,
-    mcp_client_sse_event_callback_t callback,
-    void* user_data) {
+int mcp_sthttp_client_set_sse_callback(mcp_transport_t* transport, mcp_client_sse_event_callback_t callback, void* user_data) {
     if (transport == NULL || transport->transport_data == NULL) {
         return -1;
     }
@@ -607,7 +594,6 @@ int mcp_sthttp_client_terminate_session(mcp_transport_t* transport) {
     int result = http_client_send_raw_request(socket_fd, request, data->config.request_timeout_ms);
     free(request);
     mcp_socket_close(socket_fd);
-
     if (result == 0) {
         // Clear session
         free(data->session_id);

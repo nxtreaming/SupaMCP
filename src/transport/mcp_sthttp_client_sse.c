@@ -69,7 +69,8 @@ int http_client_parse_response(const char* raw_response, size_t response_length,
         const char* colon = strchr(content_type_start, ':');
         if (colon) {
             content_type_start = colon + 1;
-            while (*content_type_start == ' ') content_type_start++; // Skip spaces
+            while (*content_type_start == ' ')
+                content_type_start++; // Skip spaces
 
             const char* content_type_end = strstr(content_type_start, "\r\n");
             if (content_type_end) {
@@ -86,7 +87,6 @@ int http_client_parse_response(const char* raw_response, size_t response_length,
     // Extract body
     const char* body_start = headers_end + 4; // Skip \r\n\r\n
     size_t body_length = response_length - (body_start - raw_response);
-    
     if (body_length > 0) {
         response->body = (char*)malloc(body_length + 1);
         if (response->body == NULL) {
@@ -149,7 +149,8 @@ char* http_client_extract_session_id(const char* headers) {
     } else {
         return NULL;
     }
-    while (*session_header == ' ') session_header++; // Skip spaces
+    while (*session_header == ' ')
+        session_header++; // Skip spaces
 
     const char* session_end = strstr(session_header, "\r\n");
     if (session_end == NULL) {
@@ -204,7 +205,6 @@ int sse_parse_event(const char* buffer, size_t length, sse_event_t* event) {
         }
         
         size_t line_length = line_content_end - ptr;
-        
         // Empty line indicates end of event
         if (line_length == 0) {
             return 0; // Event complete
@@ -338,7 +338,6 @@ int sse_client_connect(sthttp_client_data_t* data) {
     // Send SSE request
     int result = http_client_send_raw_request(data->sse_conn->socket_fd, request, data->config.request_timeout_ms);
     free(request);
-
     if (result != 0) {
         mcp_socket_close(data->sse_conn->socket_fd);
         mcp_mutex_unlock(data->sse_mutex);
@@ -347,8 +346,8 @@ int sse_client_connect(sthttp_client_data_t* data) {
 
     // Read response headers
     char header_buffer[HTTP_CLIENT_HEADER_BUFFER_SIZE];
-    int header_length = http_client_receive_response(data->sse_conn->socket_fd, header_buffer, sizeof(header_buffer), data->config.request_timeout_ms);
-
+    int header_length = http_client_receive_response(data->sse_conn->socket_fd, header_buffer,
+                                                    sizeof(header_buffer), data->config.request_timeout_ms);
     if (header_length <= 0) {
         mcp_socket_close(data->sse_conn->socket_fd);
         mcp_mutex_unlock(data->sse_mutex);
@@ -358,7 +357,6 @@ int sse_client_connect(sthttp_client_data_t* data) {
     // Parse response headers
     http_response_t response;
     result = http_client_parse_response(header_buffer, header_length, &response);
-    
     if (result != 0 || response.status_code != 200) {
         mcp_log_error("SSE connection failed with status %d", response.status_code);
         http_client_free_response(&response);
@@ -512,7 +510,6 @@ void* sse_client_thread_func(void* arg) {
         // Process events in buffer
         char* buffer_ptr = data->sse_conn->buffer;
         size_t remaining = data->sse_conn->buffer_used;
-
         while (remaining > 0) {
             // Look for complete event (ends with \n\n or \r\n\r\n)
             char* event_end = strstr(buffer_ptr, "\n\n");

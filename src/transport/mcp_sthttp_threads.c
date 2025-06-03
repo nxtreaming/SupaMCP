@@ -154,7 +154,6 @@ char* process_jsonrpc_request(sthttp_transport_data_t* data, const char* request
                                           request_json, 
                                           strlen(request_json), 
                                           &error_code);
-
     if (error_code != 0) {
         mcp_log_error("Message callback returned error: %d", error_code);
         if (response) {
@@ -256,7 +255,6 @@ int handle_mcp_post_request(struct lws* wsi, sthttp_transport_data_t* data, stht
     // Process the JSON-RPC request
     char* response = process_jsonrpc_request(data, session_data->request_body, 
                                            session_data->has_session ? session_data->session_id : NULL);
-
     if (response == NULL) {
         return send_http_error_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, "Failed to process request");
     }
@@ -269,7 +267,6 @@ int handle_mcp_post_request(struct lws* wsi, sthttp_transport_data_t* data, stht
 
     bool wants_sse = (accept_len > 0 && strstr(accept_header, "text/event-stream") != NULL);
     mcp_log_debug("Client wants SSE: %s", wants_sse ? "yes" : "no");
-
     if (wants_sse) {
         // Start SSE stream
         mcp_log_info("Starting SSE stream for POST request");

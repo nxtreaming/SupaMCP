@@ -29,10 +29,8 @@
 #define STHTTP_CLEANUP_INTERVAL_SECONDS 60
 
 // Forward declarations of static functions
-static int sthttp_transport_start(mcp_transport_t* transport,
-    mcp_transport_message_callback_t message_callback,
-    void* user_data,
-    mcp_transport_error_callback_t error_callback);
+static int sthttp_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback,
+                                 void* user_data, mcp_transport_error_callback_t error_callback);
 static int sthttp_transport_stop(mcp_transport_t* transport);
 static int sthttp_transport_destroy(mcp_transport_t* transport);
 static int sthttp_transport_send(mcp_transport_t* transport, const void* data, size_t size);
@@ -252,137 +250,11 @@ static bool initialize_session_manager(sthttp_transport_data_t* data) {
     return true;
 }
 
-mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config) {
-    if (config == NULL || config->host == NULL) {
-        mcp_log_error("Invalid Streamable HTTP configuration");
-        return NULL;
-    }
-
-    // Allocate transport structure
-    mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
-    if (transport == NULL) {
-        mcp_log_error("Failed to allocate memory for Streamable HTTP transport");
-        return NULL;
-    }
-
-    // Allocate transport data
-    sthttp_transport_data_t* data = (sthttp_transport_data_t*)calloc(1, sizeof(sthttp_transport_data_t));
-    if (data == NULL) {
-        mcp_log_error("Failed to allocate memory for Streamable HTTP transport data");
-        free(transport);
-        return NULL;
-    }
-
-    // Copy configuration
-    memcpy(&data->config, config, sizeof(mcp_sthttp_config_t));
-
-    // Set MCP endpoint
-    if (config->mcp_endpoint) {
-        data->mcp_endpoint = mcp_strdup(config->mcp_endpoint);
-    } else {
-        data->mcp_endpoint = mcp_strdup(MCP_ENDPOINT_DEFAULT);
-    }
-
-    if (data->mcp_endpoint == NULL) {
-        mcp_log_error("Failed to allocate memory for MCP endpoint");
-        free_transport_data(data);
-        free(transport);
-        return NULL;
-    }
-
-    // Initialize CORS settings
-    if (!initialize_cors_settings(data, config)) {
-        mcp_log_error("Failed to initialize CORS settings");
-        free_transport_data(data);
-        free(transport);
-        return NULL;
-    }
-
-    // Initialize mutexes
-    if (!initialize_mutexes(data)) {
-        mcp_log_error("Failed to initialize mutexes");
-        free_transport_data(data);
-        free(transport);
-        return NULL;
-    }
-
-    // Initialize session manager
-    if (!initialize_session_manager(data)) {
-        mcp_log_error("Failed to initialize session manager");
-        free_transport_data(data);
-        free(transport);
-        return NULL;
-    }
-
-    // Parse allowed origins if origin validation is enabled
-    if (config->validate_origin && config->allowed_origins) {
-        if (!parse_allowed_origins(config->allowed_origins, &data->allowed_origins, &data->allowed_origins_count)) {
-            mcp_log_error("Failed to parse allowed origins");
-            free_transport_data(data);
-            free(transport);
-            return NULL;
-        }
-        data->validate_origin = true;
-    } else {
-        data->validate_origin = false;
-    }
-
-    // Initialize SSE settings
-    data->send_heartbeats = config->send_heartbeats;
-    data->heartbeat_interval_ms = config->heartbeat_interval_ms > 0 ? 
-                                  config->heartbeat_interval_ms : 
-                                  STHTTP_DEFAULT_HEARTBEAT_INTERVAL_MS;
-
-    // Create global SSE context for non-session streams
-    size_t max_events = config->max_stored_events > 0 ? config->max_stored_events : MAX_SSE_STORED_EVENTS_DEFAULT;
-    data->global_sse_context = sse_stream_context_create(max_events);
-    if (data->global_sse_context == NULL) {
-        mcp_log_error("Failed to create global SSE context");
-        free_transport_data(data);
-        free(transport);
-        return NULL;
-    }
-
-    // Initialize SSE clients array
-    data->max_sse_clients = 1000; // Default maximum
-    data->sse_clients = (struct lws**)calloc(data->max_sse_clients, sizeof(struct lws*));
-    if (data->sse_clients == NULL) {
-        mcp_log_error("Failed to allocate SSE clients array");
-        free_transport_data(data);
-        free(transport);
-        return NULL;
-    }
-
-    // Set transport type to server
-    transport->type = MCP_TRANSPORT_TYPE_SERVER;
-    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_STHTTP;
-
-    // Initialize server operations
-    transport->server.start = sthttp_transport_start;
-    transport->server.stop = sthttp_transport_stop;
-    transport->server.destroy = sthttp_transport_destroy;
-
-    // Set transport data
-    transport->transport_data = data;
-    transport->message_callback = NULL;
-    transport->callback_user_data = NULL;
-    transport->error_callback = NULL;
-
-    mcp_log_info("Streamable HTTP transport created for %s:%d (SSL: %s, endpoint: %s)",
-                data->config.host, data->config.port,
-                data->config.use_ssl ? "enabled" : "disabled",
-                data->mcp_endpoint);
-
-    return transport;
-}
-
 /**
  * @brief Start Streamable HTTP transport
  */
-static int sthttp_transport_start(mcp_transport_t* transport,
-                                         mcp_transport_message_callback_t message_callback,
-                                         void* user_data,
-                                         mcp_transport_error_callback_t error_callback) {
+static int sthttp_transport_start(mcp_transport_t* transport, mcp_transport_message_callback_t message_callback,
+                                 void* user_data, mcp_transport_error_callback_t error_callback) {
     if (transport == NULL || transport->transport_data == NULL) {
         mcp_log_error("Invalid parameters for sthttp_transport_start");
         return -1;
@@ -591,11 +463,133 @@ static int sthttp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t
 
 // Public API functions
 
+mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config) {
+    if (config == NULL || config->host == NULL) {
+        mcp_log_error("Invalid Streamable HTTP configuration");
+        return NULL;
+    }
 
-int mcp_transport_sthttp_send_with_session(mcp_transport_t* transport,
-                                                   const void* data,
-                                                   size_t size,
-                                                   const char* session_id) {
+    // Allocate transport structure
+    mcp_transport_t* transport = (mcp_transport_t*)malloc(sizeof(mcp_transport_t));
+    if (transport == NULL) {
+        mcp_log_error("Failed to allocate memory for Streamable HTTP transport");
+        return NULL;
+    }
+
+    // Allocate transport data
+    sthttp_transport_data_t* data = (sthttp_transport_data_t*)calloc(1, sizeof(sthttp_transport_data_t));
+    if (data == NULL) {
+        mcp_log_error("Failed to allocate memory for Streamable HTTP transport data");
+        free(transport);
+        return NULL;
+    }
+
+    // Copy configuration
+    memcpy(&data->config, config, sizeof(mcp_sthttp_config_t));
+
+    // Set MCP endpoint
+    if (config->mcp_endpoint) {
+        data->mcp_endpoint = mcp_strdup(config->mcp_endpoint);
+    }
+    else {
+        data->mcp_endpoint = mcp_strdup(MCP_ENDPOINT_DEFAULT);
+    }
+
+    if (data->mcp_endpoint == NULL) {
+        mcp_log_error("Failed to allocate memory for MCP endpoint");
+        free_transport_data(data);
+        free(transport);
+        return NULL;
+    }
+
+    // Initialize CORS settings
+    if (!initialize_cors_settings(data, config)) {
+        mcp_log_error("Failed to initialize CORS settings");
+        free_transport_data(data);
+        free(transport);
+        return NULL;
+    }
+
+    // Initialize mutexes
+    if (!initialize_mutexes(data)) {
+        mcp_log_error("Failed to initialize mutexes");
+        free_transport_data(data);
+        free(transport);
+        return NULL;
+    }
+
+    // Initialize session manager
+    if (!initialize_session_manager(data)) {
+        mcp_log_error("Failed to initialize session manager");
+        free_transport_data(data);
+        free(transport);
+        return NULL;
+    }
+
+    // Parse allowed origins if origin validation is enabled
+    if (config->validate_origin && config->allowed_origins) {
+        if (!parse_allowed_origins(config->allowed_origins, &data->allowed_origins, &data->allowed_origins_count)) {
+            mcp_log_error("Failed to parse allowed origins");
+            free_transport_data(data);
+            free(transport);
+            return NULL;
+        }
+        data->validate_origin = true;
+    }
+    else {
+        data->validate_origin = false;
+    }
+
+    // Initialize SSE settings
+    data->send_heartbeats = config->send_heartbeats;
+    data->heartbeat_interval_ms = config->heartbeat_interval_ms > 0 ?
+        config->heartbeat_interval_ms :
+        STHTTP_DEFAULT_HEARTBEAT_INTERVAL_MS;
+
+    // Create global SSE context for non-session streams
+    size_t max_events = config->max_stored_events > 0 ? config->max_stored_events : MAX_SSE_STORED_EVENTS_DEFAULT;
+    data->global_sse_context = sse_stream_context_create(max_events);
+    if (data->global_sse_context == NULL) {
+        mcp_log_error("Failed to create global SSE context");
+        free_transport_data(data);
+        free(transport);
+        return NULL;
+    }
+
+    // Initialize SSE clients array
+    data->max_sse_clients = 1000; // Default maximum
+    data->sse_clients = (struct lws**)calloc(data->max_sse_clients, sizeof(struct lws*));
+    if (data->sse_clients == NULL) {
+        mcp_log_error("Failed to allocate SSE clients array");
+        free_transport_data(data);
+        free(transport);
+        return NULL;
+    }
+
+    // Set transport type to server
+    transport->type = MCP_TRANSPORT_TYPE_SERVER;
+    transport->protocol_type = MCP_TRANSPORT_PROTOCOL_STHTTP;
+
+    // Initialize server operations
+    transport->server.start = sthttp_transport_start;
+    transport->server.stop = sthttp_transport_stop;
+    transport->server.destroy = sthttp_transport_destroy;
+
+    // Set transport data
+    transport->transport_data = data;
+    transport->message_callback = NULL;
+    transport->callback_user_data = NULL;
+    transport->error_callback = NULL;
+
+    mcp_log_info("Streamable HTTP transport created for %s:%d (SSL: %s, endpoint: %s)",
+        data->config.host, data->config.port,
+        data->config.use_ssl ? "enabled" : "disabled",
+        data->mcp_endpoint);
+
+    return transport;
+}
+
+int mcp_transport_sthttp_send_with_session(mcp_transport_t* transport, const void* data, size_t size, const char* session_id) {
     if (transport == NULL || transport->transport_data == NULL || data == NULL) {
         return -1;
     }

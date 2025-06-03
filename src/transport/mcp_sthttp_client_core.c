@@ -233,7 +233,6 @@ int http_client_send_request(sthttp_client_data_t* data, const char* json_data, 
     // Send request
     int result = http_client_send_raw_request(socket_fd, request, data->config.request_timeout_ms);
     free(request);
-
     if (result != 0) {
         mcp_socket_close(socket_fd);
         return -1;
@@ -248,7 +247,6 @@ int http_client_send_request(sthttp_client_data_t* data, const char* json_data, 
 
     int response_length = http_client_receive_response(socket_fd, response_buffer, HTTP_CLIENT_BUFFER_SIZE, data->config.request_timeout_ms);
     mcp_socket_close(socket_fd);
-    
     if (response_length <= 0) {
         free(response_buffer);
         return -1;
@@ -257,7 +255,6 @@ int http_client_send_request(sthttp_client_data_t* data, const char* json_data, 
     // Parse response
     result = http_client_parse_response(response_buffer, response_length, response);
     free(response_buffer);
-    
     // Extract session ID if sessions are enabled
     if (result == 0 && data->config.enable_sessions && response->headers) {
         char* session_id = http_client_extract_session_id(response->headers);
