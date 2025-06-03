@@ -26,6 +26,7 @@
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_transport.h"
 #include "mcp_http_transport.h"
+#include "mcp_sthttp_transport.h"
 #include "mcp_profiler.h"
 #include "mcp_json.h"
 #include "mcp_socket_utils.h"
@@ -67,6 +68,10 @@ typedef struct {
     const char* api_key;
     bool gateway_mode;
     const char* doc_root;  // Document root for static file serving
+    bool enable_sessions;  // For Streamable HTTP
+    bool enable_legacy_endpoints;  // For Streamable HTTP
+    bool send_heartbeats;  // For Streamable HTTP
+    uint32_t heartbeat_interval_ms;  // For Streamable HTTP
 } server_config_t;
 
 /**
@@ -669,12 +674,18 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
     config->api_key = NULL;
     config->gateway_mode = false;
     config->doc_root = NULL;  // Default: no static file serving
+    config->enable_sessions = true;  // Default: enable sessions for Streamable HTTP
+    config->enable_legacy_endpoints = true;  // Default: enable legacy endpoints
+    config->send_heartbeats = true;  // Default: enable heartbeats
+    config->heartbeat_interval_ms = 30000;  // Default: 30 seconds
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tcp") == 0) {
             config->transport_type = "tcp";
         } else if (strcmp(argv[i], "--http") == 0) {
             config->transport_type = "http";
+        } else if (strcmp(argv[i], "--sthttp") == 0) {
+            config->transport_type = "sthttp";
         } else if (strcmp(argv[i], "--stdio") == 0) {
             config->transport_type = "stdio";
         } else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
@@ -703,11 +714,26 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             config->gateway_mode = true;
         } else if (strcmp(argv[i], "--doc-root") == 0 && i + 1 < argc) {
             config->doc_root = argv[++i];
+        } else if (strcmp(argv[i], "--enable-sessions") == 0) {
+            config->enable_sessions = true;
+        } else if (strcmp(argv[i], "--disable-sessions") == 0) {
+            config->enable_sessions = false;
+        } else if (strcmp(argv[i], "--enable-legacy") == 0) {
+            config->enable_legacy_endpoints = true;
+        } else if (strcmp(argv[i], "--disable-legacy") == 0) {
+            config->enable_legacy_endpoints = false;
+        } else if (strcmp(argv[i], "--enable-heartbeats") == 0) {
+            config->send_heartbeats = true;
+        } else if (strcmp(argv[i], "--disable-heartbeats") == 0) {
+            config->send_heartbeats = false;
+        } else if (strcmp(argv[i], "--heartbeat-interval") == 0 && i + 1 < argc) {
+            config->heartbeat_interval_ms = (uint32_t)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("Options:\n");
             printf("  --tcp               Use TCP transport (default for daemon mode)\n");
             printf("  --http              Use HTTP transport with SSE support\n");
+            printf("  --sthttp            Use Streamable HTTP transport (MCP 2025-03-26)\n");
             printf("  --stdio             Use stdio transport (default for interactive mode)\n");
             printf("  --host HOST         Host to bind to (default: 127.0.0.1)\n");
             printf("  --port PORT         Port to bind to (default: 8080)\n");
@@ -716,6 +742,13 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             printf("  --api-key KEY       Require API key for authentication\n");
             printf("  --gateway           Enable MCP Gateway mode (requires gateway_config.json)\n");
             printf("  --doc-root PATH     Document root for serving static files (HTTP mode only)\n");
+            printf("  --enable-sessions   Enable session support for Streamable HTTP (default)\n");
+            printf("  --disable-sessions  Disable session support for Streamable HTTP\n");
+            printf("  --enable-legacy     Enable legacy endpoints for Streamable HTTP (default)\n");
+            printf("  --disable-legacy    Disable legacy endpoints for Streamable HTTP\n");
+            printf("  --enable-heartbeats Enable heartbeats for Streamable HTTP (default)\n");
+            printf("  --disable-heartbeats Disable heartbeats for Streamable HTTP\n");
+            printf("  --heartbeat-interval MS Set heartbeat interval in milliseconds (default: 30000)\n");
             printf("  --daemon            Run as daemon (Unix-like systems only)\n");
             printf("  --help              Show this help message\n");
             exit(0);
@@ -968,6 +1001,26 @@ int main(int argc, char** argv) {
         if (transport) {
             mcp_transport_set_protocol(transport, MCP_TRANSPORT_PROTOCOL_HTTP);
             mcp_log_info("Transport protocol explicitly set to HTTP");
+        }
+    } else if (strcmp(config.transport_type, "sthttp") == 0) {
+        mcp_log_info("Using Streamable HTTP transport on %s:%d", config.host, config.port);
+        // Create Streamable HTTP transport configuration
+        mcp_sthttp_config_t sthttp_config = MCP_STHTTP_CONFIG_DEFAULT;
+        sthttp_config.host = config.host;
+        sthttp_config.port = config.port;
+        sthttp_config.enable_sessions = config.enable_sessions;
+        sthttp_config.enable_legacy_endpoints = config.enable_legacy_endpoints;
+        sthttp_config.send_heartbeats = config.send_heartbeats;
+        sthttp_config.heartbeat_interval_ms = config.heartbeat_interval_ms;
+        sthttp_config.validate_origin = true;
+        sthttp_config.allowed_origins = "http://localhost:*,https://localhost:*,http://127.0.0.1:*,https://127.0.0.1:*";
+
+        transport = mcp_transport_sthttp_create(&sthttp_config);
+
+        // Explicitly set the protocol type to Streamable HTTP
+        if (transport) {
+            mcp_transport_set_protocol(transport, MCP_TRANSPORT_PROTOCOL_STHTTP);
+            mcp_log_info("Transport protocol explicitly set to Streamable HTTP");
         }
     } else {
         mcp_log_error("Unknown transport type: %s", config.transport_type);

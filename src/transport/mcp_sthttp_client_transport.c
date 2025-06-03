@@ -347,7 +347,16 @@ static int sthttp_client_sendv(mcp_transport_t* transport, const mcp_buffer_t* b
         return -1;
     }
 
-    // Calculate total size
+    // Optimization for common case: binary length prefix frame
+    // (buffer_count == 2 and first buffer is 4 bytes)
+    if (buffer_count == 2 && buffers[0].size == 4) {
+        // This is likely a binary length prefix frame from mcp_client_request.c
+        // Skip the first buffer (length prefix) and use only the second buffer (JSON data)
+        mcp_log_debug("HTTP Streamable client detected binary frame in sendv, using second buffer directly");
+        return sthttp_client_send(transport, buffers[1].data, buffers[1].size);
+    }
+
+    // For other cases, calculate total size and combine buffers
     size_t total_size = 0;
     for (size_t i = 0; i < buffer_count; i++) {
         total_size += buffers[i].size;

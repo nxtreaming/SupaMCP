@@ -11,6 +11,7 @@
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_client_transport.h"
 #include "mcp_http_client_transport.h"
+#include "mcp_sthttp_client_transport.h"
 #include "mcp_log.h"
 #include "mcp_thread_local.h"
 
@@ -21,6 +22,9 @@ int main(int argc, char** argv) {
     bool use_ssl = false;
     const char* api_key = NULL;
     uint32_t timeout_ms = 30000; // 30 seconds default timeout
+    bool enable_sessions = true;
+    bool enable_sse_streams = true;
+    bool auto_reconnect_sse = true;
 
     mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG);
 
@@ -45,6 +49,11 @@ int main(int argc, char** argv) {
         } else if (strcmp(argv[i], "--https") == 0) {
             transport_type = "http";
             use_ssl = true;
+        } else if (strcmp(argv[i], "--sthttp") == 0) {
+            transport_type = "sthttp";
+        } else if (strcmp(argv[i], "--sthttps") == 0) {
+            transport_type = "sthttp";
+            use_ssl = true;
         } else if (strcmp(argv[i], "--stdio") == 0) {
             transport_type = "stdio";
         } else if (strncmp(argv[i], "--api-key=", 10) == 0) {
@@ -59,6 +68,18 @@ int main(int argc, char** argv) {
             if (i + 1 < argc) host = argv[++i];
         } else if (strcmp(argv[i], "--port") == 0) {
             if (i + 1 < argc) port = (uint16_t)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--enable-sessions") == 0) {
+            enable_sessions = true;
+        } else if (strcmp(argv[i], "--disable-sessions") == 0) {
+            enable_sessions = false;
+        } else if (strcmp(argv[i], "--enable-sse") == 0) {
+            enable_sse_streams = true;
+        } else if (strcmp(argv[i], "--disable-sse") == 0) {
+            enable_sse_streams = false;
+        } else if (strcmp(argv[i], "--enable-auto-reconnect") == 0) {
+            auto_reconnect_sse = true;
+        } else if (strcmp(argv[i], "--disable-auto-reconnect") == 0) {
+            auto_reconnect_sse = false;
         } else if (strcmp(argv[i], "--help") == 0) {
              printf("Usage: %s [OPTIONS]\n\n", argv[0]);
              printf("Options:\n");
@@ -66,6 +87,8 @@ int main(int argc, char** argv) {
              printf("  --tcp                     Use TCP transport\n");
              printf("  --http                    Use HTTP transport\n");
              printf("  --https                   Use HTTPS transport\n");
+             printf("  --sthttp                  Use Streamable HTTP transport\n");
+             printf("  --sthttps                 Use Streamable HTTPS transport\n");
              printf("  --host=HOST               Set host to connect to (default: 127.0.0.1)\n");
              printf("  --port=PORT               Set port to connect to (default: 8080)\n");
              printf("  --host HOST               Set host to connect to (default: 127.0.0.1)\n");
@@ -74,6 +97,12 @@ int main(int argc, char** argv) {
              printf("  --api-key KEY             Set API key for authentication\n");
              printf("  --timeout=MS              Set request timeout in milliseconds (default: 30000)\n");
              printf("  --timeout MS              Set request timeout in milliseconds (default: 30000)\n");
+             printf("  --enable-sessions         Enable session support for Streamable HTTP (default)\n");
+             printf("  --disable-sessions        Disable session support for Streamable HTTP\n");
+             printf("  --enable-sse              Enable SSE streams for Streamable HTTP (default)\n");
+             printf("  --disable-sse             Disable SSE streams for Streamable HTTP\n");
+             printf("  --enable-auto-reconnect   Enable auto-reconnect for SSE (default)\n");
+             printf("  --disable-auto-reconnect  Disable auto-reconnect for SSE\n");
              printf("  --help                    Show this help message\n\n");
              printf("Interactive Commands:\n");
              printf("  list_resources              - List available resources\n");
@@ -116,6 +145,22 @@ int main(int argc, char** argv) {
         config.api_key = api_key;
 
         transport = mcp_transport_http_client_create_with_config(&config);
+    } else if (strcmp(transport_type, "sthttp") == 0) {
+        mcp_log_info("Using Streamable HTTP%s client transport (%s:%d)", use_ssl ? "S" : "", host, port);
+
+        // Create Streamable HTTP client configuration
+        mcp_sthttp_client_config_t config = MCP_STHTTP_CLIENT_CONFIG_DEFAULT;
+        config.host = host;
+        config.port = port;
+        config.use_ssl = use_ssl;
+        config.api_key = api_key;
+        config.connect_timeout_ms = timeout_ms;
+        config.request_timeout_ms = timeout_ms;
+        config.enable_sessions = enable_sessions;
+        config.enable_sse_streams = enable_sse_streams;
+        config.auto_reconnect_sse = auto_reconnect_sse;
+
+        transport = mcp_transport_sthttp_client_create(&config);
     } else {
         mcp_log_error("Unknown transport type: %s", transport_type);
         return 1;
