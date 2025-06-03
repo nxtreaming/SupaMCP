@@ -22,6 +22,7 @@
 
 #include "mcp_types.h"
 #include "mcp_server.h"
+#include "mcp_server_core.h"
 #include "mcp_log.h"
 #include "mcp_stdio_transport.h"
 #include "mcp_tcp_transport.h"
@@ -34,7 +35,6 @@
 #include "mcp_gateway.h"
 #include "mcp_thread_local.h"
 #include "mcp_connection_pool.h"
-#include "server/internal/server_internal.h"
 #include "mcp_memory_pool.h"
 #include "mcp_thread_cache.h"
 #include "mcp_arena.h"

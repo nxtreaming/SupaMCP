@@ -264,8 +264,8 @@ target_include_directories(mcpcore PRIVATE
 
 # Server-specific source files
 set(SERVER_SOURCES
-    src/main.c
-    src/tools/http_client_tool.c
+    server/main.c
+    server/tools/http_client_tool.c
 )
 
 # Client-specific source files
@@ -276,6 +276,10 @@ set(CLIENT_SOURCES
 # Create server executable
 add_executable(mcp_server ${SERVER_SOURCES})
 target_link_libraries(mcp_server PRIVATE mcpcore)
+target_include_directories(mcp_server PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/server
+    ${CMAKE_CURRENT_SOURCE_DIR}/server/tools
+)
 
 # Create client executable
 add_executable(mcp_client ${CLIENT_SOURCES})
