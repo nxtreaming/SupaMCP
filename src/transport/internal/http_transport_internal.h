@@ -2,7 +2,7 @@
 #define HTTP_TRANSPORT_INTERNAL_H
 
 #include "mcp_http_transport.h"
-#include "internal/transport_internal.h"
+#include "transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_sync.h"
 #include "mcp_thread_pool.h"

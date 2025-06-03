@@ -10,7 +10,7 @@
 
 #include "mcp_sthttp_transport.h"
 #include "mcp_http_session_manager.h"
-#include "internal/transport_internal.h"
+#include "transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_sync.h"
 #include "mcp_thread_pool.h"

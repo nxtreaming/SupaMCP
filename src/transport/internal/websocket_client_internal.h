@@ -2,9 +2,9 @@
 #define WEBSOCKET_CLIENT_INTERNAL_H
 
 #include "mcp_websocket_transport.h"
-#include "internal/websocket_common.h"
-#include "internal/transport_internal.h"
-#include "internal/transport_interfaces.h"
+#include "websocket_common.h"
+#include "transport_internal.h"
+#include "transport_interfaces.h"
 #include "mcp_log.h"
 #include "mcp_sync.h"
 #include "mcp_sys_utils.h"
