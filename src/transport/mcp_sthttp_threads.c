@@ -369,13 +369,11 @@ int handle_mcp_get_request(struct lws* wsi, sthttp_transport_data_t* data, sthtt
     }
     mcp_log_debug("handle_mcp_get_request: Content-Type header added successfully");
 
-    if (lws_add_http_header_by_name(wsi, (unsigned char*)"Cache-Control",
-                                   (unsigned char*)"no-cache", 8, &p, end)) {
+    if (lws_add_http_header_by_name(wsi, (unsigned char*)"Cache-Control", (unsigned char*)"no-cache", 8, &p, end)) {
         return -1;
     }
 
-    if (lws_add_http_header_by_name(wsi, (unsigned char*)"Connection",
-                                   (unsigned char*)"keep-alive", 10, &p, end)) {
+    if (lws_add_http_header_by_name(wsi, (unsigned char*)"Connection", (unsigned char*)"keep-alive", 10, &p, end)) {
         return -1;
     }
 

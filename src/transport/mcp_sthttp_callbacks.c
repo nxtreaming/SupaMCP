@@ -13,7 +13,7 @@
 
 // Forward declarations
 static int lws_callback_sthttp(struct lws* wsi, enum lws_callback_reasons reason,
-                                       void* user, void* in, size_t len);
+                              void* user, void* in, size_t len);
 static int handle_wsi_create(struct lws* wsi, sthttp_session_data_t* session);
 static int handle_http_request(struct lws* wsi, sthttp_transport_data_t* data, 
                               sthttp_session_data_t* session, const char* uri);
@@ -29,7 +29,7 @@ static void extract_session_header(struct lws* wsi, sthttp_session_data_t* sessi
  * @brief Main HTTP callback function for libwebsockets
  */
 static int lws_callback_sthttp(struct lws* wsi, enum lws_callback_reasons reason,
-                                       void* user, void* in, size_t len) {
+                              void* user, void* in, size_t len) {
     if (wsi == NULL) {
         mcp_log_error("Invalid WebSocket instance (NULL)");
         return -1;

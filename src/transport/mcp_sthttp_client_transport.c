@@ -319,7 +319,8 @@ static int sthttp_client_send(mcp_transport_t* transport, const void* data_ptr, 
         // Call message callback with response
         if (data->message_callback) {
             int error_code = 0;
-            char* callback_response = data->message_callback(data->message_callback_user_data, response.body, strlen(response.body), &error_code);
+            char* callback_response = data->message_callback(data->message_callback_user_data, response.body,
+                                                            strlen(response.body), &error_code);
             if (callback_response) {
                 free(callback_response);
             }

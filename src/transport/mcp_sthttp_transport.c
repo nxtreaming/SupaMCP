@@ -285,8 +285,7 @@ static int sthttp_transport_start(mcp_transport_t* transport, mcp_transport_mess
             return -1;
         }
 
-        mcp_log_info("Enabling SSL with cert: %s, key: %s",
-                    data->config.cert_path, data->config.key_path);
+        mcp_log_info("Enabling SSL with cert: %s, key: %s", data->config.cert_path, data->config.key_path);
 
         info.options |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
         info.ssl_cert_filepath = data->config.cert_path;
