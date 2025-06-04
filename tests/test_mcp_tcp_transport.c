@@ -1,6 +1,7 @@
 #include "unity.h"
 #include "mcp_tcp_transport.h"
 #include "mcp_transport.h"
+#include "mcp_socket_utils.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -11,9 +12,13 @@
 
 // Platform-specific includes for sleep functions
 #ifdef _WIN32
+#include <winsock2.h>
 #include <windows.h>
 #else
 #include <unistd.h> // For usleep
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #endif
 
 // Define a test group runner function (called by the main runner)
@@ -30,7 +35,7 @@ void tearDown_tcp(void) {
 
 // --- Test Cases ---
 
-// Dummy callback for testing star
+// Dummy callback for testing start
 static char* dummy_message_callback(void* user_data, const void* data, size_t size, int* error_code) {
     (void)user_data;
     (void)data;
