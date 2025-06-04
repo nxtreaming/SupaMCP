@@ -17,6 +17,7 @@ The HTTP protocol implementation in SupaMCP provides a way to interact with the 
 ### `/call_tool` - Tool Call Endpoint
 
 This endpoint accepts POST requests with JSON-RPC 2.0 formatted payloads to call tools.
+The response returns a JSON-RPC object where `result.content` contains the tool output as an array of messages.
 
 **Example Request:**
 
@@ -52,7 +53,9 @@ Access-Control-Allow-Credentials: true
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "result": "Hello, SupaMCP!"
+  "result": {
+    "content": [{ "type": "text", "text": "Hello, SupaMCP!" }]
+  }
 }
 ```
 
