@@ -388,6 +388,7 @@ mcp_compiled_schema_t* mcp_json_schema_cache_find(mcp_json_schema_cache_t* cache
             mcp_rwlock_write_unlock(cache->cache_lock);
 
             mcp_log_debug("Schema cache hit: %s", schema_id);
+            free(schema_id);
             return schema;
         }
     } else {
