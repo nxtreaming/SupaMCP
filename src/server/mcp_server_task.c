@@ -290,8 +290,8 @@ char* transport_message_callback(void* user_data, const void* data, size_t size,
     int prev_count = __sync_fetch_and_sub(&server->active_requests, 1);
 #endif
 
-    // If this was the last request and server is shutting down, signal the condition variable
-    if (prev_count == 1 && server->shutting_down) {
+    // If active_requests reached zero and server is shutting down, signal the condition variable
+    if (prev_count == 0 && server->shutting_down) {
         if (mcp_mutex_lock(server->shutdown_mutex) == 0) {
             mcp_cond_signal(server->shutdown_cond);
             mcp_mutex_unlock(server->shutdown_mutex);
