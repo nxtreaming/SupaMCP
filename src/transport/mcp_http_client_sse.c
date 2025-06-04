@@ -6,13 +6,6 @@
  * HTTP transport. It handles connecting to SSE endpoints, processing events,
  * and maintaining connections with automatic reconnection.
  */
-
-#ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
-#endif
-
 /* Internal headers */
 #include "internal/http_client_sse.h"
 #include "internal/http_client_internal.h"

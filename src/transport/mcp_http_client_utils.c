@@ -1,9 +1,3 @@
-#ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
-#endif
-
 #include "internal/http_client_utils.h"
 #include "mcp_log.h"
 #include <stdlib.h>

@@ -1,9 +1,3 @@
-#ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
-#endif
-
 #include "mcp_stdio_transport.h"
 #include "internal/transport_internal.h"
 #include "mcp_log.h"

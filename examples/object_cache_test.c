@@ -1,9 +1,3 @@
-#ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
-#endif
-
 #include "mcp_object_cache.h"
 #include "mcp_log.h"
 #include <stdio.h>

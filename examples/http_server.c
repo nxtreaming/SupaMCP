@@ -1,12 +1,4 @@
-#ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
-
-// Include Windows socket compatibility header first
 #include <win_socket_compat.h>
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

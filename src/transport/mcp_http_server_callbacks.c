@@ -1,10 +1,4 @@
-#ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
 #include "win_socket_compat.h"
-#endif
-
 #include "internal/http_transport_internal.h"
 #include "mcp_json.h"
 #include "mcp_log.h"

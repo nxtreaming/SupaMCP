@@ -9,6 +9,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 if(MSVC)
     # MSVC flags
     add_compile_options(/W4)
+    # Suppress CRT secure warnings
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
     # Enable multi-threaded compilation
     add_compile_options(/MP)
     # Enable function-level linking

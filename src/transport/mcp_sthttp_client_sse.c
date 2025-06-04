@@ -5,11 +5,6 @@
  * This file implements SSE stream handling, event parsing, and reconnection logic
  * for the HTTP Streamable client transport.
  */
-#ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
-#endif
 #include "internal/sthttp_client_internal.h"
 
 /**

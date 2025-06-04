@@ -1,8 +1,4 @@
 #ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
-
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -10,7 +6,7 @@
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>  // For TCP_NODELAY
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>

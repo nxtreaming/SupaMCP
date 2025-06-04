@@ -1,9 +1,3 @@
-#ifdef _WIN32
-#   ifndef _CRT_SECURE_NO_WARNINGS
-#       define _CRT_SECURE_NO_WARNINGS
-#   endif
-#endif
-
 #include "mcp_websocket_connection_pool.h"
 #include "mcp_log.h"
 #include "mcp_sys_utils.h"
