@@ -30,7 +30,7 @@ void tearDown_tcp(void) {
 
 // --- Test Cases ---
 
-// Dummy callback for testing star
+// Dummy callback for testing start
 static char* dummy_message_callback(void* user_data, const void* data, size_t size, int* error_code) {
     (void)user_data;
     (void)data;
