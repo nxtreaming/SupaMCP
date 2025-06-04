@@ -140,16 +140,13 @@ mcp_list_t* mcp_list_create(mcp_list_thread_safety_t thread_safety) {
 void mcp_list_destroy(mcp_list_t* list, void (*free_data)(void*)) {
     if (!list) return;
 
-    // If thread-safe, lock first
-    if (list->thread_safety == MCP_LIST_THREAD_SAFE && list->mutex) {
-        mcp_mutex_lock(list->mutex);
-    }
-
+    // Directly clear the list. mcp_list_clear() handles its own locking,
+    // so taking the lock here would result in a deadlock with non-recursive
+    // mutexes.
     mcp_list_clear(list, free_data);
 
-    // If thread-safe, release mutex
+    // Destroy mutex if it exists
     if (list->thread_safety == MCP_LIST_THREAD_SAFE && list->mutex) {
-        mcp_mutex_unlock(list->mutex);
         mcp_mutex_destroy(list->mutex);
     }
 
