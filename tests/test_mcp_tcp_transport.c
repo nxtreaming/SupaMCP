@@ -5,9 +5,11 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#endif
 #include <string.h>
 
 // Platform-specific includes for sleep functions
@@ -67,7 +69,7 @@ static uint16_t get_ephemeral_port(void) {
     TEST_ASSERT_NOT_EQUAL_MESSAGE(-1, name_result, "getsockname failed for ephemeral port");
 
     uint16_t port = ntohs(addr.sin_port);
-    close(sock);
+    mcp_socket_close(sock);
     return port;
 }
 
