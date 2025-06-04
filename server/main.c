@@ -11,15 +11,6 @@
 #include <time.h>
 #include <errno.h>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <windows.h>
-#else
-#include <unistd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#endif
-
 #include "mcp_types.h"
 #include "mcp_server.h"
 #include "mcp_server_core.h"
