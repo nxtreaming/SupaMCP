@@ -153,8 +153,10 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
                     free(pooled_conn);
 
                     // Update counts but keep total the same
-                    pool->idle_count--;
+                    pool->active_count--;
                     pool->total_count--;
+
+                    pool->total_connections_closed++;
 
                     // Continue the loop to get another connection
                     continue;
@@ -182,8 +184,9 @@ socket_handle_t mcp_connection_pool_get(mcp_connection_pool_t* pool, int timeout
                     free(pooled_conn);
 
                     // Update counts and statistics
-                    pool->idle_count--;
+                    pool->active_count--;
                     pool->total_count--;
+                    pool->total_connections_closed++;
                     pool->failed_health_checks++;
 
                     // Continue the loop to get another connection
