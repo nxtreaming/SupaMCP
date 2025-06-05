@@ -144,23 +144,6 @@ int sthttp_client_init_data(sthttp_client_data_t* data, const mcp_sthttp_client_
     memset(&data->stats, 0, sizeof(data->stats));
     data->stats.connection_start_time = time(NULL);
 
-    // Initialize reusable request buffer
-    data->request_buffer_capacity = HTTP_CLIENT_REQUEST_BUFFER_INITIAL_SIZE;
-    data->request_buffer = (char*)malloc(data->request_buffer_capacity);
-    if (data->request_buffer == NULL) {
-        mcp_log_error("Failed to allocate request buffer");
-        sthttp_client_cleanup(data);
-        return -1;
-    }
-
-    // Create mutex for request buffer thread safety
-    data->request_buffer_mutex = mcp_mutex_create();
-    if (data->request_buffer_mutex == NULL) {
-        mcp_log_error("Failed to create request buffer mutex");
-        sthttp_client_cleanup(data);
-        return -1;
-    }
-
     mcp_log_debug("HTTP Streamable client data initialized");
     return 0;
 }
@@ -191,13 +174,6 @@ void sthttp_client_cleanup(sthttp_client_data_t* data) {
         sse_client_disconnect(data);
     }
 
-    // Cleanup reusable request buffer
-    if (data->request_buffer) {
-        free(data->request_buffer);
-        data->request_buffer = NULL;
-    }
-    data->request_buffer_capacity = 0;
-
     // Free string fields
     free((void*)data->config.host);
     free((void*)data->config.mcp_endpoint);
@@ -215,9 +191,6 @@ void sthttp_client_cleanup(sthttp_client_data_t* data) {
     }
     if (data->stats_mutex) {
         mcp_mutex_destroy(data->stats_mutex);
-    }
-    if (data->request_buffer_mutex) {
-        mcp_mutex_destroy(data->request_buffer_mutex);
     }
 
     mcp_log_debug("HTTP Streamable client data cleaned up");

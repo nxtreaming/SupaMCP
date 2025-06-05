@@ -39,10 +39,6 @@ extern "C" {
 #define HTTP_CLIENT_SESSION_ID_BUFFER_SIZE 128
 #define HTTP_CLIENT_EVENT_ID_BUFFER_SIZE 64
 
-// Request buffer sizes for reusable buffers
-#define HTTP_CLIENT_REQUEST_BUFFER_INITIAL_SIZE 2048  // Initial request buffer size
-#define HTTP_CLIENT_REQUEST_BUFFER_MAX_SIZE 65536     // Maximum request buffer size (64KB)
-
 // HTTP response parsing states
 typedef enum {
     HTTP_PARSE_STATE_STATUS_LINE,
@@ -130,11 +126,6 @@ typedef struct {
     mcp_thread_t reconnect_thread;
     volatile bool reconnect_thread_running;
     volatile bool shutdown_requested;
-
-    // Reusable request buffer to avoid frequent allocations
-    char* request_buffer;
-    size_t request_buffer_capacity;
-    mcp_mutex_t* request_buffer_mutex;
 } sthttp_client_data_t;
 
 // Function declarations
