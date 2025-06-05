@@ -108,13 +108,13 @@ static void test_request_buffer_reuse(void) {
     assert(data.request_buffer != NULL);
     assert(data.request_buffer_capacity == HTTP_CLIENT_REQUEST_BUFFER_INITIAL_SIZE);
 
-    printf("✓ Initial buffer allocated: %zu bytes\n", data.request_buffer_capacity);
+    printf("Initial buffer allocated: %zu bytes\n", data.request_buffer_capacity);
     
     // Test 1: Small request should use existing buffer
     char* request1 = build_test_request(&data, "POST", "{\"method\":\"test\"}");
     assert(request1 != NULL);
     assert(data.request_buffer_capacity == HTTP_CLIENT_REQUEST_BUFFER_INITIAL_SIZE);
-    printf("✓ Small request reused buffer: %zu bytes\n", data.request_buffer_capacity);
+    printf("Small request reused buffer: %zu bytes\n", data.request_buffer_capacity);
 
     // Test 2: Large request should resize buffer
     char large_json[4096];
@@ -125,27 +125,27 @@ static void test_request_buffer_reuse(void) {
     char* request2 = build_test_request(&data, "POST", large_json);
     assert(request2 != NULL);
     assert(data.request_buffer_capacity > old_capacity);
-    printf("✓ Large request resized buffer: %zu -> %zu bytes\n", old_capacity, data.request_buffer_capacity);
+    printf("Large request resized buffer: %zu -> %zu bytes\n", old_capacity, data.request_buffer_capacity);
 
     // Test 3: Subsequent small request should reuse larger buffer
     size_t large_capacity = data.request_buffer_capacity;
     char* request3 = build_test_request(&data, "POST", "{\"method\":\"test2\"}");
     assert(request3 != NULL);
     assert(data.request_buffer_capacity == large_capacity);
-    printf("✓ Subsequent small request reused large buffer: %zu bytes\n", data.request_buffer_capacity);
+    printf("Subsequent small request reused large buffer: %zu bytes\n", data.request_buffer_capacity);
 
     // Test 4: Verify request content is correct
     assert(strstr(request1, "POST /mcp HTTP/1.1") != NULL);
     assert(strstr(request1, "Host: localhost:8080") != NULL);
     assert(strstr(request1, "Content-Type: application/json") != NULL);
     assert(strstr(request1, "{\"method\":\"test\"}") != NULL);
-    printf("✓ Request content is correct\n");
+    printf("Request content is correct\n");
 
     // Test 5: Test GET request
     char* request4 = build_test_request(&data, "GET", NULL);
     assert(request4 != NULL);
     assert(strstr(request4, "GET /mcp HTTP/1.1") != NULL);
-    printf("✓ GET request formatted correctly\n");
+    printf("GET request formatted correctly\n");
 
     // Cleanup
     free(request1);
@@ -154,7 +154,7 @@ static void test_request_buffer_reuse(void) {
     free(request4);
     cleanup_test_data(&data);
 
-    printf("✓ All tests passed! Request buffer optimization is working correctly.\n");
+    printf("All tests passed! Request buffer optimization is working correctly.\n");
 }
 
 /**
@@ -177,13 +177,13 @@ static void test_buffer_size_limits(void) {
     char* request = build_test_request(&data, "POST", very_large_json);
     assert(request != NULL);
     assert(data.request_buffer_capacity <= HTTP_CLIENT_REQUEST_BUFFER_MAX_SIZE);
-    printf("✓ Buffer size limited to maximum: %zu bytes\n", data.request_buffer_capacity);
+    printf("Buffer size limited to maximum: %zu bytes\n", data.request_buffer_capacity);
 
     free(very_large_json);
     free(request);
     cleanup_test_data(&data);
 
-    printf("✓ Buffer size limit test passed!\n");
+    printf("Buffer size limit test passed!\n");
 }
 
 int main(void) {
@@ -193,7 +193,7 @@ int main(void) {
     test_request_buffer_reuse();
     test_buffer_size_limits();
 
-    printf("\n🎉 All optimization tests passed successfully!\n");
+    printf("\nAll optimization tests passed successfully!\n");
     printf("The HTTP client now reuses request buffers efficiently.\n");
 
     return 0;
