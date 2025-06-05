@@ -297,5 +297,15 @@ else()
     target_link_libraries(test_sse_manual PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# HTTP Client Request Buffer Optimization Test
+add_executable(test_request_buffer_optimization test_request_buffer_optimization.c)
+# This is a standalone test that doesn't need the full mcpcore library
+# No additional libraries needed for this test
+
+# HTTP Client Performance Comparison Test
+add_executable(performance_comparison performance_comparison.c)
+# This is a standalone performance test that doesn't need the full mcpcore library
+# No additional libraries needed for this test
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server http_streamable_server factory_streamable_server websocket_connection_pool websocket_server_high_capacity test_sse_manual DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server http_streamable_server factory_streamable_server websocket_connection_pool websocket_server_high_capacity test_sse_manual test_request_buffer_optimization performance_comparison DESTINATION bin/examples)

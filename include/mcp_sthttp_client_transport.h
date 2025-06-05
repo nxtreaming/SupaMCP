@@ -12,6 +12,7 @@
 #include "mcp_transport.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {

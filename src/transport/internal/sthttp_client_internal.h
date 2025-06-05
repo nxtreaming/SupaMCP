@@ -39,6 +39,10 @@ extern "C" {
 #define HTTP_CLIENT_SESSION_ID_BUFFER_SIZE 128
 #define HTTP_CLIENT_EVENT_ID_BUFFER_SIZE 64
 
+// Request buffer sizes for reusable buffers
+#define HTTP_CLIENT_REQUEST_BUFFER_INITIAL_SIZE 2048  // Initial request buffer size
+#define HTTP_CLIENT_REQUEST_BUFFER_MAX_SIZE 65536     // Maximum request buffer size (64KB)
+
 // HTTP response parsing states
 typedef enum {
     HTTP_PARSE_STATE_STATUS_LINE,
@@ -89,43 +93,48 @@ typedef struct {
  */
 typedef struct {
     mcp_sthttp_client_config_t config;
-    
+
     // Connection state
     mcp_client_connection_state_t state;
     mcp_mutex_t* state_mutex;
-    
+
     // Session management
     char* session_id;
     bool has_session;
-    
+
     // SSE connection
     sse_connection_t* sse_conn;
     mcp_mutex_t* sse_mutex;
-    
+
     // Statistics
     mcp_client_connection_stats_t stats;
     mcp_mutex_t* stats_mutex;
-    
+
     // Callbacks
     mcp_client_state_callback_t state_callback;
     void* state_callback_user_data;
     mcp_client_sse_event_callback_t sse_callback;
     void* sse_callback_user_data;
-    
+
     // Transport callbacks
     mcp_transport_message_callback_t message_callback;
     void* message_callback_user_data;
     mcp_transport_error_callback_t error_callback;
-    
+
     // Reconnection
     bool auto_reconnect;
     uint32_t reconnect_attempts;
     time_t last_reconnect_time;
-    
+
     // Threading
     mcp_thread_t reconnect_thread;
     volatile bool reconnect_thread_running;
     volatile bool shutdown_requested;
+
+    // Reusable request buffer to avoid frequent allocations
+    char* request_buffer;
+    size_t request_buffer_capacity;
+    mcp_mutex_t* request_buffer_mutex;
 } sthttp_client_data_t;
 
 // Function declarations

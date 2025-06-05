@@ -47,7 +47,7 @@ socket_t http_client_create_socket(const char* host, uint16_t port, uint32_t tim
 }
 
 /**
- * @brief Build HTTP request string
+ * @brief Build HTTP request string using reusable buffer
  */
 char* http_client_build_request(sthttp_client_data_t* data, const char* method, const char* json_data) {
     if (data == NULL || method == NULL) {
@@ -57,26 +57,53 @@ char* http_client_build_request(sthttp_client_data_t* data, const char* method, 
     const char* endpoint = data->config.mcp_endpoint ? data->config.mcp_endpoint : "/mcp";
     const char* host = data->config.host ? data->config.host : "localhost";
     const char* user_agent = data->config.user_agent ? data->config.user_agent : "SupaMCP-Client/1.0";
-    
+
     size_t content_length = json_data ? strlen(json_data) : 0;
-    
-    // Calculate buffer size
-    size_t buffer_size = 1024 + content_length;
+
+    // Calculate required buffer size
+    size_t required_size = 1024 + content_length;
     if (data->config.custom_headers) {
-        buffer_size += strlen(data->config.custom_headers);
+        required_size += strlen(data->config.custom_headers);
     }
     if (data->config.api_key) {
-        buffer_size += strlen(data->config.api_key) + 50;
-    }
-    
-    char* request = (char*)malloc(buffer_size);
-    if (request == NULL) {
-        mcp_log_error("Failed to allocate request buffer");
-        return NULL;
+        required_size += strlen(data->config.api_key) + 50;
     }
 
+    // Thread-safe access to reusable buffer
+    mcp_mutex_lock(data->request_buffer_mutex);
+
+    // Resize buffer if needed (grow-only strategy)
+    if (required_size > data->request_buffer_capacity) {
+        size_t new_capacity = required_size;
+        // Round up to next power of 2 for better memory allocation
+        if (new_capacity < HTTP_CLIENT_REQUEST_BUFFER_MAX_SIZE) {
+            size_t power_of_2 = 1;
+            while (power_of_2 < new_capacity) {
+                power_of_2 <<= 1;
+            }
+            new_capacity = power_of_2;
+            if (new_capacity > HTTP_CLIENT_REQUEST_BUFFER_MAX_SIZE) {
+                new_capacity = HTTP_CLIENT_REQUEST_BUFFER_MAX_SIZE;
+            }
+        }
+
+        char* new_buffer = (char*)realloc(data->request_buffer, new_capacity);
+        if (new_buffer == NULL) {
+            mcp_mutex_unlock(data->request_buffer_mutex);
+            mcp_log_error("Failed to resize request buffer from %zu to %zu bytes",
+                         data->request_buffer_capacity, new_capacity);
+            return NULL;
+        }
+
+        data->request_buffer = new_buffer;
+        data->request_buffer_capacity = new_capacity;
+        mcp_log_debug("Request buffer resized to %zu bytes", new_capacity);
+    }
+
+    char* request = data->request_buffer;
+
     // Build request line and basic headers
-    int offset = snprintf(request, buffer_size,
+    int offset = snprintf(request, data->request_buffer_capacity,
         "%s %s HTTP/1.1\r\n"
         "Host: %s:%d\r\n"
         "User-Agent: %s\r\n"
@@ -85,7 +112,7 @@ char* http_client_build_request(sthttp_client_data_t* data, const char* method, 
 
     // Add Content-Type and Content-Length for POST requests
     if (strcmp(method, "POST") == 0 && json_data) {
-        offset += snprintf(request + offset, buffer_size - offset,
+        offset += snprintf(request + offset, data->request_buffer_capacity - offset,
             "Content-Type: application/json\r\n"
             "Content-Length: %zu\r\n",
             content_length);
@@ -93,38 +120,50 @@ char* http_client_build_request(sthttp_client_data_t* data, const char* method, 
 
     // Add Accept header for GET requests (SSE)
     if (strcmp(method, "GET") == 0) {
-        offset += snprintf(request + offset, buffer_size - offset,
+        offset += snprintf(request + offset, data->request_buffer_capacity - offset,
             "Accept: text/event-stream\r\n"
             "Cache-Control: no-cache\r\n");
     }
 
     // Add session ID header if available
     if (data->has_session && data->session_id) {
-        offset += snprintf(request + offset, buffer_size - offset,
+        offset += snprintf(request + offset, data->request_buffer_capacity - offset,
             "Mcp-Session-Id: %s\r\n", data->session_id);
     }
 
     // Add API key header if configured
     if (data->config.api_key) {
-        offset += snprintf(request + offset, buffer_size - offset,
+        offset += snprintf(request + offset, data->request_buffer_capacity - offset,
             "Authorization: Bearer %s\r\n", data->config.api_key);
     }
 
     // Add custom headers if configured
     if (data->config.custom_headers) {
-        offset += snprintf(request + offset, buffer_size - offset,
+        offset += snprintf(request + offset, data->request_buffer_capacity - offset,
             "%s\r\n", data->config.custom_headers);
     }
 
     // End headers
-    offset += snprintf(request + offset, buffer_size - offset, "\r\n");
+    offset += snprintf(request + offset, data->request_buffer_capacity - offset, "\r\n");
 
     // Add body for POST requests
     if (strcmp(method, "POST") == 0 && json_data) {
-        offset += snprintf(request + offset, buffer_size - offset, "%s", json_data);
+        offset += snprintf(request + offset, data->request_buffer_capacity - offset, "%s", json_data);
     }
 
-    return request;
+    // Create a copy of the request to return (caller will free this)
+    char* request_copy = (char*)malloc(offset + 1);
+    if (request_copy == NULL) {
+        mcp_mutex_unlock(data->request_buffer_mutex);
+        mcp_log_error("Failed to allocate request copy");
+        return NULL;
+    }
+
+    memcpy(request_copy, request, offset);
+    request_copy[offset] = '\0';
+
+    mcp_mutex_unlock(data->request_buffer_mutex);
+    return request_copy;
 }
 
 /**
