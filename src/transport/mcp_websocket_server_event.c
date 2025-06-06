@@ -150,7 +150,7 @@ void* ws_server_event_thread(void* arg) {
             // Use shorter timeout when there are active clients
             if (data->active_clients > 0) {
                 // More clients = shorter timeout for better responsiveness
-                if (data->active_clients > 10) {
+                if (data->active_clients > 100) {
                     service_timeout_ms = 10; // Very responsive for many clients
                 } else {
                     service_timeout_ms = 20; // Balanced for few clients

@@ -239,6 +239,7 @@ int main(int argc, char* argv[]) {
     config.enable_legacy_endpoints = enable_legacy;
     config.validate_origin = true;
     config.allowed_origins = "http://localhost:*,https://localhost:*,http://127.0.0.1:*,https://127.0.0.1:*";
+    config.max_sse_clients = 5000;  // Support up to 5000 concurrent SSE clients
     
     // Create transport
     g_transport = mcp_transport_sthttp_create(&config);

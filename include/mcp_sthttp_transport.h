@@ -48,6 +48,7 @@ typedef struct mcp_sthttp_config {
     
     // SSE settings
     bool enable_sse_resumability;    /**< Whether to enable SSE stream resumability */
+    uint32_t max_sse_clients;        /**< Maximum number of concurrent SSE clients */
     uint32_t max_stored_events;      /**< Maximum number of events to store for resumability */
     bool send_heartbeats;            /**< Whether to send SSE heartbeats */
     uint32_t heartbeat_interval_ms;  /**< Heartbeat interval in milliseconds */
@@ -160,6 +161,7 @@ bool mcp_transport_sthttp_terminate_session(mcp_transport_t* transport, const ch
     .cors_allow_headers = "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID", \
     .cors_max_age = 86400, \
     .enable_sse_resumability = true, \
+    .max_sse_clients = 5000, \
     .max_stored_events = 1000, \
     .send_heartbeats = true, \
     .heartbeat_interval_ms = 30000, \

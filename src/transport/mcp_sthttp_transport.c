@@ -438,10 +438,18 @@ static int sthttp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t
     mcp_mutex_lock(transport_data->sse_mutex);
 
     int sent_count = 0;
-    for (size_t i = 0; i < transport_data->sse_client_count; i++) {
+    for (size_t i = 0; i < transport_data->max_sse_clients; i++) {
         if (transport_data->sse_clients[i] != NULL) {
-            if (send_sse_event(transport_data->sse_clients[i], NULL, "message", message) == 0) {
-                sent_count++;
+            struct lws* wsi = transport_data->sse_clients[i];
+            // Check if the WSI is still valid before sending
+            if (lws_get_socket_fd(wsi) >= 0) {
+                if (send_sse_event(wsi, NULL, "message", message) == 0) {
+                    sent_count++;
+                }
+            } else {
+                // WSI is invalid, mark for cleanup
+                transport_data->sse_clients[i] = NULL;
+                transport_data->sse_client_count--;
             }
         }
     }
@@ -550,14 +558,15 @@ mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config) 
     }
 
     // Initialize SSE clients array
-    data->max_sse_clients = 1000; // Default maximum
+    data->max_sse_clients = config->max_sse_clients > 0 ? config->max_sse_clients : 5000; // Use config value or default
     data->sse_clients = (struct lws**)calloc(data->max_sse_clients, sizeof(struct lws*));
     if (data->sse_clients == NULL) {
-        mcp_log_error("Failed to allocate SSE clients array");
+        mcp_log_error("Failed to allocate SSE clients array for %zu clients", data->max_sse_clients);
         free_transport_data(data);
         free(transport);
         return NULL;
     }
+    mcp_log_info("Initialized SSE clients array for %zu maximum clients", data->max_sse_clients);
 
     // Set transport type to server
     transport->type = MCP_TRANSPORT_TYPE_SERVER;

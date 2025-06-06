@@ -177,6 +177,7 @@ mcp_transport_t* mcp_transport_factory_create(
                     .cors_allow_headers = config->sthttp.cors_allow_headers,
                     .cors_max_age = config->sthttp.cors_max_age,
                     .enable_sse_resumability = config->sthttp.enable_sse_resumability ? true : false,
+                    .max_sse_clients = config->sthttp.max_sse_clients,
                     .max_stored_events = config->sthttp.max_stored_events,
                     .send_heartbeats = config->sthttp.send_heartbeats ? true : false,
                     .heartbeat_interval_ms = config->sthttp.heartbeat_interval_ms,

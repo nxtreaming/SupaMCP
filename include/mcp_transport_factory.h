@@ -104,6 +104,7 @@ typedef union mcp_transport_config {
         const char* cors_allow_headers;      /**< Allowed headers for CORS */
         int cors_max_age;                    /**< Max age for CORS preflight requests in seconds */
         int enable_sse_resumability;         /**< Whether to enable SSE stream resumability (1 for true, 0 for false) */
+        uint32_t max_sse_clients;            /**< Maximum number of concurrent SSE clients */
         uint32_t max_stored_events;          /**< Maximum number of events to store for resumability */
         int send_heartbeats;                 /**< Whether to send SSE heartbeats (1 for true, 0 for false) */
         uint32_t heartbeat_interval_ms;      /**< Heartbeat interval in milliseconds */

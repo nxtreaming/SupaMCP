@@ -144,6 +144,7 @@ int main(int argc, char* argv[]) {
     config.sthttp.cors_allow_headers = "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID";
     config.sthttp.cors_max_age = 86400;
     config.sthttp.enable_sse_resumability = 1;
+    config.sthttp.max_sse_clients = 5000;  // Support up to 5000 concurrent SSE clients
     config.sthttp.max_stored_events = 1000;
     config.sthttp.send_heartbeats = 1;
     config.sthttp.heartbeat_interval_ms = 30000;

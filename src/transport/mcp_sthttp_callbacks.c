@@ -279,19 +279,24 @@ static int handle_closed_http(struct lws* wsi, sthttp_transport_data_t* data,
     if (session->is_sse_stream && data != NULL) {
         mcp_mutex_lock(data->sse_mutex);
 
-        for (size_t i = 0; i < data->sse_client_count; i++) {
+        // Find and remove this client by setting to NULL (avoid array shifting)
+        bool found = false;
+        for (size_t i = 0; i < data->max_sse_clients; i++) {
             if (data->sse_clients[i] == wsi) {
-                // Remove this client by shifting the array
-                for (size_t j = i; j < data->sse_client_count - 1; j++) {
-                    data->sse_clients[j] = data->sse_clients[j + 1];
-                }
+                data->sse_clients[i] = NULL;
                 data->sse_client_count--;
+                found = true;
                 break;
             }
         }
 
         mcp_mutex_unlock(data->sse_mutex);
-        mcp_log_debug("Removed SSE client from list");
+
+        if (found) {
+            mcp_log_debug("Removed SSE client from list (count: %zu)", data->sse_client_count);
+        } else {
+            mcp_log_warn("SSE client not found in list during cleanup");
+        }
     }
 
     mcp_log_debug("HTTP connection closed and cleaned up");
