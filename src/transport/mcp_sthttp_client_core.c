@@ -6,6 +6,7 @@
  * socket management, HTTP request/response handling, and SSE stream processing.
  */
 #include "internal/sthttp_client_internal.h"
+#include "internal/sthttp_transport_internal.h"
 
 /**
  * @brief Receive data with timeout
@@ -146,7 +147,56 @@ int http_client_send_raw_request(socket_t socket_fd, const char* request, uint32
 }
 
 /**
- * @brief Receive HTTP response over socket
+ * @brief Receive HTTP response over socket using optimized parser
+ */
+int http_client_receive_response_optimized(socket_t socket_fd, http_response_t* response, uint32_t timeout_ms) {
+    if (socket_fd == MCP_INVALID_SOCKET || response == NULL) {
+        return -1;
+    }
+
+    http_parser_context_t* parser = http_parser_create();
+    if (parser == NULL) {
+        return -1;
+    }
+
+    char temp_buffer[1024];
+    int result = 0;
+
+    while (!http_parser_is_complete(parser) && !http_parser_has_error(parser)) {
+        ssize_t bytes_received = socket_recv_with_timeout(socket_fd, temp_buffer, sizeof(temp_buffer), timeout_ms);
+        if (bytes_received < 0) {
+            mcp_log_error("Receive timeout or error");
+            result = -1;
+            break;
+        }
+
+        if (bytes_received == 0) {
+            break; // Connection closed
+        }
+
+        int parse_result = http_parser_process(parser, temp_buffer, bytes_received, response);
+        if (parse_result < 0) {
+            mcp_log_error("HTTP parsing error");
+            result = -1;
+            break;
+        } else if (parse_result > 0) {
+            // Parsing complete
+            result = 0;
+            break;
+        }
+        // parse_result == 0 means need more data, continue loop
+    }
+
+    if (http_parser_has_error(parser)) {
+        result = -1;
+    }
+
+    http_parser_destroy(parser);
+    return result;
+}
+
+/**
+ * @brief Receive HTTP response over socket (legacy implementation)
  */
 int http_client_receive_response(socket_t socket_fd, char* buffer, size_t buffer_size, uint32_t timeout_ms) {
     if (socket_fd == MCP_INVALID_SOCKET || buffer == NULL || buffer_size == 0) {
@@ -245,6 +295,19 @@ int http_client_send_request(sthttp_client_data_t* data, const char* json_data, 
         return -1;
     }
 
+    // Try optimized HTTP response receiver first, fallback to legacy if needed
+    if (data->use_optimized_parsers) {
+        result = http_client_receive_response_optimized(socket_fd, response, data->config.request_timeout_ms);
+        if (result == 0) {
+            mcp_socket_close(socket_fd);
+            free(response_buffer);
+            mcp_log_debug("Used optimized HTTP parser successfully");
+            return 0;
+        }
+        mcp_log_warn("Optimized HTTP parser failed, falling back to legacy implementation");
+    }
+
+    // Fallback to legacy implementation
     int response_length = http_client_receive_response(socket_fd, response_buffer, HTTP_CLIENT_BUFFER_SIZE, data->config.request_timeout_ms);
     mcp_socket_close(socket_fd);
     if (response_length <= 0) {
@@ -252,7 +315,7 @@ int http_client_send_request(sthttp_client_data_t* data, const char* json_data, 
         return -1;
     }
 
-    // Parse response
+    // Parse response using legacy method
     result = http_client_parse_response(response_buffer, response_length, response);
     free(response_buffer);
     // Extract session ID if sessions are enabled

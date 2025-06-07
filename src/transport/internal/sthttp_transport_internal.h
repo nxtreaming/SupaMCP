@@ -16,6 +16,7 @@
 #include "mcp_thread_pool.h"
 #include "mcp_string_utils.h"
 #include "mcp_http_sse_common.h"
+#include "sthttp_client_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -42,13 +43,6 @@ extern "C" {
 // Cleanup thread interval in seconds
 #define STHTTP_CLEANUP_INTERVAL_SECONDS 60
 
-// Dynamic SSE client array settings
-#define STHTTP_INITIAL_SSE_CLIENTS 64      // Start with 64 clients
-#define STHTTP_SSE_GROWTH_FACTOR 2         // Double when full
-
-// Event ID hash map settings
-#define STHTTP_EVENT_HASH_INITIAL_SIZE 256 // Initial hash map size
-
 // HTTP status codes
 #define HTTP_STATUS_OK 200
 #define HTTP_STATUS_ACCEPTED 202
@@ -62,6 +56,13 @@ extern "C" {
 #define HTTP_ORIGIN_BUFFER_SIZE 256
 #define HTTP_SESSION_ID_BUFFER_SIZE 128
 #define HTTP_LAST_EVENT_ID_BUFFER_SIZE 64
+
+// Dynamic SSE client array settings
+#define STHTTP_INITIAL_SSE_CLIENTS 64      // Start with 64 clients
+#define STHTTP_SSE_GROWTH_FACTOR 2         // Double when full
+
+// Event ID hash map settings
+#define STHTTP_EVENT_HASH_INITIAL_SIZE 256 // Initial hash map size
 
 /**
  * @brief Hash map entry for event ID to position mapping
@@ -91,6 +92,76 @@ typedef struct {
     size_t capacity;                    /**< Current array capacity */
     mcp_mutex_t* mutex;                 /**< Mutex for thread safety */
 } dynamic_sse_clients_t;
+
+// SSE parser states (separate from HTTP parser states)
+typedef enum {
+    SSE_PARSE_STATE_FIELD_NAME,
+    SSE_PARSE_STATE_FIELD_VALUE,
+    SSE_PARSE_STATE_EVENT_COMPLETE,
+    SSE_PARSE_STATE_ERROR
+} sse_parse_state_t;
+
+/**
+ * @brief HTTP parser context (uses http_parse_state_t from sthttp_client_internal.h)
+ */
+typedef struct http_parser_context {
+    http_parse_state_t state;
+    int status_code;
+    size_t content_length;
+    bool has_content_length;
+    bool is_chunked;
+    bool connection_close;
+
+    // Header parsing
+    char* current_header_name;
+    char* current_header_value;
+    size_t header_name_len;
+    size_t header_value_len;
+
+    // Buffer management
+    char* line_buffer;
+    size_t line_buffer_size;
+    size_t line_buffer_used;
+
+    // Body tracking
+    size_t body_bytes_received;
+    size_t chunk_size;
+    bool in_chunk_data;
+} http_parser_context_t;
+
+/**
+ * @brief SSE parser context
+ */
+typedef struct sse_parser_context {
+    sse_parse_state_t state;
+
+    // Current event being parsed
+    char* event_id;
+    char* event_type;
+    char* event_data;
+
+    // Field parsing
+    char* current_field_name;
+    char* current_field_value;
+    size_t field_name_capacity;
+    size_t field_value_capacity;
+    size_t field_name_length;
+    size_t field_value_length;
+
+    // Line parsing
+    char* line_buffer;
+    size_t line_buffer_capacity;
+    size_t line_buffer_length;
+
+    // Data accumulation for multi-line data fields
+    char* data_accumulator;
+    size_t data_accumulator_capacity;
+    size_t data_accumulator_length;
+
+    // Parser state
+    bool in_field_value;
+    bool field_value_started;
+} sse_parser_context_t;
 
 /**
  * @brief SSE stream context for resumability
@@ -158,6 +229,9 @@ typedef struct {
     mcp_mutex_t* cleanup_mutex;
     volatile bool cleanup_shutdown;
 
+    // Optimization settings
+    bool use_optimized_parsers;         /**< Whether to use optimized HTTP/SSE parsers */
+
     // Global SSE event storage for non-session streams
     sse_stream_context_t* global_sse_context;
 
@@ -216,72 +290,6 @@ void sse_stream_context_store_event(sse_stream_context_t* context, const char* e
  * @brief Replay events from a given last event ID
  */
 int sse_stream_context_replay_events(sse_stream_context_t* context, struct lws* wsi, const char* last_event_id);
-
-/**
- * @brief Create dynamic SSE clients array
- */
-dynamic_sse_clients_t* dynamic_sse_clients_create(size_t initial_capacity);
-
-/**
- * @brief Destroy dynamic SSE clients array
- */
-void dynamic_sse_clients_destroy(dynamic_sse_clients_t* clients);
-
-/**
- * @brief Add client to dynamic array
- */
-int dynamic_sse_clients_add(dynamic_sse_clients_t* clients, struct lws* wsi);
-
-/**
- * @brief Remove client from dynamic array
- */
-int dynamic_sse_clients_remove(dynamic_sse_clients_t* clients, struct lws* wsi);
-
-/**
- * @brief Get client count
- */
-size_t dynamic_sse_clients_count(dynamic_sse_clients_t* clients);
-
-/**
- * @brief Cleanup disconnected clients
- */
-size_t dynamic_sse_clients_cleanup(dynamic_sse_clients_t* clients);
-
-/**
- * @brief Send message to all connected clients
- */
-int dynamic_sse_clients_broadcast(dynamic_sse_clients_t* clients,
-                                 const char* event_id, const char* event_type, const char* data);
-
-/**
- * @brief Send heartbeat to all connected clients
- */
-int dynamic_sse_clients_broadcast_heartbeat(dynamic_sse_clients_t* clients);
-
-/**
- * @brief Create event hash map
- */
-event_hash_map_t* event_hash_map_create(size_t initial_size);
-
-/**
- * @brief Destroy event hash map
- */
-void event_hash_map_destroy(event_hash_map_t* map);
-
-/**
- * @brief Add event to hash map
- */
-int event_hash_map_put(event_hash_map_t* map, const char* event_id, size_t position);
-
-/**
- * @brief Find event position in hash map
- */
-int event_hash_map_get(event_hash_map_t* map, const char* event_id, size_t* position);
-
-/**
- * @brief Remove event from hash map
- */
-int event_hash_map_remove(event_hash_map_t* map, const char* event_id);
 
 /**
  * @brief Validate origin against allowed origins list
@@ -368,6 +376,150 @@ void add_streamable_cors_headers(struct lws* wsi, sthttp_transport_data_t* data,
  * @brief Validate SSE text input for control characters
  */
 bool validate_sse_text_input(const char* text);
+
+/**
+ * @brief Create dynamic SSE clients array
+ */
+dynamic_sse_clients_t* dynamic_sse_clients_create(size_t initial_capacity);
+
+/**
+ * @brief Destroy dynamic SSE clients array
+ */
+void dynamic_sse_clients_destroy(dynamic_sse_clients_t* clients);
+
+/**
+ * @brief Add client to dynamic array
+ */
+int dynamic_sse_clients_add(dynamic_sse_clients_t* clients, struct lws* wsi);
+
+/**
+ * @brief Remove client from dynamic array
+ */
+int dynamic_sse_clients_remove(dynamic_sse_clients_t* clients, struct lws* wsi);
+
+/**
+ * @brief Get client count
+ */
+size_t dynamic_sse_clients_count(dynamic_sse_clients_t* clients);
+
+/**
+ * @brief Cleanup disconnected clients
+ */
+size_t dynamic_sse_clients_cleanup(dynamic_sse_clients_t* clients);
+
+/**
+ * @brief Send message to all connected clients
+ */
+int dynamic_sse_clients_broadcast(dynamic_sse_clients_t* clients,
+                                 const char* event_id, const char* event_type, const char* data);
+
+/**
+ * @brief Send heartbeat to all connected clients
+ */
+int dynamic_sse_clients_broadcast_heartbeat(dynamic_sse_clients_t* clients);
+
+/**
+ * @brief Create event hash map
+ */
+event_hash_map_t* event_hash_map_create(size_t initial_size);
+
+/**
+ * @brief Destroy event hash map
+ */
+void event_hash_map_destroy(event_hash_map_t* map);
+
+/**
+ * @brief Add event to hash map
+ */
+int event_hash_map_put(event_hash_map_t* map, const char* event_id, size_t position);
+
+/**
+ * @brief Find event position in hash map
+ */
+int event_hash_map_get(event_hash_map_t* map, const char* event_id, size_t* position);
+
+/**
+ * @brief Remove event from hash map
+ */
+int event_hash_map_remove(event_hash_map_t* map, const char* event_id);
+
+/**
+ * @brief Create HTTP parser context
+ */
+http_parser_context_t* http_parser_create(void);
+
+/**
+ * @brief Destroy HTTP parser context
+ */
+void http_parser_destroy(http_parser_context_t* parser);
+
+/**
+ * @brief Reset HTTP parser for new request
+ */
+void http_parser_reset(http_parser_context_t* parser);
+
+/**
+ * @brief Process HTTP data chunk
+ */
+int http_parser_process(http_parser_context_t* parser, const char* data, size_t length,
+                       http_response_t* response);
+
+/**
+ * @brief Check if HTTP parsing is complete
+ */
+bool http_parser_is_complete(const http_parser_context_t* parser);
+
+/**
+ * @brief Check if HTTP parser has error
+ */
+bool http_parser_has_error(const http_parser_context_t* parser);
+
+/**
+ * @brief Create SSE parser context
+ */
+sse_parser_context_t* sse_parser_create(void);
+
+/**
+ * @brief Destroy SSE parser context
+ */
+void sse_parser_destroy(sse_parser_context_t* parser);
+
+/**
+ * @brief Reset SSE parser for new event
+ */
+void sse_parser_reset(sse_parser_context_t* parser);
+
+/**
+ * @brief Process SSE data chunk incrementally
+ */
+int sse_parser_process(sse_parser_context_t* parser, const char* data, size_t length,
+                      sse_event_t* event_out);
+
+/**
+ * @brief Check if SSE event parsing is complete
+ */
+bool sse_parser_is_complete(const sse_parser_context_t* parser);
+
+/**
+ * @brief Check if SSE parser has error
+ */
+bool sse_parser_has_error(const sse_parser_context_t* parser);
+
+/**
+ * @brief Initialize CORS header cache
+ */
+int cors_header_cache_init(void);
+
+/**
+ * @brief Cleanup CORS header cache
+ */
+void cors_header_cache_cleanup(void);
+
+/**
+ * @brief Add optimized CORS headers to response
+ */
+int add_optimized_cors_headers(struct lws* wsi, const sthttp_transport_data_t* data,
+                              unsigned char** p, unsigned char* end);
 
 // LWS protocols for streamable HTTP transport
 extern struct lws_protocols sthttp_protocols[];

@@ -395,6 +395,9 @@ static int sthttp_transport_destroy(mcp_transport_t* transport) {
         transport->transport_data = NULL;
     }
 
+    // Cleanup CORS header cache
+    cors_header_cache_cleanup();
+
     // Free transport structure
     free(transport);
 
@@ -501,6 +504,18 @@ mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config) 
         free(transport);
         return NULL;
     }
+
+    // Initialize CORS header cache
+    if (cors_header_cache_init() != 0) {
+        mcp_log_error("Failed to initialize CORS header cache");
+        free_transport_data(data);
+        free(transport);
+        return NULL;
+    }
+
+    // Enable optimized parsers by default
+    data->use_optimized_parsers = true;
+    mcp_log_info("Streamable HTTP optimizations enabled");
 
     // Initialize mutexes
     if (!initialize_mutexes(data)) {

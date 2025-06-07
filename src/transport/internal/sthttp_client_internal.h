@@ -14,6 +14,7 @@
 #include "mcp_sync.h"
 #include "mcp_thread_pool.h"
 #include "mcp_string_utils.h"
+#include "mcp_http_sse_common.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -51,23 +52,15 @@ typedef enum {
 /**
  * @brief HTTP response structure
  */
-typedef struct {
+typedef struct http_response {
     int status_code;                     /**< HTTP status code */
     char* headers;                       /**< Raw headers string */
     char* body;                          /**< Response body */
     size_t body_length;                  /**< Length of response body */
     char* content_type;                  /**< Content-Type header value */
     char* session_id;                    /**< Session ID from response headers */
+    size_t content_length;               /**< Content length from headers */
 } http_response_t;
-
-/**
- * @brief SSE event structure
- */
-typedef struct {
-    char* id;                            /**< Event ID */
-    char* event;                         /**< Event type */
-    char* data;                          /**< Event data */
-} sse_event_t;
 
 /**
  * @brief SSE connection context
@@ -126,6 +119,9 @@ typedef struct {
     mcp_thread_t reconnect_thread;
     volatile bool reconnect_thread_running;
     volatile bool shutdown_requested;
+
+    // Optimization settings
+    bool use_optimized_parsers;         /**< Whether to use optimized HTTP/SSE parsers */
 } sthttp_client_data_t;
 
 // Function declarations
@@ -206,9 +202,14 @@ socket_t http_client_create_socket(const char* host, uint16_t port, uint32_t tim
 int http_client_send_raw_request(socket_t socket_fd, const char* request, uint32_t timeout_ms);
 
 /**
- * @brief Receive HTTP response over socket
+ * @brief Receive HTTP response over socket (legacy implementation)
  */
 int http_client_receive_response(socket_t socket_fd, char* buffer, size_t buffer_size, uint32_t timeout_ms);
+
+/**
+ * @brief Receive HTTP response over socket using optimized parser
+ */
+int http_client_receive_response_optimized(socket_t socket_fd, http_response_t* response, uint32_t timeout_ms);
 
 /**
  * @brief Build HTTP request string

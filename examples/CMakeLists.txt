@@ -317,5 +317,15 @@ else()
     target_link_libraries(test_sthttp_optimizations PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# HTTP Parser Usage Test (for verifying optimized HTTP and SSE parsers are being used)
+add_executable(test_http_parser_usage test_http_parser_usage.c)
+target_link_libraries(test_http_parser_usage PRIVATE mcpcore)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(test_http_parser_usage PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(test_http_parser_usage PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server http_streamable_server factory_streamable_server websocket_connection_pool websocket_server_high_capacity test_sse_manual test_sthttp_optimizations DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server http_streamable_server factory_streamable_server websocket_connection_pool websocket_server_high_capacity test_sse_manual test_sthttp_optimizations test_http_parser_usage DESTINATION bin/examples)

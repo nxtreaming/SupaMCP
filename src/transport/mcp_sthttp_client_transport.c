@@ -144,7 +144,10 @@ int sthttp_client_init_data(sthttp_client_data_t* data, const mcp_sthttp_client_
     memset(&data->stats, 0, sizeof(data->stats));
     data->stats.connection_start_time = time(NULL);
 
-    mcp_log_debug("HTTP Streamable client data initialized");
+    // Enable optimized parsers by default
+    data->use_optimized_parsers = true;
+
+    mcp_log_debug("HTTP Streamable client data initialized with optimizations enabled");
     return 0;
 }
 

@@ -476,33 +476,9 @@ int handle_options_request(struct lws* wsi, sthttp_transport_data_t* data) {
         return -1;
     }
 
-    // Add CORS headers if enabled
-    if (data->enable_cors) {
-        if (lws_add_http_header_by_name(wsi, (unsigned char*)"Access-Control-Allow-Origin",
-                                       (unsigned char*)data->cors_allow_origin, 
-                                       (int)strlen(data->cors_allow_origin), &p, end)) {
-            return -1;
-        }
-
-        if (lws_add_http_header_by_name(wsi, (unsigned char*)"Access-Control-Allow-Methods",
-                                       (unsigned char*)data->cors_allow_methods, 
-                                       (int)strlen(data->cors_allow_methods), &p, end)) {
-            return -1;
-        }
-
-        if (lws_add_http_header_by_name(wsi, (unsigned char*)"Access-Control-Allow-Headers",
-                                       (unsigned char*)data->cors_allow_headers, 
-                                       (int)strlen(data->cors_allow_headers), &p, end)) {
-            return -1;
-        }
-
-        char max_age_str[32];
-        snprintf(max_age_str, sizeof(max_age_str), "%d", data->cors_max_age);
-        if (lws_add_http_header_by_name(wsi, (unsigned char*)"Access-Control-Max-Age",
-                                       (unsigned char*)max_age_str, 
-                                       (int)strlen(max_age_str), &p, end)) {
-            return -1;
-        }
+    // Add CORS headers if enabled (using optimized approach)
+    if (add_optimized_cors_headers(wsi, data, &p, end) != 0) {
+        return -1;
     }
 
     if (lws_finalize_http_header(wsi, &p, end)) {

@@ -6,6 +6,7 @@
  * for the HTTP Streamable client transport.
  */
 #include "internal/sthttp_client_internal.h"
+#include "internal/sthttp_transport_internal.h"
 
 /**
  * @brief Parse HTTP response
@@ -339,20 +340,17 @@ int sse_client_connect(sthttp_client_data_t* data) {
         return -1;
     }
 
-    // Read response headers
-    char header_buffer[HTTP_CLIENT_HEADER_BUFFER_SIZE];
-    int header_length = http_client_receive_response(data->sse_conn->socket_fd, header_buffer,
-                                                    sizeof(header_buffer), data->config.request_timeout_ms);
-    if (header_length <= 0) {
+    // Use optimized HTTP response receiver for headers
+    http_response_t response;
+    result = http_client_receive_response_optimized(data->sse_conn->socket_fd, &response, data->config.request_timeout_ms);
+    if (result != 0) {
         mcp_socket_close(data->sse_conn->socket_fd);
         mcp_mutex_unlock(data->sse_mutex);
         return -1;
     }
 
-    // Parse response headers
-    http_response_t response;
-    result = http_client_parse_response(header_buffer, header_length, &response);
-    if (result != 0 || response.status_code != 200) {
+    // Check HTTP status code
+    if (response.status_code != 200) {
         mcp_log_error("SSE connection failed with status %d", response.status_code);
         http_client_free_response(&response);
         mcp_socket_close(data->sse_conn->socket_fd);
@@ -361,7 +359,6 @@ int sse_client_connect(sthttp_client_data_t* data) {
     }
 
     // Debug: Log the full response for troubleshooting
-    mcp_log_debug("SSE Response headers (%d bytes): %.*s", header_length, header_length, header_buffer);
     mcp_log_debug("Parsed content type: '%s'", response.content_type ? response.content_type : "NULL");
 
     // Verify content type
@@ -448,7 +445,7 @@ void sse_client_disconnect(sthttp_client_data_t* data) {
 }
 
 /**
- * @brief SSE receive thread function
+ * @brief SSE receive thread function with optimized parser
  */
 void* sse_client_thread_func(void* arg) {
     sthttp_client_data_t* data = (sthttp_client_data_t*)arg;
@@ -459,8 +456,11 @@ void* sse_client_thread_func(void* arg) {
     mcp_log_debug("SSE receive thread started");
 
     char temp_buffer[1024];
-    sse_event_t current_event;
-    memset(&current_event, 0, sizeof(current_event));
+    sse_parser_context_t* parser = sse_parser_create();
+    if (parser == NULL) {
+        mcp_log_error("Failed to create SSE parser");
+        return NULL;
+    }
 
     while (data->sse_conn && data->sse_conn->sse_thread_running && !data->shutdown_requested) {
         // Receive data using socket utility function
@@ -502,73 +502,57 @@ void* sse_client_thread_func(void* arg) {
 
         mcp_mutex_unlock(data->sse_mutex);
 
-        // Process events in buffer
-        char* buffer_ptr = data->sse_conn->buffer;
-        size_t remaining = data->sse_conn->buffer_used;
-        while (remaining > 0) {
-            // Look for complete event (ends with \n\n or \r\n\r\n)
-            char* event_end = strstr(buffer_ptr, "\n\n");
-            if (event_end == NULL) {
-                event_end = strstr(buffer_ptr, "\r\n\r\n");
-                if (event_end == NULL) {
-                    break; // No complete event yet
-                }
-                event_end += 4;
-            } else {
-                event_end += 2;
+        // Process events using optimized parser
+        mcp_mutex_lock(data->sse_mutex);
+        char* buffer_data = data->sse_conn->buffer;
+        size_t buffer_length = data->sse_conn->buffer_used;
+        mcp_mutex_unlock(data->sse_mutex);
+
+        sse_event_t event;
+        int parse_result = sse_parser_process(parser, buffer_data, buffer_length, &event);
+
+        if (parse_result > 0) {
+            // Event parsed successfully
+            // Update last event ID
+            if (event.id) {
+                mcp_mutex_lock(data->sse_mutex);
+                free(data->sse_conn->last_event_id);
+                data->sse_conn->last_event_id = mcp_strdup(event.id);
+                mcp_mutex_unlock(data->sse_mutex);
             }
 
-            size_t event_length = event_end - buffer_ptr;
+            // Update statistics
+            http_client_update_stats(data, "sse_event_received");
 
-            // Parse event
-            sse_event_t event;
-            if (sse_parse_event(buffer_ptr, event_length, &event) == 0) {
-                // Update last event ID
-                if (event.id) {
-                    mcp_mutex_lock(data->sse_mutex);
-                    free(data->sse_conn->last_event_id);
-                    data->sse_conn->last_event_id = mcp_strdup(event.id);
-                    mcp_mutex_unlock(data->sse_mutex);
-                }
-
-                // Update statistics
-                http_client_update_stats(data, "sse_event_received");
-
-                // Call SSE callback
-                if (data->sse_callback) {
-                    // Create temporary transport for callback
-                    mcp_transport_t temp_transport = {
-                        .type = MCP_TRANSPORT_TYPE_CLIENT,
-                        .protocol_type = MCP_TRANSPORT_PROTOCOL_HTTP,
-                        .transport_data = data
-                    };
-                    data->sse_callback(&temp_transport, event.id, event.event, event.data, data->sse_callback_user_data);
-                }
-
-                // Free event
-                sse_free_event(&event);
+            // Call SSE callback
+            if (data->sse_callback) {
+                // Create temporary transport for callback
+                mcp_transport_t temp_transport = {
+                    .type = MCP_TRANSPORT_TYPE_CLIENT,
+                    .protocol_type = MCP_TRANSPORT_PROTOCOL_HTTP,
+                    .transport_data = data
+                };
+                data->sse_callback(&temp_transport, event.id, event.event, event.data, data->sse_callback_user_data);
             }
 
-            // Move buffer pointer
-            remaining -= event_length;
-            buffer_ptr = event_end;
-        }
+            // Free event
+            sse_free_event(&event);
 
-        // Compact buffer if needed
-        if (buffer_ptr > data->sse_conn->buffer) {
+            // Clear processed data from buffer
             mcp_mutex_lock(data->sse_mutex);
-            size_t remaining_bytes = data->sse_conn->buffer + data->sse_conn->buffer_used - buffer_ptr;
-            if (remaining_bytes > 0) {
-                memmove(data->sse_conn->buffer, buffer_ptr, remaining_bytes);
-            }
-            data->sse_conn->buffer_used = remaining_bytes;
-            data->sse_conn->buffer[data->sse_conn->buffer_used] = '\0';
+            data->sse_conn->buffer_used = 0;
             mcp_mutex_unlock(data->sse_mutex);
+        } else if (parse_result < 0) {
+            // Parsing error
+            mcp_log_error("SSE parsing error");
+            break;
         }
+        // parse_result == 0 means need more data, continue loop
+
     }
 
     // Cleanup
-    sse_free_event(&current_event);
+    sse_parser_destroy(parser);
 
     // Update state
     if (data->sse_conn) {
