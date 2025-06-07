@@ -327,5 +327,25 @@ else()
     target_link_libraries(test_http_parser_usage PRIVATE Threads::Threads) # Use PRIVATE keyword
 endif()
 
+# WebSocket Logging Example (demonstrates optimized logging usage)
+add_executable(websocket_logging_example websocket_logging_example.c)
+target_link_libraries(websocket_logging_example PRIVATE mcpcore)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(websocket_logging_example PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(websocket_logging_example PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
+# Test Logging Warnings (verifies that logging optimizations don't produce compiler warnings)
+add_executable(test_logging_warnings test_logging_warnings.c)
+target_link_libraries(test_logging_warnings PRIVATE mcpcore)
+# Link platform-specific libraries needed by the transport
+if(WIN32)
+    target_link_libraries(test_logging_warnings PRIVATE ws2_32) # Use PRIVATE keyword
+else()
+    target_link_libraries(test_logging_warnings PRIVATE Threads::Threads) # Use PRIVATE keyword
+endif()
+
 # Optional: Install examples
-# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server http_streamable_server factory_streamable_server websocket_connection_pool websocket_server_high_capacity test_sse_manual test_sthttp_optimizations test_http_parser_usage DESTINATION bin/examples)
+# install(TARGETS echo_server echo_client template_server secure_template_server template_benchmark websocket_server websocket_client http_server http_streamable_server factory_streamable_server websocket_connection_pool websocket_server_high_capacity test_sse_manual test_sthttp_optimizations test_http_parser_usage websocket_logging_example test_logging_warnings DESTINATION bin/examples)

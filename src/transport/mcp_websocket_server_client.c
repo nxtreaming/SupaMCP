@@ -370,25 +370,24 @@ int ws_server_client_handle_received_data(ws_server_data_t* data, ws_client_t* c
         }
     }
 
-    // Log the raw message data for debugging (if not too large)
-#ifdef MCP_VERBOSE_DEBUG
+    // Log the raw message data for debugging (optimized)
+#if MCP_ENABLE_DATA_LOGS
     if (len < 1000) {
-        char debug_buffer[1024] = { 0 };
-        size_t copy_len = len < 1000 ? len : 1000;
-        memcpy(debug_buffer, in, copy_len);
-        debug_buffer[copy_len] = '\0';
-
-        // Log as hex for the first 32 bytes
-        char hex_buffer[200] = { 0 };
-        size_t hex_len = len < 32 ? len : 32;
-        for (size_t i = 0; i < hex_len; i++) {
-            sprintf(hex_buffer + i * 3, "%02x ", (unsigned char)((char*)in)[i]);
-        }
-        mcp_log_debug("WebSocket server raw data (hex): %s", hex_buffer);
-
-        // Check if this is a JSON message
+        // Check if this is a JSON message first (most common case)
         if (len > 0 && ((char*)in)[0] == '{') {
-            mcp_log_debug("Detected JSON message");
+            char debug_buffer[1024] = { 0 };
+            size_t copy_len = len < 1000 ? len : 1000;
+            memcpy(debug_buffer, in, copy_len);
+            debug_buffer[copy_len] = '\0';
+            mcp_log_data_verbose("received JSON message: %s", debug_buffer);
+        } else {
+            // Log as hex for non-JSON data (less common)
+            char hex_buffer[200] = { 0 };
+            size_t hex_len = len < 32 ? len : 32;
+            for (size_t i = 0; i < hex_len; i++) {
+                sprintf(hex_buffer + i * 3, "%02x ", (unsigned char)((char*)in)[i]);
+            }
+            mcp_log_data_verbose("received raw data (hex): %s", hex_buffer);
         }
     }
 #endif

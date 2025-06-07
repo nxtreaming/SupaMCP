@@ -195,25 +195,24 @@ int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t siz
         return -1;
     }
 
-    // Log the message content for debugging
-    #ifdef MCP_VERBOSE_DEBUG
+    // Log the message content for debugging (optimized)
+    #if MCP_ENABLE_DATA_LOGS
     if (size < 1000) {
-        char debug_buffer[1024] = {0};
-        size_t copy_len = size < 1000 ? size : 1000;
-        memcpy(debug_buffer, buffer, copy_len);
-        debug_buffer[copy_len] = '\0';
-
-        // Log as hex for the first 32 bytes to help diagnose encoding issues
-        char hex_buffer[200] = {0};
-        size_t hex_len = size < 32 ? size : 32;
-        for (size_t i = 0; i < hex_len; i++) {
-            sprintf(hex_buffer + i*3, "%02x ", (unsigned char)((char*)buffer)[i]);
-        }
-        mcp_log_debug("WebSocket client sending data (hex): %s", hex_buffer);
-
-        // Check if this is a JSON message
+        // Check if this is a JSON message first (most common case)
         if (size > 0 && ((char*)buffer)[0] == '{') {
-            mcp_log_debug("Sending JSON message: %s", debug_buffer);
+            char debug_buffer[1024] = {0};
+            size_t copy_len = size < 1000 ? size : 1000;
+            memcpy(debug_buffer, buffer, copy_len);
+            debug_buffer[copy_len] = '\0';
+            mcp_log_data_verbose("sending JSON: %s", debug_buffer);
+        } else {
+            // Log as hex for non-JSON data (less common)
+            char hex_buffer[200] = {0};
+            size_t hex_len = size < 32 ? size : 32;
+            for (size_t i = 0; i < hex_len; i++) {
+                sprintf(hex_buffer + i*3, "%02x ", (unsigned char)((char*)buffer)[i]);
+            }
+            mcp_log_data_verbose("sending data (hex): %s", hex_buffer);
         }
     }
     #endif
@@ -356,11 +355,11 @@ int ws_client_send_and_wait_response(
                      (unsigned long long)request_id);
     }
 
-    mcp_log_debug("WebSocket client entering synchronous response mode");
+    mcp_log_ws_debug("entering synchronous response mode");
 
-    // Log the message we're about to send (only in verbose debug mode)
-    #ifdef MCP_VERBOSE_DEBUG
-    mcp_log_debug("WebSocket client sending message: %.*s", (int)size, (const char*)data);
+    // Log the message we're about to send (only when data logging enabled)
+    #if MCP_ENABLE_DATA_LOGS
+    mcp_log_data_verbose("sending message: %.*s", (int)size, (const char*)data);
     #endif
 
     // Unlock before sending to avoid holding lock during network I/O
@@ -368,7 +367,7 @@ int ws_client_send_and_wait_response(
 
     // Send the message
     if (ws_client_send_buffer(ws_data, data, size) != 0) {
-        mcp_log_error("Failed to send WebSocket message");
+        mcp_log_ws_error("failed to send message");
 
         // Reset synchronous response mode
         mcp_mutex_lock(ws_data->response_mutex);

@@ -14,17 +14,21 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
         return 0;
     }
 
-    // Log only non-frequent callback reasons to reduce log volume
-    if (reason != LWS_CALLBACK_SERVER_WRITEABLE &&
-        reason != LWS_CALLBACK_RECEIVE &&
-        reason != LWS_CALLBACK_RECEIVE_PONG) {
-        mcp_log_debug("WebSocket server callback: reason=%d (%s)", reason, websocket_get_callback_reason_string(reason));
+    // Log only important callback reasons to reduce log volume
+    if (reason == LWS_CALLBACK_ESTABLISHED ||
+        reason == LWS_CALLBACK_CLOSED ||
+        reason == LWS_CALLBACK_PROTOCOL_DESTROY) {
+        mcp_log_ws_debug("server callback: %s", websocket_get_callback_reason_string(reason));
+    } else if (reason != LWS_CALLBACK_SERVER_WRITEABLE &&
+               reason != LWS_CALLBACK_RECEIVE &&
+               reason != LWS_CALLBACK_RECEIVE_PONG) {
+        mcp_log_ws_verbose("server callback: %s", websocket_get_callback_reason_string(reason));
     }
 
     switch (reason) {
         case LWS_CALLBACK_ESTABLISHED: {
             // Handle new client connection
-            mcp_log_info("WebSocket connection established");
+            mcp_log_ws_info("connection established");
 
             ws_server_lock_all_clients(data);
 
@@ -33,8 +37,8 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             if (client_index == -1) {
                 data->rejected_connections++;
                 ws_server_unlock_all_clients(data);
-                mcp_log_error("Maximum WebSocket clients reached (%u active, %u total connections, %u rejected, max: %u)",
-                             data->active_clients, data->total_connections, data->rejected_connections, data->max_clients);
+                mcp_log_ws_error("maximum clients reached (%u active, %u total, %u rejected, max: %u)",
+                                 data->active_clients, data->total_connections, data->rejected_connections, data->max_clients);
                 return -1;
             }
 
@@ -52,8 +56,8 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
                 data->peak_clients = data->active_clients;
             }
 
-            mcp_log_info("Client %d connected (active: %u, peak: %u, total: %u, max: %u)",
-                        client_index, data->active_clients, data->peak_clients, data->total_connections, data->max_clients);
+            mcp_log_ws_info("client %d connected (active: %u, peak: %u, total: %u, max: %u)",
+                            client_index, data->active_clients, data->peak_clients, data->total_connections, data->max_clients);
 
             ws_server_unlock_all_clients(data);
             break;
@@ -64,7 +68,7 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
             if (client) {
                 int client_id = client->client_id;
-                mcp_log_info("Client %d disconnected", client_id);
+                mcp_log_ws_info("client %d disconnected", client_id);
 
                 // Lock only this client's segment
                 ws_server_lock_client(data, client_id);
@@ -77,20 +81,20 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
                 // Clean up immediately if no pending data
                 if (client->receive_buffer_used == 0) {
-                    mcp_log_debug("No pending data for client %d, cleaning up immediately", client_id);
+                    mcp_log_ws_debug("no pending data for client %d, cleaning up immediately", client_id);
                     ws_server_client_cleanup(client, data);
                 }
 
                 ws_server_unlock_client(data, client_id);
             } else {
-                mcp_log_info("Unknown client disconnected");
+                mcp_log_ws_info("unknown client disconnected");
             }
             break;
         }
 
         case LWS_CALLBACK_PROTOCOL_DESTROY: {
             // Clean up all clients when protocol is destroyed
-            mcp_log_info("WebSocket protocol being destroyed, cleaning up all clients");
+            mcp_log_ws_info("protocol being destroyed, cleaning up all clients");
 
             ws_server_lock_all_clients(data);
             for (uint32_t i = 0; i < data->max_clients; i++) {
@@ -107,7 +111,7 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Update activity on pong receipt
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
             if (client) {
-                mcp_log_debug("Received pong from client %d", client->client_id);
+                mcp_log_ws_verbose("received pong from client %d", client->client_id);
                 ws_server_client_update_activity(client);
             }
             break;
@@ -115,11 +119,11 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
         case LWS_CALLBACK_RECEIVE: {
             // Process received data
-            mcp_log_debug("WebSocket data received: %zu bytes", len);
+            mcp_log_ws_verbose("data received: %zu bytes", len);
 
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
             if (!client) {
-                mcp_log_error("WebSocket client not found");
+                mcp_log_ws_error("client not found");
                 return -1;
             }
 
@@ -130,7 +134,7 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Handle writable state
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
             if (!client) {
-                mcp_log_error("WebSocket client not found");
+                mcp_log_ws_error("client not found");
                 return -1;
             }
 
@@ -141,7 +145,7 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
         case LWS_CALLBACK_HTTP: {
             // Handle plain HTTP request
-            mcp_log_info("HTTP request received: %s", (char*)in);
+            mcp_log_ws_debug("HTTP request received: %s", (char*)in);
 
             // Send informational response
             unsigned char buffer[LWS_PRE + 128];
@@ -177,13 +181,13 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
         case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION: {
             // Filter incoming connections
-            mcp_log_debug("WebSocket filter protocol connection");
+            mcp_log_ws_verbose("filter protocol connection");
 
             // Apply stricter filtering when near capacity
             uint32_t capacity_threshold = data->max_clients > 10 ? data->max_clients - 10 : data->max_clients / 2;
             if (data->active_clients >= capacity_threshold) {
-                mcp_log_warn("WebSocket server near capacity (%u/%u), applying stricter filtering",
-                           data->active_clients, data->max_clients);
+                mcp_log_ws_warn("near capacity (%u/%u), applying stricter filtering",
+                                data->active_clients, data->max_clients);
 
                 // Could implement additional filtering here (IP-based rate limiting, auth checks, etc.)
             }
@@ -192,12 +196,12 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
         case LWS_CALLBACK_FILTER_NETWORK_CONNECTION: {
             // This is called when a client initiates a connection
-            mcp_log_debug("WebSocket filter network connection");
+            mcp_log_ws_verbose("filter network connection");
 
             // Check if we're at capacity
             if (data->active_clients >= data->max_clients) {
-                mcp_log_warn("WebSocket server at capacity (%u/%u), rejecting connection",
-                           data->active_clients, data->max_clients);
+                mcp_log_ws_warn("at capacity (%u/%u), rejecting connection",
+                                data->active_clients, data->max_clients);
                 return -1;
             }
             return 0;
@@ -205,13 +209,13 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
 
         case LWS_CALLBACK_SERVER_NEW_CLIENT_INSTANTIATED: {
             // A new client connection is being instantiated
-            mcp_log_debug("WebSocket new client instantiated");
+            mcp_log_ws_verbose("new client instantiated");
             return 0;
         }
 
         case LWS_CALLBACK_WSI_CREATE: {
             // A new WebSocket instance is being created
-            mcp_log_debug("WebSocket instance created");
+            mcp_log_ws_verbose("instance created");
             return 0;
         }
 

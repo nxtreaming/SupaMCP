@@ -161,12 +161,17 @@ void* ws_server_event_thread(void* arg) {
             }
         }
 
-        // Log performance stats every ~60 seconds
+        // Log performance stats every ~60 seconds (only when performance logging enabled)
         if (difftime(now, last_service_time) >= 60) {
             double elapsed = difftime(now, last_service_time);
+#if MCP_ENABLE_PERF_LOGS
             double rate = service_count / elapsed;
-            mcp_log_debug("WebSocket server performance: %.1f service calls/sec, %lu active clients, timeout: %d ms",
+            mcp_log_perf("[WS] performance: %.1f service calls/sec, %lu active clients, timeout: %d ms",
                          rate, data->active_clients, service_timeout_ms);
+#else
+            // Avoid unused variable warning when performance logging is disabled
+            (void)elapsed;
+#endif
 
             // Reset counters
             last_service_time = now;

@@ -24,23 +24,19 @@ static int ws_client_callback(struct lws* wsi, enum lws_callback_reasons reason,
         return 0;
     }
 
-    // Log connection-related events with timestamp for diagnostics
+    // Log connection-related events for diagnostics (reduced verbosity)
     if (reason == LWS_CALLBACK_CLIENT_ESTABLISHED ||
         reason == LWS_CALLBACK_CLIENT_CONNECTION_ERROR ||
-        reason == LWS_CALLBACK_CLIENT_CLOSED ||
-        reason == LWS_CALLBACK_WSI_CREATE ||
-        reason == LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER ||
-        reason == LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH ||
-        reason == LWS_CALLBACK_CONNECTING ||
-        reason == LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP) {
+        reason == LWS_CALLBACK_CLIENT_CLOSED) {
 
-        time_t now = time(NULL);
-        struct tm* timeinfo = localtime(&now);
-        char timestamp[20];
-        strftime(timestamp, sizeof(timestamp), "%H:%M:%S", timeinfo);
+        mcp_log_ws_info("callback: %s", websocket_get_callback_reason_string(reason));
+    } else if (reason == LWS_CALLBACK_WSI_CREATE ||
+               reason == LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER ||
+               reason == LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH ||
+               reason == LWS_CALLBACK_CONNECTING ||
+               reason == LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP) {
 
-        mcp_log_info("[%s] WebSocket client callback: reason=%d (%s)",
-                    timestamp, reason, websocket_get_callback_reason_string(reason));
+        mcp_log_ws_debug("callback: %s", websocket_get_callback_reason_string(reason));
     }
 
     switch (reason) {
@@ -585,11 +581,11 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
         // This is the standard MCP message format with length prefix + JSON
         // For WebSocket, we only need to send the JSON part (second buffer)
 
-        // Log the message for debugging if it's JSON (only in verbose debug mode)
-        #ifdef MCP_VERBOSE_DEBUG
+        // Log the message for debugging if it's JSON (only when data logging enabled)
+        #if MCP_ENABLE_DATA_LOGS
         if (buffers[1].size > 0 && ((const char*)buffers[1].data)[0] == '{') {
             const char* json_data = (const char*)buffers[1].data;
-            mcp_log_debug("JSON data in sendv: %.*s", (int)buffers[1].size, json_data);
+            mcp_log_data_verbose("JSON data in sendv: %.*s", (int)buffers[1].size, json_data);
         }
         #endif
 

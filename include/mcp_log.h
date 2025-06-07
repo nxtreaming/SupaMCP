@@ -3,6 +3,7 @@
 
 #include <stdarg.h>
 #include <stdbool.h>
+#include "mcp_log_config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -67,6 +68,56 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
 #define mcp_log_error(...) mcp_log_log(MCP_LOG_LEVEL_ERROR, __FILE__, __LINE__, __VA_ARGS__)
 /** @brief Log a FATAL level message. */
 #define mcp_log_fatal(...) mcp_log_log(MCP_LOG_LEVEL_FATAL, __FILE__, __LINE__, __VA_ARGS__)
+
+// --- Optimized Logging Macros for Performance-Critical Code ---
+
+/**
+ * @brief Conditional logging macros for different build modes.
+ * These macros allow fine-grained control over logging verbosity to optimize performance.
+ */
+
+// Debug mode logging - only enabled when MCP_ENABLE_DEBUG_LOGS is set
+#if MCP_ENABLE_DEBUG_LOGS
+    #define mcp_log_debug_verbose(...) mcp_log_debug(__VA_ARGS__)
+    #define mcp_log_trace_verbose(...) mcp_log_trace(__VA_ARGS__)
+#else
+    #define mcp_log_debug_verbose(...) ((void)0)
+    #define mcp_log_trace_verbose(...) ((void)0)
+#endif
+
+// High-frequency operation logging - only enabled when MCP_ENABLE_VERBOSE_LOGS is set
+#if MCP_ENABLE_VERBOSE_LOGS
+    #define mcp_log_verbose(...) mcp_log_debug(__VA_ARGS__)
+#else
+    #define mcp_log_verbose(...) ((void)0)
+#endif
+
+// Data content logging - only enabled when MCP_ENABLE_DATA_LOGS is set
+#if MCP_ENABLE_DATA_LOGS
+    #define mcp_log_data_verbose(...) mcp_log_debug(__VA_ARGS__)
+#else
+    #define mcp_log_data_verbose(...) ((void)0)
+#endif
+
+// Performance metrics logging - only enabled when MCP_ENABLE_PERF_LOGS is set
+#if MCP_ENABLE_PERF_LOGS
+    #define mcp_log_perf(...) mcp_log_debug(__VA_ARGS__)
+#else
+    #define mcp_log_perf(...) ((void)0)
+#endif
+
+// Connection-specific logging with standardized prefixes
+#define mcp_log_connection_info(prefix, ...) mcp_log_info("[" prefix "] " __VA_ARGS__)
+#define mcp_log_connection_warn(prefix, ...) mcp_log_warn("[" prefix "] " __VA_ARGS__)
+#define mcp_log_connection_error(prefix, ...) mcp_log_error("[" prefix "] " __VA_ARGS__)
+#define mcp_log_connection_debug(prefix, ...) mcp_log_debug_verbose("[" prefix "] " __VA_ARGS__)
+
+// WebSocket-specific logging macros with consistent prefixes
+#define mcp_log_ws_info(...) mcp_log_connection_info("WS", __VA_ARGS__)
+#define mcp_log_ws_warn(...) mcp_log_connection_warn("WS", __VA_ARGS__)
+#define mcp_log_ws_error(...) mcp_log_connection_error("WS", __VA_ARGS__)
+#define mcp_log_ws_debug(...) mcp_log_connection_debug("WS", __VA_ARGS__)
+#define mcp_log_ws_verbose(...) mcp_log_verbose("[WS] " __VA_ARGS__)
 
 /**
  * @brief Sets the minimum log level to output.
