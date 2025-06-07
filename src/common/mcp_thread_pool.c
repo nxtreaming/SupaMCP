@@ -22,6 +22,7 @@ mcp_thread_pool_t* mcp_thread_pool_create(size_t thread_count, size_t queue_size
 
     // Initialize pool structure
     pool->thread_count = 0;
+    pool->max_thread_count = thread_count;  // Store original allocation size
     pool->shutdown_flag = 0;
     pool->started = 0;
     pool->rwlock = NULL;
@@ -254,6 +255,13 @@ int mcp_thread_pool_resize(mcp_thread_pool_t* pool, size_t new_thread_count) {
         new_thread_count = MIN_THREAD_COUNT;
     }
 
+    // Prevent exceeding original allocation size to avoid array bounds issues
+    if (new_thread_count > pool->max_thread_count) {
+        mcp_log_warn("Cannot resize thread pool to %zu threads (max: %zu), capping to maximum",
+                     new_thread_count, pool->max_thread_count);
+        new_thread_count = pool->max_thread_count;
+    }
+
     // If shrinking
     if (new_thread_count < pool->thread_count) {
         // First, explicitly signal threads that should exit
@@ -399,10 +407,14 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
     mcp_log_info("Thread pool statistics: submitted=%zu, completed=%zu, failed=%zu",
                  pool->tasks_submitted, pool->tasks_completed, pool->tasks_failed);
 
-    // Per-worker statistics
-    for (size_t i = 0; i < pool->thread_count; ++i) {
-        mcp_log_info("Worker %zu statistics: executed=%zu, stolen=%zu",
-                     i, pool->tasks_executed[i], pool->tasks_stolen[i]);
+    // Per-worker statistics - use max_thread_count to avoid array bounds issues
+    // Note: Statistics arrays were allocated based on max_thread_count
+    for (size_t i = 0; i < pool->max_thread_count; ++i) {
+        // Only log statistics for threads that were actually started
+        if (i < pool->thread_count) {
+            mcp_log_info("Worker %zu statistics: executed=%zu, stolen=%zu",
+                         i, pool->tasks_executed[i], pool->tasks_stolen[i]);
+        }
     }
 
     // Cleanup - first free regular memory resources
@@ -413,7 +425,7 @@ int mcp_thread_pool_destroy(mcp_thread_pool_t* pool) {
     if (pool->tasks_executed) free((void*)pool->tasks_executed);
 
     if (pool->deques) {
-         for (size_t i = 0; i < pool->thread_count; ++i) {
+         for (size_t i = 0; i < pool->max_thread_count; ++i) {
               if (pool->deques[i].buffer) {
 #ifdef _WIN32
                   _aligned_free(pool->deques[i].buffer);

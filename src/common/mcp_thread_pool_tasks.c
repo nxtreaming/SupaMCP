@@ -29,7 +29,8 @@ int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), v
     mcp_task_t task = { .function = function, .argument = argument };
 
     // Thread-safe round-robin submission using atomic fetch-and-add
-    size_t target_deque_idx = fetch_add_size(&pool->next_submit_deque, 1) % pool->thread_count;
+    // Use max_thread_count to ensure we don't exceed allocated deque array size
+    size_t target_deque_idx = fetch_add_size(&pool->next_submit_deque, 1) % pool->max_thread_count;
     work_stealing_deque_t* target_deque = &pool->deques[target_deque_idx];
 
     // Try to push task onto the bottom of the target deque
@@ -38,8 +39,8 @@ int mcp_thread_pool_add_task(mcp_thread_pool_t* pool, void (*function)(void*), v
         bool submission_success = false;
 
         // Try each deque in sequence
-        for (size_t i = 1; i < pool->thread_count; i++) {
-            size_t alt_deque_idx = (target_deque_idx + i) % pool->thread_count;
+        for (size_t i = 1; i < pool->max_thread_count; i++) {
+            size_t alt_deque_idx = (target_deque_idx + i) % pool->max_thread_count;
             work_stealing_deque_t* alt_deque = &pool->deques[alt_deque_idx];
 
             if (deque_push_bottom(alt_deque, task)) {
@@ -126,7 +127,7 @@ int mcp_thread_pool_wait(mcp_thread_pool_t* pool, unsigned int timeout_ms) {
 
         // Check if all deques are empty and no tasks are active
         bool all_empty = true;
-        for (size_t i = 0; i < pool->thread_count; i++) {
+        for (size_t i = 0; i < pool->max_thread_count; i++) {
             size_t bottom = load_size(&pool->deques[i].bottom);
             size_t top = load_size(&pool->deques[i].top);
 

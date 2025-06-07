@@ -20,16 +20,24 @@
 #include <time.h>
 
 #include "mcp_server.h"
-#include "mcp_sthttp_transport.h"
-#include "mcp_sthttp_client_transport.h"
+#include "mcp_transport_factory.h"
 #include "mcp_log.h"
 #include "mcp_sys_utils.h"
 #include "mcp_socket_utils.h"
+
+// Transport protocol types (mapped to factory types)
+typedef enum {
+    TRANSPORT_STHTTP,    // HTTP Streamable (default)
+    TRANSPORT_HTTP,      // Standard HTTP
+    TRANSPORT_TCP,       // TCP
+    TRANSPORT_WEBSOCKET  // WebSocket
+} transport_protocol_t;
 
 // Global variables
 static volatile bool g_running = true;
 static mcp_server_t* g_server = NULL;
 static mcp_transport_t* g_server_transport = NULL;
+static transport_protocol_t g_protocol = TRANSPORT_STHTTP;
 
 /**
  * @brief Signal handler for graceful shutdown and crash detection
@@ -74,36 +82,193 @@ static void signal_handler(int signal) {
 }
 
 /**
- * @brief Create a test client
+ * @brief Parse transport protocol from string
  */
-static mcp_transport_t* create_test_client(int client_id) {
-    printf("   [DEBUG] Creating client #%d...\n", client_id);
+static transport_protocol_t parse_protocol(const char* protocol_str) {
+    if (protocol_str == NULL) {
+        return TRANSPORT_STHTTP;
+    }
+
+    if (strcmp(protocol_str, "sthttp") == 0 || strcmp(protocol_str, "http-streamable") == 0) {
+        return TRANSPORT_STHTTP;
+    } else if (strcmp(protocol_str, "http") == 0) {
+        return TRANSPORT_HTTP;
+    } else if (strcmp(protocol_str, "tcp") == 0) {
+        return TRANSPORT_TCP;
+    } else if (strcmp(protocol_str, "websocket") == 0 || strcmp(protocol_str, "ws") == 0) {
+        return TRANSPORT_WEBSOCKET;
+    } else {
+        printf("Unknown protocol '%s', using default (sthttp)\n", protocol_str);
+        return TRANSPORT_STHTTP;
+    }
+}
+
+/**
+ * @brief Get protocol name string
+ */
+static const char* get_protocol_name(transport_protocol_t protocol) {
+    switch (protocol) {
+        case TRANSPORT_STHTTP: return "HTTP Streamable";
+        case TRANSPORT_HTTP: return "HTTP";
+        case TRANSPORT_TCP: return "TCP";
+        case TRANSPORT_WEBSOCKET: return "WebSocket";
+        default: return "Unknown";
+    }
+}
+
+/**
+ * @brief Print usage information
+ */
+static void print_usage(const char* program_name) {
+    printf("Usage: %s [max_clients] [protocol]\n", program_name);
+    printf("\n");
+    printf("Arguments:\n");
+    printf("  max_clients  Maximum number of clients to test (default: 100)\n");
+    printf("  protocol     Transport protocol to use (default: sthttp)\n");
+    printf("\n");
+    printf("Supported protocols:\n");
+    printf("  sthttp       HTTP Streamable (MCP 2025-03-26) - supports SSE streams\n");
+    printf("  http         Standard HTTP - traditional request/response\n");
+    printf("  tcp          TCP - raw TCP with length-prefixed framing\n");
+    printf("  websocket    WebSocket - full-duplex WebSocket connections\n");
+    printf("\n");
+    printf("Examples:\n");
+    printf("  %s 1000                    # Test 1000 HTTP Streamable clients\n", program_name);
+    printf("  %s 500 tcp                 # Test 500 TCP clients\n", program_name);
+    printf("  %s 2000 websocket          # Test 2000 WebSocket clients\n", program_name);
+    printf("  %s 100 http                # Test 100 HTTP clients\n", program_name);
+    printf("\n");
+}
+
+/**
+ * @brief Create server transport based on protocol using factory
+ */
+static mcp_transport_t* create_server_transport(transport_protocol_t protocol) {
+    mcp_transport_config_t config = {0};
+    mcp_transport_type_t factory_type;
+
+    switch (protocol) {
+        case TRANSPORT_STHTTP:
+            factory_type = MCP_TRANSPORT_STHTTP;
+            config.sthttp.host = "127.0.0.1";
+            config.sthttp.port = 8080;
+            config.sthttp.use_ssl = 0;
+            config.sthttp.mcp_endpoint = "/mcp";
+            config.sthttp.enable_sessions = 0;
+            config.sthttp.enable_cors = 1;
+            config.sthttp.cors_allow_origin = "*";
+            config.sthttp.cors_allow_methods = "GET, POST, OPTIONS, DELETE";
+            config.sthttp.cors_allow_headers = "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID";
+            config.sthttp.cors_max_age = 86400;
+            config.sthttp.max_sse_clients = 5000;
+            config.sthttp.timeout_ms = 30000;
+            break;
+
+        case TRANSPORT_HTTP:
+            factory_type = MCP_TRANSPORT_HTTP_SERVER;
+            config.http.host = "127.0.0.1";
+            config.http.port = 8080;
+            config.http.use_ssl = 0;
+            config.http.timeout_ms = 30000;
+            break;
+
+        case TRANSPORT_TCP:
+            factory_type = MCP_TRANSPORT_TCP;
+            config.tcp.host = "127.0.0.1";
+            config.tcp.port = 8080;
+            config.tcp.idle_timeout_ms = 0; // no idle timeout
+            break;
+
+        case TRANSPORT_WEBSOCKET:
+            factory_type = MCP_TRANSPORT_WS_SERVER;
+            config.ws.host = "127.0.0.1";
+            config.ws.port = 8080;
+            config.ws.path = "/ws";
+            config.ws.use_ssl = 0;
+            config.ws.connect_timeout_ms = 10000;
+            break;
+
+        default:
+            printf("ERROR: Unsupported server protocol\n");
+            return NULL;
+    }
+
+    return mcp_transport_factory_create(factory_type, &config);
+}
+
+/**
+ * @brief Create a test client based on protocol using factory
+ */
+static mcp_transport_t* create_test_client(int client_id, transport_protocol_t protocol) {
+    printf("   [DEBUG] Creating %s client #%d...\n", get_protocol_name(protocol), client_id);
     fflush(stdout);
-    
-    mcp_sthttp_client_config_t config = MCP_STHTTP_CLIENT_CONFIG_DEFAULT;
-    config.host = "127.0.0.1";
-    config.port = 8080;
-    config.enable_sse_streams = true;
-    
-    mcp_transport_t* client = mcp_transport_sthttp_client_create(&config);
+
+    mcp_transport_config_t config = {0};
+    mcp_transport_type_t factory_type;
+
+    switch (protocol) {
+        case TRANSPORT_STHTTP:
+            factory_type = MCP_TRANSPORT_STHTTP_CLIENT;
+            config.sthttp_client.host = "127.0.0.1";
+            config.sthttp_client.port = 8080;
+            config.sthttp_client.use_ssl = 0;
+            config.sthttp_client.mcp_endpoint = "/mcp";
+            config.sthttp_client.connect_timeout_ms = 10000;
+            config.sthttp_client.request_timeout_ms = 30000;
+            config.sthttp_client.enable_sessions = 1;
+            config.sthttp_client.enable_sse_streams = 1;
+            config.sthttp_client.auto_reconnect_sse = 1;
+            break;
+
+        case TRANSPORT_HTTP:
+            factory_type = MCP_TRANSPORT_HTTP_CLIENT;
+            config.http_client.host = "127.0.0.1";
+            config.http_client.port = 8080;
+            config.http_client.use_ssl = 0;
+            config.http_client.timeout_ms = 30000;
+            break;
+
+        case TRANSPORT_TCP:
+            factory_type = MCP_TRANSPORT_TCP_CLIENT;
+            config.tcp.host = "127.0.0.1";
+            config.tcp.port = 8080;
+            break;
+
+        case TRANSPORT_WEBSOCKET:
+            factory_type = MCP_TRANSPORT_WS_CLIENT;
+            config.ws.host = "127.0.0.1";
+            config.ws.port = 8080;
+            config.ws.path = "/ws";
+            config.ws.use_ssl = 0;
+            config.ws.connect_timeout_ms = 10000;
+            break;
+
+        default:
+            printf("   [ERROR] Unsupported client protocol\n");
+            fflush(stdout);
+            return NULL;
+    }
+
+    mcp_transport_t* client = mcp_transport_factory_create(factory_type, &config);
     if (client == NULL) {
-        printf("   [ERROR] Failed to create client transport #%d\n", client_id);
+        printf("   [ERROR] Failed to create %s client transport #%d\n", get_protocol_name(protocol), client_id);
         fflush(stdout);
         return NULL;
     }
-    
+
     // Start the client
     int start_result = mcp_transport_start(client, NULL, NULL, NULL);
     if (start_result != 0) {
-        printf("   [ERROR] Failed to start client transport #%d (result: %d)\n", client_id, start_result);
+        printf("   [ERROR] Failed to start %s client transport #%d (result: %d)\n",
+               get_protocol_name(protocol), client_id, start_result);
         fflush(stdout);
         mcp_transport_destroy(client);
         return NULL;
     }
-    
-    printf("   [SUCCESS] Client #%d created and started\n", client_id);
+
+    printf("   [SUCCESS] %s client #%d created and started\n", get_protocol_name(protocol), client_id);
     fflush(stdout);
-    
+
     return client;
 }
 
@@ -129,7 +294,7 @@ static int test_client_limits(int max_clients) {
         // Add delay between client creations
         mcp_sleep_ms(200);
         
-        clients[i] = create_test_client(i + 1);
+        clients[i] = create_test_client(i + 1, g_protocol);
         if (clients[i] != NULL) {
             created_count++;
             consecutive_failures = 0;
@@ -193,18 +358,31 @@ static int test_client_limits(int max_clients) {
  */
 int main(int argc, char* argv[]) {
     printf("=== MCP Client Limits Test ===\n");
-    printf("This test finds the root cause of client creation limits.\n\n");
+    printf("This test finds the root cause of client creation limits.\n");
+    printf("Supports multiple transport protocols: sthttp, http, tcp, websocket\n\n");
     fflush(stdout);
-    
+
     // Parse command line arguments
     int target_clients = 100; // Default
+    const char* protocol_str = "sthttp"; // Default protocol
+
     if (argc > 1) {
         target_clients = atoi(argv[1]);
         if (target_clients <= 0) {
-            printf("Invalid client count: %s\n", argv[1]);
+            printf("ERROR: Invalid client count: %s\n\n", argv[1]);
+            print_usage(argv[0]);
             return 1;
         }
     }
+
+    if (argc > 2) {
+        protocol_str = argv[2];
+    }
+
+    // Parse and set protocol
+    g_protocol = parse_protocol(protocol_str);
+    printf("Using transport protocol: %s\n", get_protocol_name(g_protocol));
+    printf("Target clients: %d\n\n", target_clients);
     
     // Set up signal handlers for crash detection
     signal(SIGINT, signal_handler);
@@ -223,16 +401,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Create server transport
-    mcp_sthttp_config_t config = MCP_STHTTP_CONFIG_DEFAULT;
-    config.host = "127.0.0.1";
-    config.port = 8080;
-    config.mcp_endpoint = "/mcp";
-    config.enable_sessions = false;
-    
-    g_server_transport = mcp_transport_sthttp_create(&config);
+    // Create server transport based on protocol
+    g_server_transport = create_server_transport(g_protocol);
     if (g_server_transport == NULL) {
-        printf("ERROR: Failed to create server transport\n");
+        printf("ERROR: Failed to create %s server transport\n", get_protocol_name(g_protocol));
         mcp_socket_cleanup();
         return 1;
     }
@@ -257,7 +429,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    printf("Server started successfully on %s:%d\n", config.host, config.port);
+    printf("%s server started successfully on 127.0.0.1:8080\n", get_protocol_name(g_protocol));
     printf("Testing with up to %d clients...\n\n", target_clients);
     fflush(stdout);
     

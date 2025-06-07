@@ -85,7 +85,9 @@ void* thread_pool_worker(void* arg) {
             worker_locals.backoff_shift = 0; // Reset exponential backoff
 
             // Mark worker as active
-            worker_locals.pool->worker_status[worker_locals.my_index] = 1;
+            if (worker_locals.my_index < worker_locals.pool->max_thread_count) {
+                worker_locals.pool->worker_status[worker_locals.my_index] = 1;
+            }
             worker_locals.worker_data->is_active = true;
             fetch_add_size(&worker_locals.pool->active_tasks, 1);
 
@@ -95,11 +97,16 @@ void* thread_pool_worker(void* arg) {
 
             // Update statistics
             fetch_add_size(&worker_locals.pool->tasks_completed, 1);
-            fetch_add_size(&worker_locals.pool->tasks_executed[worker_locals.my_index], 1);
+            // Only update per-worker statistics if within bounds
+            if (worker_locals.my_index < worker_locals.pool->max_thread_count) {
+                fetch_add_size(&worker_locals.pool->tasks_executed[worker_locals.my_index], 1);
+            }
             fetch_add_size(&worker_locals.pool->active_tasks, (size_t)-1); // Decrement
 
             // Mark worker as idle
-            worker_locals.pool->worker_status[worker_locals.my_index] = 0;
+            if (worker_locals.my_index < worker_locals.pool->max_thread_count) {
+                worker_locals.pool->worker_status[worker_locals.my_index] = 0;
+            }
             worker_locals.worker_data->is_active = false;
 
             continue;
@@ -198,7 +205,9 @@ void* thread_pool_worker(void* arg) {
                 worker_locals.last_victim_index = victim_index;
 
                 // Mark worker as active
-                worker_locals.pool->worker_status[worker_locals.my_index] = 1;
+                if (worker_locals.my_index < worker_locals.pool->max_thread_count) {
+                    worker_locals.pool->worker_status[worker_locals.my_index] = 1;
+                }
                 worker_locals.worker_data->is_active = true;
                 fetch_add_size(&worker_locals.pool->active_tasks, 1);
 
@@ -208,12 +217,17 @@ void* thread_pool_worker(void* arg) {
 
                 // Update statistics
                 fetch_add_size(&worker_locals.pool->tasks_completed, 1);
-                fetch_add_size(&worker_locals.pool->tasks_executed[worker_locals.my_index], 1);
-                fetch_add_size(&worker_locals.pool->tasks_stolen[worker_locals.my_index], 1);
+                // Only update per-worker statistics if within bounds
+                if (worker_locals.my_index < worker_locals.pool->max_thread_count) {
+                    fetch_add_size(&worker_locals.pool->tasks_executed[worker_locals.my_index], 1);
+                    fetch_add_size(&worker_locals.pool->tasks_stolen[worker_locals.my_index], 1);
+                }
                 fetch_add_size(&worker_locals.pool->active_tasks, (size_t)-1); // Decrement
 
                 // Mark worker as idle
-                worker_locals.pool->worker_status[worker_locals.my_index] = 0;
+                if (worker_locals.my_index < worker_locals.pool->max_thread_count) {
+                    worker_locals.pool->worker_status[worker_locals.my_index] = 0;
+                }
                 worker_locals.worker_data->is_active = false;
 
                 continue;

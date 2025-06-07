@@ -100,6 +100,7 @@ struct mcp_thread_pool {
     mcp_thread_t* threads;      /**< Array of worker thread handles. */
     worker_arg_t** worker_args; /**< Array of worker thread arguments for cleanup. */
     size_t thread_count;        /**< Number of worker threads. */
+    size_t max_thread_count;    /**< Maximum thread count (size of allocated arrays). */
     int started;                /**< Number of threads successfully started. */
 
     // Group 3: Deque management (rarely modified after initialization)
