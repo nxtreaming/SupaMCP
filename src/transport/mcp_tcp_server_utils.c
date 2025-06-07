@@ -43,6 +43,26 @@ void tcp_client_handler_wrapper(void* arg) {
         return;
     }
 
+    // Check if the client connection is still valid before starting handler
+    // This prevents starting handlers for connections that were closed during shutdown
+    if (client->socket == MCP_INVALID_SOCKET || client->should_stop ||
+        client->state == CLIENT_STATE_INACTIVE) {
+        mcp_log_debug("Skipping client handler for invalid/stopped connection (index: %d, socket: %d, should_stop: %s, state: %d)",
+                     client->client_index, (int)client->socket,
+                     client->should_stop ? "true" : "false", (int)client->state);
+        return;
+    }
+
+    // Additional check with transport data to ensure server is still running
+    if (client->transport && client->transport->transport_data) {
+        mcp_tcp_transport_data_t* tcp_data = (mcp_tcp_transport_data_t*)client->transport->transport_data;
+        if (!tcp_data->running) {
+            mcp_log_debug("Skipping client handler for connection (index: %d) - server is shutting down",
+                         client->client_index);
+            return;
+        }
+    }
+
     mcp_log_debug("Handling client connection from %s:%d (index: %d)",
                  client->client_ip, client->client_port, client->client_index);
 

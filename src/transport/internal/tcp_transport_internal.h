@@ -18,12 +18,13 @@
 #include <errno.h>
 
 // Constants
-#define MAX_TCP_CLIENTS 2048                    // Increased max concurrent client connections
+#define MAX_TCP_CLIENTS 8192                    // Maximum concurrent client connections (supports 5000+ clients)
 #define POOL_BUFFER_SIZE (1024 * 16)            // 16KB buffer size (More efficient)
 #define POOL_NUM_BUFFERS 1024                   // Increased number of buffers for better concurrency
 #define MAX_MCP_MESSAGE_SIZE (1024 * 1024)      // 1MB limit
-#define DEFAULT_THREAD_POOL_SIZE 4              // Default number of worker threads in the pool
-#define CONNECTION_QUEUE_SIZE 32                // Size of the connection queue for the thread pool
+#define DEFAULT_THREAD_POOL_SIZE 32             // Default number of worker threads in the pool (reasonable starting point)
+#define MAX_THREAD_POOL_SIZE 512                // Maximum number of worker threads (16 clients per thread for 8192 clients)
+#define CONNECTION_QUEUE_SIZE 256               // Size of the connection queue for the thread pool (reasonable buffer for burst connections)
 
 #define MONITOR_INTERVAL_MS 1000
 #define ADJUST_INTERVAL_MS 30000

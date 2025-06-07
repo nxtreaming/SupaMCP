@@ -40,6 +40,31 @@ static mcp_transport_t* g_server_transport = NULL;
 static transport_protocol_t g_protocol = TRANSPORT_STHTTP;
 
 /**
+ * @brief Simple message callback for test clients
+ */
+static char* test_client_message_callback(void* user_data, const char* message, size_t message_len, int* error_code) {
+    (void)user_data;
+    (void)message;
+    (void)message_len;
+    // For testing purposes, we just acknowledge receipt and don't process the message
+    // In a real application, this would parse and handle the MCP message
+    *error_code = 0;
+    return NULL; // No response needed for test clients
+}
+
+/**
+ * @brief Simple error callback for test clients
+ */
+static void test_client_error_callback(void* user_data, int error_code) {
+    (void)user_data;
+    (void)error_code;
+    // For testing purposes, we just log the error
+    // In a real application, this would handle connection errors, retries, etc.
+    // We don't log here to avoid spam during mass testing
+
+}
+
+/**
  * @brief Signal handler for graceful shutdown and crash detection
  */
 static void signal_handler(int signal) {
@@ -256,8 +281,8 @@ static mcp_transport_t* create_test_client(int client_id, transport_protocol_t p
         return NULL;
     }
 
-    // Start the client
-    int start_result = mcp_transport_start(client, NULL, NULL, NULL);
+    // Start the client with proper callbacks
+    int start_result = mcp_transport_start(client, test_client_message_callback, NULL, test_client_error_callback);
     if (start_result != 0) {
         printf("   [ERROR] Failed to start %s client transport #%d (result: %d)\n",
                get_protocol_name(protocol), client_id, start_result);

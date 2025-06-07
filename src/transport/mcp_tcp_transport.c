@@ -235,8 +235,8 @@ static int tcp_transport_start(
         // Not fatal, continue without smart auto-adjustment
     }
 
-    mcp_log_info("TCP server transport started on %s:%d (thread pool: %d threads)",
-                data->host, data->port, DEFAULT_THREAD_POOL_SIZE);
+    mcp_log_info("TCP server transport started on %s:%d (thread pool: %d-%d threads)",
+                data->host, data->port, DEFAULT_THREAD_POOL_SIZE, MAX_THREAD_POOL_SIZE);
     return 0;
 }
 
@@ -372,10 +372,8 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
         mcp_log_debug("Monitor thread stopped");
     }
 
-    // Signal all client connections to stop
-    tcp_transport_signal_clients_to_stop(data);
-
-    // Wait for all thread pool tasks to complete with a timeout
+    // Wait for thread pool tasks to complete BEFORE signaling clients to stop
+    // This prevents the race condition where tasks try to start handlers for invalid sockets
     if (data->thread_pool) {
         const int THREAD_POOL_WAIT_TIMEOUT_MS = 2000; // 2 seconds
 
@@ -384,11 +382,14 @@ static int tcp_transport_stop(mcp_transport_t* transport) {
 
         mcp_thread_pool_wait(data->thread_pool, THREAD_POOL_WAIT_TIMEOUT_MS);
 
-        // Force thread pool shutdown after timeout
+        // Destroy thread pool before closing client connections
         mcp_log_debug("Destroying thread pool...");
         mcp_thread_pool_destroy(data->thread_pool);
         data->thread_pool = NULL;
     }
+
+    // Signal all client connections to stop AFTER thread pool is destroyed
+    tcp_transport_signal_clients_to_stop(data);
 
     // Clean up resources
     tcp_transport_cleanup_resources(data);
@@ -601,13 +602,20 @@ mcp_transport_t* mcp_transport_tcp_create(
         return NULL;
     }
 
-    // Create the thread pool for handling client connections
-    tcp_data->thread_pool = mcp_thread_pool_create(DEFAULT_THREAD_POOL_SIZE, CONNECTION_QUEUE_SIZE);
+    // Create the thread pool with maximum size to allow dynamic scaling
+    // This allocates arrays for MAX_THREAD_POOL_SIZE but starts with fewer active threads
+    tcp_data->thread_pool = mcp_thread_pool_create(MAX_THREAD_POOL_SIZE, CONNECTION_QUEUE_SIZE);
     if (tcp_data->thread_pool == NULL) {
-        mcp_log_error("Failed to create thread pool (size: %d, queue: %d)",
-                     DEFAULT_THREAD_POOL_SIZE, CONNECTION_QUEUE_SIZE);
+        mcp_log_error("Failed to create thread pool (max size: %d, queue: %d)",
+                     MAX_THREAD_POOL_SIZE, CONNECTION_QUEUE_SIZE);
         tcp_transport_free_resources(transport, tcp_data);
         return NULL;
+    }
+
+    // Resize down to default size initially (smart adjustment will scale up as needed)
+    if (mcp_thread_pool_resize(tcp_data->thread_pool, DEFAULT_THREAD_POOL_SIZE) != 0) {
+        mcp_log_warn("Failed to resize thread pool to default size %d, keeping maximum %d",
+                     DEFAULT_THREAD_POOL_SIZE, MAX_THREAD_POOL_SIZE);
     }
 
     // Set transport type and protocol
@@ -622,9 +630,9 @@ mcp_transport_t* mcp_transport_tcp_create(
     // Set transport data
     transport->transport_data = tcp_data;
 
-    mcp_log_info("Created TCP server transport on %s:%d (max clients: %d, thread pool: %d, idle timeout: %d ms)",
+    mcp_log_info("Created TCP server transport on %s:%d (max clients: %d, thread pool: %d-%d, idle timeout: %d ms)",
                 tcp_data->host, tcp_data->port, tcp_data->max_clients,
-                DEFAULT_THREAD_POOL_SIZE, idle_timeout_ms);
+                DEFAULT_THREAD_POOL_SIZE, MAX_THREAD_POOL_SIZE, idle_timeout_ms);
 
     return transport;
 }
