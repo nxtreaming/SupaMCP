@@ -42,6 +42,13 @@ extern "C" {
 // Cleanup thread interval in seconds
 #define STHTTP_CLEANUP_INTERVAL_SECONDS 60
 
+// Dynamic SSE client array settings
+#define STHTTP_INITIAL_SSE_CLIENTS 64      // Start with 64 clients
+#define STHTTP_SSE_GROWTH_FACTOR 2         // Double when full
+
+// Event ID hash map settings
+#define STHTTP_EVENT_HASH_INITIAL_SIZE 256 // Initial hash map size
+
 // HTTP status codes
 #define HTTP_STATUS_OK 200
 #define HTTP_STATUS_ACCEPTED 202
@@ -57,6 +64,35 @@ extern "C" {
 #define HTTP_LAST_EVENT_ID_BUFFER_SIZE 64
 
 /**
+ * @brief Hash map entry for event ID to position mapping
+ */
+typedef struct event_hash_entry {
+    char* event_id;                     /**< Event ID string */
+    size_t position;                    /**< Position in circular buffer */
+    struct event_hash_entry* next;      /**< Next entry for collision handling */
+} event_hash_entry_t;
+
+/**
+ * @brief Hash map for fast event ID lookup
+ */
+typedef struct {
+    event_hash_entry_t** buckets;       /**< Hash buckets */
+    size_t bucket_count;                /**< Number of buckets */
+    size_t entry_count;                 /**< Number of entries */
+    mcp_mutex_t* mutex;                 /**< Mutex for thread safety */
+} event_hash_map_t;
+
+/**
+ * @brief Dynamic SSE client array
+ */
+typedef struct {
+    struct lws** clients;               /**< Array of client pointers */
+    size_t count;                       /**< Current number of clients */
+    size_t capacity;                    /**< Current array capacity */
+    mcp_mutex_t* mutex;                 /**< Mutex for thread safety */
+} dynamic_sse_clients_t;
+
+/**
  * @brief SSE stream context for resumability
  */
 typedef struct {
@@ -68,6 +104,7 @@ typedef struct {
     size_t stored_event_count;          /**< Number of stored events */
     size_t max_stored_events;           /**< Maximum events to store */
     uint64_t next_event_id;             /**< Next event ID to assign */
+    event_hash_map_t* event_hash;       /**< Hash map for fast event lookup */
     mcp_mutex_t* mutex;                 /**< Mutex for thread safety */
 } sse_stream_context_t;
 
@@ -113,11 +150,13 @@ typedef struct {
     // Static file serving
     struct lws_http_mount* mount;
 
-    // SSE clients tracking
-    struct lws** sse_clients;
-    size_t sse_client_count;
-    size_t max_sse_clients;
-    mcp_mutex_t* sse_mutex;
+    // SSE clients tracking (dynamic array)
+    dynamic_sse_clients_t* sse_clients;
+
+    // Cleanup thread synchronization
+    mcp_cond_t* cleanup_condition;
+    mcp_mutex_t* cleanup_mutex;
+    volatile bool cleanup_shutdown;
 
     // Global SSE event storage for non-session streams
     sse_stream_context_t* global_sse_context;
@@ -177,6 +216,72 @@ void sse_stream_context_store_event(sse_stream_context_t* context, const char* e
  * @brief Replay events from a given last event ID
  */
 int sse_stream_context_replay_events(sse_stream_context_t* context, struct lws* wsi, const char* last_event_id);
+
+/**
+ * @brief Create dynamic SSE clients array
+ */
+dynamic_sse_clients_t* dynamic_sse_clients_create(size_t initial_capacity);
+
+/**
+ * @brief Destroy dynamic SSE clients array
+ */
+void dynamic_sse_clients_destroy(dynamic_sse_clients_t* clients);
+
+/**
+ * @brief Add client to dynamic array
+ */
+int dynamic_sse_clients_add(dynamic_sse_clients_t* clients, struct lws* wsi);
+
+/**
+ * @brief Remove client from dynamic array
+ */
+int dynamic_sse_clients_remove(dynamic_sse_clients_t* clients, struct lws* wsi);
+
+/**
+ * @brief Get client count
+ */
+size_t dynamic_sse_clients_count(dynamic_sse_clients_t* clients);
+
+/**
+ * @brief Cleanup disconnected clients
+ */
+size_t dynamic_sse_clients_cleanup(dynamic_sse_clients_t* clients);
+
+/**
+ * @brief Send message to all connected clients
+ */
+int dynamic_sse_clients_broadcast(dynamic_sse_clients_t* clients,
+                                 const char* event_id, const char* event_type, const char* data);
+
+/**
+ * @brief Send heartbeat to all connected clients
+ */
+int dynamic_sse_clients_broadcast_heartbeat(dynamic_sse_clients_t* clients);
+
+/**
+ * @brief Create event hash map
+ */
+event_hash_map_t* event_hash_map_create(size_t initial_size);
+
+/**
+ * @brief Destroy event hash map
+ */
+void event_hash_map_destroy(event_hash_map_t* map);
+
+/**
+ * @brief Add event to hash map
+ */
+int event_hash_map_put(event_hash_map_t* map, const char* event_id, size_t position);
+
+/**
+ * @brief Find event position in hash map
+ */
+int event_hash_map_get(event_hash_map_t* map, const char* event_id, size_t* position);
+
+/**
+ * @brief Remove event from hash map
+ */
+int event_hash_map_remove(event_hash_map_t* map, const char* event_id);
 
 /**
  * @brief Validate origin against allowed origins list

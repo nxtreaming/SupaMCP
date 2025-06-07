@@ -160,6 +160,7 @@ set(COMMON_SOURCES
     src/transport/mcp_http_session_manager.c
     src/transport/mcp_sthttp_transport.c
     src/transport/mcp_sthttp_utils.c
+    src/transport/mcp_sthttp_dynamic_utils.c
     src/transport/mcp_sthttp_threads.c
     src/transport/mcp_sthttp_callbacks.c
     src/transport/mcp_sthttp_client_transport.c

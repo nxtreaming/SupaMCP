@@ -79,9 +79,9 @@ static void free_transport_data(sthttp_transport_data_t* data) {
         data->mount = NULL;
     }
 
-    // Free SSE clients array
+    // Free dynamic SSE clients array
     if (data->sse_clients) {
-        free(data->sse_clients);
+        dynamic_sse_clients_destroy(data->sse_clients);
         data->sse_clients = NULL;
     }
 
@@ -97,11 +97,19 @@ static void free_transport_data(sthttp_transport_data_t* data) {
         data->session_manager = NULL;
     }
 
-    // Destroy mutexes
-    if (data->sse_mutex) {
-        mcp_mutex_destroy(data->sse_mutex);
-        data->sse_mutex = NULL;
+    // Destroy cleanup synchronization objects
+    if (data->cleanup_condition) {
+        mcp_cond_destroy(data->cleanup_condition);
+        data->cleanup_condition = NULL;
     }
+
+    if (data->cleanup_mutex) {
+        mcp_mutex_destroy(data->cleanup_mutex);
+        data->cleanup_mutex = NULL;
+    }
+
+    // Destroy mutexes (note: sse_mutex is now part of dynamic_sse_clients)
+    // No longer needed since dynamic_sse_clients manages its own mutex
 
     // Free the data structure itself
     free(data);
@@ -171,13 +179,7 @@ static bool initialize_mutexes(sthttp_transport_data_t* data) {
         return false;
     }
 
-    // Initialize SSE mutex
-    data->sse_mutex = mcp_mutex_create();
-    if (data->sse_mutex == NULL) {
-        mcp_log_error("Failed to create SSE mutex");
-        return false;
-    }
-
+    // No longer need SSE mutex since dynamic_sse_clients manages its own mutex
     return true;
 }
 
@@ -341,6 +343,14 @@ static int sthttp_transport_stop(mcp_transport_t* transport) {
     // Set running flag to false
     data->running = false;
 
+    // Signal cleanup thread to shutdown
+    if (data->cleanup_mutex && data->cleanup_condition) {
+        mcp_mutex_lock(data->cleanup_mutex);
+        data->cleanup_shutdown = true;
+        mcp_cond_signal(data->cleanup_condition);
+        mcp_mutex_unlock(data->cleanup_mutex);
+    }
+
     // Cancel all connections to help libwebsockets shutdown faster
     if (data->context) {
         lws_cancel_service(data->context);
@@ -434,27 +444,8 @@ static int sthttp_transport_sendv(mcp_transport_t* transport, const mcp_buffer_t
     }
     message[total_size] = '\0';
 
-    // Send as SSE event to all connected clients
-    mcp_mutex_lock(transport_data->sse_mutex);
-
-    int sent_count = 0;
-    for (size_t i = 0; i < transport_data->max_sse_clients; i++) {
-        if (transport_data->sse_clients[i] != NULL) {
-            struct lws* wsi = transport_data->sse_clients[i];
-            // Check if the WSI is still valid before sending
-            if (lws_get_socket_fd(wsi) >= 0) {
-                if (send_sse_event(wsi, NULL, "message", message) == 0) {
-                    sent_count++;
-                }
-            } else {
-                // WSI is invalid, mark for cleanup
-                transport_data->sse_clients[i] = NULL;
-                transport_data->sse_client_count--;
-            }
-        }
-    }
-
-    mcp_mutex_unlock(transport_data->sse_mutex);
+    // Send as SSE event to all connected clients using dynamic array
+    int sent_count = dynamic_sse_clients_broadcast(transport_data->sse_clients, NULL, "message", message);
 
     free(message);
 
@@ -557,16 +548,38 @@ mcp_transport_t* mcp_transport_sthttp_create(const mcp_sthttp_config_t* config) 
         return NULL;
     }
 
-    // Initialize SSE clients array
-    data->max_sse_clients = config->max_sse_clients > 0 ? config->max_sse_clients : 5000; // Use config value or default
-    data->sse_clients = (struct lws**)calloc(data->max_sse_clients, sizeof(struct lws*));
+    // Initialize dynamic SSE clients array
+    size_t initial_capacity = config->max_sse_clients > 0 ?
+        (config->max_sse_clients < STHTTP_INITIAL_SSE_CLIENTS ? config->max_sse_clients : STHTTP_INITIAL_SSE_CLIENTS) :
+        STHTTP_INITIAL_SSE_CLIENTS;
+
+    data->sse_clients = dynamic_sse_clients_create(initial_capacity);
     if (data->sse_clients == NULL) {
-        mcp_log_error("Failed to allocate SSE clients array for %zu clients", data->max_sse_clients);
+        mcp_log_error("Failed to create dynamic SSE clients array");
         free_transport_data(data);
         free(transport);
         return NULL;
     }
-    mcp_log_info("Initialized SSE clients array for %zu maximum clients", data->max_sse_clients);
+    mcp_log_info("Initialized dynamic SSE clients array with initial capacity %zu", initial_capacity);
+
+    // Initialize cleanup thread synchronization
+    data->cleanup_mutex = mcp_mutex_create();
+    if (data->cleanup_mutex == NULL) {
+        mcp_log_error("Failed to create cleanup mutex");
+        free_transport_data(data);
+        free(transport);
+        return NULL;
+    }
+
+    data->cleanup_condition = mcp_cond_create();
+    if (data->cleanup_condition == NULL) {
+        mcp_log_error("Failed to create cleanup condition variable");
+        free_transport_data(data);
+        free(transport);
+        return NULL;
+    }
+
+    data->cleanup_shutdown = false;
 
     // Set transport type to server
     transport->type = MCP_TRANSPORT_TYPE_SERVER;

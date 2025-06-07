@@ -37,36 +37,18 @@ void* sthttp_event_thread_func(void* arg) {
         }
 
         // Send heartbeats if enabled
-        if (data->send_heartbeats) {
+        if (data->send_heartbeats && data->sse_clients) {
             time_t current_time = time(NULL);
             if ((current_time - last_heartbeat) * 1000 >= (time_t)data->heartbeat_interval_ms) {
-                mcp_mutex_lock(data->sse_mutex);
-
-                // Send heartbeat to all connected SSE clients
-                size_t heartbeat_sent = 0;
-                for (size_t i = 0; i < data->max_sse_clients; i++) {
-                    if (data->sse_clients[i] != NULL) {
-                        // Check if the WSI is still valid before sending heartbeat
-                        struct lws* wsi = data->sse_clients[i];
-                        if (lws_get_socket_fd(wsi) >= 0) {
-                            if (send_sse_heartbeat_to_wsi(wsi) == 0) {
-                                heartbeat_sent++;
-                            }
-                        } else {
-                            // WSI is invalid, mark for cleanup
-                            data->sse_clients[i] = NULL;
-                            data->sse_client_count--;
-                        }
-                    }
-                }
+                // Send heartbeat to all connected SSE clients using dynamic array
+                int heartbeat_sent = dynamic_sse_clients_broadcast_heartbeat(data->sse_clients);
 
                 data->last_heartbeat_time = current_time;
                 data->heartbeat_counter++;
 
-                mcp_mutex_unlock(data->sse_mutex);
-
                 last_heartbeat = current_time;
-                mcp_log_debug("Sent heartbeat to %zu SSE clients (active: %zu)", heartbeat_sent, data->sse_client_count);
+                size_t active_clients = dynamic_sse_clients_count(data->sse_clients);
+                mcp_log_debug("Sent heartbeat to %d SSE clients (active: %zu)", heartbeat_sent, active_clients);
             }
         }
 
@@ -97,13 +79,24 @@ void* sthttp_cleanup_thread_func(void* arg) {
     mcp_log_info("HTTP streamable cleanup thread started");
 
     while (data->running) {
-        // Sleep for the cleanup interval
-        for (int i = 0; i < STHTTP_CLEANUP_INTERVAL_SECONDS && data->running; i++) {
-            mcp_sleep_ms(1000);
+        // Use condition variable for efficient timed wait
+        mcp_mutex_lock(data->cleanup_mutex);
+
+        // Wait for cleanup interval or shutdown signal
+        int wait_result = mcp_cond_timedwait(data->cleanup_condition,
+                                            data->cleanup_mutex,
+                                            STHTTP_CLEANUP_INTERVAL_SECONDS * 1000);
+
+        bool should_exit = data->cleanup_shutdown;
+        mcp_mutex_unlock(data->cleanup_mutex);
+
+        if (should_exit || !data->running) {
+            break;
         }
 
-        if (!data->running) {
-            break;
+        // Log if there was an error (but continue operation)
+        if (wait_result != 0 && wait_result != -2) { // -2 is timeout, which is expected
+            mcp_log_debug("Cleanup thread condition wait returned: %d", wait_result);
         }
 
         // Clean up expired sessions
@@ -114,35 +107,14 @@ void* sthttp_cleanup_thread_func(void* arg) {
             }
         }
 
-        // Clean up disconnected SSE clients
-        mcp_mutex_lock(data->sse_mutex);
-
-        size_t active_clients = 0;
-        size_t cleaned_clients = 0;
-
-        for (size_t i = 0; i < data->max_sse_clients; i++) {
-            if (data->sse_clients[i] != NULL) {
-                struct lws* wsi = data->sse_clients[i];
-                // Check if client is still connected by validating socket
-                if (lws_get_socket_fd(wsi) >= 0) {
-                    active_clients++;
-                } else {
-                    // Client is disconnected, remove it
-                    data->sse_clients[i] = NULL;
-                    cleaned_clients++;
-                }
+        // Clean up disconnected SSE clients using dynamic array
+        if (data->sse_clients) {
+            size_t cleaned_clients = dynamic_sse_clients_cleanup(data->sse_clients);
+            if (cleaned_clients > 0) {
+                size_t active_clients = dynamic_sse_clients_count(data->sse_clients);
+                mcp_log_debug("Cleanup thread removed %zu disconnected SSE clients (active: %zu)",
+                             cleaned_clients, active_clients);
             }
-        }
-
-        // Update the client count
-        size_t old_count = data->sse_client_count;
-        data->sse_client_count = active_clients;
-
-        mcp_mutex_unlock(data->sse_mutex);
-
-        if (cleaned_clients > 0) {
-            mcp_log_debug("Cleanup thread removed %zu disconnected SSE clients (active: %zu, was: %zu)",
-                         cleaned_clients, active_clients, old_count);
         }
     }
 
@@ -415,25 +387,10 @@ int handle_mcp_get_request(struct lws* wsi, sthttp_transport_data_t* data, sthtt
         return -1;
     }
 
-    // Add to SSE clients list
-    mcp_mutex_lock(data->sse_mutex);
-
-    // Find a free slot
-    bool added = false;
-    for (size_t i = 0; i < data->max_sse_clients; i++) {
-        if (data->sse_clients[i] == NULL) {
-            data->sse_clients[i] = wsi;
-            data->sse_client_count++;
-            added = true;
-            break;
-        }
-    }
-
-    mcp_mutex_unlock(data->sse_mutex);
-
-    if (!added) {
-        mcp_log_warn("SSE client limit reached (%zu)", data->max_sse_clients);
-        return send_http_error_response(wsi, HTTP_STATUS_SERVICE_UNAVAILABLE, "SSE client limit reached");
+    // Add to dynamic SSE clients list
+    if (dynamic_sse_clients_add(data->sse_clients, wsi) != 0) {
+        mcp_log_error("Failed to add SSE client to dynamic array");
+        return send_http_error_response(wsi, HTTP_STATUS_INTERNAL_SERVER_ERROR, "Failed to register SSE client");
     }
 
     // Replay events if Last-Event-ID was provided

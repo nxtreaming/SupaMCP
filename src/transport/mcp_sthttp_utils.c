@@ -29,6 +29,15 @@ sse_stream_context_t* sse_stream_context_create(size_t max_stored_events) {
         }
     }
 
+    // Create event hash map for fast lookup
+    context->event_hash = event_hash_map_create(STHTTP_EVENT_HASH_INITIAL_SIZE);
+    if (context->event_hash == NULL) {
+        mcp_log_error("Failed to create event hash map");
+        free(context->stored_events);
+        free(context);
+        return NULL;
+    }
+
     // Create mutex
     context->mutex = mcp_mutex_create();
     if (context->mutex == NULL) {
@@ -72,6 +81,12 @@ void sse_stream_context_destroy(sse_stream_context_t* context) {
     }
 
     mcp_mutex_unlock(context->mutex);
+
+    // Free event hash map
+    if (context->event_hash) {
+        event_hash_map_destroy(context->event_hash);
+    }
+
     mcp_mutex_destroy(context->mutex);
     free(context);
 }
@@ -98,7 +113,12 @@ void sse_stream_context_store_event(sse_stream_context_t* context, const char* e
 
     // Clear the existing event at this index if buffer is full
     if (context->stored_event_count == context->max_stored_events) {
-        sse_event_clear(&context->stored_events[index]);
+        sse_event_t* old_event = &context->stored_events[index];
+        // Remove old event from hash map
+        if (old_event->id && context->event_hash) {
+            event_hash_map_remove(context->event_hash, old_event->id);
+        }
+        sse_event_clear(old_event);
         context->event_head = (context->event_head + 1) % context->max_stored_events;
     } else {
         context->stored_event_count++;
@@ -110,6 +130,11 @@ void sse_stream_context_store_event(sse_stream_context_t* context, const char* e
     event->event = event_type ? mcp_strdup(event_type) : NULL;
     event->data = data ? mcp_strdup(data) : NULL;
     event->timestamp = time(NULL);
+
+    // Add to hash map for fast lookup
+    if (event->id && context->event_hash) {
+        event_hash_map_put(context->event_hash, event->id, index);
+    }
 
     // Update tail pointer
     context->event_tail = (context->event_tail + 1) % context->max_stored_events;
@@ -136,20 +161,44 @@ int sse_stream_context_replay_events(sse_stream_context_t* context, struct lws* 
     mcp_mutex_lock(context->mutex);
 
     int replayed_count = 0;
+    size_t start_index = 0;
     bool found_start = (last_event_id == NULL); // If no last event ID, replay all
 
-    // Iterate through stored events
-    for (size_t i = 0; i < context->stored_event_count; i++) {
+    // Use hash map for fast lookup if available
+    if (!found_start && context->event_hash) {
+        size_t hash_position;
+        if (event_hash_map_get(context->event_hash, last_event_id, &hash_position) == 0) {
+            // Found the event in hash map, calculate the starting index
+            // We want to start from the event AFTER the last_event_id
+            for (size_t i = 0; i < context->stored_event_count; i++) {
+                size_t index = (context->event_head + i) % context->max_stored_events;
+                if (index == hash_position) {
+                    start_index = i + 1; // Start from next event
+                    found_start = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // If hash map lookup failed, fall back to linear search
+    if (!found_start && last_event_id != NULL) {
+        for (size_t i = 0; i < context->stored_event_count; i++) {
+            size_t index = (context->event_head + i) % context->max_stored_events;
+            sse_event_t* event = &context->stored_events[index];
+
+            if (event->id && strcmp(event->id, last_event_id) == 0) {
+                start_index = i + 1; // Start from next event
+                found_start = true;
+                break;
+            }
+        }
+    }
+
+    // Replay events starting from the determined position
+    for (size_t i = start_index; i < context->stored_event_count; i++) {
         size_t index = (context->event_head + i) % context->max_stored_events;
         sse_event_t* event = &context->stored_events[index];
-
-        // If we haven't found the starting point yet, look for the last event ID
-        if (!found_start) {
-            if (event->id && last_event_id && strcmp(event->id, last_event_id) == 0) {
-                found_start = true;
-            }
-            continue; // Skip this event
-        }
 
         // Send the event
         if (send_sse_event(wsi, event->id, event->event, event->data) == 0) {
