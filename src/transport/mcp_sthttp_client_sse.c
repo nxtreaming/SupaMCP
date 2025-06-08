@@ -342,6 +342,7 @@ int sse_client_connect(sthttp_client_data_t* data) {
 
     // Use optimized HTTP response receiver for headers
     http_response_t response;
+    memset(&response, 0, sizeof(response)); // Initialize response structure
     result = http_client_receive_response_optimized(data->sse_conn->socket_fd, &response, data->config.request_timeout_ms);
     if (result != 0) {
         mcp_socket_close(data->sse_conn->socket_fd);
