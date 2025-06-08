@@ -30,15 +30,21 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Handle new client connection
             mcp_log_ws_info("connection established");
 
-            ws_server_lock_all_clients(data);
+            // Use write lock only for client array modification
+            ws_server_write_lock_clients(data);
 
-            // Find empty client slot using bitmap
+            // Find empty client slot using bitmap (now with atomic operations)
             int client_index = ws_server_find_free_client_slot(data);
             if (client_index == -1) {
-                data->rejected_connections++;
-                ws_server_unlock_all_clients(data);
+                // Atomic increment for rejected connections
+                MCP_ATOMIC_INC(data->rejected_connections);
+                ws_server_write_unlock_clients(data);
+
+                uint32_t active = MCP_ATOMIC_LOAD(data->active_clients);
+                uint32_t total = MCP_ATOMIC_LOAD(data->total_connections);
+                uint32_t rejected = MCP_ATOMIC_LOAD(data->rejected_connections);
                 mcp_log_ws_error("maximum clients reached (%u active, %u total, %u rejected, max: %u)",
-                                 data->active_clients, data->total_connections, data->rejected_connections, data->max_clients);
+                                 active, total, rejected, data->max_clients);
                 return -1;
             }
 
@@ -47,19 +53,28 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             ws_server_client_init(client, client_index, wsi);
             lws_set_opaque_user_data(wsi, client);
 
-            // Update statistics
+            // Update bitmap and statistics atomically
             ws_server_set_client_bit(data->client_bitmap, client_index, data->bitmap_size);
-            data->active_clients++;
-            data->total_connections++;
 
-            if (data->active_clients > data->peak_clients) {
-                data->peak_clients = data->active_clients;
+            // Atomic updates for statistics
+            uint32_t new_active = MCP_ATOMIC_INC(data->active_clients);
+            MCP_ATOMIC_INC(data->total_connections);
+
+            // Update peak clients atomically
+            uint32_t current_peak = MCP_ATOMIC_LOAD(data->peak_clients);
+            while (new_active > current_peak) {
+                if (MCP_ATOMIC_COMPARE_EXCHANGE(data->peak_clients, current_peak, new_active)) {
+                    break;
+                }
+                current_peak = MCP_ATOMIC_LOAD(data->peak_clients);
             }
 
-            mcp_log_ws_info("client %d connected (active: %u, peak: %u, total: %u, max: %u)",
-                            client_index, data->active_clients, data->peak_clients, data->total_connections, data->max_clients);
+            ws_server_write_unlock_clients(data);
 
-            ws_server_unlock_all_clients(data);
+            uint32_t peak = MCP_ATOMIC_LOAD(data->peak_clients);
+            uint32_t total = MCP_ATOMIC_LOAD(data->total_connections);
+            mcp_log_ws_info("client %d connected (active: %u, peak: %u, total: %u, max: %u)",
+                            client_index, new_active, peak, total, data->max_clients);
             break;
         }
 
@@ -198,10 +213,11 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // This is called when a client initiates a connection
             mcp_log_ws_verbose("filter network connection");
 
-            // Check if we're at capacity
-            if (data->active_clients >= data->max_clients) {
+            // Check if we're at capacity using atomic load
+            uint32_t current_active = MCP_ATOMIC_LOAD(data->active_clients);
+            if (current_active >= data->max_clients) {
                 mcp_log_ws_warn("at capacity (%u/%u), rejecting connection",
-                                data->active_clients, data->max_clients);
+                                current_active, data->max_clients);
                 return -1;
             }
             return 0;

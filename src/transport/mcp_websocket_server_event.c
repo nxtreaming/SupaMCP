@@ -15,7 +15,8 @@ static void ws_server_check_timeouts(ws_server_data_t* data) {
 
     data->last_ping_time = now;
 
-    ws_server_lock_all_clients(data);
+    // Use read lock for checking client timeouts (read-only operation)
+    ws_server_read_lock_clients(data);
 
     for (uint32_t i = 0; i < data->max_clients; i++) {
         ws_client_t* client = &data->clients[i];
@@ -41,7 +42,7 @@ static void ws_server_check_timeouts(ws_server_data_t* data) {
         }
     }
 
-    ws_server_unlock_all_clients(data);
+    ws_server_read_unlock_clients(data);
 }
 
 // Clean up inactive clients
@@ -59,11 +60,17 @@ void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
 
     data->last_cleanup_time = now;
 
-    ws_server_lock_all_clients(data);
+    // Use read lock for cleanup operations (mostly read-only)
+    ws_server_read_lock_clients(data);
 
-    // Use bitmap to quickly skip inactive clients
+    // Use bitmap to quickly skip inactive clients with atomic reads
     for (uint32_t i = 0; i < data->bitmap_size; i++) {
-        uint32_t word = data->client_bitmap[i];
+        // Atomic read of bitmap word
+#ifdef _WIN32
+        uint32_t word = InterlockedOr((volatile LONG*)&data->client_bitmap[i], 0);
+#else
+        uint32_t word = __sync_or_and_fetch(&data->client_bitmap[i], 0);
+#endif
 
         // Skip words with no active clients
         if (word == 0) {
@@ -95,7 +102,7 @@ void ws_server_cleanup_inactive_clients(ws_server_data_t* data) {
         }
     }
 
-    ws_server_unlock_all_clients(data);
+    ws_server_read_unlock_clients(data);
 }
 
 // Server event loop thread function with adaptive timeout
@@ -126,8 +133,11 @@ void* ws_server_event_thread(void* arg) {
     mcp_log_info("WebSocket server event thread started");
 
     while (data->running) {
-        // Service libwebsockets with current timeout
-        int service_result = lws_service(data->context, service_timeout_ms);
+        // Check for forced service requirements and adjust timeout
+        int adjusted_timeout = lws_service_adjust_timeout(data->context, service_timeout_ms, 0);
+
+        // Service libwebsockets with adjusted timeout
+        int service_result = lws_service(data->context, adjusted_timeout);
         if (service_result < 0) {
             mcp_log_warn("lws_service returned error: %d", service_result);
             // Don't exit the loop, just continue and try again
@@ -147,10 +157,13 @@ void* ws_server_event_thread(void* arg) {
         if (difftime(now, last_activity_check) >= ACTIVITY_CHECK_INTERVAL) {
             last_activity_check = now;
 
+            // Use atomic load to read active client count without locking
+            uint32_t current_active_clients = MCP_ATOMIC_LOAD(data->active_clients);
+
             // Use shorter timeout when there are active clients
-            if (data->active_clients > 0) {
+            if (current_active_clients > 0) {
                 // More clients = shorter timeout for better responsiveness
-                if (data->active_clients > 100) {
+                if (current_active_clients > 100) {
                     service_timeout_ms = 10; // Very responsive for many clients
                 } else {
                     service_timeout_ms = 20; // Balanced for few clients
@@ -166,8 +179,9 @@ void* ws_server_event_thread(void* arg) {
             double elapsed = difftime(now, last_service_time);
 #if MCP_ENABLE_PERF_LOGS
             double rate = service_count / elapsed;
-            mcp_log_perf("[WS] performance: %.1f service calls/sec, %lu active clients, timeout: %d ms",
-                         rate, data->active_clients, service_timeout_ms);
+            uint32_t current_active_clients = MCP_ATOMIC_LOAD(data->active_clients);
+            mcp_log_perf("[WS] performance: %.1f service calls/sec, %u active clients, timeout: %d ms",
+                         rate, current_active_clients, service_timeout_ms);
 #else
             // Avoid unused variable warning when performance logging is disabled
             (void)elapsed;

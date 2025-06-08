@@ -209,9 +209,13 @@ static void ws_server_transport_destroy(mcp_transport_t* transport) {
         mcp_log_debug("Transport already stopped during destroy");
     }
 
-    // Clean up all mutexes
+    // Clean up all synchronization primitives
     if (data->global_mutex) {
         mcp_mutex_destroy(data->global_mutex);
+    }
+
+    if (data->clients_rwlock) {
+        mcp_rwlock_destroy(data->clients_rwlock);
     }
 
     if (data->segment_mutexes) {
@@ -258,22 +262,17 @@ int mcp_transport_websocket_server_get_stats(mcp_transport_t* transport,
 
     ws_server_data_t* data = (ws_server_data_t*)transport->transport_data;
 
-    // Lock global mutex to ensure consistent data
-    ws_server_lock_all_clients(data);
+    // Use atomic loads for lock-free statistics access
+    if (active_clients) *active_clients = MCP_ATOMIC_LOAD(data->active_clients);
+    if (peak_clients) *peak_clients = MCP_ATOMIC_LOAD(data->peak_clients);
+    if (total_connections) *total_connections = MCP_ATOMIC_LOAD(data->total_connections);
+    if (rejected_connections) *rejected_connections = MCP_ATOMIC_LOAD(data->rejected_connections);
 
-    // Copy statistics
-    if (active_clients) *active_clients = data->active_clients;
-    if (peak_clients) *peak_clients = data->peak_clients;
-    if (total_connections) *total_connections = data->total_connections;
-    if (rejected_connections) *rejected_connections = data->rejected_connections;
-
-    // Calculate uptime
+    // Calculate uptime (no lock needed for timestamp)
     if (uptime_seconds) {
         time_t now = time(NULL);
         *uptime_seconds = difftime(now, data->start_time); // difftime returns double, perfect for uptime
     }
-
-    ws_server_unlock_all_clients(data);
 
     return 0;
 }
@@ -372,9 +371,21 @@ mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_confi
         return NULL;
     }
 
+    // Create read-write lock for client array access
+    data->clients_rwlock = mcp_rwlock_create();
+    if (!data->clients_rwlock) {
+        free(data->client_bitmap);
+        free(data->clients);
+        free(data);
+        free(transport);
+        mcp_log_error("Failed to create WebSocket clients read-write lock");
+        return NULL;
+    }
+
     // Allocate segment mutexes
     data->segment_mutexes = (mcp_mutex_t**)malloc(data->num_segments * sizeof(mcp_mutex_t*));
     if (!data->segment_mutexes) {
+        mcp_rwlock_destroy(data->clients_rwlock);
         free(data->client_bitmap);
         free(data->clients);
         free(data);
@@ -419,6 +430,12 @@ mcp_transport_t* mcp_transport_websocket_server_create(const mcp_websocket_confi
 
     // Initialize protocols
     mcp_websocket_init_protocols(server_protocols, ws_server_callback);
+
+    // Initialize atomic statistics
+    MCP_ATOMIC_STORE(data->active_clients, 0);
+    MCP_ATOMIC_STORE(data->peak_clients, 0);
+    MCP_ATOMIC_STORE(data->total_connections, 0);
+    MCP_ATOMIC_STORE(data->rejected_connections, 0);
 
     // Initialize timestamps
     data->last_ping_time = time(NULL);
