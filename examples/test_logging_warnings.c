@@ -5,7 +5,6 @@
  * This test file simulates the scenarios that were causing compiler warnings
  * and verifies that they are now properly handled.
  */
-
 #include "mcp_log.h"
 #include "mcp_log_config.h"
 #include <stdio.h>

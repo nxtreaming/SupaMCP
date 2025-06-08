@@ -5,7 +5,6 @@
  * This example shows how to use the optimized logging macros in WebSocket
  * transport code for different scenarios and build configurations.
  */
-
 #include "mcp_log.h"
 #include "mcp_log_config.h"
 #include <stdio.h>
@@ -54,9 +53,14 @@ int example_send_message(const char* message, size_t length) {
 
 // Example performance monitoring function
 void example_performance_stats(int active_connections, double throughput) {
+#if MCP_ENABLE_PERF_LOGS
     // Performance metrics (only when performance logging enabled)
     mcp_log_perf("[WS] active connections: %d, throughput: %.2f msg/sec", 
                  active_connections, throughput);
+#else
+    (void)active_connections;
+    (void)throughput;
+#endif
 }
 
 // Example error handling function
@@ -70,6 +74,7 @@ void example_handle_error(int error_code, const char* context) {
 
 // Example callback function with different logging levels
 int example_websocket_callback(int reason, void* user_data) {
+    (void)user_data;
     switch (reason) {
         case 1: // Connection established
             mcp_log_ws_info("callback: connection established");

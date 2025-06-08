@@ -27,6 +27,11 @@ extern "C" {
 #define DEFAULT_BUFFER_POOL_SIZE 256         // Number of buffers in the pool
 #define DEFAULT_BUFFER_POOL_BUFFER_SIZE 4096 // Size of each buffer in the pool
 
+// Client buffer management configuration
+#define WS_CLIENT_SEND_BUFFER_POOL_SIZE 64   // Number of send buffers in client pool
+#define WS_CLIENT_REUSABLE_BUFFER_SIZE 4096  // Size of reusable send buffer for small messages
+#define WS_CLIENT_SMALL_MESSAGE_THRESHOLD 3072 // Messages smaller than this use reusable buffer
+
 // Buffer growth factor
 #define WS_BUFFER_GROWTH_FACTOR 1.5    // Factor to grow buffer when needed
 

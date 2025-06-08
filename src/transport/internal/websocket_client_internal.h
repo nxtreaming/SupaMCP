@@ -8,6 +8,7 @@
 #include "mcp_log.h"
 #include "mcp_sync.h"
 #include "mcp_sys_utils.h"
+#include "mcp_buffer_pool.h"
 #include "mcp_thread_local.h"
 #include "mcp_client.h"
 
@@ -69,11 +70,27 @@ typedef struct {
     int response_error_code;        // Response error code
     int64_t current_request_id;     // Current request ID being processed
     bool request_timedout;         // Whether the current request has timed out
+
+    // Send buffer management for optimized memory usage
+    mcp_buffer_pool_t* send_buffer_pool;  // Pool for reusable send buffers
+    unsigned char* reusable_send_buffer;  // Fixed-size reusable buffer for small messages
+    size_t reusable_buffer_size;          // Size of the reusable buffer
+    mcp_mutex_t* send_buffer_mutex;       // Mutex for send buffer access
+
+    // Buffer usage statistics
+    uint32_t buffer_reuses;               // Number of buffer reuses
+    uint32_t buffer_allocs;               // Number of new allocations
+    uint32_t utf8_validations_skipped;    // Number of UTF-8 validations skipped
+    uint32_t ascii_only_messages;         // Number of ASCII-only messages detected
 } ws_client_data_t;
 
 // Buffer management functions
 int ws_client_handle_received_data(ws_client_data_t* data, void* in, size_t len, bool is_final);
 int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t size);
+int ws_client_init_send_buffers(ws_client_data_t* data);
+void ws_client_cleanup_send_buffers(ws_client_data_t* data);
+bool ws_client_is_ascii_only(const void* buffer, size_t size);
+int ws_client_send_buffer_optimized(ws_client_data_t* data, const void* buffer, size_t size, bool skip_utf8_validation);
 
 // Connection management functions
 int ws_client_connect(ws_client_data_t* data);

@@ -1,5 +1,123 @@
 #include "internal/websocket_client_internal.h"
 
+// Initialize send buffer management for optimized memory usage
+int ws_client_init_send_buffers(ws_client_data_t* data) {
+    if (!data) {
+        return -1;
+    }
+
+    // Create send buffer pool for reusable buffers
+    data->send_buffer_pool = mcp_buffer_pool_create(
+        WS_CLIENT_REUSABLE_BUFFER_SIZE + LWS_PRE,
+        WS_CLIENT_SEND_BUFFER_POOL_SIZE
+    );
+
+    if (!data->send_buffer_pool) {
+        mcp_log_warn("Failed to create WebSocket client send buffer pool, falling back to malloc");
+    } else {
+        mcp_log_debug("WebSocket client send buffer pool created with %d buffers of %d bytes each",
+                     WS_CLIENT_SEND_BUFFER_POOL_SIZE, WS_CLIENT_REUSABLE_BUFFER_SIZE + LWS_PRE);
+    }
+
+    // Allocate reusable send buffer for small messages
+    data->reusable_send_buffer = (unsigned char*)malloc(WS_CLIENT_REUSABLE_BUFFER_SIZE + LWS_PRE);
+    if (!data->reusable_send_buffer) {
+        mcp_log_error("Failed to allocate reusable send buffer");
+        if (data->send_buffer_pool) {
+            mcp_buffer_pool_destroy(data->send_buffer_pool);
+            data->send_buffer_pool = NULL;
+        }
+        return -1;
+    }
+
+    data->reusable_buffer_size = WS_CLIENT_REUSABLE_BUFFER_SIZE;
+
+    // Create mutex for send buffer access
+    data->send_buffer_mutex = mcp_mutex_create();
+    if (!data->send_buffer_mutex) {
+        mcp_log_error("Failed to create send buffer mutex");
+        free(data->reusable_send_buffer);
+        data->reusable_send_buffer = NULL;
+        if (data->send_buffer_pool) {
+            mcp_buffer_pool_destroy(data->send_buffer_pool);
+            data->send_buffer_pool = NULL;
+        }
+        return -1;
+    }
+
+    // Initialize statistics
+    data->buffer_reuses = 0;
+    data->buffer_allocs = 0;
+    data->utf8_validations_skipped = 0;
+    data->ascii_only_messages = 0;
+
+    mcp_log_debug("WebSocket client send buffer management initialized");
+    return 0;
+}
+
+// Cleanup send buffer management
+void ws_client_cleanup_send_buffers(ws_client_data_t* data) {
+    if (!data) {
+        return;
+    }
+
+    // Log statistics before cleanup
+    if (data->buffer_allocs > 0 || data->buffer_reuses > 0) {
+        mcp_log_info("WebSocket client buffer stats: %u reuses, %u allocs, %u UTF-8 validations skipped, %u ASCII-only messages",
+                    data->buffer_reuses, data->buffer_allocs, data->utf8_validations_skipped, data->ascii_only_messages);
+    }
+
+    // Destroy send buffer mutex
+    if (data->send_buffer_mutex) {
+        mcp_mutex_destroy(data->send_buffer_mutex);
+        data->send_buffer_mutex = NULL;
+    }
+
+    // Free reusable send buffer
+    if (data->reusable_send_buffer) {
+        free(data->reusable_send_buffer);
+        data->reusable_send_buffer = NULL;
+        data->reusable_buffer_size = 0;
+    }
+
+    // Destroy send buffer pool
+    if (data->send_buffer_pool) {
+        mcp_buffer_pool_destroy(data->send_buffer_pool);
+        data->send_buffer_pool = NULL;
+    }
+
+    mcp_log_debug("WebSocket client send buffer management cleaned up");
+}
+
+// Fast ASCII-only detection to skip UTF-8 validation when possible
+bool ws_client_is_ascii_only(const void* buffer, size_t size) {
+    if (!buffer || size == 0) {
+        return true;
+    }
+
+    const unsigned char* bytes = (const unsigned char*)buffer;
+
+    // Process in chunks of 8 bytes for better performance
+    size_t chunk_count = size / 8;
+    const uint64_t* chunks = (const uint64_t*)bytes;
+
+    for (size_t i = 0; i < chunk_count; i++) {
+        // Check if any byte in the 8-byte chunk has the high bit set
+        if (chunks[i] & 0x8080808080808080ULL) {
+            return false;
+        }
+    }
+
+    // Check remaining bytes
+    for (size_t i = chunk_count * 8; i < size; i++) {
+        if (bytes[i] > 127) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // Extract request/response ID from JSON data
 static int64_t websocket_extract_request_id(const char* json_data, size_t data_len) {
     int64_t id = -1;  // -1 indicates "no valid ID"
@@ -189,8 +307,8 @@ int ws_client_handle_received_data(ws_client_data_t* data, void* in, size_t len,
     return 0;
 }
 
-// Send a buffer via WebSocket with optimized memory handling
-int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t size) {
+// Optimized send buffer function with buffer reuse and optional UTF-8 validation
+int ws_client_send_buffer_optimized(ws_client_data_t* data, const void* buffer, size_t size, bool skip_utf8_validation) {
     if (!data || !buffer || size == 0 || !data->wsi) {
         return -1;
     }
@@ -217,82 +335,114 @@ int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t siz
     }
     #endif
 
-    // Always use heap allocation for WebSocket buffer to avoid MSVC stack array issues
-    unsigned char* buf = (unsigned char*)malloc(LWS_PRE + size);
+    unsigned char* buf = NULL;
+    bool using_reusable_buffer = false;
+    bool using_pool_buffer = false;
+    bool needs_sanitization = false;
+
+    // Determine buffer allocation strategy
+    if (size <= WS_CLIENT_SMALL_MESSAGE_THRESHOLD && data->reusable_send_buffer && data->send_buffer_mutex) {
+        // Use reusable buffer for small messages
+        mcp_mutex_lock(data->send_buffer_mutex);
+        if (size + LWS_PRE <= data->reusable_buffer_size + LWS_PRE) {
+            buf = data->reusable_send_buffer;
+            using_reusable_buffer = true;
+            data->buffer_reuses++;
+        }
+        mcp_mutex_unlock(data->send_buffer_mutex);
+    }
+
+    if (!buf && data->send_buffer_pool && size + LWS_PRE <= WS_CLIENT_REUSABLE_BUFFER_SIZE + LWS_PRE) {
+        // Try to get buffer from pool
+        buf = (unsigned char*)mcp_buffer_pool_acquire(data->send_buffer_pool);
+        if (buf) {
+            using_pool_buffer = true;
+            data->buffer_reuses++;
+        }
+    }
+
     if (!buf) {
-        mcp_log_error("Failed to allocate buffer for WebSocket message of size %zu", size);
-        return -1;
+        // Fall back to malloc for large messages or when pools are unavailable
+        buf = (unsigned char*)malloc(LWS_PRE + size);
+        if (!buf) {
+            mcp_log_error("Failed to allocate buffer for WebSocket message of size %zu", size);
+            return -1;
+        }
+        data->buffer_allocs++;
     }
 
     // Copy the message data
     memcpy(buf + LWS_PRE, buffer, size);
 
-    // Validate and sanitize UTF-8 encoding before sending
+    // Optimized UTF-8 validation - skip if requested or if ASCII-only
     bool has_utf8 = false;
-    bool needs_sanitization = false;
+    if (!skip_utf8_validation) {
+        // Fast ASCII-only check first
+        if (ws_client_is_ascii_only(buffer, size)) {
+            data->ascii_only_messages++;
+            data->utf8_validations_skipped++;
+        } else {
+            // Full UTF-8 validation for non-ASCII content
+            for (size_t i = 0; i < size; i++) {
+                unsigned char c = ((unsigned char*)buffer)[i];
 
-    // First pass: check if we have UTF-8 characters and if sanitization is needed
-    for (size_t i = 0; i < size; i++) {
-        unsigned char c = ((unsigned char*)buffer)[i];
+                // Check for high-bit characters (potential UTF-8)
+                if (c > 127) {
+                    has_utf8 = true;
 
-        // Check for high-bit characters (potential UTF-8)
-        if (c > 127) {
-            has_utf8 = true;
+                    // Check for invalid UTF-8 sequences
+                    if (c == 0xFE || c == 0xFF) {
+                        mcp_log_error("Invalid UTF-8 byte detected at position %zu: 0x%02X", i, c);
+                        needs_sanitization = true;
+                    }
 
-            // Check for invalid UTF-8 sequences
-            if (c == 0xFE || c == 0xFF) {
-                mcp_log_error("Invalid UTF-8 byte detected at position %zu: 0x%02X", i, c);
-                needs_sanitization = true;
-            }
-
-            // Check for incomplete UTF-8 sequences at the end of the buffer
-            if (i == size - 1) {
-                if ((c & 0xE0) == 0xC0 || (c & 0xF0) == 0xE0 || (c & 0xF8) == 0xF0) {
-                    mcp_log_error("Incomplete UTF-8 sequence at end of buffer: 0x%02X", c);
-                    needs_sanitization = true;
+                    // Check for incomplete UTF-8 sequences at the end of the buffer
+                    if (i == size - 1) {
+                        if ((c & 0xE0) == 0xC0 || (c & 0xF0) == 0xE0 || (c & 0xF8) == 0xF0) {
+                            mcp_log_error("Incomplete UTF-8 sequence at end of buffer: 0x%02X", c);
+                            needs_sanitization = true;
+                        }
+                    }
                 }
             }
+
+            // If we have UTF-8 characters, log a simple message
+            if (has_utf8) {
+                mcp_log_debug("Message contains UTF-8 characters");
+            }
         }
+    } else {
+        data->utf8_validations_skipped++;
     }
 
-    // If we have UTF-8 characters, log a simple message
-    if (has_utf8) {
-        mcp_log_debug("Message contains UTF-8 characters");
-    }
-
-    // If sanitization is needed, create a sanitized copy
+    // Handle sanitization if needed
     if (needs_sanitization) {
         mcp_log_warn("Invalid UTF-8 detected, sanitizing message");
 
-        // Create a sanitized copy of the buffer
-        unsigned char* sanitized_buf = (unsigned char*)malloc(LWS_PRE + size);
-        if (!sanitized_buf) {
-            mcp_log_error("Failed to allocate buffer for sanitized message");
-            free(buf);
-            return -1;
-        }
-
-        // Copy the message data and sanitize it
-        memcpy(sanitized_buf + LWS_PRE, buffer, size);
-
+        // If using reusable or pool buffer, we need to sanitize in place
         // Replace invalid UTF-8 sequences with '?'
         for (size_t i = 0; i < size; i++) {
-            unsigned char c = sanitized_buf[LWS_PRE + i];
+            unsigned char c = buf[LWS_PRE + i];
             if (c == 0xFE || c == 0xFF) {
-                sanitized_buf[LWS_PRE + i] = '?';
+                buf[LWS_PRE + i] = '?';
             }
         }
-
-        // Free the original buffer and use the sanitized one
-        free(buf);
-        buf = sanitized_buf;
     }
 
     // Send the message directly
     int result = lws_write(data->wsi, buf + LWS_PRE, size, LWS_WRITE_TEXT);
 
-    // Free the buffer
-    free(buf);
+    // Clean up buffer based on allocation type
+    if (using_reusable_buffer) {
+        // Reusable buffer - no cleanup needed, just unlock if we had locked
+        // (already unlocked above)
+    } else if (using_pool_buffer) {
+        // Return buffer to pool
+        mcp_buffer_pool_release(data->send_buffer_pool, buf);
+    } else {
+        // Free malloc'd buffer
+        free(buf);
+    }
 
     if (result < 0) {
         mcp_log_error("Failed to send WebSocket message directly");
@@ -304,6 +454,12 @@ int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t siz
 
     mcp_log_debug("WebSocket message sent directly, size: %zu, result: %d", size, result);
     return 0;
+}
+
+// Send a buffer via WebSocket with optimized memory handling (backward compatibility)
+int ws_client_send_buffer(ws_client_data_t* data, const void* buffer, size_t size) {
+    // Call optimized version with UTF-8 validation enabled by default
+    return ws_client_send_buffer_optimized(data, buffer, size, false);
 }
 
 // Send a message and wait for a response with optimized waiting strategy

@@ -380,6 +380,9 @@ static void ws_client_cleanup_resources(ws_client_data_t* data) {
         data->response_data_len = 0;
     }
 
+    // Cleanup send buffer management
+    ws_client_cleanup_send_buffers(data);
+
     // Step 6: Wait a short time to allow all awakened threads to exit wait state
     // This is an empirical value, usually a few milliseconds is enough
     // But we use a more conservative value to ensure safety
@@ -432,7 +435,9 @@ static int ws_client_transport_send(mcp_transport_t* transport, const void* data
         return -1;
     }
 
-    return ws_client_send_buffer(ws_data, data, size);
+    // Use optimized send buffer with ASCII-only detection
+    bool skip_utf8_validation = ws_client_is_ascii_only(data, size);
+    return ws_client_send_buffer_optimized(ws_data, data, size, skip_utf8_validation);
 }
 
 // Client transport receive function
@@ -676,8 +681,9 @@ static int ws_client_transport_sendv(mcp_transport_t* transport, const mcp_buffe
             return -1;
         }
 
-        // Send the message
-        int result = ws_client_send_buffer(ws_data, combined_buffer, total_size);
+        // Send the message with optimized buffer handling
+        bool skip_utf8_validation = ws_client_is_ascii_only(combined_buffer, total_size);
+        int result = ws_client_send_buffer_optimized(ws_data, combined_buffer, total_size, skip_utf8_validation);
 
         free(combined_buffer);
 
@@ -776,6 +782,13 @@ static int ws_client_transport_start(
     data->ping_timeout_ms = WS_PING_TIMEOUT_MS;
     data->ping_in_progress = false;
     data->missed_pongs = 0;
+
+    // Initialize send buffer management
+    if (ws_client_init_send_buffers(data) != 0) {
+        mcp_log_error("Failed to initialize WebSocket client send buffers");
+        ws_client_cleanup_resources(data);
+        return -1;
+    }
 
     // Set initial state
     data->state = WS_CLIENT_STATE_DISCONNECTED;
