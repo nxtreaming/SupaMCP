@@ -56,13 +56,12 @@ void ws_server_client_cleanup(ws_client_t* client, ws_server_data_t* server_data
 
     // Update bitmap and statistics if server_data is provided
     if (server_data) {
-        // Clear bit in bitmap (now atomic)
+        // Clear bit in bitmap
         ws_server_clear_client_bit(server_data->client_bitmap, client->client_id, server_data->bitmap_size);
 
-        // Atomically decrement active client count
-        uint32_t current_active = MCP_ATOMIC_LOAD(server_data->active_clients);
-        if (current_active > 0) {
-            MCP_ATOMIC_DEC(server_data->active_clients);
+        // Decrement active client count
+        if (server_data->active_clients > 0) {
+            server_data->active_clients--;
         }
     }
 }
@@ -211,18 +210,13 @@ ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* ws
     }
 
     // If not found, search through the client list using bitmap for efficiency
-    ws_server_read_lock_clients(data);
+    ws_server_lock_all_clients(data);
 
-    // Use bitmap to quickly skip inactive clients with atomic reads
+    // Use bitmap to quickly skip inactive clients
     const uint32_t num_words = data->bitmap_size;
 
     for (uint32_t i = 0; i < num_words; i++) {
-        // Atomic read of bitmap word
-#ifdef _WIN32
-        uint32_t word = InterlockedOr((volatile LONG*)&data->client_bitmap[i], 0);
-#else
-        uint32_t word = __sync_or_and_fetch(&data->client_bitmap[i], 0);
-#endif
+        uint32_t word = data->client_bitmap[i];
 
         // Skip words with no active clients
         if (word == 0) {
@@ -263,7 +257,7 @@ ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* ws
                 // Store client pointer in opaque user data for faster lookup next time
                 lws_set_opaque_user_data(wsi, client);
 
-                ws_server_read_unlock_clients(data);
+                ws_server_unlock_all_clients(data);
                 return client;
             }
 
@@ -272,7 +266,7 @@ ws_client_t* ws_server_find_client_by_wsi(ws_server_data_t* data, struct lws* ws
         }
     }
 
-    ws_server_read_unlock_clients(data);
+    ws_server_unlock_all_clients(data);
     return NULL;
 }
 

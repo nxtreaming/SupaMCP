@@ -30,21 +30,15 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // Handle new client connection
             mcp_log_ws_info("connection established");
 
-            // Use write lock only for client array modification
-            ws_server_write_lock_clients(data);
+            ws_server_lock_all_clients(data);
 
-            // Find empty client slot using bitmap (now with atomic operations)
+            // Find empty client slot using bitmap
             int client_index = ws_server_find_free_client_slot(data);
             if (client_index == -1) {
-                // Atomic increment for rejected connections
-                MCP_ATOMIC_INC(data->rejected_connections);
-                ws_server_write_unlock_clients(data);
-
-                uint32_t active = MCP_ATOMIC_LOAD(data->active_clients);
-                uint32_t total = MCP_ATOMIC_LOAD(data->total_connections);
-                uint32_t rejected = MCP_ATOMIC_LOAD(data->rejected_connections);
+                data->rejected_connections++;
+                ws_server_unlock_all_clients(data);
                 mcp_log_ws_error("maximum clients reached (%u active, %u total, %u rejected, max: %u)",
-                                 active, total, rejected, data->max_clients);
+                                 data->active_clients, data->total_connections, data->rejected_connections, data->max_clients);
                 return -1;
             }
 
@@ -53,56 +47,40 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             ws_server_client_init(client, client_index, wsi);
             lws_set_opaque_user_data(wsi, client);
 
-            // Update bitmap and statistics atomically
+            // Update statistics
             ws_server_set_client_bit(data->client_bitmap, client_index, data->bitmap_size);
+            data->active_clients++;
+            data->total_connections++;
 
-            // Atomic updates for statistics
-            uint32_t new_active = MCP_ATOMIC_INC(data->active_clients);
-            MCP_ATOMIC_INC(data->total_connections);
-
-            // Update peak clients atomically
-            uint32_t current_peak = MCP_ATOMIC_LOAD(data->peak_clients);
-            while (new_active > current_peak) {
-                if (MCP_ATOMIC_COMPARE_EXCHANGE(data->peak_clients, current_peak, new_active)) {
-                    break;
-                }
-                current_peak = MCP_ATOMIC_LOAD(data->peak_clients);
+            if (data->active_clients > data->peak_clients) {
+                data->peak_clients = data->active_clients;
             }
 
-            ws_server_write_unlock_clients(data);
-
-            uint32_t peak = MCP_ATOMIC_LOAD(data->peak_clients);
-            uint32_t total = MCP_ATOMIC_LOAD(data->total_connections);
             mcp_log_ws_info("client %d connected (active: %u, peak: %u, total: %u, max: %u)",
-                            client_index, new_active, peak, total, data->max_clients);
+                            client_index, data->active_clients, data->peak_clients, data->total_connections, data->max_clients);
+
+            ws_server_unlock_all_clients(data);
             break;
         }
 
         case LWS_CALLBACK_CLOSED: {
             // Handle client disconnection
+            mcp_log_ws_info("connection closed");
+
             ws_client_t* client = (ws_client_t*)lws_get_opaque_user_data(wsi);
             if (client) {
-                int client_id = client->client_id;
-                mcp_log_ws_info("client %d disconnected", client_id);
+                ws_server_lock_all_clients(data);
 
-                // Lock only this client's segment
-                ws_server_lock_client(data, client_id);
+                // Clear client data and update statistics
+                ws_server_clear_client_bit(data->client_bitmap, client->client_id, data->bitmap_size);
+                data->active_clients--;
 
-                // Mark client as closing but preserve pending data
-                client->state = WS_CLIENT_STATE_CLOSING;
-                client->wsi = NULL;
-                client->last_activity = time(NULL);
-                client->ping_sent = 0;
+                mcp_log_ws_info("client %d disconnected (active: %u, max: %u)",
+                                client->client_id, data->active_clients, data->max_clients);
 
-                // Clean up immediately if no pending data
-                if (client->receive_buffer_used == 0) {
-                    mcp_log_ws_debug("no pending data for client %d, cleaning up immediately", client_id);
-                    ws_server_client_cleanup(client, data);
-                }
+                ws_server_client_cleanup(client, data);
 
-                ws_server_unlock_client(data, client_id);
-            } else {
-                mcp_log_ws_info("unknown client disconnected");
+                ws_server_unlock_all_clients(data);
             }
             break;
         }
@@ -213,11 +191,10 @@ int ws_server_callback(struct lws* wsi, enum lws_callback_reasons reason,
             // This is called when a client initiates a connection
             mcp_log_ws_verbose("filter network connection");
 
-            // Check if we're at capacity using atomic load
-            uint32_t current_active = MCP_ATOMIC_LOAD(data->active_clients);
-            if (current_active >= data->max_clients) {
+            // Check if we're at capacity
+            if (data->active_clients >= data->max_clients) {
                 mcp_log_ws_warn("at capacity (%u/%u), rejecting connection",
-                                current_active, data->max_clients);
+                                data->active_clients, data->max_clients);
                 return -1;
             }
             return 0;
