@@ -21,7 +21,9 @@ typedef enum mcp_transport_type {
     MCP_TRANSPORT_HTTP_SERVER,              /**< HTTP server transport */
     MCP_TRANSPORT_HTTP_CLIENT,              /**< HTTP client transport */
     MCP_TRANSPORT_STHTTP,                   /**< HTTP Streamable server transport (MCP 2025-03-26) */
-    MCP_TRANSPORT_STHTTP_CLIENT             /**< HTTP Streamable client transport (MCP 2025-03-26) */
+    MCP_TRANSPORT_STHTTP_CLIENT,            /**< HTTP Streamable client transport (MCP 2025-03-26) */
+    MCP_TRANSPORT_MQTT_SERVER,              /**< MQTT server transport (broker) */
+    MCP_TRANSPORT_MQTT_CLIENT               /**< MQTT client transport */
 } mcp_transport_type_t;
 
 /**
@@ -131,6 +133,33 @@ typedef union mcp_transport_config {
         int auto_reconnect_sse;              /**< Whether to automatically reconnect SSE streams (1 for true, 0 for false) */
         const char* custom_headers;          /**< Additional custom headers (format: "Key1: Value1\r\nKey2: Value2") */
     } sthttp_client;
+
+    struct {
+        const char* host;                    /**< MQTT broker hostname or IP address */
+        uint16_t port;                       /**< MQTT broker port (default: 1883 for non-SSL, 8883 for SSL) */
+        const char* client_id;               /**< MQTT client ID (auto-generated if NULL) */
+        const char* username;                /**< MQTT username (optional) */
+        const char* password;                /**< MQTT password (optional) */
+        const char* topic_prefix;            /**< Topic prefix for MCP messages (default: "mcp/") */
+        const char* request_topic;           /**< Topic for MCP requests (default: "{prefix}request") */
+        const char* response_topic;          /**< Topic for MCP responses (default: "{prefix}response") */
+        const char* notification_topic;      /**< Topic for MCP notifications (default: "{prefix}notification") */
+        uint16_t keep_alive;                 /**< MQTT keep-alive interval in seconds (default: 60) */
+        int clean_session;                   /**< MQTT clean session flag (1 for true, 0 for false) */
+        int use_ssl;                         /**< Whether to use SSL/TLS (1 for true, 0 for false) */
+        const char* cert_path;               /**< Path to SSL certificate (optional) */
+        const char* key_path;                /**< Path to SSL private key (optional) */
+        const char* ca_cert_path;            /**< Path to CA certificate for verification (optional) */
+        int verify_ssl;                      /**< Whether to verify SSL certificates (1 for true, 0 for false) */
+        uint32_t connect_timeout_ms;         /**< Connection timeout in milliseconds */
+        uint32_t message_timeout_ms;         /**< Message timeout in milliseconds */
+        int qos;                             /**< MQTT Quality of Service level (0, 1, or 2) */
+        int retain;                          /**< Whether to retain messages (1 for true, 0 for false) */
+        const char* will_topic;              /**< Last Will and Testament topic (optional) */
+        const char* will_message;            /**< Last Will and Testament message (optional) */
+        int will_qos;                        /**< Last Will and Testament QoS level */
+        int will_retain;                     /**< Whether to retain Last Will and Testament message */
+    } mqtt;
 
 } mcp_transport_config_t;
 

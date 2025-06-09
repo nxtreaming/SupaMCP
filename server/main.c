@@ -15,6 +15,7 @@
 #include "mcp_sthttp_transport.h"
 #include "mcp_transport_factory.h"
 #include "mcp_websocket_transport.h"
+#include "mcp_mqtt_transport.h"
 #include "mcp_profiler.h"
 #include "mcp_json.h"
 #include "mcp_socket_utils.h"
@@ -60,6 +61,15 @@ typedef struct {
     bool enable_legacy_endpoints;  // For Streamable HTTP
     bool send_heartbeats;  // For Streamable HTTP
     uint32_t heartbeat_interval_ms;  // For Streamable HTTP
+
+    // MQTT-specific options
+    const char* mqtt_client_id;
+    const char* mqtt_username;
+    const char* mqtt_password;
+    const char* mqtt_topic_prefix;
+    int mqtt_qos;
+    bool mqtt_clean_session;
+    bool mqtt_use_ssl;
 } server_config_t;
 
 /**
@@ -668,6 +678,15 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
     config->send_heartbeats = true;  // Default: enable heartbeats
     config->heartbeat_interval_ms = 30000;  // Default: 30 seconds
 
+    // MQTT defaults
+    config->mqtt_client_id = NULL;
+    config->mqtt_username = NULL;
+    config->mqtt_password = NULL;
+    config->mqtt_topic_prefix = "mcp/";
+    config->mqtt_qos = 1;
+    config->mqtt_clean_session = true;
+    config->mqtt_use_ssl = false;
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tcp") == 0) {
             config->transport_type = "tcp";
@@ -677,6 +696,8 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             config->transport_type = "sthttp";
         } else if (strcmp(argv[i], "--websocket") == 0 || strcmp(argv[i], "--ws") == 0) {
             config->transport_type = "websocket";
+        } else if (strcmp(argv[i], "--mqtt") == 0) {
+            config->transport_type = "mqtt";
         } else if (strcmp(argv[i], "--stdio") == 0) {
             config->transport_type = "stdio";
         } else if (strcmp(argv[i], "--ws-path") == 0 && i + 1 < argc) {
@@ -721,6 +742,22 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             config->send_heartbeats = false;
         } else if (strcmp(argv[i], "--heartbeat-interval") == 0 && i + 1 < argc) {
             config->heartbeat_interval_ms = (uint32_t)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--mqtt-client-id") == 0 && i + 1 < argc) {
+            config->mqtt_client_id = argv[++i];
+        } else if (strcmp(argv[i], "--mqtt-username") == 0 && i + 1 < argc) {
+            config->mqtt_username = argv[++i];
+        } else if (strcmp(argv[i], "--mqtt-password") == 0 && i + 1 < argc) {
+            config->mqtt_password = argv[++i];
+        } else if (strcmp(argv[i], "--mqtt-topic-prefix") == 0 && i + 1 < argc) {
+            config->mqtt_topic_prefix = argv[++i];
+        } else if (strcmp(argv[i], "--mqtt-qos") == 0 && i + 1 < argc) {
+            config->mqtt_qos = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--mqtt-clean-session") == 0) {
+            config->mqtt_clean_session = true;
+        } else if (strcmp(argv[i], "--mqtt-persistent-session") == 0) {
+            config->mqtt_clean_session = false;
+        } else if (strcmp(argv[i], "--mqtt-ssl") == 0) {
+            config->mqtt_use_ssl = true;
         } else if (strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("Options:\n");
@@ -728,6 +765,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             printf("  --http              Use HTTP transport with SSE support\n");
             printf("  --sthttp            Use Streamable HTTP transport (MCP 2025-03-26)\n");
             printf("  --websocket, --ws   Use WebSocket transport\n");
+            printf("  --mqtt              Use MQTT transport\n");
             printf("  --stdio             Use stdio transport (default for interactive mode)\n");
             printf("  --host HOST         Host to bind to (default: 127.0.0.1)\n");
             printf("  --port PORT         Port to bind to (default: 8080)\n");
@@ -744,6 +782,14 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             printf("  --enable-heartbeats Enable heartbeats for Streamable HTTP (default)\n");
             printf("  --disable-heartbeats Disable heartbeats for Streamable HTTP\n");
             printf("  --heartbeat-interval MS Set heartbeat interval in milliseconds (default: 30000)\n");
+            printf("  --mqtt-client-id ID Set MQTT client ID\n");
+            printf("  --mqtt-username USER Set MQTT username\n");
+            printf("  --mqtt-password PASS Set MQTT password\n");
+            printf("  --mqtt-topic-prefix PREFIX Set MQTT topic prefix (default: mcp/)\n");
+            printf("  --mqtt-qos QOS      Set MQTT QoS level (0, 1, or 2, default: 1)\n");
+            printf("  --mqtt-clean-session Use MQTT clean session (default)\n");
+            printf("  --mqtt-persistent-session Use MQTT persistent session\n");
+            printf("  --mqtt-ssl          Use SSL/TLS for MQTT connection\n");
             printf("  --daemon            Run as daemon (Unix-like systems only)\n");
             printf("  --help              Show this help message\n");
             exit(0);
@@ -1029,6 +1075,28 @@ int main(int argc, char** argv) {
         ws_config.ws.connect_timeout_ms = 5000; // 5 second timeout
 
         transport = mcp_transport_factory_create(MCP_TRANSPORT_WS_SERVER, &ws_config);
+    } else if (strcmp(config.transport_type, "mqtt") == 0) {
+        mcp_log_info("Using MQTT transport on %s:%d", config.host, config.port);
+
+        // Create MQTT transport configuration
+        mcp_mqtt_config_t mqtt_config = MCP_MQTT_CONFIG_DEFAULT;
+        mqtt_config.host = config.host;
+        mqtt_config.port = config.port;
+        mqtt_config.client_id = config.mqtt_client_id;
+        mqtt_config.username = config.mqtt_username;
+        mqtt_config.password = config.mqtt_password;
+        mqtt_config.topic_prefix = config.mqtt_topic_prefix;
+        mqtt_config.qos = config.mqtt_qos;
+        mqtt_config.clean_session = config.mqtt_clean_session;
+        mqtt_config.use_ssl = config.mqtt_use_ssl;
+
+        transport = mcp_transport_mqtt_create(&mqtt_config);
+
+        // Explicitly set the protocol type to MQTT
+        if (transport) {
+            mcp_transport_set_protocol(transport, MCP_TRANSPORT_PROTOCOL_MQTT);
+            mcp_log_info("Transport protocol explicitly set to MQTT");
+        }
     } else {
         mcp_log_error("Unknown transport type: %s", config.transport_type);
         mcp_server_destroy(g_server); g_server = NULL;

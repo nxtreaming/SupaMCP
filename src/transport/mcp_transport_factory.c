@@ -8,6 +8,8 @@
 #include "mcp_http_client_transport.h"
 #include "mcp_sthttp_transport.h"
 #include "mcp_sthttp_client_transport.h"
+#include "mcp_mqtt_transport.h"
+#include "mcp_mqtt_client_transport.h"
 #include <stdlib.h>
 
 mcp_transport_t* mcp_transport_factory_create(
@@ -213,6 +215,76 @@ mcp_transport_t* mcp_transport_factory_create(
                     .custom_headers = config->sthttp_client.custom_headers
                 };
                 return mcp_transport_sthttp_client_create(&client_config);
+            }
+
+        case MCP_TRANSPORT_MQTT_SERVER:
+            if (config == NULL) {
+                return NULL;
+            }
+            {
+                // Convert from transport factory config to MQTT config
+                mcp_mqtt_config_t mqtt_config = {
+                    .host = config->mqtt.host,
+                    .port = config->mqtt.port,
+                    .client_id = config->mqtt.client_id,
+                    .username = config->mqtt.username,
+                    .password = config->mqtt.password,
+                    .topic_prefix = config->mqtt.topic_prefix,
+                    .request_topic = config->mqtt.request_topic,
+                    .response_topic = config->mqtt.response_topic,
+                    .notification_topic = config->mqtt.notification_topic,
+                    .keep_alive = config->mqtt.keep_alive,
+                    .clean_session = config->mqtt.clean_session ? true : false,
+                    .use_ssl = config->mqtt.use_ssl ? true : false,
+                    .cert_path = config->mqtt.cert_path,
+                    .key_path = config->mqtt.key_path,
+                    .ca_cert_path = config->mqtt.ca_cert_path,
+                    .verify_ssl = config->mqtt.verify_ssl ? true : false,
+                    .connect_timeout_ms = config->mqtt.connect_timeout_ms,
+                    .message_timeout_ms = config->mqtt.message_timeout_ms,
+                    .qos = config->mqtt.qos,
+                    .retain = config->mqtt.retain ? true : false,
+                    .will_topic = config->mqtt.will_topic,
+                    .will_message = config->mqtt.will_message,
+                    .will_qos = config->mqtt.will_qos,
+                    .will_retain = config->mqtt.will_retain ? true : false
+                };
+                return mcp_transport_mqtt_create(&mqtt_config);
+            }
+
+        case MCP_TRANSPORT_MQTT_CLIENT:
+            if (config == NULL) {
+                return NULL;
+            }
+            {
+                // Convert from transport factory config to MQTT config
+                mcp_mqtt_config_t mqtt_config = {
+                    .host = config->mqtt.host,
+                    .port = config->mqtt.port,
+                    .client_id = config->mqtt.client_id,
+                    .username = config->mqtt.username,
+                    .password = config->mqtt.password,
+                    .topic_prefix = config->mqtt.topic_prefix,
+                    .request_topic = config->mqtt.request_topic,
+                    .response_topic = config->mqtt.response_topic,
+                    .notification_topic = config->mqtt.notification_topic,
+                    .keep_alive = config->mqtt.keep_alive,
+                    .clean_session = config->mqtt.clean_session ? true : false,
+                    .use_ssl = config->mqtt.use_ssl ? true : false,
+                    .cert_path = config->mqtt.cert_path,
+                    .key_path = config->mqtt.key_path,
+                    .ca_cert_path = config->mqtt.ca_cert_path,
+                    .verify_ssl = config->mqtt.verify_ssl ? true : false,
+                    .connect_timeout_ms = config->mqtt.connect_timeout_ms,
+                    .message_timeout_ms = config->mqtt.message_timeout_ms,
+                    .qos = config->mqtt.qos,
+                    .retain = config->mqtt.retain ? true : false,
+                    .will_topic = config->mqtt.will_topic,
+                    .will_message = config->mqtt.will_message,
+                    .will_qos = config->mqtt.will_qos,
+                    .will_retain = config->mqtt.will_retain ? true : false
+                };
+                return mcp_transport_mqtt_client_create(&mqtt_config);
             }
 
         default:

@@ -168,6 +168,9 @@ set(COMMON_SOURCES
     src/transport/mcp_sthttp_client_sse.c
     src/transport/mcp_sthttp_http_parser.c
     src/transport/mcp_sthttp_sse_parser.c
+    src/transport/mcp_mqtt_common.c
+    src/transport/mcp_mqtt_transport.c
+    src/transport/mcp_mqtt_client_transport.c
     src/common/mcp_types.c
     src/common/mcp_arena.c
     src/common/mcp_log.c

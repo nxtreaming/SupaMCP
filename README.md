@@ -5,7 +5,7 @@ A cross-platform implementation of the Model Context Protocol (MCP) server/clien
 ## Features
 
 - Cross-platform support (Windows, macOS, Linux)
-- Multiple transport options (stdio, TCP, HTTP, WebSocket, **Streamable HTTP**)
+- Multiple transport options (stdio, TCP, HTTP, WebSocket, **Streamable HTTP**, **MQTT**)
 - Resource and tool support
 - **MCP Gateway Mode:** Can act as a gateway to route requests to downstream MCP servers.
 - **Streamable HTTP Transport:** Full MCP 2025-03-26 protocol support with unified endpoints, session management, and streaming responses
@@ -135,6 +135,9 @@ mcp_server --http --host 127.0.0.1 --port 8080
 # Run with Streamable HTTP transport (MCP 2025-03-26)
 ./build/examples/http_streamable_server 8080
 
+# Run with MQTT transport
+mcp_server --mqtt --host 127.0.0.1 --port 1883
+
 # Run with logging to file
 mcp_server --log-file /path/to/log/file.log
 
@@ -154,6 +157,7 @@ mcp_server --help
 |--------|-------------|---------|
 | `--tcp` | Use TCP transport | - |
 | `--http` | Use HTTP transport with SSE support | - |
+| `--mqtt` | Use MQTT transport | - |
 | `--stdio` | Use stdio transport (default) | - |
 | `--host HOST` | Host to bind to | 127.0.0.1 |
 | `--port PORT` | Port to bind to | 8080 |
@@ -203,6 +207,9 @@ mcp_client --tcp --host 127.0.0.1 --port 8080 --list-resources
 # List resources using HTTP transport
 mcp_client --http --host 127.0.0.1 --port 8080 --list-resources
 
+# List resources using MQTT transport
+mcp_client --mqtt --host 127.0.0.1 --port 1883 --list-resources
+
 # List resource templates
 mcp_client --list-templates
 
@@ -225,6 +232,7 @@ mcp_client --help
 |--------|-------------|---------|
 | `--tcp` | Use TCP transport | - |
 | `--http` | Use HTTP transport | - |
+| `--mqtt` | Use MQTT transport | - |
 | `--stdio` | Use stdio transport (default) | - |
 | `--host HOST` | Host to connect to | 127.0.0.1 |
 | `--port PORT` | Port to connect to | 8080 |
@@ -270,6 +278,7 @@ The server provides the following example tools:
 
 Additional documentation is available in the `docs` directory:
 
+- [MQTT Transport](docs/mqtt_transport.md): Complete documentation for the MQTT transport implementation, including configuration, usage examples, and troubleshooting.
 - [Streamable HTTP Transport](docs/streamable_http_transport.md): Complete documentation for the MCP 2025-03-26 Streamable HTTP Transport implementation, including server and client usage.
 - [HTTP Protocol Implementation Optimization](docs/http_protocol_optimization.md): Details about the optimizations made to the HTTP protocol implementation in SupaMCP and how to test these optimizations.
 - [HTTP Protocol](docs/http_protocol.md): Comprehensive documentation of the HTTP protocol implementation in SupaMCP.

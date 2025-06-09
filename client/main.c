@@ -8,6 +8,7 @@
 #include "mcp_sthttp_client_transport.h"
 #include "mcp_transport_factory.h"
 #include "mcp_websocket_transport.h"
+#include "mcp_mqtt_client_transport.h"
 #include "mcp_log.h"
 #include "mcp_thread_local.h"
 
@@ -22,6 +23,14 @@ int main(int argc, char** argv) {
     bool enable_sessions = true;
     bool enable_sse_streams = true;
     bool auto_reconnect_sse = true;
+
+    // MQTT-specific options
+    const char* mqtt_client_id = NULL;
+    const char* mqtt_username = NULL;
+    const char* mqtt_password = NULL;
+    const char* mqtt_topic_prefix = "mcp/";
+    int mqtt_qos = 1;
+    bool mqtt_clean_session = true;
 
     mcp_log_init(NULL, MCP_LOG_LEVEL_DEBUG);
 
@@ -55,6 +64,22 @@ int main(int argc, char** argv) {
             transport_type = "websocket";
         } else if (strncmp(argv[i], "--ws-path=", 10) == 0) {
             ws_path = argv[i] + 10;
+        } else if (strcmp(argv[i], "--mqtt") == 0) {
+            transport_type = "mqtt";
+        } else if (strncmp(argv[i], "--mqtt-client-id=", 17) == 0) {
+            mqtt_client_id = argv[i] + 17;
+        } else if (strncmp(argv[i], "--mqtt-username=", 16) == 0) {
+            mqtt_username = argv[i] + 16;
+        } else if (strncmp(argv[i], "--mqtt-password=", 16) == 0) {
+            mqtt_password = argv[i] + 16;
+        } else if (strncmp(argv[i], "--mqtt-topic-prefix=", 20) == 0) {
+            mqtt_topic_prefix = argv[i] + 20;
+        } else if (strncmp(argv[i], "--mqtt-qos=", 11) == 0) {
+            mqtt_qos = atoi(argv[i] + 11);
+        } else if (strcmp(argv[i], "--mqtt-clean-session") == 0) {
+            mqtt_clean_session = true;
+        } else if (strcmp(argv[i], "--mqtt-persistent-session") == 0) {
+            mqtt_clean_session = false;
         } else if (strcmp(argv[i], "--stdio") == 0) {
             transport_type = "stdio";
         } else if (strncmp(argv[i], "--api-key=", 10) == 0) {
@@ -92,6 +117,14 @@ int main(int argc, char** argv) {
              printf("  --sthttps                 Use Streamable HTTPS transport\n");
              printf("  --websocket, --ws         Use WebSocket transport\n");
              printf("  --ws-path=PATH            Set WebSocket path (default: /ws)\n");
+             printf("  --mqtt                    Use MQTT transport\n");
+             printf("  --mqtt-client-id=ID       Set MQTT client ID\n");
+             printf("  --mqtt-username=USER      Set MQTT username\n");
+             printf("  --mqtt-password=PASS      Set MQTT password\n");
+             printf("  --mqtt-topic-prefix=PREFIX Set MQTT topic prefix (default: mcp/)\n");
+             printf("  --mqtt-qos=QOS            Set MQTT QoS level (0, 1, or 2, default: 1)\n");
+             printf("  --mqtt-clean-session      Use MQTT clean session (default)\n");
+             printf("  --mqtt-persistent-session Use MQTT persistent session\n");
              printf("  --host=HOST               Set host to connect to (default: 127.0.0.1)\n");
              printf("  --port=PORT               Set port to connect to (default: 8080)\n");
              printf("  --host HOST               Set host to connect to (default: 127.0.0.1)\n");
@@ -176,6 +209,26 @@ int main(int argc, char** argv) {
         config.ws.connect_timeout_ms = timeout_ms;
 
         transport = mcp_transport_factory_create(MCP_TRANSPORT_WS_CLIENT, &config);
+    } else if (strcmp(transport_type, "mqtt") == 0) {
+        mcp_log_info("Using MQTT client transport (%s:%d)", host, port);
+
+        // Create MQTT client configuration
+        mcp_mqtt_client_config_t config = MCP_MQTT_CLIENT_CONFIG_DEFAULT;
+        config.base.host = host;
+        config.base.port = port;
+        config.base.client_id = mqtt_client_id;
+        config.base.username = mqtt_username;
+        config.base.password = mqtt_password;
+        config.base.topic_prefix = mqtt_topic_prefix;
+        config.base.qos = mqtt_qos;
+        config.base.clean_session = mqtt_clean_session;
+        config.base.use_ssl = use_ssl;
+        config.base.connect_timeout_ms = timeout_ms;
+        config.base.message_timeout_ms = timeout_ms;
+        config.auto_reconnect = true;
+        config.enable_metrics = true;
+
+        transport = mcp_transport_mqtt_client_create_with_config(&config);
     } else {
         mcp_log_error("Unknown transport type: %s", transport_type);
         return 1;
