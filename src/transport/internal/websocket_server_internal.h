@@ -7,8 +7,6 @@
 #include "transport_interfaces.h"
 #include "mcp_log.h"
 #include "mcp_sync.h"
-#include "mcp_rwlock.h"
-#include "mcp_atom.h"
 #include "mcp_sys_utils.h"
 #include "mcp_thread_local.h"
 #include "mcp_buffer_pool.h"
@@ -58,17 +56,16 @@ typedef struct {
     uint32_t max_clients;           // Maximum number of clients
     uint32_t bitmap_size;           // Size of bitmap array in uint32_t units
 
-    // Optimized concurrency control
-    mcp_rwlock_t* clients_rwlock;   // Read-write lock for client array access
-    mcp_mutex_t** segment_mutexes;  // Array of segment mutexes for fine-grained locking
+    // Segmented mutex for better concurrency
+    mcp_mutex_t** segment_mutexes;  // Array of segment mutexes
     uint32_t num_segments;          // Number of mutex segments
-    mcp_mutex_t* global_mutex;      // Global mutex for critical operations only
+    mcp_mutex_t* global_mutex;      // Global mutex for operations affecting all clients
 
-    // Atomic statistics for lock-free updates
-    MCP_ATOMIC_TYPE(uint32_t) active_clients;        // Number of active clients
-    MCP_ATOMIC_TYPE(uint32_t) peak_clients;          // Peak number of active clients
-    MCP_ATOMIC_TYPE(uint32_t) total_connections;     // Total number of connections since start
-    MCP_ATOMIC_TYPE(uint32_t) rejected_connections;  // Number of rejected connections due to max clients
+    // Statistics
+    uint32_t active_clients;        // Number of active clients
+    uint32_t peak_clients;          // Peak number of active clients
+    uint32_t total_connections;     // Total number of connections since start
+    uint32_t rejected_connections;  // Number of rejected connections due to max clients
 
     mcp_transport_t* transport;     // Transport handle
     mcp_websocket_config_t config;  // WebSocket configuration
@@ -93,18 +90,10 @@ void ws_server_clear_client_bit(uint32_t* bitmap, int index, int bitmap_size);
 bool ws_server_test_client_bit(uint32_t* bitmap, int index, int bitmap_size);
 int ws_server_find_free_client_slot(ws_server_data_t* data);
 
-// Optimized locking functions
+// Mutex helper functions
 mcp_mutex_t* ws_server_get_client_mutex(ws_server_data_t* data, int client_index);
 void ws_server_lock_client(ws_server_data_t* data, int client_index);
 void ws_server_unlock_client(ws_server_data_t* data, int client_index);
-
-// Read-write lock functions for better concurrency
-void ws_server_read_lock_clients(ws_server_data_t* data);
-void ws_server_read_unlock_clients(ws_server_data_t* data);
-void ws_server_write_lock_clients(ws_server_data_t* data);
-void ws_server_write_unlock_clients(ws_server_data_t* data);
-
-// Legacy global lock functions (use sparingly)
 void ws_server_lock_all_clients(ws_server_data_t* data);
 void ws_server_unlock_all_clients(ws_server_data_t* data);
 
