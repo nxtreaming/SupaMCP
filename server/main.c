@@ -13,6 +13,8 @@
 #include "mcp_tcp_transport.h"
 #include "mcp_http_transport.h"
 #include "mcp_sthttp_transport.h"
+#include "mcp_transport_factory.h"
+#include "mcp_websocket_transport.h"
 #include "mcp_profiler.h"
 #include "mcp_json.h"
 #include "mcp_socket_utils.h"
@@ -47,6 +49,7 @@ typedef struct {
     const char* transport_type;
     const char* host;
     uint16_t port;
+    const char* ws_path;   // WebSocket path (e.g., "/ws")
     const char* log_file;
     mcp_log_level_t log_level;
     bool daemon;
@@ -653,6 +656,7 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
     config->transport_type = "stdio";
     config->host = "127.0.0.1";
     config->port = 8080;
+    config->ws_path = "/ws";  // Default WebSocket path
     config->log_file = NULL;
     config->log_level = MCP_LOG_LEVEL_INFO;
     config->daemon = false;
@@ -671,8 +675,12 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             config->transport_type = "http";
         } else if (strcmp(argv[i], "--sthttp") == 0) {
             config->transport_type = "sthttp";
+        } else if (strcmp(argv[i], "--websocket") == 0 || strcmp(argv[i], "--ws") == 0) {
+            config->transport_type = "websocket";
         } else if (strcmp(argv[i], "--stdio") == 0) {
             config->transport_type = "stdio";
+        } else if (strcmp(argv[i], "--ws-path") == 0 && i + 1 < argc) {
+            config->ws_path = argv[++i];
         } else if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
             config->host = argv[++i];
         } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
@@ -719,9 +727,11 @@ static int parse_arguments(int argc, char** argv, server_config_t* config) {
             printf("  --tcp               Use TCP transport (default for daemon mode)\n");
             printf("  --http              Use HTTP transport with SSE support\n");
             printf("  --sthttp            Use Streamable HTTP transport (MCP 2025-03-26)\n");
+            printf("  --websocket, --ws   Use WebSocket transport\n");
             printf("  --stdio             Use stdio transport (default for interactive mode)\n");
             printf("  --host HOST         Host to bind to (default: 127.0.0.1)\n");
             printf("  --port PORT         Port to bind to (default: 8080)\n");
+            printf("  --ws-path PATH      WebSocket endpoint path (default: /ws)\n");
             printf("  --log-file FILE     Log to file\n");
             printf("  --log-level LEVEL   Set log level (error, warn, info, debug)\n");
             printf("  --api-key KEY       Require API key for authentication\n");
@@ -1007,6 +1017,18 @@ int main(int argc, char** argv) {
             mcp_transport_set_protocol(transport, MCP_TRANSPORT_PROTOCOL_STHTTP);
             mcp_log_info("Transport protocol explicitly set to Streamable HTTP");
         }
+    } else if (strcmp(config.transport_type, "websocket") == 0) {
+        mcp_log_info("Using WebSocket transport on %s:%d%s", config.host, config.port, config.ws_path);
+
+        // Create WebSocket transport configuration
+        mcp_transport_config_t ws_config = {0};
+        ws_config.ws.host = config.host;
+        ws_config.ws.port = config.port;
+        ws_config.ws.path = config.ws_path;
+        ws_config.ws.use_ssl = 0; // No SSL for now
+        ws_config.ws.connect_timeout_ms = 5000; // 5 second timeout
+
+        transport = mcp_transport_factory_create(MCP_TRANSPORT_WS_SERVER, &ws_config);
     } else {
         mcp_log_error("Unknown transport type: %s", config.transport_type);
         mcp_server_destroy(g_server); g_server = NULL;

@@ -6,6 +6,8 @@
 #include "mcp_tcp_client_transport.h"
 #include "mcp_http_client_transport.h"
 #include "mcp_sthttp_client_transport.h"
+#include "mcp_transport_factory.h"
+#include "mcp_websocket_transport.h"
 #include "mcp_log.h"
 #include "mcp_thread_local.h"
 
@@ -13,6 +15,7 @@ int main(int argc, char** argv) {
     const char* transport_type = "stdio";
     const char* host = "127.0.0.1";
     uint16_t port = 8080;
+    const char* ws_path = "/ws"; // Default WebSocket path
     bool use_ssl = false;
     const char* api_key = NULL;
     uint32_t timeout_ms = 30000; // 30 seconds default timeout
@@ -48,6 +51,10 @@ int main(int argc, char** argv) {
         } else if (strcmp(argv[i], "--sthttps") == 0) {
             transport_type = "sthttp";
             use_ssl = true;
+        } else if (strcmp(argv[i], "--websocket") == 0 || strcmp(argv[i], "--ws") == 0) {
+            transport_type = "websocket";
+        } else if (strncmp(argv[i], "--ws-path=", 10) == 0) {
+            ws_path = argv[i] + 10;
         } else if (strcmp(argv[i], "--stdio") == 0) {
             transport_type = "stdio";
         } else if (strncmp(argv[i], "--api-key=", 10) == 0) {
@@ -83,6 +90,8 @@ int main(int argc, char** argv) {
              printf("  --https                   Use HTTPS transport\n");
              printf("  --sthttp                  Use Streamable HTTP transport\n");
              printf("  --sthttps                 Use Streamable HTTPS transport\n");
+             printf("  --websocket, --ws         Use WebSocket transport\n");
+             printf("  --ws-path=PATH            Set WebSocket path (default: /ws)\n");
              printf("  --host=HOST               Set host to connect to (default: 127.0.0.1)\n");
              printf("  --port=PORT               Set port to connect to (default: 8080)\n");
              printf("  --host HOST               Set host to connect to (default: 127.0.0.1)\n");
@@ -155,6 +164,18 @@ int main(int argc, char** argv) {
         config.auto_reconnect_sse = auto_reconnect_sse;
 
         transport = mcp_transport_sthttp_client_create(&config);
+    } else if (strcmp(transport_type, "websocket") == 0) {
+        mcp_log_info("Using WebSocket client transport (%s:%d%s)", host, port, ws_path);
+
+        // Create WebSocket transport configuration
+        mcp_transport_config_t config = {0};
+        config.ws.host = host;
+        config.ws.port = port;
+        config.ws.path = ws_path;
+        config.ws.use_ssl = use_ssl ? 1 : 0;
+        config.ws.connect_timeout_ms = timeout_ms;
+
+        transport = mcp_transport_factory_create(MCP_TRANSPORT_WS_CLIENT, &config);
     } else {
         mcp_log_error("Unknown transport type: %s", transport_type);
         return 1;
