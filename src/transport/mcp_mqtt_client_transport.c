@@ -344,6 +344,8 @@ static int mqtt_client_protocol_callback(struct lws* wsi, enum lws_callback_reas
                 if (topic) {
                     mqtt_handle_incoming_message(&client_data->base, topic, pub->payload, pub->payload_len);
                     free(topic);
+                } else {
+                    mcp_log_error("Failed to allocate memory for MQTT topic (length: %u)", pub->topic_len);
                 }
                 mqtt_client_update_stats(client_data, false, true, pub->payload_len);
             }
@@ -655,6 +657,10 @@ int mqtt_client_start_connection(mcp_mqtt_client_transport_data_t* data) {
         char* generated_id = mqtt_generate_client_id();
         if (generated_id) {
             data->base.config.client_id = generated_id;
+            mcp_log_debug("Generated MQTT client ID: %s", generated_id);
+        } else {
+            mcp_log_error("Failed to generate MQTT client ID");
+            return -1;
         }
     }
 
@@ -712,31 +718,44 @@ int mqtt_client_start_connection(mcp_mqtt_client_transport_data_t* data) {
             mcp_log_info("Loaded persistent session for client: %s", data->base.config.client_id);
 
             // Restore subscriptions
+            int subscription_count = 0;
             struct mqtt_subscription* sub = session_data.subscriptions;
             while (sub) {
                 struct mqtt_subscription* next = sub->next;
-                mqtt_client_add_subscription(data, sub->topic, sub->qos);
+                if (mqtt_client_add_subscription(data, sub->topic, sub->qos) == 0) {
+                    subscription_count++;
+                } else {
+                    mcp_log_warn("Failed to restore subscription for topic: %s", sub->topic);
+                }
                 free(sub->topic);
                 free(sub);
                 sub = next;
             }
+            mcp_log_debug("Restored %d subscriptions from persistent session", subscription_count);
 
             // Restore in-flight messages
+            int inflight_count = 0;
             struct mqtt_inflight_message* inflight = session_data.inflight_messages;
             while (inflight) {
                 struct mqtt_inflight_message* next = inflight->next;
-                mqtt_client_add_inflight_message(data, inflight->packet_id, inflight->topic,
-                                                inflight->payload, inflight->payload_len,
-                                                inflight->qos, inflight->retain);
+                if (mqtt_client_add_inflight_message(data, inflight->packet_id, inflight->topic,
+                                                   inflight->payload, inflight->payload_len,
+                                                   inflight->qos, inflight->retain) == 0) {
+                    inflight_count++;
+                } else {
+                    mcp_log_warn("Failed to restore in-flight message for topic: %s", inflight->topic);
+                }
                 free(inflight->topic);
                 free(inflight->payload);
                 free(inflight);
                 inflight = next;
             }
+            mcp_log_debug("Restored %d in-flight messages from persistent session", inflight_count);
 
             // Restore last packet ID if needed
             if (session_data.last_packet_id > 0) {
                 data->message_tracking.packet_id = (uint16_t)session_data.last_packet_id;
+                mcp_log_debug("Restored last packet ID: %u", session_data.last_packet_id);
             }
         } else {
             mcp_log_debug("No existing session found for client: %s", data->base.config.client_id);
@@ -825,6 +844,11 @@ static int mqtt_client_save_session(mcp_mqtt_client_transport_data_t* data) {
 
     // Save session
     int result = mqtt_session_save(data->base.config.client_id, &session_data);
+    if (result == 0) {
+        mcp_log_debug("Successfully saved session for client: %s", data->base.config.client_id);
+    } else {
+        mcp_log_error("Failed to save session for client: %s", data->base.config.client_id);
+    }
 
     // Cleanup
     sub = session_data.subscriptions;

@@ -314,7 +314,8 @@ int mqtt_process_message_queue(mcp_mqtt_transport_data_t* data) {
         result = lws_mqtt_client_send_publish(data->wsi, &pub, entry->payload, (uint32_t)entry->payload_len, 1);
 
         if (result < 0) {
-            mcp_log_error("Failed to publish MQTT message: %d", result);
+            mcp_log_error("Failed to publish MQTT message to topic '%s': error code %d, payload size %zu",
+                         entry->topic, result, entry->payload_len);
         }
     }
     
@@ -430,13 +431,21 @@ int mqtt_handle_incoming_message(mcp_mqtt_transport_data_t* data, const char* to
                     size_t mqtt_len = 0;
 
                     if (mqtt_serialize_mcp_message(response, strlen(response), &mqtt_payload, &mqtt_len) == 0) {
-                        mqtt_enqueue_message(data, response_topic, mqtt_payload, mqtt_len,
-                                           data->config.qos, data->config.retain);
+                        int enqueue_result = mqtt_enqueue_message(data, response_topic, mqtt_payload, mqtt_len,
+                                                                data->config.qos, data->config.retain);
+                        if (enqueue_result == 0) {
+                            mcp_log_debug("Sent MQTT response to topic: %s", response_topic);
+                        } else {
+                            mcp_log_error("Failed to enqueue MQTT response to topic: %s", response_topic);
+                        }
                         free(mqtt_payload);
-                        mcp_log_debug("Sent MQTT response to topic: %s", response_topic);
+                    } else {
+                        mcp_log_error("Failed to serialize MCP response message for topic: %s", response_topic);
                     }
 
                     free(response_topic);
+                } else {
+                    mcp_log_error("Failed to construct response topic for client: %s", client_id_from_topic);
                 }
             }
 
@@ -445,7 +454,8 @@ int mqtt_handle_incoming_message(mcp_mqtt_transport_data_t* data, const char* to
             }
             free(mcp_data);
         } else {
-            mcp_log_error("Failed to deserialize MCP message from MQTT payload");
+            mcp_log_error("Failed to deserialize MCP message from MQTT payload (topic: %s, size: %zu)",
+                         topic, payload_len);
         }
     } else if (data->custom_message_handler) {
         // Call custom message handler for non-MCP messages

@@ -37,6 +37,33 @@ static bool g_log_use_color = false; // Default to no color
 /** @internal Mutex for thread safety. */
 static mcp_mutex_t* g_log_mutex = NULL;
 
+/**
+ * @brief Safe fprintf function with error checking for logging
+ * @param stream File stream to write to
+ * @param format Format string
+ * @param ... Variable arguments
+ * @return Number of characters written, or -1 on error
+ */
+static int safe_fprintf(FILE* stream, const char* format, ...) {
+    if (!stream || !format) {
+        return -1;
+    }
+
+    va_list args;
+    va_start(args, format);
+    int result = vfprintf(stream, format, args);
+    va_end(args);
+
+    if (result < 0) {
+        // Only log to stderr if this isn't already stderr to avoid recursion
+        if (stream != stderr) {
+            fprintf(stderr, "[LOG ERROR] Failed to write to log file (errno: %d)\n", errno);
+        }
+    }
+
+    return result;
+}
+
 // Core logging function
 void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* format, ...) {
     // 1. Check if logging is quiet or level is too low
@@ -136,9 +163,10 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
         const char* json_fmt = "{\"timestamp\":\"%s\", \"level\":\"%s\", \"file\":\"%s\", \"line\":%d, \"message\":\"%s\"}\n";
 
         if (g_log_file != NULL) {
-             fprintf(g_log_file, json_fmt,
-                     timestamp, g_log_level_names[level], escaped_file, line, escaped_message);
-             fflush(g_log_file);
+             if (safe_fprintf(g_log_file, json_fmt,
+                           timestamp, g_log_level_names[level], escaped_file, line, escaped_message) >= 0) {
+                fflush(g_log_file);
+            }
         }
         // Outputting to stderr might still interleave output from different threads,
         // but the access to g_log_file and g_log_format is protected.
@@ -148,10 +176,11 @@ void mcp_log_log(mcp_log_level_t level, const char* file, int line, const char* 
     } else { // Default to TEXT format
         const char* text_fmt = "%s[%s] [%s:%d] [%s] %s%s\n";
         if (g_log_file != NULL) {
-            fprintf(g_log_file, text_fmt,
-                    "", // No color for file
-                    timestamp, filename, line, g_log_level_names[level], message, "");
-            fflush(g_log_file); // Ensure immediate write to file
+            if (safe_fprintf(g_log_file, text_fmt,
+                           "", // No color for file
+                           timestamp, filename, line, g_log_level_names[level], message, "") >= 0) {
+                fflush(g_log_file); // Ensure immediate write to file
+            }
         }
          fprintf(stderr, text_fmt,
                  color_start, // Start color
@@ -476,9 +505,10 @@ void mcp_log_structured(
         const char* json_fmt = "{\"timestamp\":\"%s\", \"level\":\"%s\", \"component\":\"%s\", \"event\":\"%s\", \"message\":\"%s\"}\n";
 
         if (g_log_file != NULL) {
-            fprintf(g_log_file, json_fmt,
-                    timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message);
-            fflush(g_log_file);
+            if (safe_fprintf(g_log_file, json_fmt,
+                           timestamp, g_log_level_names[level], escaped_component, escaped_event, escaped_message) >= 0) {
+                fflush(g_log_file);
+            }
         }
         // Outputting to stderr might still interleave, but file access is protected
         fprintf(stderr, json_fmt,
@@ -486,12 +516,13 @@ void mcp_log_structured(
     } else { // Default to TEXT format
         const char* text_fmt = "[%s] [%s] [%s|%s] %s\n";
         if (g_log_file != NULL) {
-            fprintf(g_log_file, text_fmt,
-                     timestamp, g_log_level_names[level],
-                     component ? component : "-",
-                     event ? event : "-",
-                     base_message);
-            fflush(g_log_file);
+            if (safe_fprintf(g_log_file, text_fmt,
+                           timestamp, g_log_level_names[level],
+                           component ? component : "-",
+                           event ? event : "-",
+                           base_message) >= 0) {
+                fflush(g_log_file);
+            }
         }
         fprintf(stderr, text_fmt,
                 timestamp, g_log_level_names[level],

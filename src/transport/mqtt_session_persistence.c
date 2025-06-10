@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -27,11 +28,6 @@
 // Magic number for session files
 #define MQTT_SESSION_MAGIC 0x4D435053  // "MCPS"
 
-// Helper function to check if persistence system is ready and safe to use
-static bool is_persistence_ready(void) {
-    return g_persistence_initialized && !g_persistence_shutting_down && g_session_mutex != NULL;
-}
-
 // Internal helper functions that assume lock is already held
 static bool mqtt_session_is_expired_internal(const char* client_id);
 static int mqtt_session_delete_internal(const char* client_id);
@@ -40,6 +36,36 @@ static char* g_storage_path = NULL;
 static mcp_mutex_t* g_session_mutex = NULL;
 static volatile bool g_persistence_initialized = false;
 static volatile bool g_persistence_shutting_down = false;
+
+/**
+ * @brief Safe file write function with error checking
+ * @param ptr Pointer to data to write
+ * @param size Size of each element
+ * @param count Number of elements to write
+ * @param stream File stream to write to
+ * @return 0 on success, -1 on failure
+ */
+static int safe_fwrite(const void* ptr, size_t size, size_t count, FILE* stream) {
+    if (!ptr || !stream || size == 0 || count == 0) {
+        mcp_log_error("Invalid parameters for file write operation");
+        return -1;
+    }
+
+    size_t written = fwrite(ptr, size, count, stream);
+    if (written != count) {
+        size_t expected_bytes = size * count;
+        size_t actual_bytes = written * size;
+        mcp_log_error("Failed to write %zu bytes to file (wrote %zu bytes, errno: %d)",
+                     expected_bytes, actual_bytes, errno);
+        return -1;
+    }
+    return 0;
+}
+
+// Helper function to check if persistence system is ready and safe to use
+static bool is_persistence_ready(void) {
+    return g_persistence_initialized && !g_persistence_shutting_down && g_session_mutex != NULL;
+}
 
 int mqtt_session_persistence_init(const char* storage_path) {
     if (!storage_path) {
@@ -151,6 +177,7 @@ int mqtt_session_save(const char* client_id, const mqtt_session_data_t* session)
 
     FILE* fp = fopen(path, "wb");
     if (!fp) {
+        mcp_log_error("Failed to open session file for writing: %s (errno: %d)", path, errno);
         free(path);
         mcp_mutex_unlock(g_session_mutex);
         return -1;
@@ -158,22 +185,42 @@ int mqtt_session_save(const char* client_id, const mqtt_session_data_t* session)
 
     // Write session data
     uint32_t magic = MQTT_SESSION_MAGIC;
-    fwrite(&magic, sizeof(magic), 1, fp);
+    if (safe_fwrite(&magic, sizeof(magic), 1, fp) != 0) {
+        fclose(fp);
+        free(path);
+        mcp_mutex_unlock(g_session_mutex);
+        return -1;
+    }
 
     // Write file format version
     uint16_t version = MQTT_SESSION_FILE_VERSION;
-    fwrite(&version, sizeof(version), 1, fp);
+    if (safe_fwrite(&version, sizeof(version), 1, fp) != 0) {
+        fclose(fp);
+        free(path);
+        mcp_mutex_unlock(g_session_mutex);
+        return -1;
+    }
 
     // Write session metadata
     uint64_t current_time = mcp_get_time_ms();
-    fwrite(&session->session_created_time, sizeof(session->session_created_time), 1, fp);
-    fwrite(&current_time, sizeof(current_time), 1, fp);  // last_access_time
-    fwrite(&session->session_expiry_interval, sizeof(session->session_expiry_interval), 1, fp);
+    if (safe_fwrite(&session->session_created_time, sizeof(session->session_created_time), 1, fp) != 0 ||
+        safe_fwrite(&current_time, sizeof(current_time), 1, fp) != 0 ||
+        safe_fwrite(&session->session_expiry_interval, sizeof(session->session_expiry_interval), 1, fp) != 0) {
+        fclose(fp);
+        free(path);
+        mcp_mutex_unlock(g_session_mutex);
+        return -1;
+    }
 
     // Write client ID length and data
     uint16_t client_id_len = (uint16_t)strlen(client_id);
-    fwrite(&client_id_len, sizeof(client_id_len), 1, fp);
-    fwrite(client_id, 1, client_id_len, fp);
+    if (safe_fwrite(&client_id_len, sizeof(client_id_len), 1, fp) != 0 ||
+        safe_fwrite(client_id, 1, client_id_len, fp) != 0) {
+        fclose(fp);
+        free(path);
+        mcp_mutex_unlock(g_session_mutex);
+        return -1;
+    }
 
     // Write subscription count
     uint16_t sub_count = 0;
@@ -182,20 +229,35 @@ int mqtt_session_save(const char* client_id, const mqtt_session_data_t* session)
         sub_count++;
         sub = sub->next;
     }
-    fwrite(&sub_count, sizeof(sub_count), 1, fp);
+    if (safe_fwrite(&sub_count, sizeof(sub_count), 1, fp) != 0) {
+        fclose(fp);
+        free(path);
+        mcp_mutex_unlock(g_session_mutex);
+        return -1;
+    }
 
     // Write subscriptions
     sub = session->subscriptions;
     while (sub) {
         uint16_t topic_len = (uint16_t)strlen(sub->topic);
-        fwrite(&topic_len, sizeof(topic_len), 1, fp);
-        fwrite(sub->topic, 1, topic_len, fp);
-        fwrite(&sub->qos, sizeof(sub->qos), 1, fp);
+        if (safe_fwrite(&topic_len, sizeof(topic_len), 1, fp) != 0 ||
+            safe_fwrite(sub->topic, 1, topic_len, fp) != 0 ||
+            safe_fwrite(&sub->qos, sizeof(sub->qos), 1, fp) != 0) {
+            fclose(fp);
+            free(path);
+            mcp_mutex_unlock(g_session_mutex);
+            return -1;
+        }
         sub = sub->next;
     }
 
     // Write last packet ID
-    fwrite(&session->last_packet_id, sizeof(session->last_packet_id), 1, fp);
+    if (safe_fwrite(&session->last_packet_id, sizeof(session->last_packet_id), 1, fp) != 0) {
+        fclose(fp);
+        free(path);
+        mcp_mutex_unlock(g_session_mutex);
+        return -1;
+    }
 
     // Write in-flight message count
     uint16_t inflight_count = 0;
@@ -204,25 +266,50 @@ int mqtt_session_save(const char* client_id, const mqtt_session_data_t* session)
         inflight_count++;
         inflight = inflight->next;
     }
-    fwrite(&inflight_count, sizeof(inflight_count), 1, fp);
+    if (safe_fwrite(&inflight_count, sizeof(inflight_count), 1, fp) != 0) {
+        fclose(fp);
+        free(path);
+        mcp_mutex_unlock(g_session_mutex);
+        return -1;
+    }
 
     // Write in-flight messages
     inflight = session->inflight_messages;
     while (inflight) {
-        fwrite(&inflight->packet_id, sizeof(inflight->packet_id), 1, fp);
+        if (safe_fwrite(&inflight->packet_id, sizeof(inflight->packet_id), 1, fp) != 0) {
+            fclose(fp);
+            free(path);
+            mcp_mutex_unlock(g_session_mutex);
+            return -1;
+        }
 
         uint16_t topic_len = (uint16_t)strlen(inflight->topic);
-        fwrite(&topic_len, sizeof(topic_len), 1, fp);
-        fwrite(inflight->topic, 1, topic_len, fp);
+        if (safe_fwrite(&topic_len, sizeof(topic_len), 1, fp) != 0 ||
+            safe_fwrite(inflight->topic, 1, topic_len, fp) != 0) {
+            fclose(fp);
+            free(path);
+            mcp_mutex_unlock(g_session_mutex);
+            return -1;
+        }
 
         uint32_t payload_len = (uint32_t)inflight->payload_len;
-        fwrite(&payload_len, sizeof(payload_len), 1, fp);
-        fwrite(inflight->payload, 1, inflight->payload_len, fp);
+        if (safe_fwrite(&payload_len, sizeof(payload_len), 1, fp) != 0 ||
+            safe_fwrite(inflight->payload, 1, inflight->payload_len, fp) != 0) {
+            fclose(fp);
+            free(path);
+            mcp_mutex_unlock(g_session_mutex);
+            return -1;
+        }
 
-        fwrite(&inflight->qos, sizeof(inflight->qos), 1, fp);
-        fwrite(&inflight->retain, sizeof(inflight->retain), 1, fp);
-        fwrite(&inflight->send_time, sizeof(inflight->send_time), 1, fp);
-        fwrite(&inflight->retry_count, sizeof(inflight->retry_count), 1, fp);
+        if (safe_fwrite(&inflight->qos, sizeof(inflight->qos), 1, fp) != 0 ||
+            safe_fwrite(&inflight->retain, sizeof(inflight->retain), 1, fp) != 0 ||
+            safe_fwrite(&inflight->send_time, sizeof(inflight->send_time), 1, fp) != 0 ||
+            safe_fwrite(&inflight->retry_count, sizeof(inflight->retry_count), 1, fp) != 0) {
+            fclose(fp);
+            free(path);
+            mcp_mutex_unlock(g_session_mutex);
+            return -1;
+        }
 
         inflight = inflight->next;
     }
@@ -260,6 +347,7 @@ int mqtt_session_load(const char* client_id, mqtt_session_data_t* session) {
 
     FILE* fp = fopen(path, "rb");
     if (!fp) {
+        mcp_log_warn("Failed to open session file for reading: %s (errno: %d)", path, errno);
         free(path);
         mcp_mutex_unlock(g_session_mutex);
         return -1;
@@ -562,10 +650,12 @@ int mqtt_session_delete(const char* client_id) {
     int result = 0;
 #ifdef _WIN32
     if (_unlink(path) != 0) {
+        mcp_log_warn("Failed to delete session file: %s (errno: %d)", path, errno);
         result = -1;
     }
 #else
     if (unlink(path) != 0) {
+        mcp_log_warn("Failed to delete session file: %s (errno: %d)", path, errno);
         result = -1;
     }
 #endif
@@ -655,6 +745,7 @@ int mqtt_session_get_info(const char* client_id, uint64_t* created_time,
 
     FILE* fp = fopen(path, "rb");
     if (!fp) {
+        mcp_log_debug("Failed to open session file for info reading: %s (errno: %d)", path, errno);
         free(path);
         mcp_mutex_unlock(g_session_mutex);
         return -1;

@@ -85,8 +85,8 @@ char* read_log_file(void) {
         return NULL;
     }
 
-    fread(buffer, 1, size, fp);
-    buffer[size] = '\0';
+    size_t bytes_read = fread(buffer, 1, size, fp);
+    buffer[bytes_read] = '\0';  // Use actual bytes read instead of expected size
     fclose(fp);
     return buffer;
 }
