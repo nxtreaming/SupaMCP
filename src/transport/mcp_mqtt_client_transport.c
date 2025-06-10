@@ -1,5 +1,6 @@
 #include "mcp_mqtt_client_transport.h"
 #include "mqtt_client_internal.h"
+#include "internal/mqtt_session_persistence.h"
 #include "transport_internal.h"
 #include "mcp_log.h"
 #include "mcp_sync.h"
@@ -71,6 +72,17 @@ int mqtt_client_transport_data_init(mcp_mqtt_client_transport_data_t* data,
     if (mqtt_transport_data_init(&data->base, &config->base, false) != 0) {
         return -1;
     }
+
+    // Initialize session persistence
+    if (config->session_storage_path) {
+        data->session_storage_path = mcp_strdup(config->session_storage_path);
+        if (mqtt_session_persistence_init(data->session_storage_path) != 0) {
+            mcp_log_warn("Failed to initialize session persistence");
+            free(data->session_storage_path);
+            data->session_storage_path = NULL;
+        }
+    }
+    data->session_persist = config->persistent_session;
     
     // Copy client configuration
     data->client_config = *config;
@@ -85,11 +97,14 @@ int mqtt_client_transport_data_init(mcp_mqtt_client_transport_data_t* data,
     data->stats_mutex = mcp_mutex_create();
     data->monitoring.ping_condition = mcp_cond_create();
     data->reconnect_condition = mcp_cond_create();
+    data->session_cleanup_condition = mcp_cond_create();
+    data->session_cleanup_mutex = mcp_mutex_create();
 
     if (!data->message_tracking.packet_mutex || !data->message_tracking.inflight_mutex ||
         !data->session.state_mutex || !data->session.subscription_mutex ||
         !data->monitoring.ping_mutex || !data->reconnect_mutex || !data->stats_mutex ||
-        !data->monitoring.ping_condition || !data->reconnect_condition) {
+        !data->monitoring.ping_condition || !data->reconnect_condition ||
+        !data->session_cleanup_condition || !data->session_cleanup_mutex) {
         mcp_log_error("Failed to create MQTT client synchronization objects");
         // Clean up any created objects
         if (data->message_tracking.packet_mutex) mcp_mutex_destroy(data->message_tracking.packet_mutex);
@@ -101,6 +116,8 @@ int mqtt_client_transport_data_init(mcp_mqtt_client_transport_data_t* data,
         if (data->stats_mutex) mcp_mutex_destroy(data->stats_mutex);
         if (data->monitoring.ping_condition) mcp_cond_destroy(data->monitoring.ping_condition);
         if (data->reconnect_condition) mcp_cond_destroy(data->reconnect_condition);
+        if (data->session_cleanup_condition) mcp_cond_destroy(data->session_cleanup_condition);
+        if (data->session_cleanup_mutex) mcp_mutex_destroy(data->session_cleanup_mutex);
         return -1;
     }
     
@@ -113,6 +130,9 @@ int mqtt_client_transport_data_init(mcp_mqtt_client_transport_data_t* data,
     // Initialize thread pointers
     data->reconnect_thread = NULL;
     data->monitoring.ping_thread = NULL;
+    data->session_cleanup_thread = NULL;
+    data->session_cleanup_active = false;
+    data->session_cleanup_interval_ms = 3600000; // 1 hour default
     
     // Set default values
     data->message_tracking.packet_id = 1;
@@ -149,6 +169,15 @@ void mqtt_client_transport_data_cleanup(mcp_mqtt_client_transport_data_t* data) 
         mcp_thread_join(*data->monitoring.ping_thread, NULL);
         free(data->monitoring.ping_thread);
         data->monitoring.ping_thread = NULL;
+    }
+
+    // Stop session cleanup
+    data->session_cleanup_active = false;
+    if (data->session_cleanup_thread) {
+        mcp_cond_signal(data->session_cleanup_condition);
+        mcp_thread_join(*data->session_cleanup_thread, NULL);
+        free(data->session_cleanup_thread);
+        data->session_cleanup_thread = NULL;
     }
     
     // Clean up in-flight messages
@@ -189,9 +218,18 @@ void mqtt_client_transport_data_cleanup(mcp_mqtt_client_transport_data_t* data) 
     if (data->stats_mutex) mcp_mutex_destroy(data->stats_mutex);
     if (data->monitoring.ping_condition) mcp_cond_destroy(data->monitoring.ping_condition);
     if (data->reconnect_condition) mcp_cond_destroy(data->reconnect_condition);
+    if (data->session_cleanup_condition) mcp_cond_destroy(data->session_cleanup_condition);
+    if (data->session_cleanup_mutex) mcp_mutex_destroy(data->session_cleanup_mutex);
     
     // Clean up base transport data
     mqtt_transport_data_cleanup(&data->base);
+
+    // Clean up session persistence
+    if (data->session_storage_path) {
+        mqtt_session_persistence_cleanup();
+        free(data->session_storage_path);
+        data->session_storage_path = NULL;
+    }
     
     mcp_log_debug("MQTT client transport data cleaned up");
 }
@@ -455,6 +493,22 @@ static int mqtt_client_transport_start(mcp_transport_t* transport,
         mcp_log_info("MQTT server will subscribe to request topic: %s", request_wildcard_topic);
     }
 
+    // Start session cleanup thread if persistence is enabled
+    if (data->session_persist && data->session_storage_path) {
+        data->session_cleanup_active = true;
+        data->session_cleanup_thread = malloc(sizeof(mcp_thread_t));
+        if (data->session_cleanup_thread) {
+            if (mcp_thread_create(data->session_cleanup_thread, mqtt_client_session_cleanup_thread, data) != 0) {
+                mcp_log_warn("Failed to create session cleanup thread");
+                free(data->session_cleanup_thread);
+                data->session_cleanup_thread = NULL;
+                data->session_cleanup_active = false;
+            } else {
+                mcp_log_debug("Session cleanup thread started");
+            }
+        }
+    }
+
     // Start connection
     if (mqtt_client_start_connection(data) != 0) {
         return -1;
@@ -651,13 +705,161 @@ int mqtt_client_start_connection(mcp_mqtt_client_transport_data_t* data) {
         return -1;
     }
 
+    // Load session if persistence is enabled
+    if (data->session_persist && data->session_storage_path) {
+        mqtt_session_data_t session_data = {0};
+        if (mqtt_session_load(data->base.config.client_id, &session_data) == 0) {
+            mcp_log_info("Loaded persistent session for client: %s", data->base.config.client_id);
+
+            // Restore subscriptions
+            struct mqtt_subscription* sub = session_data.subscriptions;
+            while (sub) {
+                struct mqtt_subscription* next = sub->next;
+                mqtt_client_add_subscription(data, sub->topic, sub->qos);
+                free(sub->topic);
+                free(sub);
+                sub = next;
+            }
+
+            // Restore in-flight messages
+            struct mqtt_inflight_message* inflight = session_data.inflight_messages;
+            while (inflight) {
+                struct mqtt_inflight_message* next = inflight->next;
+                mqtt_client_add_inflight_message(data, inflight->packet_id, inflight->topic,
+                                                inflight->payload, inflight->payload_len,
+                                                inflight->qos, inflight->retain);
+                free(inflight->topic);
+                free(inflight->payload);
+                free(inflight);
+                inflight = next;
+            }
+
+            // Restore last packet ID if needed
+            if (session_data.last_packet_id > 0) {
+                data->message_tracking.packet_id = (uint16_t)session_data.last_packet_id;
+            }
+        } else {
+            mcp_log_debug("No existing session found for client: %s", data->base.config.client_id);
+        }
+    }
+
     mcp_log_debug("MQTT client connection initiated");
     return 0;
+}
+
+static int mqtt_client_save_session(mcp_mqtt_client_transport_data_t* data) {
+    if (!data->session_persist || !data->session_storage_path) {
+        return 0;  // Session persistence not enabled
+    }
+
+    mqtt_session_data_t session_data = {0};
+    session_data.client_id = (char*)data->base.config.client_id;
+    session_data.session_created_time = mcp_get_time_ms();
+    session_data.session_last_access_time = mcp_get_time_ms();
+    session_data.session_expiry_interval = data->client_config.session_expiry_interval;
+    session_data.file_format_version = 1;
+
+    // Copy subscriptions
+    mcp_mutex_lock(data->session.subscription_mutex);
+    struct mqtt_subscription* sub = data->session.subscriptions;
+    while (sub) {
+        struct mqtt_subscription* new_sub = (struct mqtt_subscription*)malloc(sizeof(struct mqtt_subscription));
+        if (new_sub) {
+            new_sub->topic = mcp_strdup(sub->topic);
+            if (!new_sub->topic) {
+                // mcp_strdup failed, clean up and continue
+                free(new_sub);
+                mcp_log_warn("Failed to duplicate subscription topic, skipping");
+                sub = sub->next;
+                continue;
+            }
+            new_sub->qos = sub->qos;
+            new_sub->active = sub->active;
+            new_sub->next = session_data.subscriptions;
+            session_data.subscriptions = new_sub;
+        } else {
+            mcp_log_warn("Failed to allocate subscription, skipping");
+        }
+        sub = sub->next;
+    }
+    mcp_mutex_unlock(data->session.subscription_mutex);
+
+    // Copy in-flight messages
+    mcp_mutex_lock(data->message_tracking.inflight_mutex);
+    struct mqtt_inflight_message* inflight = data->message_tracking.inflight_messages;
+    while (inflight) {
+        struct mqtt_inflight_message* new_inflight = (struct mqtt_inflight_message*)malloc(sizeof(struct mqtt_inflight_message));
+        if (new_inflight) {
+            new_inflight->packet_id = inflight->packet_id;
+            new_inflight->topic = mcp_strdup(inflight->topic);
+            new_inflight->payload = malloc(inflight->payload_len);
+
+            // Check if both allocations succeeded
+            if (!new_inflight->topic || !new_inflight->payload) {
+                // Clean up partial allocation
+                free(new_inflight->topic);
+                free(new_inflight->payload);
+                free(new_inflight);
+                mcp_log_warn("Failed to allocate in-flight message data, skipping");
+                inflight = inflight->next;
+                continue;
+            }
+
+            memcpy(new_inflight->payload, inflight->payload, inflight->payload_len);
+            new_inflight->payload_len = inflight->payload_len;
+            new_inflight->qos = inflight->qos;
+            new_inflight->retain = inflight->retain;
+            new_inflight->send_time = inflight->send_time;
+            new_inflight->retry_count = inflight->retry_count;
+            new_inflight->next = session_data.inflight_messages;
+            session_data.inflight_messages = new_inflight;
+        } else {
+            mcp_log_warn("Failed to allocate in-flight message, skipping");
+        }
+        inflight = inflight->next;
+    }
+    mcp_mutex_unlock(data->message_tracking.inflight_mutex);
+
+    // Save last packet ID
+    session_data.last_packet_id = data->message_tracking.packet_id;
+
+    // Save session
+    int result = mqtt_session_save(data->base.config.client_id, &session_data);
+
+    // Cleanup
+    sub = session_data.subscriptions;
+    while (sub) {
+        struct mqtt_subscription* next = sub->next;
+        free(sub->topic);
+        free(sub);
+        sub = next;
+    }
+
+    inflight = session_data.inflight_messages;
+    while (inflight) {
+        struct mqtt_inflight_message* next = inflight->next;
+        free(inflight->topic);
+        free(inflight->payload);
+        free(inflight);
+        inflight = next;
+    }
+
+    if (result == 0) {
+        mcp_log_debug("Saved session for client: %s", data->base.config.client_id);
+    } else {
+        mcp_log_warn("Failed to save session for client: %s", data->base.config.client_id);
+    }
+
+    return result;
 }
 
 int mqtt_client_stop_connection(mcp_mqtt_client_transport_data_t* data) {
     if (!data) {
         return -1;
+    }
+
+    if (data->session_persist) {
+        mqtt_client_save_session(data);
     }
 
     // Signal stop
@@ -813,6 +1015,38 @@ void* mqtt_client_ping_thread(void* arg) {
     }
 
     mcp_log_debug("MQTT client ping thread ended");
+    return NULL;
+}
+
+void* mqtt_client_session_cleanup_thread(void* arg) {
+    mcp_mqtt_client_transport_data_t* data = (mcp_mqtt_client_transport_data_t*)arg;
+    if (!data) {
+        return NULL;
+    }
+
+    mcp_log_debug("MQTT client session cleanup thread started");
+
+    while (data->session_cleanup_active && !data->base.should_stop) {
+        // Wait for cleanup interval
+        mcp_mutex_lock(data->session_cleanup_mutex);
+        mcp_cond_timedwait(data->session_cleanup_condition, data->session_cleanup_mutex,
+                          data->session_cleanup_interval_ms);
+        mcp_mutex_unlock(data->session_cleanup_mutex);
+
+        if (!data->session_cleanup_active || data->base.should_stop) {
+            break;
+        }
+
+        // Perform session cleanup
+        if (data->session_storage_path) {
+            int cleaned = mqtt_session_cleanup_expired();
+            if (cleaned > 0) {
+                mcp_log_info("Cleaned %d expired MQTT sessions", cleaned);
+            }
+        }
+    }
+
+    mcp_log_debug("MQTT client session cleanup thread ended");
     return NULL;
 }
 
@@ -1131,43 +1365,83 @@ int mqtt_client_save_session_state(mcp_mqtt_client_transport_data_t* data) {
         return -1;
     }
 
-    // Count subscriptions
-    int subscription_count = 0;
-    mcp_mutex_lock(data->session.subscription_mutex);
-    struct mqtt_subscription* sub = data->session.subscriptions;
-    while (sub) {
-        subscription_count++;
-        sub = sub->next;
-    }
-    mcp_mutex_unlock(data->session.subscription_mutex);
-
-    // For now, we'll just log the session state
-    // In a full implementation, this would save to persistent storage
-    mcp_log_debug("Saving MQTT client session state:");
-    mcp_log_debug("  - Client ID: %s", data->base.config.client_id);
-    mcp_log_debug("  - Subscriptions: %d", subscription_count);
-    mcp_log_debug("  - In-flight messages: %d", data->message_tracking.inflight_count);
-
-    // TODO: Implement actual session state persistence
-    return 0;
+    // Use the main session save function
+    return mqtt_client_save_session(data);
 }
 
 int mqtt_client_load_session_state(mcp_mqtt_client_transport_data_t* data) {
-    if (!data) {
+    if (!data || !data->session_persist || !data->session_storage_path) {
         return -1;
     }
 
-    // For now, we'll just log that we're loading session state
-    // In a full implementation, this would load from persistent storage
-    mcp_log_debug("Loading MQTT client session state for client: %s",
-                  data->base.config.client_id);
+    mqtt_session_data_t session_data = {0};
+    if (mqtt_session_load(data->base.config.client_id, &session_data) != 0) {
+        mcp_log_debug("No session state to load for client: %s", data->base.config.client_id);
+        return -1;
+    }
 
-    // TODO: Implement actual session state loading from persistent storage
-    // This would include:
-    // - Restoring subscriptions
-    // - Restoring in-flight messages
-    // - Restoring session configuration
+    mcp_log_info("Loading session state for client: %s", data->base.config.client_id);
 
+    // Restore subscriptions
+    mcp_mutex_lock(data->session.subscription_mutex);
+    struct mqtt_subscription* sub = session_data.subscriptions;
+    while (sub) {
+        struct mqtt_subscription* next = sub->next;
+
+        // Add to client's subscription list
+        struct mqtt_subscription* client_sub = malloc(sizeof(struct mqtt_subscription));
+        if (client_sub) {
+            client_sub->topic = mcp_strdup(sub->topic);
+            client_sub->qos = sub->qos;
+            client_sub->active = sub->active;
+            client_sub->next = data->session.subscriptions;
+            data->session.subscriptions = client_sub;
+        }
+
+        free(sub->topic);
+        free(sub);
+        sub = next;
+    }
+    mcp_mutex_unlock(data->session.subscription_mutex);
+
+    // Restore in-flight messages
+    mcp_mutex_lock(data->message_tracking.inflight_mutex);
+    struct mqtt_inflight_message* inflight = session_data.inflight_messages;
+    while (inflight) {
+        struct mqtt_inflight_message* next = inflight->next;
+
+        // Add to client's in-flight list
+        struct mqtt_inflight_message* client_inflight = malloc(sizeof(struct mqtt_inflight_message));
+        if (client_inflight) {
+            client_inflight->packet_id = inflight->packet_id;
+            client_inflight->topic = mcp_strdup(inflight->topic);
+            client_inflight->payload = malloc(inflight->payload_len);
+            if (client_inflight->payload) {
+                memcpy(client_inflight->payload, inflight->payload, inflight->payload_len);
+            }
+            client_inflight->payload_len = inflight->payload_len;
+            client_inflight->qos = inflight->qos;
+            client_inflight->retain = inflight->retain;
+            client_inflight->send_time = inflight->send_time;
+            client_inflight->retry_count = inflight->retry_count;
+            client_inflight->next = data->message_tracking.inflight_messages;
+            data->message_tracking.inflight_messages = client_inflight;
+            data->message_tracking.inflight_count++;
+        }
+
+        free(inflight->topic);
+        free(inflight->payload);
+        free(inflight);
+        inflight = next;
+    }
+    mcp_mutex_unlock(data->message_tracking.inflight_mutex);
+
+    // Restore last packet ID
+    if (session_data.last_packet_id > 0) {
+        data->message_tracking.packet_id = (uint16_t)session_data.last_packet_id;
+    }
+
+    mcp_log_info("Loaded session state for client: %s", data->base.config.client_id);
     return 0;
 }
 
@@ -1199,6 +1473,13 @@ int mqtt_client_validate_config(const mcp_mqtt_client_config_t* config) {
 
     if (config->max_inflight_messages == 0) {
         mcp_log_error("MQTT client max in-flight messages must be > 0");
+        return -1;
+    }
+ 
+    // Validate session persistence settings
+    if (config->persistent_session && (!config->session_storage_path ||
+                                       strlen(config->session_storage_path) == 0)) {
+        mcp_log_error("Session storage path must be provided when session persistence is enabled");
         return -1;
     }
 
@@ -1367,4 +1648,69 @@ int mcp_mqtt_client_get_broker_info(mcp_transport_t* transport,
     *port = data->base.config.port;
 
     return 0;
+}
+
+/**
+ * @brief Saves the current session state for the MQTT client
+ */
+int mcp_mqtt_client_save_session(mcp_transport_t* transport) {
+    if (!transport || !transport->transport_data) {
+        return -1;
+    }
+
+    mcp_mqtt_client_transport_data_t* data = (mcp_mqtt_client_transport_data_t*)transport->transport_data;
+    return mqtt_client_save_session(data);
+}
+
+/**
+ * @brief Loads session state for the MQTT client
+ */
+int mcp_mqtt_client_load_session(mcp_transport_t* transport) {
+    if (!transport || !transport->transport_data) {
+        return -1;
+    }
+
+    mcp_mqtt_client_transport_data_t* data = (mcp_mqtt_client_transport_data_t*)transport->transport_data;
+    return mqtt_client_load_session_state(data);
+}
+
+/**
+ * @brief Deletes the session state for the MQTT client
+ */
+int mcp_mqtt_client_delete_session(mcp_transport_t* transport) {
+    if (!transport || !transport->transport_data) {
+        return -1;
+    }
+
+    mcp_mqtt_client_transport_data_t* data = (mcp_mqtt_client_transport_data_t*)transport->transport_data;
+
+    if (!data->base.config.client_id) {
+        return -1;
+    }
+
+    return mqtt_session_delete(data->base.config.client_id);
+}
+
+/**
+ * @brief Checks if a session exists for the MQTT client
+ */
+bool mcp_mqtt_client_session_exists(mcp_transport_t* transport) {
+    if (!transport || !transport->transport_data) {
+        return false;
+    }
+
+    mcp_mqtt_client_transport_data_t* data = (mcp_mqtt_client_transport_data_t*)transport->transport_data;
+
+    if (!data->base.config.client_id) {
+        return false;
+    }
+
+    return mqtt_session_exists(data->base.config.client_id);
+}
+
+/**
+ * @brief Triggers cleanup of expired sessions
+ */
+int mcp_mqtt_client_cleanup_expired_sessions(void) {
+    return mqtt_session_cleanup_expired();
 }

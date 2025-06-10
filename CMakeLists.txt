@@ -171,6 +171,7 @@ set(COMMON_SOURCES
     src/transport/mcp_mqtt_common.c
     src/transport/mcp_mqtt_transport.c
     src/transport/mcp_mqtt_client_transport.c
+    src/transport/mqtt_session_persistence.c
     src/common/mcp_types.c
     src/common/mcp_arena.c
     src/common/mcp_log.c

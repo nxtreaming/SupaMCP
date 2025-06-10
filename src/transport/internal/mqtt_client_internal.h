@@ -89,7 +89,16 @@ typedef struct mcp_mqtt_client_transport_data {
     bool metrics_enabled;                /**< Whether metrics collection is enabled */
     uint32_t message_retry_interval_ms;  /**< Message retry interval */
     uint32_t max_message_retries;        /**< Maximum message retries */
-    
+
+    char* session_storage_path;         // Path for session storage
+    bool session_persist;               // Whether to persist sessions
+
+    // Session cleanup
+    mcp_thread_t* session_cleanup_thread; /**< Session cleanup thread */
+    volatile bool session_cleanup_active; /**< Whether cleanup thread is running */
+    mcp_cond_t* session_cleanup_condition; /**< Condition for cleanup events */
+    mcp_mutex_t* session_cleanup_mutex;   /**< Mutex for cleanup state */
+    uint32_t session_cleanup_interval_ms; /**< Cleanup interval in milliseconds */
 } mcp_mqtt_client_transport_data_t;
 
 /**
@@ -157,6 +166,11 @@ uint32_t mqtt_client_calculate_reconnect_delay(mcp_mqtt_client_transport_data_t*
  * @brief Ping monitoring thread function
  */
 void* mqtt_client_ping_thread(void* arg);
+
+/**
+ * @brief Session cleanup thread function
+ */
+void* mqtt_client_session_cleanup_thread(void* arg);
 
 /**
  * @brief Sends a ping message

@@ -34,8 +34,9 @@ typedef struct mcp_mqtt_client_config {
     
     // Session options
     bool persistent_session;             /**< Whether to use persistent sessions */
-    const char* session_state_file;      /**< File to store session state (optional) */
-    
+    char* session_storage_path;          /**< Path to store session data */
+    uint32_t session_expiry_interval;    /**< Session expiry interval in seconds (0 = no expiry) */
+
     // Advanced options
     bool enable_metrics;                 /**< Whether to collect connection metrics */
     uint32_t ping_interval_ms;           /**< Interval for sending PING messages */
@@ -57,7 +58,8 @@ typedef struct mcp_mqtt_client_config {
     .message_retry_interval_ms = 5000, \
     .max_message_retries = 3, \
     .persistent_session = false, \
-    .session_state_file = NULL, \
+    .session_storage_path = NULL, \
+    .session_expiry_interval = 0, \
     .enable_metrics = false, \
     .ping_interval_ms = 30000, \
     .ping_timeout_ms = 5000 \
@@ -173,9 +175,48 @@ int mcp_mqtt_client_set_auto_reconnect(mcp_transport_t* transport, bool enable);
  * @param port Pointer to store the broker port
  * @return 0 on success, -1 on error
  */
-int mcp_mqtt_client_get_broker_info(mcp_transport_t* transport, 
-                                   const char** host, 
+int mcp_mqtt_client_get_broker_info(mcp_transport_t* transport,
+                                   const char** host,
                                    uint16_t* port);
+
+/**
+ * @brief Saves the current session state for the MQTT client.
+ *
+ * @param transport The MQTT client transport instance
+ * @return 0 on success, -1 on error
+ */
+int mcp_mqtt_client_save_session(mcp_transport_t* transport);
+
+/**
+ * @brief Loads session state for the MQTT client.
+ *
+ * @param transport The MQTT client transport instance
+ * @return 0 on success, -1 on error
+ */
+int mcp_mqtt_client_load_session(mcp_transport_t* transport);
+
+/**
+ * @brief Deletes the session state for the MQTT client.
+ *
+ * @param transport The MQTT client transport instance
+ * @return 0 on success, -1 on error
+ */
+int mcp_mqtt_client_delete_session(mcp_transport_t* transport);
+
+/**
+ * @brief Checks if a session exists for the MQTT client.
+ *
+ * @param transport The MQTT client transport instance
+ * @return true if session exists, false otherwise
+ */
+bool mcp_mqtt_client_session_exists(mcp_transport_t* transport);
+
+/**
+ * @brief Triggers cleanup of expired sessions.
+ *
+ * @return Number of sessions cleaned up, or -1 on error
+ */
+int mcp_mqtt_client_cleanup_expired_sessions(void);
 
 #ifdef __cplusplus
 }
