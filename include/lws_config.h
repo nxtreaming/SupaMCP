@@ -131,7 +131,7 @@
 #define LWS_ROLE_RAW_FILE
 /* #undef LWS_ROLE_RAW_PROXY */
 #define LWS_ROLE_WS
-/* #undef LWS_ROLE_MQTT */
+#define LWS_ROLE_MQTT
 /* #undef LWS_SHA1_USE_OPENSSL_NAME */
 #define LWS_SSL_CLIENT_USE_OS_CA_CERTS
 /* #undef LWS_SSL_SERVER_WITH_ECDH_CERT */
@@ -142,7 +142,7 @@
 /* #undef LWS_WITH_ACCESS_LOG */
 /* #undef LWS_WITH_ACME */
 /* #undef LWS_WITH_ALSA */
-/* #undef LWS_WITH_SYS_ASYNC_DNS */
+#define LWS_WITH_SYS_ASYNC_DNS
 /* #undef LWS_WITH_BORINGSSL */
 /* #undef LWS_WITH_CGI */
 #define LWS_WITH_CONMON
@@ -167,7 +167,7 @@
 #define LWS_WITH_HTTP_BASIC_AUTH
 /* #undef LWS_WITH_HTTP_BROTLI */
 /* #undef LWS_HTTP_HEADERS_ALL */
-/* #undef LWS_WITH_HTTP_PROXY */
+#define LWS_WITH_HTTP_PROXY
 /* #undef LWS_WITH_HTTP_STREAM_COMPRESSION */
 #define LWS_WITH_HTTP_UNCOMMON_HEADERS
 /* #undef LWS_WITH_IPV6 */
@@ -215,7 +215,7 @@
 /* #undef LWS_WITH_STATEFUL_URLDECODE */
 /* #undef LWS_WITH_STATS */
 /* #undef LWS_WITH_STRUCT_SQLITE3 */
-/* #undef LWS_WITH_STRUCT_JSON */
+#define LWS_WITH_STRUCT_JSON
 /* #undef LWS_WITH_SUL_DEBUGGING */
 /* #undef LWS_WITH_SQLITE3 */
 /* #undef LWS_WITH_SYS_DHCP_CLIENT */

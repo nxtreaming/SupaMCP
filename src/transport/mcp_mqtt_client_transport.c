@@ -9,6 +9,23 @@
 #include <string.h>
 #include <errno.h>
 
+#ifdef _WIN32
+// Windows doesn't have strndup, so we implement it
+static char* strndup(const char* s, size_t n) {
+    if (!s) return NULL;
+
+    size_t len = strlen(s);
+    if (n < len) len = n;
+
+    char* result = malloc(len + 1);
+    if (!result) return NULL;
+
+    memcpy(result, s, len);
+    result[len] = '\0';
+    return result;
+}
+#endif
+
 // Forward declarations for transport interface functions
 static int mqtt_client_transport_init(mcp_transport_t* transport);
 static void mqtt_client_transport_destroy(mcp_transport_t* transport);
@@ -202,13 +219,13 @@ static int mqtt_client_protocol_callback(struct lws* wsi, enum lws_callback_reas
             }
             break;
             
-        case LWS_CALLBACK_CLIENT_ESTABLISHED:
+        case LWS_CALLBACK_MQTT_CLIENT_ESTABLISHED:
             mcp_log_info("MQTT client connected");
             if (protocol_data && client_data) {
                 protocol_data->transport_data = &client_data->base;
                 protocol_data->is_authenticated = false;
                 protocol_data->connect_time = mcp_get_time_ms();
-                
+
                 // Generate client ID if not provided
                 if (!client_data->base.config.client_id) {
                     char* generated_id = mqtt_generate_client_id();
@@ -216,15 +233,39 @@ static int mqtt_client_protocol_callback(struct lws* wsi, enum lws_callback_reas
                         client_data->base.config.client_id = generated_id;
                     }
                 }
-                
-                strncpy(protocol_data->client_id, 
+
+                strncpy(protocol_data->client_id,
                        client_data->base.config.client_id ? client_data->base.config.client_id : "unknown",
                        sizeof(protocol_data->client_id) - 1);
-                
+
+                // Resolve MQTT topics with client ID
+                if (mqtt_resolve_topics(&client_data->base, protocol_data->client_id) != 0) {
+                    mcp_log_error("Failed to resolve MQTT topics for client: %s", protocol_data->client_id);
+                } else {
+                    mcp_log_debug("MQTT topics resolved for client: %s", protocol_data->client_id);
+                    mcp_log_debug("Request topic: %s", client_data->base.resolved_request_topic);
+                    mcp_log_debug("Response topic: %s", client_data->base.resolved_response_topic);
+                    mcp_log_debug("Notification topic: %s", client_data->base.resolved_notification_topic);
+                }
+
+                // Subscribe to response and notification topics
+                if (client_data->base.resolved_response_topic) {
+                    lws_mqtt_subscribe_param_t sub = {0};
+                    sub.num_topics = 1;
+                    sub.topic[0].name = client_data->base.resolved_response_topic;
+                    sub.topic[0].qos = client_data->base.config.qos;
+                    lws_mqtt_client_send_subcribe(wsi, &sub);
+                }
+
+                if (client_data->base.resolved_notification_topic) {
+                    lws_mqtt_subscribe_param_t sub = {0};
+                    sub.num_topics = 1;
+                    sub.topic[0].name = client_data->base.resolved_notification_topic;
+                    sub.topic[0].qos = client_data->base.config.qos;
+                    lws_mqtt_client_send_subcribe(wsi, &sub);
+                }
+
                 mqtt_client_handle_state_change(client_data, MCP_MQTT_CLIENT_CONNECTED, "Connected");
-                
-                // Restore subscriptions if this is a reconnection
-                mqtt_client_restore_subscriptions(client_data);
             }
             break;
             
@@ -238,12 +279,19 @@ static int mqtt_client_protocol_callback(struct lws* wsi, enum lws_callback_reas
             }
             break;
             
-        case LWS_CALLBACK_CLIENT_RECEIVE:
+        case LWS_CALLBACK_MQTT_CLIENT_RX:
             if (protocol_data && client_data && in && len > 0) {
                 // Handle incoming MQTT message
-                mcp_log_debug("Received MQTT data: %zu bytes", len);
-                mqtt_handle_incoming_message(&client_data->base, "unknown", in, len);
-                mqtt_client_update_stats(client_data, false, true, len);
+                lws_mqtt_publish_param_t *pub = (lws_mqtt_publish_param_t *)in;
+                mcp_log_debug("Received MQTT message on topic: %.*s, size: %u",
+                             pub->topic_len, pub->topic, pub->payload_len);
+
+                char* topic = strndup(pub->topic, pub->topic_len);
+                if (topic) {
+                    mqtt_handle_incoming_message(&client_data->base, topic, pub->payload, pub->payload_len);
+                    free(topic);
+                }
+                mqtt_client_update_stats(client_data, false, true, pub->payload_len);
             }
             break;
             
@@ -512,15 +560,67 @@ int mqtt_client_start_connection(mcp_mqtt_client_transport_data_t* data) {
         return -1;
     }
 
-    // This is a placeholder - actual implementation would create libwebsockets client connection
     mcp_log_debug("Starting MQTT client connection to %s:%d",
                  data->base.config.host, data->base.config.port);
 
     mqtt_client_handle_state_change(data, MCP_MQTT_CLIENT_CONNECTING, "Starting connection");
 
-    // For now, just simulate a successful connection
-    mqtt_client_handle_state_change(data, MCP_MQTT_CLIENT_CONNECTED, "Connected");
+    // Generate client ID if not provided
+    if (!data->base.config.client_id) {
+        char* generated_id = mqtt_generate_client_id();
+        if (generated_id) {
+            data->base.config.client_id = generated_id;
+        }
+    }
 
+    // Resolve MQTT topics with client ID
+    const char* client_id = data->base.config.client_id ? data->base.config.client_id : "unknown";
+    if (mqtt_resolve_topics(&data->base, client_id) != 0) {
+        mcp_log_error("Failed to resolve MQTT topics for client: %s", client_id);
+        return -1;
+    } else {
+        mcp_log_debug("MQTT topics resolved for client: %s", client_id);
+        mcp_log_debug("Request topic: %s", data->base.resolved_request_topic);
+        mcp_log_debug("Response topic: %s", data->base.resolved_response_topic);
+        mcp_log_debug("Notification topic: %s", data->base.resolved_notification_topic);
+    }
+
+    // Create libwebsockets context for MQTT client
+    data->base.context = mqtt_create_lws_context(&data->base);
+    if (!data->base.context) {
+        mcp_log_error("Failed to create libwebsockets context for MQTT client");
+        return -1;
+    }
+
+    // Set up MQTT connection parameters
+    lws_mqtt_client_connect_param_t mqtt_params = {0};
+    mqtt_params.client_id = data->base.config.client_id;
+    mqtt_params.keep_alive = data->base.config.keep_alive;
+    mqtt_params.clean_start = 1;
+    mqtt_params.username = data->base.config.username;
+    mqtt_params.password = data->base.config.password;
+
+    // Set up client connection info
+    struct lws_client_connect_info connect_info = {0};
+    connect_info.context = data->base.context;
+    connect_info.address = data->base.config.host;
+    connect_info.port = data->base.config.port;
+    connect_info.path = "/";
+    connect_info.host = data->base.config.host;
+    connect_info.origin = data->base.config.host;
+    connect_info.protocol = "mqtt";
+    connect_info.ssl_connection = data->base.config.use_ssl ? LCCSCF_USE_SSL : 0;
+    connect_info.userdata = data;
+    connect_info.mqtt_cp = &mqtt_params;
+
+    // Attempt connection
+    data->base.wsi = lws_client_connect_via_info(&connect_info);
+    if (!data->base.wsi) {
+        mcp_log_error("Failed to initiate MQTT client connection");
+        return -1;
+    }
+
+    mcp_log_debug("MQTT client connection initiated");
     return 0;
 }
 

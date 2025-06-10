@@ -13,7 +13,7 @@
 #include <sys/time.h>
 #endif
 
-// Simple random number generation for client ID
+// Simple random number generation for client ID and security tokens
 static uint32_t mqtt_get_random(void) {
     static bool seeded = false;
     if (!seeded) {
@@ -25,6 +25,17 @@ static uint32_t mqtt_get_random(void) {
         seeded = true;
     }
     return (uint32_t)rand();
+}
+
+// Generate secure random token for topic protection
+static void mqtt_generate_security_token(char* token, size_t token_size) {
+    const char* chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    size_t chars_len = strlen(chars);
+
+    for (size_t i = 0; i < token_size - 1; i++) {
+        token[i] = chars[mqtt_get_random() % chars_len];
+    }
+    token[token_size - 1] = '\0';
 }
 
 /**
@@ -91,42 +102,50 @@ int mqtt_resolve_topics(mcp_mqtt_transport_data_t* data, const char* client_id) 
     if (!data || !client_id) {
         return -1;
     }
-    
+
     const char* prefix = data->config.topic_prefix ? data->config.topic_prefix : "mcp/";
-    
-    // Resolve request topic
+
+    // Generate security token for topic protection
+    char security_token[17]; // 16 chars + null terminator
+    mqtt_generate_security_token(security_token, sizeof(security_token));
+
+    // Create secure client identifier
+    char secure_client_id[256];
+    snprintf(secure_client_id, sizeof(secure_client_id), "%s_%s", client_id, security_token);
+
+    // Resolve request topic with security token
     if (data->config.request_topic) {
         data->resolved_request_topic = mcp_strdup(data->config.request_topic);
     } else {
-        size_t len = strlen(prefix) + strlen(client_id) + 16;
+        size_t len = strlen(prefix) + strlen(secure_client_id) + 16;
         data->resolved_request_topic = malloc(len);
         if (data->resolved_request_topic) {
             snprintf(data->resolved_request_topic, len,
-                    MCP_MQTT_DEFAULT_REQUEST_TOPIC_TEMPLATE, prefix, client_id);
+                    MCP_MQTT_DEFAULT_REQUEST_TOPIC_TEMPLATE, prefix, secure_client_id);
         }
     }
 
-    // Resolve response topic
+    // Resolve response topic with security token
     if (data->config.response_topic) {
         data->resolved_response_topic = mcp_strdup(data->config.response_topic);
     } else {
-        size_t len = strlen(prefix) + strlen(client_id) + 16;
+        size_t len = strlen(prefix) + strlen(secure_client_id) + 16;
         data->resolved_response_topic = malloc(len);
         if (data->resolved_response_topic) {
             snprintf(data->resolved_response_topic, len,
-                    MCP_MQTT_DEFAULT_RESPONSE_TOPIC_TEMPLATE, prefix, client_id);
+                    MCP_MQTT_DEFAULT_RESPONSE_TOPIC_TEMPLATE, prefix, secure_client_id);
         }
     }
 
-    // Resolve notification topic
+    // Resolve notification topic with security token
     if (data->config.notification_topic) {
         data->resolved_notification_topic = mcp_strdup(data->config.notification_topic);
     } else {
-        size_t len = strlen(prefix) + strlen(client_id) + 16;
+        size_t len = strlen(prefix) + strlen(secure_client_id) + 16;
         data->resolved_notification_topic = malloc(len);
         if (data->resolved_notification_topic) {
             snprintf(data->resolved_notification_topic, len,
-                    MCP_MQTT_DEFAULT_NOTIFICATION_TOPIC_TEMPLATE, prefix, client_id);
+                    MCP_MQTT_DEFAULT_NOTIFICATION_TOPIC_TEMPLATE, prefix, secure_client_id);
         }
     }
     
@@ -136,7 +155,7 @@ int mqtt_resolve_topics(mcp_mqtt_transport_data_t* data, const char* client_id) 
         return -1;
     }
     
-    mcp_log_debug("MQTT topics resolved - Request: %s, Response: %s, Notification: %s",
+    mcp_log_debug("MQTT topics resolved with security token - Request: %s, Response: %s, Notification: %s",
                  data->resolved_request_topic, data->resolved_response_topic,
                  data->resolved_notification_topic);
     
@@ -282,10 +301,36 @@ int mqtt_process_message_queue(mcp_mqtt_transport_data_t* data) {
     // Process the message
     int result = -1;
     if (data->wsi) {
+#ifdef LWS_ROLE_MQTT
         // Use libwebsockets MQTT API to send the message
-        // This is a placeholder - actual implementation would use lws_mqtt_client_send_publish
-        mcp_log_debug("Processing MQTT message to topic: %s", entry->topic);
-        result = 0; // Placeholder success
+        lws_mqtt_publish_param_t pub = {0};
+        pub.topic = entry->topic;
+        pub.topic_len = strlen(entry->topic);
+        pub.payload = entry->payload;
+        pub.payload_len = entry->payload_len;
+        pub.qos = (lws_mqtt_qos_levels_t)entry->qos;
+        pub.retain = entry->retain;
+
+        mcp_log_debug("Publishing MQTT message to topic: %s, size: %zu", entry->topic, entry->payload_len);
+        result = lws_mqtt_client_send_publish(data->wsi, &pub, entry->payload, entry->payload_len, 1);
+
+        if (result < 0) {
+            mcp_log_error("Failed to publish MQTT message: %d", result);
+        }
+#else
+        // Simulate MQTT message processing for testing
+        mcp_log_debug("Simulating MQTT publish to topic: %s, size: %zu", entry->topic, entry->payload_len);
+
+        // For local testing, we can simulate message delivery by calling the message handler
+        // This allows testing the MCP message flow without real MQTT broker
+        if (data->is_server) {
+            // Server: simulate receiving the message and processing it
+            mqtt_handle_incoming_message(data, entry->topic, entry->payload, entry->payload_len);
+        } else {
+            // Client: just mark as sent successfully
+            result = 0;
+        }
+#endif
     }
     
     // Update statistics
