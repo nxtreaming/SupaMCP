@@ -68,6 +68,7 @@ tcp_opt*.md
 shttp_*.md
 TCP_call_process.txt
 thread_pool_exit_enhancements.md
+mqtt_pubsub_dev.md
 
 # Python
 .env

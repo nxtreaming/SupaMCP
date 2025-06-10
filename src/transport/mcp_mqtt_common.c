@@ -304,14 +304,14 @@ int mqtt_process_message_queue(mcp_mqtt_transport_data_t* data) {
         // Use libwebsockets MQTT API to send the message
         lws_mqtt_publish_param_t pub = {0};
         pub.topic = entry->topic;
-        pub.topic_len = strlen(entry->topic);
+        pub.topic_len = (uint16_t)strlen(entry->topic);
         pub.payload = entry->payload;
-        pub.payload_len = entry->payload_len;
+        pub.payload_len = (uint32_t)entry->payload_len;
         pub.qos = (lws_mqtt_qos_levels_t)entry->qos;
         pub.retain = entry->retain;
 
         mcp_log_debug("Publishing MQTT message to topic: %s, size: %zu", entry->topic, entry->payload_len);
-        result = lws_mqtt_client_send_publish(data->wsi, &pub, entry->payload, entry->payload_len, 1);
+        result = lws_mqtt_client_send_publish(data->wsi, &pub, entry->payload, (uint32_t)entry->payload_len, 1);
 
         if (result < 0) {
             mcp_log_error("Failed to publish MQTT message: %d", result);
@@ -335,6 +335,44 @@ int mqtt_process_message_queue(mcp_mqtt_transport_data_t* data) {
 }
 
 /**
+ * @brief Extracts client ID from a request topic
+ */
+static char* mqtt_extract_client_id_from_topic(const char* topic, const char* prefix) {
+    if (!topic || !prefix) {
+        return NULL;
+    }
+
+    // Expected format: {prefix}request/{client_id}
+    char expected_prefix[256];
+    snprintf(expected_prefix, sizeof(expected_prefix), "%srequest/", prefix);
+
+    if (strncmp(topic, expected_prefix, strlen(expected_prefix)) != 0) {
+        return NULL;
+    }
+
+    // Extract client_id part
+    const char* client_id_start = topic + strlen(expected_prefix);
+    return mcp_strdup(client_id_start);
+}
+
+/**
+ * @brief Constructs response topic for a client
+ */
+static char* mqtt_construct_response_topic(const char* client_id, const char* prefix) {
+    if (!client_id || !prefix) {
+        return NULL;
+    }
+
+    size_t len = strlen(prefix) + strlen(client_id) + 16;
+    char* response_topic = malloc(len);
+    if (response_topic) {
+        snprintf(response_topic, len, "%sresponse/%s", prefix, client_id);
+    }
+
+    return response_topic;
+}
+
+/**
  * @brief Handles incoming MQTT messages
  */
 int mqtt_handle_incoming_message(mcp_mqtt_transport_data_t* data, const char* topic,
@@ -342,36 +380,68 @@ int mqtt_handle_incoming_message(mcp_mqtt_transport_data_t* data, const char* to
     if (!data || !topic || !payload || payload_len == 0) {
         return -1;
     }
-    
+
     mcp_log_debug("Received MQTT message on topic: %s, size: %zu", topic, payload_len);
-    
+
     // Update statistics
     mcp_mutex_lock(data->stats_mutex);
     data->messages_received++;
     data->bytes_received += payload_len;
     mcp_mutex_unlock(data->stats_mutex);
-    
+
     // Check if this is an MCP message on our topics
     bool is_mcp_message = false;
-    if (data->resolved_request_topic && strcmp(topic, data->resolved_request_topic) == 0) {
+    bool is_request_message = false;
+    char* client_id_from_topic = NULL;
+
+    const char* prefix = data->config.topic_prefix ? data->config.topic_prefix : "mcp/";
+
+    // Check if this is a request message (for server)
+    char request_pattern[256];
+    snprintf(request_pattern, sizeof(request_pattern), "%srequest/", prefix);
+    if (strncmp(topic, request_pattern, strlen(request_pattern)) == 0) {
         is_mcp_message = true;
-    } else if (data->resolved_response_topic && strcmp(topic, data->resolved_response_topic) == 0) {
+        is_request_message = true;
+        client_id_from_topic = mqtt_extract_client_id_from_topic(topic, prefix);
+    }
+    // Check other topic patterns
+    else if (data->resolved_response_topic && strcmp(topic, data->resolved_response_topic) == 0) {
         is_mcp_message = true;
     } else if (data->resolved_notification_topic && strcmp(topic, data->resolved_notification_topic) == 0) {
         is_mcp_message = true;
     }
-    
+
     if (is_mcp_message && data->message_callback) {
         // Convert MQTT payload to MCP message
         void* mcp_data = NULL;
         size_t mcp_len = 0;
-        
+
         if (mqtt_deserialize_mcp_message(payload, payload_len, &mcp_data, &mcp_len) == 0) {
             // Call MCP message callback
             int error_code = 0;
             char* response = data->message_callback(data->callback_user_data, mcp_data, mcp_len, &error_code);
+
+            // For request messages, send response back to the client
+            if (response && is_request_message && client_id_from_topic) {
+                char* response_topic = mqtt_construct_response_topic(client_id_from_topic, prefix);
+                if (response_topic) {
+                    // Serialize and send response
+                    void* mqtt_payload = NULL;
+                    size_t mqtt_len = 0;
+
+                    if (mqtt_serialize_mcp_message(response, strlen(response), &mqtt_payload, &mqtt_len) == 0) {
+                        mqtt_enqueue_message(data, response_topic, mqtt_payload, mqtt_len,
+                                           data->config.qos, data->config.retain);
+                        free(mqtt_payload);
+                        mcp_log_debug("Sent MQTT response to topic: %s", response_topic);
+                    }
+
+                    free(response_topic);
+                }
+            }
+
             if (response) {
-                free(response); // Free any response since MQTT doesn't use it directly
+                free(response);
             }
             free(mcp_data);
         } else {
@@ -381,6 +451,10 @@ int mqtt_handle_incoming_message(mcp_mqtt_transport_data_t* data, const char* to
         // Call custom message handler for non-MCP messages
         data->custom_message_handler(topic, payload, payload_len, data->custom_handler_user_data);
     }
-    
+
+    if (client_id_from_topic) {
+        free(client_id_from_topic);
+    }
+
     return 0;
 }

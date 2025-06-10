@@ -249,21 +249,36 @@ static int mqtt_client_protocol_callback(struct lws* wsi, enum lws_callback_reas
                     mcp_log_debug("Notification topic: %s", client_data->base.resolved_notification_topic);
                 }
 
-                // Subscribe to response and notification topics
-                if (client_data->base.resolved_response_topic) {
-                    lws_mqtt_subscribe_param_t sub = {0};
-                    sub.num_topics = 1;
-                    sub.topic[0].name = client_data->base.resolved_response_topic;
-                    sub.topic[0].qos = client_data->base.config.qos;
-                    lws_mqtt_client_send_subcribe(wsi, &sub);
-                }
+                // Subscribe to appropriate topics based on transport type
+                mcp_transport_t* transport = (mcp_transport_t*)protocol_data->transport_data;
+                bool is_server = (transport && transport->type == MCP_TRANSPORT_TYPE_SERVER);
 
-                if (client_data->base.resolved_notification_topic) {
-                    lws_mqtt_subscribe_param_t sub = {0};
-                    sub.num_topics = 1;
-                    sub.topic[0].name = client_data->base.resolved_notification_topic;
-                    sub.topic[0].qos = client_data->base.config.qos;
-                    lws_mqtt_client_send_subcribe(wsi, &sub);
+                if (is_server) {
+                    // Server: Subscribe to all stored subscriptions (including request wildcard)
+                    mqtt_client_restore_subscriptions(client_data);
+                } else {
+                    // Client: Subscribe to response and notification topics
+                    if (client_data->base.resolved_response_topic) {
+                        lws_mqtt_topic_elem_t topic_elem = {0};
+                        topic_elem.name = client_data->base.resolved_response_topic;
+                        topic_elem.qos = (lws_mqtt_qos_levels_t)client_data->base.config.qos;
+
+                        lws_mqtt_subscribe_param_t sub = {0};
+                        sub.num_topics = 1;
+                        sub.topic = &topic_elem;
+                        lws_mqtt_client_send_subcribe(wsi, &sub);
+                    }
+
+                    if (client_data->base.resolved_notification_topic) {
+                        lws_mqtt_topic_elem_t topic_elem = {0};
+                        topic_elem.name = client_data->base.resolved_notification_topic;
+                        topic_elem.qos = (lws_mqtt_qos_levels_t)client_data->base.config.qos;
+
+                        lws_mqtt_subscribe_param_t sub = {0};
+                        sub.num_topics = 1;
+                        sub.topic = &topic_elem;
+                        lws_mqtt_client_send_subcribe(wsi, &sub);
+                    }
                 }
 
                 mqtt_client_handle_state_change(client_data, MCP_MQTT_CLIENT_CONNECTED, "Connected");
@@ -424,12 +439,28 @@ static int mqtt_client_transport_start(mcp_transport_t* transport,
     data->base.callback_user_data = user_data;
     data->base.error_callback = error_callback;
 
+    // Determine if this is a server transport (based on transport type)
+    bool is_server = (transport->type == MCP_TRANSPORT_TYPE_SERVER);
+
+    // For server transports, set up subscription to request topics
+    if (is_server) {
+        // Subscribe to all client request topics using wildcard
+        const char* prefix = data->base.config.topic_prefix ? data->base.config.topic_prefix : "mcp/";
+        char request_wildcard_topic[256];
+        snprintf(request_wildcard_topic, sizeof(request_wildcard_topic), "%srequest/+", prefix);
+
+        // Add subscription for server to receive all client requests
+        mqtt_client_add_subscription(data, request_wildcard_topic, data->base.config.qos);
+
+        mcp_log_info("MQTT server will subscribe to request topic: %s", request_wildcard_topic);
+    }
+
     // Start connection
     if (mqtt_client_start_connection(data) != 0) {
         return -1;
     }
 
-    mcp_log_info("MQTT client transport started");
+    mcp_log_info("MQTT client transport started (server mode: %s)", is_server ? "yes" : "no");
     return 0;
 }
 
