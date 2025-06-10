@@ -586,7 +586,6 @@ static int mqtt_client_transport_receive(mcp_transport_t* transport, char** data
 /**
  * @brief Placeholder implementations for client-specific functions
  */
-
 int mqtt_client_start_connection(mcp_mqtt_client_transport_data_t* data) {
     if (!data) {
         return -1;

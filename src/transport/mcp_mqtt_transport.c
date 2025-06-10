@@ -11,10 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// MQTT server transport functionality has been removed.
-// This file now contains shared utility functions and wrapper functions.
-// Use mcp_mqtt_client_transport.c for actual MQTT client functionality.
-
 /**
  * @brief Initializes MQTT transport data structure
  */
@@ -303,8 +299,6 @@ struct lws_context* mqtt_create_lws_context(mcp_mqtt_transport_data_t* data) {
     mcp_log_debug("Created libwebsockets context for MQTT");
     return context;
 }
-
-// mqtt_enqueue_message is implemented in mcp_mqtt_common.c
 
 /**
  * @brief Gets the current connection status of an MQTT transport
