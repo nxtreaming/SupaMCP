@@ -301,7 +301,6 @@ int mqtt_process_message_queue(mcp_mqtt_transport_data_t* data) {
     // Process the message
     int result = -1;
     if (data->wsi) {
-#ifdef LWS_ROLE_MQTT
         // Use libwebsockets MQTT API to send the message
         lws_mqtt_publish_param_t pub = {0};
         pub.topic = entry->topic;
@@ -317,20 +316,6 @@ int mqtt_process_message_queue(mcp_mqtt_transport_data_t* data) {
         if (result < 0) {
             mcp_log_error("Failed to publish MQTT message: %d", result);
         }
-#else
-        // Simulate MQTT message processing for testing
-        mcp_log_debug("Simulating MQTT publish to topic: %s, size: %zu", entry->topic, entry->payload_len);
-
-        // For local testing, we can simulate message delivery by calling the message handler
-        // This allows testing the MCP message flow without real MQTT broker
-        if (data->is_server) {
-            // Server: simulate receiving the message and processing it
-            mqtt_handle_incoming_message(data, entry->topic, entry->payload, entry->payload_len);
-        } else {
-            // Client: just mark as sent successfully
-            result = 0;
-        }
-#endif
     }
     
     // Update statistics

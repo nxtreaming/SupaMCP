@@ -4,6 +4,7 @@
 #include "mcp_log.h"
 #include "mcp_sync.h"
 #include "mcp_sys_utils.h"
+#include "mcp_string_utils.h"
 #include "libwebsockets.h"
 #include <stdlib.h>
 #include <string.h>
@@ -638,54 +639,326 @@ int mqtt_client_stop_connection(mcp_mqtt_client_transport_data_t* data) {
 }
 
 void* mqtt_client_reconnect_thread(void* arg) {
-    // Placeholder for reconnection logic
+    mcp_mqtt_client_transport_data_t* data = (mcp_mqtt_client_transport_data_t*)arg;
+    if (!data) {
+        return NULL;
+    }
+
+    mcp_log_debug("MQTT client reconnect thread started");
+
+    while (!data->base.should_stop && data->reconnect_state != MQTT_RECONNECT_IDLE) {
+        // Wait for reconnect delay
+        uint32_t delay_ms = mqtt_client_calculate_reconnect_delay(data);
+        mcp_sleep_ms(delay_ms);
+
+        if (data->base.should_stop) {
+            break;
+        }
+
+        // Attempt reconnection
+        mcp_log_info("Attempting MQTT client reconnection...");
+        if (mqtt_client_start_connection(data) == 0) {
+            mcp_log_info("MQTT client reconnected successfully");
+            data->reconnect_state = MQTT_RECONNECT_IDLE;
+
+            // Restore subscriptions
+            mqtt_client_restore_subscriptions(data);
+            break;
+        } else {
+            mcp_log_warn("MQTT client reconnection failed, will retry");
+            data->base.connection_failures++;
+        }
+    }
+
+    mcp_log_debug("MQTT client reconnect thread ended");
     return NULL;
 }
 
 int mqtt_client_schedule_reconnect(mcp_mqtt_client_transport_data_t* data) {
-    // Placeholder for reconnection scheduling
+    if (!data || data->reconnect_state != MQTT_RECONNECT_IDLE) {
+        return -1;
+    }
+
+    data->reconnect_state = MQTT_RECONNECT_SCHEDULED;
+
+    // Create reconnect thread if not already running
+    if (!data->reconnect_thread) {
+        data->reconnect_thread = malloc(sizeof(mcp_thread_t));
+        if (!data->reconnect_thread) {
+            mcp_log_error("Failed to allocate memory for reconnect thread");
+            return -1;
+        }
+
+        if (mcp_thread_create(data->reconnect_thread, mqtt_client_reconnect_thread, data) != 0) {
+            mcp_log_error("Failed to create MQTT client reconnect thread");
+            free(data->reconnect_thread);
+            data->reconnect_thread = NULL;
+            data->reconnect_state = MQTT_RECONNECT_IDLE;
+            return -1;
+        }
+    }
+
+    mcp_log_debug("MQTT client reconnection scheduled");
     return 0;
 }
 
 void mqtt_client_cancel_reconnect(mcp_mqtt_client_transport_data_t* data) {
-    // Placeholder for reconnection cancellation
+    if (!data) {
+        return;
+    }
+
+    data->reconnect_state = MQTT_RECONNECT_IDLE;
+
+    if (data->reconnect_thread) {
+        // Signal the thread to stop and wait for it
+        mcp_cond_signal(data->reconnect_condition);
+        mcp_thread_join(*data->reconnect_thread, NULL);
+        free(data->reconnect_thread);
+        data->reconnect_thread = NULL;
+    }
+
+    mcp_log_debug("MQTT client reconnection cancelled");
 }
 
 uint32_t mqtt_client_calculate_reconnect_delay(mcp_mqtt_client_transport_data_t* data) {
-    // Placeholder for reconnection delay calculation
-    return 1000;
+    if (!data) {
+        return 1000;
+    }
+
+    // Exponential backoff with jitter
+    uint32_t base_delay = 1000; // 1 second
+    uint32_t max_delay = 60000;  // 60 seconds
+
+    // Calculate exponential backoff: base_delay * 2^failures
+    uint32_t delay = base_delay;
+    for (uint32_t i = 0; i < data->base.connection_failures && delay < max_delay; i++) {
+        delay *= 2;
+        if (delay > max_delay) {
+            delay = max_delay;
+            break;
+        }
+    }
+
+    // Add jitter (±25%) using standard rand()
+    uint32_t jitter = delay / 4;
+    static bool seeded = false;
+    if (!seeded) {
+        srand((unsigned int)mcp_get_time_ms());
+        seeded = true;
+    }
+    uint32_t random_offset = (rand() % (jitter * 2)) - jitter;
+    delay += random_offset;
+
+    mcp_log_debug("MQTT reconnect delay calculated: %u ms (failures: %u)",
+                  delay, data->base.connection_failures);
+
+    return delay;
 }
 
 void* mqtt_client_ping_thread(void* arg) {
-    // Placeholder for ping monitoring
+    mcp_mqtt_client_transport_data_t* data = (mcp_mqtt_client_transport_data_t*)arg;
+    if (!data) {
+        return NULL;
+    }
+
+    mcp_log_debug("MQTT client ping thread started");
+
+    while (data->monitoring.ping_thread_active && !data->base.should_stop) {
+        // Wait for ping interval
+        mcp_mutex_lock(data->monitoring.ping_mutex);
+        mcp_cond_timedwait(data->monitoring.ping_condition, data->monitoring.ping_mutex,
+                          data->monitoring.ping_interval_ms);
+        mcp_mutex_unlock(data->monitoring.ping_mutex);
+
+        if (!data->monitoring.ping_thread_active || data->base.should_stop) {
+            break;
+        }
+
+        // Send ping if connected
+        if (data->base.connection_state == MCP_MQTT_CLIENT_CONNECTED) {
+            if (mqtt_client_send_ping(data) != 0) {
+                mcp_log_warn("Failed to send MQTT ping");
+            }
+        }
+    }
+
+    mcp_log_debug("MQTT client ping thread ended");
     return NULL;
 }
 
 int mqtt_client_send_ping(mcp_mqtt_client_transport_data_t* data) {
-    // Placeholder for ping sending
+    if (!data || !data->base.wsi) {
+        return -1;
+    }
+
+    // MQTT ping is typically handled automatically by libwebsockets
+    // For now, we'll simulate ping functionality by checking connection status
+    // In a full implementation, this could use lws_callback_on_writable to trigger a ping
+
+    // Check if connection is still alive by attempting to write
+    if (lws_callback_on_writable(data->base.wsi) < 0) {
+        mcp_log_error("Failed to schedule MQTT ping write");
+        return -1;
+    }
+
+    data->monitoring.pending_pings++;
+    mcp_log_debug("MQTT ping scheduled (pending: %d)", data->monitoring.pending_pings);
+
     return 0;
 }
 
 void mqtt_client_handle_pong(mcp_mqtt_client_transport_data_t* data) {
-    // Placeholder for pong handling
+    if (!data) {
+        return;
+    }
+
+    if (data->monitoring.pending_pings > 0) {
+        data->monitoring.pending_pings--;
+    }
+
+    mcp_log_debug("MQTT pong received (pending: %d)", data->monitoring.pending_pings);
+
+    // Reset connection failure count on successful pong
+    data->base.connection_failures = 0;
 }
 
 int mqtt_client_add_inflight_message(mcp_mqtt_client_transport_data_t* data,
                                     uint16_t packet_id, const char* topic,
                                     const void* payload, size_t payload_len,
                                     int qos, bool retain) {
-    // Placeholder for in-flight message tracking
+    if (!data || !topic || !payload) {
+        return -1;
+    }
+
+    // Check if we've reached the maximum in-flight messages
+    mcp_mutex_lock(data->message_tracking.inflight_mutex);
+    if ((uint32_t)data->message_tracking.inflight_count >= data->message_tracking.max_inflight) {
+        mcp_mutex_unlock(data->message_tracking.inflight_mutex);
+        mcp_log_warn("Maximum in-flight messages reached (%u)", data->message_tracking.max_inflight);
+        return -1;
+    }
+
+    // Create new in-flight message
+    struct mqtt_inflight_message* msg = malloc(sizeof(struct mqtt_inflight_message));
+    if (!msg) {
+        mcp_mutex_unlock(data->message_tracking.inflight_mutex);
+        mcp_log_error("Failed to allocate in-flight message");
+        return -1;
+    }
+
+    msg->packet_id = packet_id;
+    msg->topic = mcp_strdup(topic);
+    msg->payload = malloc(payload_len);
+    if (!msg->topic || !msg->payload) {
+        free(msg->topic);
+        free(msg->payload);
+        free(msg);
+        mcp_mutex_unlock(data->message_tracking.inflight_mutex);
+        mcp_log_error("Failed to allocate message data");
+        return -1;
+    }
+
+    memcpy(msg->payload, payload, payload_len);
+    msg->payload_len = payload_len;
+    msg->qos = qos;
+    msg->retain = retain;
+    msg->send_time = mcp_get_time_ms();
+    msg->retry_count = 0;
+
+    // Add to linked list
+    msg->next = data->message_tracking.inflight_messages;
+    data->message_tracking.inflight_messages = msg;
+    data->message_tracking.inflight_count++;
+
+    mcp_mutex_unlock(data->message_tracking.inflight_mutex);
+
+    mcp_log_debug("Added in-flight message: packet_id=%u, topic=%s", packet_id, topic);
     return 0;
 }
 
 void mqtt_client_remove_inflight_message(mcp_mqtt_client_transport_data_t* data,
                                         uint16_t packet_id) {
-    // Placeholder for in-flight message removal
+    if (!data) {
+        return;
+    }
+
+    mcp_mutex_lock(data->message_tracking.inflight_mutex);
+
+    struct mqtt_inflight_message* prev = NULL;
+    struct mqtt_inflight_message* current = data->message_tracking.inflight_messages;
+
+    while (current) {
+        if (current->packet_id == packet_id) {
+            // Remove from linked list
+            if (prev) {
+                prev->next = current->next;
+            } else {
+                data->message_tracking.inflight_messages = current->next;
+            }
+
+            // Free memory
+            free(current->topic);
+            free(current->payload);
+            free(current);
+
+            data->message_tracking.inflight_count--;
+
+            mcp_log_debug("Removed in-flight message: packet_id=%u", packet_id);
+            break;
+        }
+
+        prev = current;
+        current = current->next;
+    }
+
+    mcp_mutex_unlock(data->message_tracking.inflight_mutex);
 }
 
 int mqtt_client_retry_inflight_messages(mcp_mqtt_client_transport_data_t* data) {
-    // Placeholder for message retry logic
-    return 0;
+    if (!data) {
+        return -1;
+    }
+
+    uint64_t current_time = mcp_get_time_ms();
+    int retried_count = 0;
+
+    mcp_mutex_lock(data->message_tracking.inflight_mutex);
+
+    struct mqtt_inflight_message* msg = data->message_tracking.inflight_messages;
+    while (msg) {
+        // Check if message needs retry
+        uint64_t elapsed = current_time - msg->send_time;
+        if (elapsed > data->message_retry_interval_ms && msg->retry_count < data->max_message_retries) {
+            // Retry the message
+            if (data->base.wsi) {
+                lws_mqtt_publish_param_t pub = {0};
+                pub.topic = msg->topic;
+                pub.topic_len = (uint16_t)strlen(msg->topic);
+                pub.payload = msg->payload;
+                pub.payload_len = (uint32_t)msg->payload_len;
+                pub.qos = (lws_mqtt_qos_levels_t)msg->qos;
+                pub.retain = msg->retain;
+
+                if (lws_mqtt_client_send_publish(data->base.wsi, &pub, msg->payload, (uint32_t)msg->payload_len, 1) >= 0) {
+                    msg->retry_count++;
+                    msg->send_time = current_time;
+                    retried_count++;
+                    mcp_log_debug("Retried in-flight message: packet_id=%u, retry=%u",
+                                  msg->packet_id, msg->retry_count);
+                }
+            }
+        }
+
+        msg = msg->next;
+    }
+
+    mcp_mutex_unlock(data->message_tracking.inflight_mutex);
+
+    if (retried_count > 0) {
+        mcp_log_debug("Retried %d in-flight messages", retried_count);
+    }
+
+    return retried_count;
 }
 
 uint16_t mqtt_client_next_packet_id(mcp_mqtt_client_transport_data_t* data) {
@@ -705,27 +978,166 @@ uint16_t mqtt_client_next_packet_id(mcp_mqtt_client_transport_data_t* data) {
 
 int mqtt_client_add_subscription(mcp_mqtt_client_transport_data_t* data,
                                const char* topic, int qos) {
-    // Placeholder for subscription management
+    if (!data || !topic) {
+        return -1;
+    }
+
+    mcp_mutex_lock(data->session.subscription_mutex);
+
+    // Check if subscription already exists
+    struct mqtt_subscription* existing = data->session.subscriptions;
+    while (existing) {
+        if (strcmp(existing->topic, topic) == 0) {
+            // Update QoS if different
+            if (existing->qos != qos) {
+                existing->qos = qos;
+                mcp_log_debug("Updated subscription QoS: topic=%s, qos=%d", topic, qos);
+            }
+            mcp_mutex_unlock(data->session.subscription_mutex);
+            return 0;
+        }
+        existing = existing->next;
+    }
+
+    // Create new subscription
+    struct mqtt_subscription* sub = malloc(sizeof(struct mqtt_subscription));
+    if (!sub) {
+        mcp_mutex_unlock(data->session.subscription_mutex);
+        mcp_log_error("Failed to allocate subscription");
+        return -1;
+    }
+
+    sub->topic = mcp_strdup(topic);
+    if (!sub->topic) {
+        free(sub);
+        mcp_mutex_unlock(data->session.subscription_mutex);
+        mcp_log_error("Failed to allocate subscription topic");
+        return -1;
+    }
+
+    sub->qos = qos;
+    sub->next = data->session.subscriptions;
+    data->session.subscriptions = sub;
+
+    mcp_mutex_unlock(data->session.subscription_mutex);
+
+    mcp_log_debug("Added subscription: topic=%s, qos=%d", topic, qos);
     return 0;
 }
 
 void mqtt_client_remove_subscription(mcp_mqtt_client_transport_data_t* data,
                                    const char* topic) {
-    // Placeholder for subscription removal
+    if (!data || !topic) {
+        return;
+    }
+
+    mcp_mutex_lock(data->session.subscription_mutex);
+
+    struct mqtt_subscription* prev = NULL;
+    struct mqtt_subscription* current = data->session.subscriptions;
+
+    while (current) {
+        if (strcmp(current->topic, topic) == 0) {
+            // Remove from linked list
+            if (prev) {
+                prev->next = current->next;
+            } else {
+                data->session.subscriptions = current->next;
+            }
+
+            // Free memory
+            free(current->topic);
+            free(current);
+
+            mcp_log_debug("Removed subscription: topic=%s", topic);
+            break;
+        }
+
+        prev = current;
+        current = current->next;
+    }
+
+    mcp_mutex_unlock(data->session.subscription_mutex);
 }
 
 int mqtt_client_restore_subscriptions(mcp_mqtt_client_transport_data_t* data) {
-    // Placeholder for subscription restoration
-    return 0;
+    if (!data || !data->base.wsi) {
+        return -1;
+    }
+
+    int restored_count = 0;
+
+    mcp_mutex_lock(data->session.subscription_mutex);
+
+    struct mqtt_subscription* sub = data->session.subscriptions;
+    while (sub) {
+        // Restore subscription using libwebsockets MQTT API
+        lws_mqtt_topic_elem_t topic_elem = {0};
+        topic_elem.name = sub->topic;
+        topic_elem.qos = (lws_mqtt_qos_levels_t)sub->qos;
+
+        lws_mqtt_subscribe_param_t subscribe_param = {0};
+        subscribe_param.num_topics = 1;
+        subscribe_param.topic = &topic_elem;
+
+        if (lws_mqtt_client_send_subcribe(data->base.wsi, &subscribe_param) >= 0) {
+            restored_count++;
+            mcp_log_debug("Restored subscription: topic=%s, qos=%d", sub->topic, sub->qos);
+        } else {
+            mcp_log_warn("Failed to restore subscription: topic=%s", sub->topic);
+        }
+
+        sub = sub->next;
+    }
+
+    mcp_mutex_unlock(data->session.subscription_mutex);
+
+    mcp_log_info("Restored %d MQTT subscriptions", restored_count);
+    return restored_count;
 }
 
 int mqtt_client_save_session_state(mcp_mqtt_client_transport_data_t* data) {
-    // Placeholder for session state saving
+    if (!data) {
+        return -1;
+    }
+
+    // Count subscriptions
+    int subscription_count = 0;
+    mcp_mutex_lock(data->session.subscription_mutex);
+    struct mqtt_subscription* sub = data->session.subscriptions;
+    while (sub) {
+        subscription_count++;
+        sub = sub->next;
+    }
+    mcp_mutex_unlock(data->session.subscription_mutex);
+
+    // For now, we'll just log the session state
+    // In a full implementation, this would save to persistent storage
+    mcp_log_debug("Saving MQTT client session state:");
+    mcp_log_debug("  - Client ID: %s", data->base.config.client_id);
+    mcp_log_debug("  - Subscriptions: %d", subscription_count);
+    mcp_log_debug("  - In-flight messages: %d", data->message_tracking.inflight_count);
+
+    // TODO: Implement actual session state persistence
     return 0;
 }
 
 int mqtt_client_load_session_state(mcp_mqtt_client_transport_data_t* data) {
-    // Placeholder for session state loading
+    if (!data) {
+        return -1;
+    }
+
+    // For now, we'll just log that we're loading session state
+    // In a full implementation, this would load from persistent storage
+    mcp_log_debug("Loading MQTT client session state for client: %s",
+                  data->base.config.client_id);
+
+    // TODO: Implement actual session state loading from persistent storage
+    // This would include:
+    // - Restoring subscriptions
+    // - Restoring in-flight messages
+    // - Restoring session configuration
+
     return 0;
 }
 
