@@ -73,17 +73,8 @@ typedef struct mcp_mqtt_config {
     .will_retain = false \
 }
 
-/**
- * @brief Creates an MQTT server transport (broker functionality).
- * 
- * This function creates an MQTT transport that acts as a broker,
- * accepting connections from MQTT clients and routing MCP messages
- * between them.
- * 
- * @param config MQTT configuration structure
- * @return Pointer to the created transport, or NULL on failure
- */
-mcp_transport_t* mcp_transport_mqtt_create(const mcp_mqtt_config_t* config);
+// MQTT server transport (broker functionality) has been removed.
+// Use external MQTT broker with MQTT client transport instead.
 
 /**
  * @brief Creates an MQTT client transport.

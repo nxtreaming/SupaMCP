@@ -25,6 +25,18 @@ The MQTT transport allows MCP servers and clients to communicate using the MQTT 
 
 ## Architecture
 
+SupaMCP MQTT transport uses an external MQTT broker architecture where both MCP clients and servers connect as MQTT clients:
+
+```
+mcp_client <---> mqtt client (libwebsockets) <---> mqtt broker <---> mqtt client (libwebsockets) <---> mcp_server
+```
+
+This approach provides:
+- **Better scalability**: External brokers can handle thousands of clients
+- **Improved reliability**: Dedicated MQTT brokers are battle-tested
+- **Separation of concerns**: SupaMCP focuses on MCP protocol, broker handles MQTT
+- **Flexibility**: Can use any MQTT broker (Mosquitto, HiveMQ, AWS IoT, etc.)
+
 ### Topic Structure
 
 The MQTT transport uses a structured topic hierarchy for MCP messages:
@@ -47,15 +59,54 @@ Default topic prefix is `mcp/`, resulting in topics like:
 3. **Server Response**: Published to `{prefix}response/{client_id}`
 4. **Client Reception**: Client subscribes to its response topic
 
+## Prerequisites
+
+### External MQTT Broker Setup
+
+Since SupaMCP now uses an external MQTT broker architecture, you need to set up an MQTT broker first. Here are some popular options:
+
+#### Mosquitto (Recommended for development)
+
+```bash
+# Install Mosquitto
+sudo apt-get install mosquitto mosquitto-clients  # Ubuntu/Debian
+brew install mosquitto                             # macOS
+
+# Start Mosquitto broker
+mosquitto -p 1883 -v
+
+# Test with mosquitto clients
+mosquitto_pub -h 127.0.0.1 -t test/topic -m "Hello MQTT"
+mosquitto_sub -h 127.0.0.1 -t test/topic
+```
+
+#### Docker Mosquitto
+
+```bash
+# Run Mosquitto in Docker
+docker run -it -p 1883:1883 eclipse-mosquitto:latest
+
+# With custom configuration
+docker run -it -p 1883:1883 -v $(pwd)/mosquitto.conf:/mosquitto/config/mosquitto.conf eclipse-mosquitto:latest
+```
+
+#### Cloud MQTT Services
+
+- **AWS IoT Core**: Managed MQTT service with device management
+- **Azure IoT Hub**: Enterprise-grade IoT messaging
+- **HiveMQ Cloud**: Professional MQTT broker service
+- **CloudMQTT**: Simple cloud MQTT service
+
 ## Configuration
 
 ### Server Configuration
 
 ```c
-#include "mcp_mqtt_transport.h"
+#include "mcp_mqtt_client_transport.h"
 
+// Server now uses MQTT client transport to connect to external broker
 mcp_mqtt_config_t config = MCP_MQTT_CONFIG_DEFAULT;
-config.host = "mqtt.example.com";
+config.host = "mqtt.supamate.com";  // External MQTT broker
 config.port = 1883;
 config.client_id = "mcp_server_001";
 config.username = "server_user";
@@ -64,7 +115,7 @@ config.topic_prefix = "mcp/";
 config.qos = 1;
 config.clean_session = true;
 
-mcp_transport_t* transport = mcp_transport_mqtt_create(&config);
+mcp_transport_t* transport = mcp_transport_mqtt_client_create(&config);
 ```
 
 ### Client Configuration
@@ -73,7 +124,7 @@ mcp_transport_t* transport = mcp_transport_mqtt_create(&config);
 #include "mcp_mqtt_client_transport.h"
 
 mcp_mqtt_client_config_t config = MCP_MQTT_CLIENT_CONFIG_DEFAULT;
-config.base.host = "mqtt.example.com";
+config.base.host = "mqtt.supamate.com";
 config.base.port = 1883;
 config.base.client_id = "mcp_client_001";
 config.base.username = "client_user";
@@ -90,15 +141,15 @@ mcp_transport_t* transport = mcp_transport_mqtt_client_create_with_config(&confi
 
 ```bash
 # Basic MQTT server
-./mcp_server --mqtt --host 127.0.0.1 --port 1883
+./mcp_server --mqtt --host mqtt.supamate.com --port 1883
 
 # MQTT server with authentication
-./mcp_server --mqtt --host 127.0.0.1 --port 1883 \
+./mcp_server --mqtt --host mqtt.supamate.com --port 1883 \
   --mqtt-username server_user --mqtt-password server_pass \
   --mqtt-client-id mcp_server_001
 
 # MQTT server with SSL and custom settings
-./mcp_server --mqtt --host 127.0.0.1 --port 8883 \
+./mcp_server --mqtt --host mqtt.supamate.com --port 8883 \
   --mqtt-ssl --mqtt-qos 2 --mqtt-topic-prefix "myapp/mcp/" \
   --mqtt-persistent-session
 ```
@@ -107,15 +158,15 @@ mcp_transport_t* transport = mcp_transport_mqtt_client_create_with_config(&confi
 
 ```bash
 # Basic MQTT client
-./mcp_client --mqtt --host 127.0.0.1 --port 1883
+./mcp_client --mqtt --host mqtt.supamate.com --port 1883
 
 # MQTT client with authentication
-./mcp_client --mqtt --host 127.0.0.1 --port 1883 \
+./mcp_client --mqtt --host mqtt.supamate.com --port 1883 \
   --mqtt-username client_user --mqtt-password client_pass \
   --mqtt-client-id mcp_client_001
 
 # MQTT client with SSL
-./mcp_client --mqtt --host 127.0.0.1 --port 8883 \
+./mcp_client --mqtt --host mqtt.supamate.com --port 8883 \
   --mqtt-ssl --mqtt-qos 1 --mqtt-topic-prefix "myapp/mcp/"
 ```
 
@@ -201,17 +252,17 @@ mcp_transport_t* transport = mcp_transport_mqtt_client_create_with_config(&confi
 
 ```c
 #include "mcp_server.h"
-#include "mcp_mqtt_transport.h"
+#include "mcp_mqtt_client_transport.h"
 
 int main() {
-    // Create MQTT transport
+    // Create MQTT client transport (connects to external broker)
     mcp_mqtt_config_t config = MCP_MQTT_CONFIG_DEFAULT;
-    config.host = "localhost";
+    config.host = "mqtt.supamate.com";  // External MQTT broker
     config.port = 1883;
-    
-    mcp_transport_t* transport = mcp_transport_mqtt_create(&config);
+
+    mcp_transport_t* transport = mcp_transport_mqtt_client_create(&config);
     if (!transport) {
-        fprintf(stderr, "Failed to create MQTT transport\n");
+        fprintf(stderr, "Failed to create MQTT client transport\n");
         return 1;
     }
     
@@ -261,7 +312,7 @@ int main() {
 int main() {
     // Create MQTT client transport
     mcp_mqtt_client_config_t config = MCP_MQTT_CLIENT_CONFIG_DEFAULT;
-    config.base.host = "localhost";
+    config.base.host = "mqtt.supamate.com";  // External MQTT broker
     config.base.port = 1883;
     
     mcp_transport_t* transport = mcp_transport_mqtt_client_create_with_config(&config);

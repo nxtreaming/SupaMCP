@@ -1090,7 +1090,8 @@ int main(int argc, char** argv) {
         mqtt_config.clean_session = config.mqtt_clean_session;
         mqtt_config.use_ssl = config.mqtt_use_ssl;
 
-        transport = mcp_transport_mqtt_create(&mqtt_config);
+        // Use MQTT client transport to connect to external broker
+        transport = mcp_transport_mqtt_client_create(&mqtt_config);
 
         // Explicitly set the protocol type to MQTT
         if (transport) {

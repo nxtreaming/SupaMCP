@@ -22,7 +22,7 @@ typedef enum mcp_transport_type {
     MCP_TRANSPORT_HTTP_CLIENT,              /**< HTTP client transport */
     MCP_TRANSPORT_STHTTP,                   /**< HTTP Streamable server transport (MCP 2025-03-26) */
     MCP_TRANSPORT_STHTTP_CLIENT,            /**< HTTP Streamable client transport (MCP 2025-03-26) */
-    MCP_TRANSPORT_MQTT_SERVER,              /**< MQTT server transport (broker) */
+    MCP_TRANSPORT_MQTT_SERVER,              /**< MQTT server transport (DEPRECATED - use external broker) */
     MCP_TRANSPORT_MQTT_CLIENT               /**< MQTT client transport */
 } mcp_transport_type_t;
 
